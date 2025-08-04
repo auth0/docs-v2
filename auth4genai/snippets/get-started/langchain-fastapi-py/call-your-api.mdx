@@ -1,255 +1,210 @@
-    ### Install dependencies
+import { Prerequisites } from "/snippets/get-started/prerequisites/call-your-api.jsx";
 
-    In the root directory of your project, install the following dependencies:
+<Prerequisites
+  callbackUrl="http://localhost:8000/api/auth/callback"
+  logoutUrl="http://localhost:5173"
+/>
 
-    - `fastapi`: [FastAPI](https://fastapi.tiangolo.com/) web framework for building APIs with Python.
-    - `auth0-fastapi-api`: [Auth0's FastAPI API SDK](https://github.com/auth0/auth0-server-python/tree/main/packages/auth0_fastapi_api) to secure APIs using bearer tokens from Auth0.
-    - `langchain`: [LangChain's](https://pypi.org/project/langchain/) base Python library.
-    - `langchain-core`: LangChain's [core abstractions](https://pypi.org/project/langchain-core/) library.
-    - `langchain-openai`: LangChain integrations for OpenAI.
-    - `uvicorn` and `python-dotenv` `https`: Other Python utility libraries.
+### Prepare the FastAPI app
 
-    ```bash wrap lines
-    pip3 install fastapi auth0-fastapi-api langchain langchain-core langchain-openai uvicorn python-dotenv httpx
-    ```
+**Recommended**: Use the starter template, clone the [Auth0 AI samples](https://github.com/auth0-samples/auth0-ai-samples) repository:
 
-    ### Set up your environment
+```bash wrap lines
+git clone https://github.com/auth0-samples/auth0-ai-samples.git
+cd auth0-ai-samples/authenticate-users/langchain-fastapi-py
+```
 
-    In the root directory of your project, create the `.env.local` file and add the following variables:
-    
-    ```bash .env.local wrap lines
-    AUTH0_SECRET='use [openssl rand -hex 32] to generate a 32 bytes value'
-    APP_BASE_URL='http://localhost:3000'
-    AUTH0_DOMAIN='<your-auth0-domain>'
-    AUTH0_CLIENT_ID='<your-auth0-application-client-id>'
-    AUTH0_CLIENT_SECRET='<your-auth0-application-client-secret>'
-    ```
+The project is divided into two parts:
 
-    To initialize your local Python environment, run these commands in the terminal:
+- `backend/` contains the backend code for the Web app and API written in Python using FastAPI and the LangGraph agent.
+- `frontend/` contains the frontend code for the Web app written in React as a Vite SPA.
 
-    ```bash wrap lines
-    python3 -m venv env
-    source env/bin/activate
-    ```
+### Install dependencies
 
-    ### Create an API in Auth0
+In the `backend` directory of your project, install the following dependencies:
 
-    In the Auth0 Dashboard, [create an API](https://auth0.com/docs/get-started/auth0-overview/set-up-apis). Set the **Identifier** as `agent0-api`.
+- `langgraph`: [LangGraph](https://pypi.org/project/langgraph/) for building stateful, multi-actor applications with LLMs.
+- `langchain-openai`: LangChain integrations for OpenAI.
+- `langgraph-cli`: LangGraph CLI for running a local LangGraph server.
 
-    Once you've successfully created the API, enable the corresponding `AUTH0_CLIENT_ID` within the **Machine to Machine Applications** tab. This enables that client to request access tokens for this API.
+Make sure you have [uv](https://docs.astral.sh/uv/) installed and run the following command to install the dependencies:
 
-    Update the `.env.local` file to set the `AUTH0_API_AUDIENCE` to `agent0-api`, or the identifier for the API you created.
+```bash wrap lines
+cd backend
+uv sync
+uv add langgraph langchain-openai langgraph-cli[inmem]
+```
 
-    ```bash .env.local wrap lines
-    # ...
+### Update the environment file
 
-    AUTH0_API_AUDIENCE=agent0-api
-    ```
+Copy the `.env.example` file to `.env` and update the variables with your Auth0 credentials. You can find your Auth0 domain, client ID and client secret in the application you created in the Auth0 dashboard.
 
-    Next, create a file called `src/app.py` and add the following code to import dependencies and set up the Auth0 configuration:
+### Pass credentials to the agent
 
-    ```python src/app.py wrap lines
-    import json
+First, you have to pass the access token from the user's session to the agent. The FastAPI backend will proxy requests to the LangGraph server with the user's credentials.
 
-    from fastapi import Depends, FastAPI, HTTPException, Request, Response
-    from fastapi.middleware.cors import CORSMiddleware
-    from fastapi_plugin import Auth0FastAPI
+Update the API route to pass the access token to the agent in `app/api/routes/chat.py`:
 
-    from langchain_openai import ChatOpenAI
-    from langchain.agents import AgentExecutor, create_tool_calling_agent
+```python app/api/routes/chat.py wrap lines highlight={2,9,21-23}
+# ...
+from app.core.auth import auth_client
+# ...
 
-    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-    from langchain_core.tools import tool
+@agent_router.api_route(
+    "/{full_path:path}", methods=["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"]
+)
+async def api_route(
+    request: Request, full_path: str, auth_session=Depends(auth_client.require_session)
+):
+    try:
+        # ... existing code
 
-    from dotenv import load_dotenv
-    from typing import Any, Dict, List
+        # Prepare body
+        body = await request.body()
+        if request.method in ("POST", "PUT", "PATCH") and body:
+            content = await request.json()
+            content["config"] = {
+                "configurable": {
+                    "_credentials": {
+                        "access_token": auth_session.get("token_sets")[0].get(
+                            "access_token"
+                        ),
+                    }
+                }
+            }
+            body = json.dumps(content).encode("utf-8")
 
-    import httpx
-    import os
-    import uvicorn
+            # ... existing code
+```
 
-    load_dotenv(dotenv_path=".env.local")
-    app = FastAPI()
+### Define a tool to call your API
 
-    # Set up the CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[os.getenv("AGENT0_WEB_HOST")],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+In this step, you'll create a LangChain tool to make the first-party API call. The tool fetches an access token to call the API.
 
-    # Auth0 configuration
-    auth0 = Auth0FastAPI(
-        domain=os.getenv("AUTH0_DOMAIN"),
-        audience=os.getenv("AUTH0_API_AUDIENCE"),
-    )
-    ```
-    ### Define a tool to call your API
+In this example, after taking in an Auth0 access token during user login, the tool returns the user profile of the currently logged-in user by calling the [/userinfo](https://auth0.com/docs/api/authentication/user-profile/get-user-info) endpoint.
 
-    In this step, you’ll create a tool to make the first-party API call. The tool fetches an access token to call the API.
+Create a user info tool in `app/agents/tools/user_info.py`:
 
-    Add the following code to `src/app.py` to set up `Agent0` with a token-protected API tool call to Auth0's `/userinfo` endpoint:
+```python app/agents/tools/user_info.py wrap lines
+import httpx
+from langchain_core.tools import StructuredTool
+from langchain_core.runnables.config import RunnableConfig
+from pydantic import BaseModel
 
-    ```python src/app.py wrap lines
-    # ...
+from app.core.config import settings
 
-    # OpenAI model
-    model = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0,
-        api_key=os.getenv("AGENT0_OPENAI_KEY")
-    )
 
-    # Create a prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an AI agent for demonstrating tool calling with Auth0."),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
+class UserInfoSchema(BaseModel):
+    pass
 
-    # Function to create a tool dynamically with the provided token
-    def get_user_info_tool(token: str):
-        @tool
-        async def get_user_info() -> Dict[str, Any]:
-            """Fetch user info from Auth0 using the provided token."""
-            auth0_domain = os.getenv("AUTH0_DOMAIN")
-            if not auth0_domain:
-                return {"error": "Auth0 domain is not defined"}
 
-            url = f"https://{auth0_domain}/userinfo"
-            headers = {"Authorization": f"Bearer {token}"}
+async def get_user_info_fn(config: RunnableConfig):
+    """Get information about the current logged in user from Auth0 /userinfo endpoint."""
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers)
-                if response.status_code != 200:
-                    return {"error": "Failed to fetch user info"}
-                return response.json()
+    # Access credentials from config
+    if "configurable" not in config or "_credentials" not in config["configurable"]:
+        return "There is no user logged in."
 
-        return get_user_info
+    credentials = config["configurable"]["_credentials"]
+    access_token = credentials.get("access_token")
 
-    # Agent execution function
-    async def agent0(messages: List[Dict], token: str) -> Dict[str, Any]:
-        get_user_info = get_user_info_tool(token)  # Inject token dynamically
+    if not access_token:
+        return "There is no user logged in."
 
-        tools = [get_user_info]
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://{settings.AUTH0_DOMAIN}/userinfo",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                },
+            )
 
-        # Create the agent using the factory function
-        agent = create_tool_calling_agent(model, tools, prompt)
+            if response.status_code == 200:
+                user_info = response.json()
+                return f"User information: {user_info}"
+            else:
+                return "I couldn't verify your identity"
 
-        # Create the agent executor
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-        )
+    except Exception as e:
+        return f"Error getting user info: {str(e)}"
 
-        response = await agent_executor.ainvoke({"input": messages})
 
-        return {"content": response["output"]}
-    ```
+get_user_info = StructuredTool(
+    name="get_user_info",
+    description="Get information about the current logged in user.",
+    args_schema=UserInfoSchema,
+    coroutine=get_user_info_fn,
+)
+```
 
-    ### Run API server and handle AI agent requests
+### Add the tool to the AI agent
 
-    Add the following code to `src/app.py` to handle requests to the `/agent` endpoint:
+The AI agent processes and runs the user's request through the AI pipeline, including the tool call. Update the `app/agents/assistant0.py` file to add the tool to the agent.
 
-    ```python src/app.py wrap lines
-    # ...
+```python app/agents/assistant0.py wrap lines highlight={2,4}
+# ...
+from app.agents.tools.user_info import get_user_info
 
-    @app.post("/agent")
-    async def agent_api(
-        request: Request,
-        response: Response,
-        claims: dict = Depends(auth0.require_auth())
-    ):
-        data = await request.body()
-        messages = json.loads(data).get('messages') if data else ""
+tools = [get_user_info]
 
-        if not messages or not isinstance(messages, list):
-            detail = "Messages are required and should be an array"
-            raise HTTPException(status_code=400, detail=detail)
+llm = ChatOpenAI(model="gpt-4.1-mini")
 
-        try:
-            # Retrieve the authorization header with access token
-            # in the format "Bearer <token>"
-            token = request.headers.get("authorization")
-            response = await agent0(messages, token)
-            return {"response": response["content"]}
-        except Exception as error:
-            print(error)
-            detail("Failed to get response from agent")
-            raise HTTPException(status_code=500, detail=detail)
+agent = create_react_agent(
+    llm,
+    tools=ToolNode(tools, handle_tool_errors=False),
+    prompt="You are a personal assistant named Assistant0. You are a helpful assistant that can answer questions and help with tasks. You have access to a set of tools, use the tools as needed to answer the user's question. Render the email body as a markdown block, do not wrap it in code blocks.",
+)
+```
 
-    if __name__ == "__main__":
-        uvicorn.run(app, host="127.0.0.1", port=3000)
-    ```
+You need an API Key from OpenAI to use the LLM. Add that API key to your `.env` file:
 
-    ### Run your API server
-    Run this command to start the API server:
+```bash .env wrap lines
+# ...
+OPENAI_API_KEY="YOUR_API_KEY"
+```
 
-    ```bash wrap lines
-    python3 src/app.py
-    ```
+If you use another provider for your LLM, adjust the variable name in `.env` accordingly
 
-    ### Test your application
+### Test your application
 
-    Create a test script to call the API using an access token issued to the logged-in user. This simulates using a front-end application which can follow the same pattern to access backend APIs.
+To test the application, start the FastAPI backend, LangGraph server, and the frontend:
 
-    #### 1. Create a test script
-    Create a file called `api_test.py` and add the following code to it:
+1. In a new terminal, start the FastAPI backend:
 
-    ```python api_test.py wrap lines
-    from dotenv import load_dotenv
-    import os
-    import requests
-    load_dotenv(dotenv_path=".env.local")
+```bash wrap lines
+cd backend
+source .venv/bin/activate
+fastapi dev app/main.py
+```
 
-    def get_access_token():
-        url = f"https://{os.getenv('AUTH0_DOMAIN')}/oauth/token"
-        headers = {"content-type": "application/x-www-form-urlencoded"}
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": os.getenv("AUTH0_CLIENT_ID"),
-            "client_secret": os.getenv("AUTH0_CLIENT_SECRET"),
-            "audience": os.getenv("AUTH0_API_AUDIENCE"),
-        }
-        response = requests.post(url, headers=headers, data=data)
-        response.raise_for_status()  # Raise an error for bad responses
-        return response.json().get("access_token")
+2. In another terminal, start the LangGraph server:
 
-    def call_agent_api(access_token):
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}"
-        }
-        payload = {
-            "messages": [
-                {"content": "Hello, tell me a joke.", "role": "Human"}
-            ]
-        }
-        response = requests.post((os.getenv("APP_BASE_URL")+"/agent"), json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()
+```bash wrap lines
+cd backend
+source .venv/bin/activate
+uv pip install -U langgraph-api
+langgraph dev --port 54367 --allow-blocking
+```
 
-    def main():
-        try:
-            token = get_access_token()
-            print("Access token obtained successfully.")
-            response = call_agent_api(token)
-            print("Agent API Response:", response.get("response"))
-        except requests.exceptions.RequestException as e:
-            print("Error:", e)
+3. In another terminal, start the frontend:
 
-    if __name__ == "__main__":
-        main()
-    ```
+```bash wrap lines
+cd frontend
+cp .env.example .env # Copy the `.env.example` file to `.env`.
+npm run dev
+```
 
-    #### 2. Run your test script
+Visit the URL `http://localhost:5173` in your browser and interact with the AI agent. You can ask questions like `"who am I?"` to trigger the tool call and test whether it successfully retrieves information about the logged-in user.
 
-    To run your test script, enter the following command in a second terminal instance:
+```bash wrap lines
+User: who am I?
+AI: It seems that there is no user currently logged in. If you need assistance with anything else, feel free to ask!
 
-    ```bash wrap lines
-    python3 api_test.py
-    ```
+User: who am I?
+AI: You are Deepu Sasidharan. Here are your details: - .........
+```
 
-    When you run the test script, the CLI app fetches an Auth0 token with `agent0-api` as the audience and uses it to call the `/agent` endpoint. If successful, it prints the AI agent's response.
+That's it! You've successfully integrated first-party tool-calling into your LangGraph FastAPI project.
+
+Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/call-apis-on-users-behalf/your-api/langchain-fastapi-py).
