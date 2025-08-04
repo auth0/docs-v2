@@ -1,200 +1,207 @@
-    ### Install dependencies
+import { Prerequisites } from "/snippets/get-started/prerequisites/async-auth.jsx";
 
-    Install the following dependencies:
+<Prerequisites />
 
-    - `ai`: Core [Vercel AI SDK](https://sdk.vercel.ai/docs) module that interacts with various AI model providers.
-    - `zod`: TypeScript-first schema validation library.
-    - `dotenv`: A module that loads environment variables from a `.env` file.
-    - `auth0`: Auth0 [Node.js](https://github.com/auth0/node-auth0) library.
-    - `@ai-sdk/openai`: [OpenAI](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) provider for the [Vercel AI SDK](https://sdk.vercel.ai/docs).
-    - `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-vercel) built for GenAI applications powered by the Vercel AI SDK.
+### Install dependencies
 
-    ```bash Create a new Node.js project wrap lines
-    npm init -y
-    npm i auth0@4 @auth0/ai-vercel@2 zod@3 ai@4 @ai-sdk/openai@1 dotenv@16
-    ```
+Install the following dependencies:
 
-    Add the below to `package.json`:
+- `ai`: Core [Vercel AI SDK](https://sdk.vercel.ai/docs) module that interacts with various AI model providers.
+- `zod`: TypeScript-first schema validation library.
+- `dotenv`: A module that loads environment variables from a `.env` file.
+- `auth0`: [Auth0 Node.js](https://github.com/auth0/node-auth0) library.
+- `@ai-sdk/openai`: [OpenAI](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) provider for the [Vercel AI SDK](https://sdk.vercel.ai/docs).
+- `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-vercel) built for GenAI applications powered by the Vercel AI SDK.
 
-    ```json package.json wrap lines
-    "main": "index.js",
-    "x-type": "module",
-    "scripts": {
-      "start": "npx tsx src/index.ts"
+```bash Create a new Node.js project wrap lines
+npm init -y
+npm i auth0@4 @auth0/ai-vercel@2 zod@3 ai@4 @ai-sdk/openai@1 dotenv@16
+```
+
+Add the below to `package.json`:
+
+```json package.json wrap lines
+"main": "index.js",
+"x-type": "module",
+"scripts": {
+  "start": "npx tsx src/index.ts"
+},
+```
+
+### Integrate Auth0 AI SDK
+
+Integrate the [Auth0 AI SDK](https://github.com/auth0-lab/auth0-ai-js) into your application to secure your async AI agent workflow.
+
+#### 1. Create your environment file
+
+In the root directory of your project, create the `.env` file and add the following variables.
+
+```bash .env wrap lines
+AUTH0_DOMAIN='<your-auth0-domain>'
+AUTH0_CLIENT_ID='<your-auth0-application-client-id>'
+AUTH0_CLIENT_SECRET='<your-auth0-application-client-secret>'
+
+# You can use any provider of your choice supported by Vercel AI
+OPENAI_API_KEY="YOUR_API_KEY"
+
+# API
+STOCK_API_URL=<your-stock-api-url>
+AUDIENCE=sample-stock-api
+```
+
+#### 2. Require async authorization for your tool
+
+To require asynchronous authorization for your tool wrap the tool with the Async authorizer, `withAsyncUserConfirmation()`.
+
+Wrap the tool with the Async authorizer in `src/lib/tools/buy.ts`. This will intercept the tool call to initiate a CIBA request:
+
+- The CIBA request includes the user ID that will approve the request.
+- Auth0 sends the user a mobile push notification. The AI agent polls the `/token` endpoint for a user response.
+- The mobile application retrieves the `binding_message` containing the consent details, in this case, the quantity of stock to purchase for a stock ticker.
+- The user responds to the request:
+  - If the request is approved, the tool execution will continue.
+  - If the request is rejected, the tool execution will not continue.
+
+<Frame>
+  <img src="/ai/docs/img/async_auth_diagram.png" alt="CIBA sequence diagram" />
+</Frame>
+
+In our example, we wrap a tool that buys shares for a given stock picker on the user’s behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the stock’s API. Upon completing the CIBA flow, the AI agent responds with a message confirming the purchase.
+
+The Auth0 AI SDK returns an error response if the user denies the transaction.
+
+Now, create and wrap the tool with the Async authorizer. Create a file `src/lib/tools/buy.ts` and add the following code:
+
+
+```ts src/lib/tools/buy.ts wrap lines
+import "dotenv/config";
+
+import { tool } from "ai";
+import { z } from "zod";
+
+import { Auth0AI, getCIBACredentials } from "@auth0/ai-vercel";
+import { AccessDeniedInterrupt } from "@auth0/ai/interrupts";
+export type Context = {
+  userId: string;
+};
+
+const auth0AI = new Auth0AI();
+
+export const buy = (context: Context) => {
+  // highlight-next-line
+  const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
+    // highlight-next-line
+    userID: context.userId,
+    // highlight-next-line
+    bindingMessage: async ({ ticker, qty }) =>
+      // highlight-next-line
+      `Do you want to buy ${qty} shares of ${ticker}`,
+    scopes: ["openid", "stock:trade"],
+    audience: process.env["AUDIENCE"]!,
+    /**
+     * When this flag is set to `block`, the execution of the tool awaits
+     * until the user approves or rejects the request.
+     *
+     * Given the asynchronous nature of the CIBA flow, this mode
+     * is only useful during development.
+     *
+     * In practice, the process that is awaiting the user confirmation
+     * could crash or timeout before the user approves the request.
+     */
+    // highlight-next-line
+    onAuthorizationRequest: "block",
+    onUnauthorized: async (e: Error) => {
+      if (e instanceof AccessDeniedInterrupt) {
+        return "The user has deny the request";
+      }
+      return e.message;
     },
-    ```
+  });
 
-    ### Integrate Auth0 AI SDK
+  return withAsyncAuthorization(
+    tool({
+      description: "Use this function to buy stock",
+      parameters: z.object({
+        ticker: z.string(),
+        qty: z.number(),
+      }),
+      execute: async ({ ticker, qty }) => {
+        const headers = {
+          "Content-Type": "application/json",
+        };
+        const body = {
+          ticker: ticker,
+          qty: qty,
+        };
+        // highlight-next-line
+        const credentials = getCIBACredentials();
+        const accessToken = credentials?.accessToken?.value;
 
-    Integrate the [Auth0 AI SDK](https://github.com/auth0-lab/auth0-ai-js) into your application to secure your async AI agent workflow.
+        if (accessToken) {
+          headers["Authorization"] = "Bearer " + accessToken;
+        }
 
-    #### 1. Create your environment file
-    In the root directory of your project, create the `.env` file and add the following variables:
+        console.log("Executing request to buy stock");
 
-    ```bash .env wrap lines
-    AUTH0_DOMAIN='<your-auth0-domain>'
-    AUTH0_CLIENT_ID='<your-auth0-application-client-id>'
-    AUTH0_CLIENT_SECRET='<your-auth0-application-client-secret>'
+        const response = await fetch(process.env["STOCK_API_URL"]!, {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify(body),
+        });
 
-    # You can use any provider of your choice supported by Vercel AI
-    OPENAI_API_KEY="YOUR_API_KEY"
+        return response.statusText;
+      },
+    })
+  );
+};
+```
 
-    # API
-    STOCK_API_URL=<your-stock-api-url>
-    AUDIENCE=sample-stock-api
-    ```
+#### 3. Integrate the tool into an AI agent
 
-    #### 2. Require async authorization for your tool
+Create a file at `src/index.ts` and add tool calling to the Vercel AI agent using the `generateText()` or `streamText()` functions:
 
-    To require asynchronous authorization for your tool wrap the tool with the Async authorizer, `withAsyncUserConfirmation()`.
+```ts src/index.ts wrap lines
+import { setAIContext } from "@auth0/ai-vercel";
+import crypto from "node:crypto";
+import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
 
-    Wrap the tool with the Async authorizer in `src/lib/tools/buy.ts`. This will intercept the tool call to initiate a CIBA request:
-    - The CIBA request includes the user ID that will approve the request.
-    - Auth0 sends the user a mobile push notification. The AI agent polls the `/token` endpoint for a user response.
-    - The mobile application retrieves the `binding_message` containing the consent details, in this case, the quantity of stock to purchase for a stock ticker.
-    - The user responds to the request:
-      - If the request is approved, the tool execution will continue.
-      - If the request is rejected, the tool execution will not continue.
+import { buy } from "./lib/tools/buy";
 
-    <Frame>
-      <img src="/ai/docs/img/async_auth_diagram.png" alt="CIBA sequence diagram" />
-    </Frame>
+async function main() {
+  const threadID = crypto.randomUUID();
+  // highlight-next-line
+  setAIContext({ threadID });
 
-    In our example, we wrap a tool that buys shares for a given stock picker on the user’s behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the stock’s API. Upon completing the CIBA flow, the AI agent responds with a message confirming the purchase.
+  console.log(
+    "Check your mobile device for Auth0 Guardian notification and approve the request"
+  );
 
-    The Auth0 AI SDK returns an error response if the user denies the transaction.
-
-    Now, create and wrap the tool with the Async authorizer. Create a file `src/lib/tools/buy.ts` and add the following code:
-
-    ```ts src/lib/tools/buy.ts wrap lines
-    import "dotenv/config";
-
-    import { tool } from "ai";
-    import { z } from "zod";
-
-    import { Auth0AI, getCIBACredentials } from "@auth0/ai-vercel";
-    import { AccessDeniedInterrupt } from "@auth0/ai/interrupts";
-    export type Context = {
-      userId: string;
-    };
-
-    const auth0AI = new Auth0AI();
-
-    export const buy = (context: Context) => {
+  const { text } = await generateText({
+    model: openai("gpt-4o-mini"),
+    prompt: "Buy 3 stocks of Google",
+    maxSteps: 2,
+    tools: {
+      // pass an Auth0 user id. For example, 'auth0|100000000000000000000' or 'google-oauth2|100000000000000000000'
       // highlight-next-line
-      const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
-        // highlight-next-line
-        userID: context.userId,
-        // highlight-next-line
-        bindingMessage: async ({ ticker, qty }) =>
-          // highlight-next-line
-          `Do you want to buy ${qty} shares of ${ticker}`,
-        scopes: ["openid", "stock:trade"],
-        audience: process.env["AUDIENCE"]!,
-        /**
-        * When this flag is set to `block`, the execution of the tool awaits
-        * until the user approves or rejects the request.
-        *
-        * Given the asynchronous nature of the CIBA flow, this mode
-        * is only useful during development.
-        *
-        * In practice, the process that is awaiting the user confirmation
-        * could crash or timeout before the user approves the request.
-        */
-        // highlight-next-line
-        onAuthorizationRequest: "block",
-        onUnauthorized: async (e: Error) => {
-          if (e instanceof AccessDeniedInterrupt) {
-            return "The user has deny the request";
-          }
-          return e.message;
-        },
-      });
+      buy: buy({ userId: "<authenticated-user-id>" }),
+    },
+  });
 
-      return withAsyncAuthorization(
-        tool({
-          description: "Use this function to buy stock",
-          parameters: z.object({
-            ticker: z.string(),
-            qty: z.number(),
-          }),
-          execute: async ({ ticker, qty }) => {
-            const headers = {
-              "Content-Type": "application/json",
-            };
-            const body = {
-              ticker: ticker,
-              qty: qty,
-            };
-            // highlight-next-line
-            const credentials = getCIBACredentials();
-            const accessToken = credentials?.accessToken?.value;
+  console.log(text);
+}
 
-            if (accessToken) {
-              headers["Authorization"] = "Bearer " + accessToken;
-            }
+main().catch(console.error);
+```
 
-            console.log("Executing request to buy stock");
+You should now have a CLI app that allows you to interact with the AI agent.
 
-            const response = await fetch(process.env["STOCK_API_URL"]!, {
-              method: "POST",
-              headers: headers,
-              body: JSON.stringify(body),
-            });
+### Test the application
 
-            return response.statusText;
-          },
-        })
-      );
-    };
-    ```
+To test the CLI app, set a prompt, such as "Buy 3 stocks of Google," and pass it the user ID of the user approving or declining the transaction. You can get the user ID from the [Auth0 Dashboard](https://manage.auth0.com/).
 
-    #### 3. Integrate the tool into an AI agent
+To get the user ID, navigate to **User Management** > **Users** and click on a user. The ID should look like `auth0|123456789`.
 
-    Create a file at `src/index.ts` and add tool calling to the Vercel AI agent using the `generateText()` or `streamText()` functions:
+Now, run `npm start` and look for a push notification from the Auth0 Guardian app or your [custom app integrated with the Auth0 Guardian SDK](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow/user-authorization-with-ciba) on your mobile device. Once you approve the notification, you should see the tool being executed on your console.
 
-    ```ts src/index.ts wrap lines
-    import { setAIContext } from "@auth0/ai-vercel";
-    import crypto from "node:crypto";
-    import { generateText } from "ai";
-    import { openai } from "@ai-sdk/openai";
-
-    import { buy } from "./lib/tools/buy";
-
-    async function main() {
-      const threadID = crypto.randomUUID();
-      // highlight-next-line
-      setAIContext({ threadID });
-
-      console.log(
-        "Check your mobile device for Auth0 Guardian notification and approve the request"
-      );
-
-      const { text } = await generateText({
-        model: openai("gpt-4o-mini"),
-        prompt: "Buy 3 stocks of Google",
-        maxSteps: 2,
-        tools: {
-          // pass an Auth0 user id. For example, 'auth0|100000000000000000000' or 'google-oauth2|100000000000000000000'
-          // highlight-next-line
-          buy: buy({ userId: "<authenticated-user-id>" }),
-        },
-      });
-
-      console.log(text);
-    }
-
-    main().catch(console.error);
-    ```
-
-    You should now have a CLI app that allows you to interact with the AI agent.
-
-    ### Test the application
-
-    To test the CLI app, set a prompt, such as "Buy 3 stocks of Google," and pass it the user ID of the user approving or declining the transaction. You can get the user ID from the [Auth0 Dashboard](https://manage.auth0.com/). 
-
-    To get the user ID, navigate to **User Management** > **Users** and click on a user. The user ID should look like `auth0|123456789`.
-
-    Now, run `npm start` and look for a push notification from the Auth0 Guardian app or your [custom app integrated with the Auth0 Guardian SDK](https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow/user-authorization-with-ciba) on your mobile device. Once you approve the notification, you should see the tool being executed on your console.
-
-    Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/asynchronous-authorization/vercel-ai-node-js).
+Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/asynchronous-authorization/vercel-ai-node-js).
