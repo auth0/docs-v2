@@ -1,40 +1,5 @@
-const authOrigin = "https://auth0-docs-auth-proxy.vercel.app";
-
-// add MobX script to the document
-const script = document.createElement("script");
-script.src = "https://unpkg.com/mobx/dist/mobx.umd.production.min.js";
-
-// wait for the MobX script to load before executing the main function
-script.onload = () => {
-  main();
-};
-
-document.head.appendChild(script);
-
-function main() {
-  console.log("MobX loaded");
-
-  const { makeAutoObservable } = window.mobx;
-
-  window.authState = makeAutoObservable({
-    value: { user: null },
-    get user() {
-      return this.value.user;
-    },
-    async initUser() {
-      const response = await fetch(`${authOrigin}/api/user`, {
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error("Network response was not ok");
-      }
-      const user = await response.json();
-      this.value.user = user;
-    },
-  });
-}
-
 const userSymbol = Symbol("userSymbol");
+const authOrigin = "https://auth0-docs-auth-proxy.vercel.app";
 
 window.authService = {
   [userSymbol]: null,
