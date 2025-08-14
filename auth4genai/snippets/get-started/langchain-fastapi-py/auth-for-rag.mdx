@@ -1,0 +1,225 @@
+import { Prerequisites } from "/snippets/get-started/prerequisites/auth-for-rag.jsx";
+
+<Prerequisites
+  callbackUrl="http://localhost:8000/api/auth/callback"
+  logoutUrl="http://localhost:5173"
+/>
+
+### Prepare the FastAPI app
+
+**Recommended**: Use the starter template, clone the [Auth0 AI samples](https://github.com/auth0-samples/auth0-ai-samples) repository:
+
+```bash wrap lines
+git clone https://github.com/auth0-samples/auth0-ai-samples.git
+cd auth0-ai-samples/authenticate-users/langchain-fastapi-py
+```
+
+The project is divided into two parts:
+
+- `backend/` contains the backend code for the Web app and API written in Python using FastAPI and the LangGraph agent.
+- `frontend/` contains the frontend code for the Web app written in React as a Vite SPA.
+
+### Install dependencies
+
+In the `backend` directory of your project, install the following dependencies:
+
+- `auth0-ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0-lab/auth0-ai-python/tree/main/packages/auth0-ai-langchain) built for GenAI applications powered by LangChain.
+- `langgraph`: For building stateful, multi-actor applications with LLMs.
+- `langchain-openai`: [OpenAI](https://python.langchain.com/docs/integrations/chat/openai) provider for LangChain.
+- `langgraph-cli`: LangGraph CLI for running a local LangGraph server.
+- `openfga-sdk`: OpenFGA SDK for Fine-Grained Authorization
+
+Make sure you have [uv](https://docs.astral.sh/uv/) installed and run the following command to install the dependencies:
+
+```bash wrap lines
+cd backend
+uv sync
+uv add "auth0-ai-langchain>=1.0.0b3" openfga-sdk langgraph langchain-openai "langgraph-cli[inmem]" --prerelease=allow
+```
+
+### Update the environment file
+
+Copy the `.env.example` file to `.env` and update the variables with your Auth0 credentials. You can find your Auth0 domain, client ID and client secret in the application you created in the Auth0 dashboard.
+
+import SetupFGAStore from "/snippets/get-started/common/setup-fga-store.mdx";
+
+<SetupFGAStore />
+
+### Secure the RAG Tool
+
+After configuring your FGA Store, secure the RAG tool using Auth0 FGA and Auth0 AI SDK.
+
+The starter application is already configured to handle documents and embeddings.
+
+**Document Upload and Storage**
+
+- You can upload documents through the API endpoints (`backend/app/api/routes/documents.py`).
+- Uploaded documents are processed and stored with embeddings for efficient retrieval.
+- APIs for uploading and retrieving documents are defined in the application routes.
+- Database models are defined in `backend/app/models`.
+- FGA helpers are implemented in `backend/app/core/fga.py`.
+- Documents are stored as embeddings in a PostgreSQL vector database (`backend/app/core/rag.py`).
+
+**Access Control with Auth0 FGA**
+
+- When a document is uploaded, the app automatically creates [FGA tuples](https://docs.fga.dev/fga-concepts#what-is-a-relationship-tuple) to define which users can access which documents. A tuple signifies a user's relation to a given object. For example, the below tuple implies that all users can view the `<document name>` object.
+- Navigate to the **Tuple Management** section to see the tuples being added. If you want to add a tuple manually for a document, click **+ Add Tuple**. Fill in the following information:
+  - **User**: `user:*`
+  - **Object**: select doc and add `<document name>` in the ID field
+  - **Relation**: `viewer`
+
+#### Create a RAG tool
+
+Define a RAG tool that uses the `FGARetriever` to filter authorized data from the vector database:
+
+```python backend/app/agents/tools/context_docs.py wrap lines
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import StructuredTool
+from auth0_ai_langchain import FGARetriever
+from openfga_sdk.client.models import ClientBatchCheckItem
+from pydantic import BaseModel
+
+from app.core.rag import get_vector_store
+
+class GetContextDocsSchema(BaseModel):
+    question: str
+
+
+async def get_context_docs_fn(question: str, config: RunnableConfig):
+    """Use the tool when user asks for documents or projects or anything that is stored in the knowledge base"""
+
+    if "configurable" not in config or "_credentials" not in config["configurable"]:
+        return "There is no user logged in."
+
+    credentials = config["configurable"]["_credentials"]
+    user = credentials.get("user")
+
+    if not user:
+        return "There is no user logged in."
+
+    user_email = user.get("email")
+    vector_store = await get_vector_store()
+
+    if not vector_store:
+        return "There is no vector store."
+
+    retriever = FGARetriever(
+        retriever=vector_store.as_retriever(),
+        build_query=lambda doc: ClientBatchCheckItem(
+            user=f"user:{user_email}",
+            object=f"doc:{doc.metadata.get('document_id')}",
+            relation="can_view",
+        ),
+    )
+
+    documents = retriever.invoke(question)
+    return "\n\n".join([document.page_content for document in documents])
+
+
+get_context_docs = StructuredTool(
+    name="get_context_docs",
+    description="Use the tool when user asks for documents or projects or anything that is stored in the knowledge base",
+    args_schema=GetContextDocsSchema,
+    coroutine=get_context_docs_fn,
+)
+```
+
+#### Use the RAG tool from AI agent
+
+Call the tool from your AI agent to get data from documents. First, update the `backend/app/api/routes/chat.py` file with the following code to pass the user credentials to your agent:
+
+```python backend/app/api/routes/chat.py wrap lines highlight={2,9,21}
+# ...
+from app.core.auth import auth_client
+# ...
+
+@agent_router.api_route(
+    "/{full_path:path}", methods=["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"]
+)
+async def api_route(
+    request: Request, full_path: str, auth_session=Depends(auth_client.require_session)
+):
+    try:
+        # ... existing code
+
+        # Prepare body
+        body = await request.body()
+        if request.method in ("POST", "PUT", "PATCH") and body:
+            content = await request.json()
+            content["config"] = {
+                "configurable": {
+                    "_credentials": {
+                        "user": auth_session.get("user"),
+                    }
+                }
+            }
+            body = json.dumps(content).encode("utf-8")
+
+            # ... existing code
+```
+
+Now, update the `backend/app/agents/assistant0.py` file with the following code to add the tool to your agent:
+
+```python backend/app/agents/assistant0.py wrap lines highlight={2,4}
+# ...
+from app.agents.tools.context_docs import get_context_docs
+
+tools = [get_context_docs]
+
+llm = ChatOpenAI(model="gpt-4.1-mini")
+
+agent = create_react_agent(
+    llm,
+    tools=ToolNode(tools, handle_tool_errors=False),
+    prompt="You are a personal assistant named Assistant0. You are a helpful assistant that can answer questions and help with tasks. You have access to a set of tools, use the tools as needed to answer the user's question. Render the email body as a markdown block, do not wrap it in code blocks.",
+)
+```
+
+### Test your application
+
+To test the application, start the database, FastAPI backend, LangGraph server, and the frontend:
+
+1. Start the FastAPI backend:
+
+```bash wrap lines
+cd backend
+# start the postgres database
+docker compose up -d
+# start the FastAPI backend
+source .venv/bin/activate
+fastapi dev app/main.py
+```
+
+2. In another terminal, start the LangGraph server:
+
+```bash wrap lines
+cd backend
+source .venv/bin/activate
+uv pip install -U langgraph-api
+langgraph dev --port 54367 --allow-blocking
+```
+
+<Note>
+  This will open the LangGraph Studio in a new tab. You can close it as we won't
+  require it for testing the application.
+</Note>
+
+3. In another terminal, start the frontend:
+
+```bash wrap lines
+cd frontend
+cp .env.example .env # Copy the `.env.example` file to `.env`.
+npm install
+npm run dev
+```
+
+Visit the URL `http://localhost:5173` in your browser.
+Upload a document from the documents tab and ask your AI agent a question about the document. You should get a response with the relevant information.
+
+Go to an incognito window, log in as a different user, and ask it the same question. You should not get a response.
+
+Share the document from the documents page to the second user and try again. You should see the information now.
+
+That's it! You successfully integrated RAG protected by Auth0 FGA into your project.
+
+Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/authorization-for-rag/langchain-fastapi-py).
