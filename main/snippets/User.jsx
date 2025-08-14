@@ -31,7 +31,7 @@ export const User = () => {
   if (!isAuthenticated) {
     return (
       <button
-        className="px-2 bg-primary-dark rounded-full group-hover:opacity-[0.9]"
+        className="px-2 text-white bg-primary-dark rounded-full group-hover:opacity-[0.9]"
         onClick={window.authService.login}
       >
         Login
@@ -44,7 +44,7 @@ export const User = () => {
       <span className="text-gray-700">{user.name || user.email}</span>
       <button
         onClick={window.authService.logout}
-        className="px-2 bg-primary-dark rounded-full group-hover:opacity-[0.9]"
+        className="px-2 bg-primary-dark text-white rounded-full group-hover:opacity-[0.9]"
       >
         Logout
       </button>
