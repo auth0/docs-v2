@@ -1,5 +1,6 @@
 const userSymbol = Symbol("userSymbol");
 const authOrigin = "https://auth0-docs-auth-proxy.vercel.app";
+const backendOrigin = "http://127.0.0.2:3000/v2/";
 
 window.authService = {
   [userSymbol]: null,
@@ -40,3 +41,15 @@ window.authService = {
     window.authService[userSymbol] = user;
   },
 };
+
+window.backendService = {
+  helloWorld: async () => {
+    const response = await fetch(`${backendOrigin}/hello`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error("Network response was not ok");
+    }
+    return await response.json();
+  },
+}
