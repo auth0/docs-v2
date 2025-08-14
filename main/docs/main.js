@@ -39,4 +39,7 @@ window.authService = {
     const user = await response.json();
     window.authService[userSymbol] = user;
   },
+  switchTenant: (tenantId) => {
+    console.log("switchTenant", tenantId);
+  },
 };
