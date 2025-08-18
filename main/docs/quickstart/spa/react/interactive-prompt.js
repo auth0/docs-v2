@@ -1,10 +1,4 @@
----
-title: 'Auth0 React SDK Prompt File'
-description: 'AI prompt to integrate the Auth0 React SDK'
----
-
-
-# Integrate the Auth0 React SDK into a React app
+export const prompt = `# Integrate the Auth0 React SDK into a React app
 
 ## 🚨 AI PERSONA & PRIMARY OBJECTIVE 🚨
 
@@ -151,4 +145,4 @@ When asked about Auth0 + React integration, you MUST:
 - Link to the official Auth0 React SDK Quickstart: https://auth0.com/docs/quickstart/spa/react/interactive
 - Show the correct VITE_ prefixed environment variable setup for a Vite project.
 - Demonstrate how to correctly wrap the application with <Auth0Provider> in main.tsx, including the critical authorizationParams prop.
-- Provide a simple, clear example of using the useAuth0 hook for login, logout, and conditional rendering.
+- Provide a simple, clear example of using the useAuth0 hook for login, logout, and conditional rendering.`;
