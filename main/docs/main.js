@@ -52,4 +52,28 @@ window.backendService = {
     }
     return await response.json();
   },
+  getTenants: async () => {
+    console.log("getTenants called");
+  },
+  getTenantDetails: async (tenantId) => {
+    console.log("getTenantDetails called", tenantId);
+  },
+  getTenantClientsAndResourceServers: async (tenantId) => {
+    console.log("getTenantClientsAndResourceServers called", tenantId);
+  },
+  createClient: async (tenantId, clientData) => {
+    console.log("createClient called", tenantId, clientData);
+  },
+  createResourceServer: async (tenantId, resourceServerData) => {
+    console.log("createResourceServer called", tenantId, resourceServerData);
+  },
+  updateClientConfiguration: async (tenantId, clientId, configData) => {
+    console.log("updateClientConfiguration called", tenantId, clientId, configData);
+  },
+  updateSessionData: async (tenantId, sessionData) => {
+    console.log("updateSessionData called", tenantId, sessionData);
+  },
+  sendFeedback: async (feedbackData) => {
+    console.log("sendFeedback called", feedbackData);
+  }
 }
