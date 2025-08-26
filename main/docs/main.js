@@ -1,5 +1,6 @@
 const userSymbol = Symbol("userSymbol");
 const authOrigin = "https://auth0-docs-auth-proxy.vercel.app";
+const backendOrigin = "http://127.0.0.2:3000/v2/";
 
 window.authService = {
   [userSymbol]: null,
@@ -40,3 +41,39 @@ window.authService = {
     window.authService[userSymbol] = user;
   },
 };
+
+window.backendService = {
+  helloWorld: async () => {
+    const response = await fetch(`${backendOrigin}/hello`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error("Network response was not ok");
+    }
+    return await response.json();
+  },
+  getTenants: async () => {
+    console.log("getTenants called");
+  },
+  getTenantDetails: async (tenantId) => {
+    console.log("getTenantDetails called", tenantId);
+  },
+  getTenantClientsAndResourceServers: async (tenantId) => {
+    console.log("getTenantClientsAndResourceServers called", tenantId);
+  },
+  createClient: async (tenantId, clientData) => {
+    console.log("createClient called", tenantId, clientData);
+  },
+  createResourceServer: async (tenantId, resourceServerData) => {
+    console.log("createResourceServer called", tenantId, resourceServerData);
+  },
+  updateClientConfiguration: async (tenantId, clientId, configData) => {
+    console.log("updateClientConfiguration called", tenantId, clientId, configData);
+  },
+  updateSessionData: async (tenantId, sessionData) => {
+    console.log("updateSessionData called", tenantId, sessionData);
+  },
+  sendFeedback: async (feedbackData) => {
+    console.log("sendFeedback called", feedbackData);
+  }
+}
