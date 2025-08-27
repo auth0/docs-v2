@@ -1,6 +1,6 @@
 const userSymbol = Symbol("userSymbol");
 const authOrigin = "https://auth0-docs-auth-proxy.vercel.app";
-const backendOrigin = "http://127.0.0.2:3000/v2/";
+const backendOrigin = "http://localhost:3000/docs/auth/v2/";
 
 window.authService = {
   [userSymbol]: null,
@@ -44,22 +44,19 @@ window.authService = {
 
 window.backendService = {
   helloWorld: async () => {
-    const response = await fetch(`${backendOrigin}/hello`, {
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new Error("Network response was not ok");
-    }
-    return await response.json();
+    return await fetchData('');
   },
   getTenants: async () => {
-    console.log("getTenants called");
+    return await fetchData('tenants');
   },
   getTenantDetails: async (tenantId) => {
     console.log("getTenantDetails called", tenantId);
   },
-  getTenantClientsAndResourceServers: async (tenantId) => {
-    console.log("getTenantClientsAndResourceServers called", tenantId);
+  getClients: async (tenantId) => {
+    return await fetchData(`clients?tenantId=${tenantId}`);
+  },
+  getResourceServers: async (tenantId) => {
+    return await fetchData(`resource-servers?tenantId=${tenantId}`);
   },
   createClient: async (tenantId, clientData) => {
     console.log("createClient called", tenantId, clientData);
@@ -76,4 +73,14 @@ window.backendService = {
   sendFeedback: async (feedbackData) => {
     console.log("sendFeedback called", feedbackData);
   }
+}
+
+async function fetchData(endpoint){
+  const response = await fetch(`${backendOrigin}${endpoint}`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error("Network response was not ok");
+    }
+    return await response.json();
 }
