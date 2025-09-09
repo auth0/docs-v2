@@ -1,3 +1,4 @@
+import '../sentry.js'; 
 const userSymbol = Symbol("userSymbol");
 const authOrigin = "https://auth0-docs-auth-proxy.vercel.app";
 
@@ -40,3 +41,4 @@ window.authService = {
     window.authService[userSymbol] = user;
   },
 };
+
