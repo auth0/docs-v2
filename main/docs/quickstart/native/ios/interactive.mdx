@@ -1,0 +1,559 @@
+---
+title: "Auth0 iOS Quickstart"
+description: "Setup Auth0 on your iOS app in under 5min "
+mode: "wide"
+---
+
+<Tip>
+  [**Sign up**](https://auth0.com/signup?utm_source=ios_quickstart) **for an Auth0 account if you don't have one**
+</Tip>
+
+## Get Started
+
+<Steps>
+  <Step title="Create a new iOS project" stepNumber={1}>
+    Create a new iOS project for this Quickstart
+
+    Open Xcode and create a new iOS project:
+    1. **File** → **New** → **Project**
+    2. Choose **iOS** → **App**
+    3. Name your project `Auth0-iOS-Sample`
+    4. Select **Swift** as the language
+    5. Choose **Storyboard** for Interface
+    6. Click **Create**
+  </Step>
+  
+  <Step title="Install the Auth0 iOS SDK" stepNumber={2}>
+    Add the Auth0 SDK using Swift Package Manager:
+
+    In Xcode:
+    1. **File** → **Add Package Dependencies...**
+    2. Enter the repository URL: `https://github.com/auth0/Auth0.swift`
+    3. Click **Add Package**
+    4. Select **Auth0** and click **Add Package**
+  </Step>
+  
+  <Step title="Setup your Auth0 App" stepNumber={3}>
+    Next up, you need to:
+
+    1. Create a new Native Application on your Auth0 tenant.
+    2. Configure the callback and logout URLs for your iOS app.
+    3. Create an Auth0.plist file with your Domain and Client ID.
+
+    You can manually set up your app on the [dashboard](https://manage.auth0.com/dashboard/) or run the following script to do this automatically:
+
+    <Tabs>
+      <Tab title="Mac">
+        ```shellscript
+        AUTH0_APP_NAME="My iOS App" && BUNDLE_ID=$(defaults read "$(pwd)/Auth0-iOS-Sample.xcodeproj/project.pbxproj" | grep -o 'PRODUCT_BUNDLE_IDENTIFIER = [^;]*' | head -1 | cut -d'=' -f2 | tr -d ' ";') && brew tap auth0/auth0-cli && brew install auth0 && auth0 login --no-input && auth0 apps create -n "${AUTH0_APP_NAME}" -t native -c "https://\${DOMAIN}/ios/\${BUNDLE_ID}/callback,\${BUNDLE_ID}://\${AUTH0_DOMAIN}/ios/\${BUNDLE_ID}/callback" -l "https://\${DOMAIN}/ios/\${BUNDLE_ID}/callback,\${BUNDLE_ID}://\${AUTH0_DOMAIN}/ios/\${BUNDLE_ID}/callback" --json > auth0-app-details.json && CLIENT_ID=$(jq -r '.client_id' auth0-app-details.json) && DOMAIN=$(auth0 tenants list --json | jq -r '.[] | select(.active == true) | .name') && cat > Auth0.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>ClientId</key>
+    <string>${CLIENT_ID}</string>
+    <key>Domain</key>
+    <string>${DOMAIN}</string>
+</dict>
+</plist>
+EOF
+        rm auth0-app-details.json && echo "Auth0.plist created with your Auth0 details" && echo "Don't forget to add Auth0.plist to your Xcode project!"
+        ```
+      </Tab>
+      <Tab title="Manual Setup">
+        1. Go to the [Auth0 Dashboard](https://manage.auth0.com/dashboard/)
+        2. Create a new **Native** application
+        3. Add the following URLs to **Allowed Callback URLs** and **Allowed Logout URLs**:
+           ```
+           https://YOUR_AUTH0_DOMAIN/ios/YOUR_BUNDLE_IDENTIFIER/callback,
+           YOUR_BUNDLE_IDENTIFIER://YOUR_AUTH0_DOMAIN/ios/YOUR_BUNDLE_IDENTIFIER/callback
+           ```
+        4. Create `Auth0.plist` in your project root:
+           ```xml
+           <?xml version="1.0" encoding="UTF-8"?>
+           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+           <plist version="1.0">
+           <dict>
+               <key>ClientId</key>
+               <string>YOUR_AUTH0_CLIENT_ID</string>
+               <key>Domain</key>
+               <string>YOUR_AUTH0_DOMAIN</string>
+           </dict>
+           </plist>
+           ```
+        5. Add the `Auth0.plist` file to your Xcode project
+      </Tab>
+    </Tabs>
+
+    <Warning>
+      Make sure to add the `Auth0.plist` file to your Xcode project by dragging it into the project navigator and ensuring "Add to target" is checked for your app target.
+    </Warning>
+  </Step>
+  
+  <Step title="Create the Authentication Service" stepNumber={4}>
+    Create a new Swift file called `AuthenticationService.swift`:
+
+    ```swift AuthenticationService.swift lines
+    import Foundation
+    import Auth0
+    import Combine
+
+    @MainActor
+    class AuthenticationService: ObservableObject {
+        @Published var isAuthenticated = false
+        @Published var user: User?
+        @Published var credentials: Credentials?
+        @Published var isLoading = false
+        @Published var errorMessage: String?
+        
+        private let credentialsManager = CredentialsManager(authentication: Auth0.authentication())
+        
+        init() {
+            checkAuthenticationStatus()
+        }
+        
+        // MARK: - Authentication Status
+        
+        private func checkAuthenticationStatus() {
+            isLoading = true
+            
+            credentialsManager.credentials { result in
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    switch result {
+                    case .success(let credentials):
+                        self.credentials = credentials
+                        self.isAuthenticated = true
+                        self.fetchUserInfo(with: credentials.accessToken)
+                    case .failure:
+                        self.isAuthenticated = false
+                        self.credentials = nil
+                        self.user = nil
+                    }
+                }
+            }
+        }
+        
+        // MARK: - Login
+        
+        func login() {
+            isLoading = true
+            errorMessage = nil
+            
+            Auth0
+                .webAuth()
+                .scope("openid profile email")
+                .audience("https://\(Bundle.main.object(forInfoDictionaryKey: "Auth0Domain") as! String)/userinfo")
+                .start { result in
+                    DispatchQueue.main.async {
+                        self.isLoading = false
+                        switch result {
+                        case .success(let credentials):
+                            // Store credentials securely
+                            _ = self.credentialsManager.store(credentials: credentials)
+                            self.credentials = credentials
+                            self.isAuthenticated = true
+                            self.fetchUserInfo(with: credentials.accessToken)
+                        case .failure(let error):
+                            self.errorMessage = "Login failed: \(error.localizedDescription)"
+                        }
+                    }
+                }
+        }
+        
+        // MARK: - Logout
+        
+        func logout() {
+            isLoading = true
+            errorMessage = nil
+            
+            Auth0
+                .webAuth()
+                .clearSession { result in
+                    DispatchQueue.main.async {
+                        self.isLoading = false
+                        switch result {
+                        case .success:
+                            // Clear stored credentials
+                            _ = self.credentialsManager.clear()
+                            self.credentials = nil
+                            self.user = nil
+                            self.isAuthenticated = false
+                        case .failure(let error):
+                            self.errorMessage = "Logout failed: \(error.localizedDescription)"
+                        }
+                    }
+                }
+        }
+        
+        // MARK: - User Info
+        
+        private func fetchUserInfo(with accessToken: String) {
+            Auth0
+                .authentication()
+                .userInfo(withAccessToken: accessToken)
+                .start { result in
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .success(let userInfo):
+                            self.user = userInfo
+                        case .failure(let error):
+                            print("Failed to fetch user info: \(error)")
+                        }
+                    }
+                }
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="Create the UI Components" stepNumber={5}>
+    Create the main views for your app:
+
+    <CodeGroup>
+
+    ```swift ContentView.swift lines
+    import SwiftUI
+    import Auth0
+
+    struct ContentView: View {
+        @StateObject private var authService = AuthenticationService()
+        
+        var body: some View {
+            NavigationView {
+                ZStack {
+                    // Background gradient
+                    LinearGradient(
+                        gradient: Gradient(colors: [Color(.systemBackground), Color(.secondarySystemBackground)]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                    
+                    VStack(spacing: 30) {
+                        // Header
+                        VStack(spacing: 16) {
+                            // Auth0 Logo placeholder
+                            Image(systemName: "shield.checkered")
+                                .font(.system(size: 80))
+                                .foregroundStyle(.blue)
+                            
+                            Text("Auth0 iOS Sample")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, 40)
+                        
+                        if authService.isLoading {
+                            LoadingView()
+                        } else if authService.isAuthenticated {
+                            AuthenticatedView(authService: authService)
+                        } else {
+                            UnauthenticatedView(authService: authService)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 32)
+                }
+                .navigationBarHidden(true)
+                .alert("Error", isPresented: .constant(authService.errorMessage != nil)) {
+                    Button("OK") {
+                        authService.errorMessage = nil
+                    }
+                } message: {
+                    Text(authService.errorMessage ?? "")
+                }
+            }
+        }
+    }
+
+    struct ContentView_Previews: PreviewProvider {
+        static var previews: some View {
+            ContentView()
+        }
+    }
+    ```
+
+    ```swift AuthenticatedView.swift lines
+    import SwiftUI
+    import Auth0
+
+    struct AuthenticatedView: View {
+        @ObservedObject var authService: AuthenticationService
+        
+        var body: some View {
+            VStack(spacing: 24) {
+                // Success message
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.title2)
+                    Text("Successfully authenticated!")
+                        .font(.headline)
+                        .foregroundColor(.green)
+                }
+                .padding()
+                .background(Color.green.opacity(0.1))
+                .cornerRadius(12)
+                
+                // Profile section
+                VStack(spacing: 16) {
+                    Text("Your Profile")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    
+                    ProfileCard(user: authService.user)
+                }
+                
+                // Logout button
+                Button(action: {
+                    authService.logout()
+                }) {
+                    HStack {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                        Text("Log Out")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.red)
+                    .cornerRadius(12)
+                }
+                .disabled(authService.isLoading)
+            }
+        }
+    }
+    ```
+
+    ```swift UnauthenticatedView.swift lines
+    import SwiftUI
+
+    struct UnauthenticatedView: View {
+        @ObservedObject var authService: AuthenticationService
+        
+        var body: some View {
+            VStack(spacing: 24) {
+                VStack(spacing: 16) {
+                    Text("Get started by signing in to your account")
+                        .font(.title3)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(16)
+                
+                Button(action: {
+                    authService.login()
+                }) {
+                    HStack {
+                        Image(systemName: "person.badge.key")
+                        Text("Log In")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .cornerRadius(12)
+                }
+                .disabled(authService.isLoading)
+            }
+        }
+    }
+    ```
+
+    ```swift ProfileCard.swift lines
+    import SwiftUI
+    import Auth0
+
+    struct ProfileCard: View {
+        let user: User?
+        
+        var body: some View {
+            VStack(spacing: 16) {
+                if let user = user {
+                    // Profile picture
+                    AsyncImage(url: URL(string: user.picture ?? "")) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 80))
+                            .foregroundColor(.gray)
+                    }
+                    .frame(width: 100, height: 100)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.blue, lineWidth: 3))
+                    
+                    // User info
+                    VStack(spacing: 8) {
+                        if let name = user.name {
+                            Text(name)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                        }
+                        
+                        if let email = user.email {
+                            Text(email)
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } else {
+                    // Loading placeholder
+                    VStack(spacing: 16) {
+                        ProgressView()
+                        Text("Loading profile...")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding()
+            .background(Color(.tertiarySystemBackground))
+            .cornerRadius(16)
+        }
+    }
+    ```
+
+    ```swift LoadingView.swift lines
+    import SwiftUI
+
+    struct LoadingView: View {
+        var body: some View {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.2)
+                Text("Loading...")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+        }
+    }
+    ```
+
+    ```swift App.swift lines
+    import SwiftUI
+
+    @main
+    struct Auth0_iOS_SampleApp: App {
+        var body: some Scene {
+            WindowGroup {
+                ContentView()
+            }
+        }
+    }
+    ```
+
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Configure Associated Domains (Optional)" stepNumber={6}>
+    For Universal Links support (iOS 17.4+ / recommended for security):
+
+    1. In your Auth0 Dashboard:
+       - Go to **Applications** → Your app → **Settings** → **Advanced Settings** → **Device Settings**
+       - Set **Team ID** to your Apple Team ID
+       - Set **App ID** to your bundle identifier
+
+    2. In Xcode:
+       - Go to your app target → **Signing & Capabilities**
+       - Add **Associated Domains** capability
+       - Add: `webcredentials:YOUR_AUTH0_DOMAIN`
+
+    <Note>
+      This step requires a paid Apple Developer account but provides enhanced security through Universal Links.
+    </Note>
+  </Step>
+  
+  <Step title="Run your app" stepNumber={7}>
+    Build and run your iOS app:
+
+    1. Select your target device or simulator
+    2. Press **Cmd+R** or click the **Run** button
+    3. Test the authentication flow
+  </Step>
+</Steps>
+
+<Check>
+  **Checkpoint**
+
+  You should now have a fully functional Auth0 login page running on your iOS device or simulator with native iOS UI components and modern SwiftUI patterns.
+</Check>
+
+---
+
+## Next up:
+
+<Columns cols={2}>
+  <Card title="Secure your API" icon="server" iconType="solid">
+    Learn how to use the access token to make authenticated API calls to your backend
+  </Card>
+  <Card title="Add Biometric Authentication" icon="fingerprint" iconType="solid">
+    Enhance security with Face ID/Touch ID for credential storage
+  </Card>
+</Columns>
+
+## Advanced Features
+
+### Biometric Authentication
+
+Enable Face ID/Touch ID for enhanced security:
+
+```swift
+// In AuthenticationService.swift, modify the credentials manager
+private let credentialsManager: CredentialsManager = {
+    let manager = CredentialsManager(authentication: Auth0.authentication())
+    manager.enableBiometrics(withTitle: "Authenticate to access your account", 
+                           cancelTitle: "Cancel", 
+                           fallbackTitle: "Use Password")
+    return manager
+}()
+```
+
+### Token Refresh
+
+Automatically refresh expired tokens:
+
+```swift
+func refreshTokenIfNeeded() {
+    credentialsManager.credentials { result in
+        DispatchQueue.main.async {
+            switch result {
+            case .success(let credentials):
+                self.credentials = credentials
+                // Token automatically refreshed if needed
+            case .failure(let error):
+                if case .noCredentials = error {
+                    self.isAuthenticated = false
+                }
+            }
+        }
+    }
+}
+```
+
+### Custom Scopes and Audience
+
+Request specific permissions and API access:
+
+```swift
+Auth0
+    .webAuth()
+    .scope("openid profile email read:posts write:posts")
+    .audience("https://my-api.example.com")
+    .start { result in
+        // Handle result
+    }
+```
+
+<Note>
+  This is a functional prototype built by Bharath Natarajan to explore what a next-generation, delightful quickstart could look like.
+
+  This serves as a PoC for a new Quickstart standard that we will eventually adopt and scale. Please share your thoughts/feedback with Bharath directly!
+</Note>
