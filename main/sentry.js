@@ -5,7 +5,7 @@
   script.crossOrigin = 'anonymous';
   script.async = true;
   script.onload = function () {
-    Sentry.init({
+    window.Sentry.init({
       dsn: "https://d433d747a8af0820757f35be62ee08be@o27592.ingest.us.sentry.io/4509985515241472",
       sendDefaultPii: true,
       release: "docs-v2",
