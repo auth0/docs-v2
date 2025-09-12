@@ -4,12 +4,12 @@
   // Define your config for each environment
   const SENTRY_CONFIGS = {
     tus: {
-      dsn: "https://d433d747a8af0820757f35be62ee08be@o27592.ingest.us.sentry.io/4509985515241472",
+      dsn: "https://8eae506d264532942aace9ecc223a526@o27592.ingest.us.sentry.io/4510008367972352",
       release: "docs-v2-tus",
       environment: "tus",
     },
     sus: {
-      dsn: "https://d433d747a8af0820757f35be62ee08be@o27592.ingest.us.sentry.io/4509985515241472",
+      dsn: "https://0fe11b3e3241a0986fc2755ca26fbe79@o27592.ingest.us.sentry.io/4510008371970048",
       release: "docs-v2-sus",
       environment: "sus",
     },
