@@ -1,0 +1,620 @@
+---
+title: "Go"
+permalink: "01-login"
+---
+
+##### By Sergiu Ghitea
+
+This tutorial demonstrates how to add user login to a Go web application using Auth0.We recommend that you log in to follow this quickstart with examples configured for your account.
+
+{/* <Card title="View on Github" href="https://github.com/auth0-samples/auth0-golang-web-app/tree/master/01-Login" icon="github">
+System requirements: Go 1.21+
+</Card> */}
+
+<Callout icon="file-lines" iconType="regular">
+**New to Auth?** Learn [How Auth0 works](/docs/overview), how it [integrates with Regular Web Applications](/docs/architecture-scenarios/web-app-sso) and which [protocol](/docs/flows) it uses.
+</Callout>
+
+## Configure Auth0
+
+### Get Your Application Keys
+
+When you signed up for Auth0, a new application was created for you, or you could have created a new one. You will need some details about that application to communicate with Auth0. You can get these details from the [Application Settings](https://manage.auth0.com/#/applications) section in the Auth0 dashboard.
+
+<Frame>![App Dashboard](https://cdn2.auth0.com/docs/1.14550.0/media/articles/dashboard/client_settings.png)</Frame>
+
+You need the following information:
+
+* **Domain**
+* **Client ID**
+* **Client Secret**
+
+<Callout icon="file-lines" iconType="regular">
+If you download the sample from the top of this page, these details are filled out for you.
+</Callout>
+
+### Configure Callback URLs
+
+A callback URL is a URL in your application where Auth0 redirects the user after they have authenticated. The callback URL for your app must be added to the **Allowed Callback URLs** field in your [Application Settings](https://manage.auth0.com/#/applications). If this field is not set, users will be unable to log in to the application and will get an error.
+
+<Callout icon="file-lines" iconType="regular">
+If you are following along with the sample project you downloaded from the top of this page, the callback URL you need to add to the **Allowed Callback URLs** field is `http://localhost:3000/callback`.
+</Callout>
+
+### Configure Logout URLs
+
+A logout URL is a URL in your application that Auth0 can return to after the user has been logged out of the authorization server. This is specified in the `returnTo` query parameter. The logout URL for your app must be added to the **Allowed Logout URLs** field in your [Application Settings](https://manage.auth0.com/#/applications). If this field is not set, users will be unable to log out from the application and will get an error.
+
+<Callout icon="file-lines" iconType="regular">
+If you are following along with the sample project you downloaded from the top of this page, the logout URL you need to add to the **Allowed Logout URLs** field is `http://localhost:3000`.
+</Callout>
+
+## Configure Go to Use Auth0
+
+### Download dependencies
+
+Start by adding a `go.mod` file to list all the dependencies to be used.
+
+```go lines
+// go.mod
+
+module 01-Login
+
+go 1.21
+
+require (
+	github.com/coreos/go-oidc/v3 v3.8.0
+	github.com/gin-contrib/sessions v0.0.5
+	github.com/gin-gonic/gin v1.9.1
+	github.com/joho/godotenv v1.5.1
+	golang.org/x/oauth2 v0.15.0
+)
+```
+
+
+
+
+
+
+We can now make the dependencies available for us by running the following shell command:
+
+```bash lines
+go mod download
+```
+
+
+
+
+
+<Callout icon="file-lines" iconType="regular">
+This example uses `gin` for routing, but you can use whichever router you want.
+</Callout>
+
+### Configure your application
+
+Create a `.env` file within the root of your project directory to store the app configuration, and fill in the
+environment variables:
+
+```env lines
+# The URL of our Auth0 Tenant Domain.
+# If you're using a Custom Domain, be sure to set this to that value instead.
+AUTH0_DOMAIN='{yourDomain}'
+
+# Our Auth0 application's Client ID.
+AUTH0_CLIENT_ID='{yourClientId}'
+
+# Our Auth0 application's Client Secret.
+AUTH0_CLIENT_SECRET='{yourClientSecret}'
+
+# The Callback URL of our application.
+AUTH0_CALLBACK_URL='http://localhost:3000/callback'
+```
+
+
+
+
+
+
+### Configure OAuth2 and OpenID Connect packages
+
+Create a file called `auth.go` in the `platform/authenticator` folder. In this package you'll create a method to
+configure and return [OAuth2](https://godoc.org/golang.org/x/oauth2) and
+[oidc](https://godoc.org/github.com/coreos/go-oidc) clients, and another one to verify an ID Token.
+
+```go lines
+// platform/authenticator/auth.go
+
+package authenticator
+
+import (
+	"context"
+	"errors"
+	"os"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+)
+
+// Authenticator is used to authenticate our users.
+type Authenticator struct {
+	*oidc.Provider
+	oauth2.Config
+}
+
+// New instantiates the *Authenticator.
+func New() (*Authenticator, error) {
+	provider, err := oidc.NewProvider(
+		context.Background(),
+		"https://"+os.Getenv("AUTH0_DOMAIN")+"/",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	conf := oauth2.Config{
+		ClientID:     os.Getenv("AUTH0_CLIENT_ID"),
+		ClientSecret: os.Getenv("AUTH0_CLIENT_SECRET"),
+		RedirectURL:  os.Getenv("AUTH0_CALLBACK_URL"),
+		Endpoint:     provider.Endpoint(),
+		Scopes:       []string{oidc.ScopeOpenID, "profile"},
+	}
+
+	return &Authenticator{
+		Provider: provider,
+		Config:   conf,
+	}, nil
+}
+
+// VerifyIDToken verifies that an *oauth2.Token is a valid *oidc.IDToken.
+func (a *Authenticator) VerifyIDToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
+	rawIDToken, ok := token.Extra("id_token").(string)
+	if !ok {
+		return nil, errors.New("no id_token field in oauth2 token")
+	}
+
+	oidcConfig := &oidc.Config{
+		ClientID: a.ClientID,
+	}
+
+	return a.Verifier(oidcConfig).Verify(ctx, rawIDToken)
+}
+```
+
+
+
+
+
+
+### Setting up your application routes
+
+Create a file called `router.go` in the `platform/router` folder. In this package you'll create a method to configure
+and return our routes using [github.com/gin-gonic/gin](https://github.com/gin-gonic/gin). You will be passing an
+instance of `Authenticator` to the method, so it can be used within the `login` and `callback` handlers.
+
+```go lines
+// platform/router/router.go
+
+package router
+
+import (
+	"encoding/gob"
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
+	"github.com/gin-gonic/gin"
+
+	"01-Login/platform/authenticator"
+	"01-Login/platform/middleware"
+	"01-Login/web/app/callback"
+	"01-Login/web/app/login"
+	"01-Login/web/app/logout"
+	"01-Login/web/app/user"
+)
+
+// New registers the routes and returns the router.
+func New(auth *authenticator.Authenticator) *gin.Engine {
+	router := gin.Default()
+
+	// To store custom types in our cookies,
+	// we must first register them using gob.Register
+	gob.Register(map[string]interface{}{})
+
+	store := cookie.NewStore([]byte("secret"))
+	router.Use(sessions.Sessions("auth-session", store))
+
+	router.Static("/public", "web/static")
+	router.LoadHTMLGlob("web/template/*")
+
+	router.GET("/", func(ctx *gin.Context) {
+		ctx.HTML(http.StatusOK, "home.html", nil)
+	})
+	router.GET("/login", login.Handler(auth))
+	router.GET("/callback", callback.Handler(auth))
+	router.GET("/user", user.Handler)
+	router.GET("/logout", logout.Handler)
+
+	return router
+}
+```
+
+
+
+
+
+<Callout icon="file-lines" iconType="regular">
+The router uses the [github.com/gin-contrib/sessions](https://github.com/gin-contrib/sessions) middleware to manage
+our cookie based sessions.
+</Callout>
+
+### Serving your application
+
+Next, let's create our application's entry point `main.go` and wire everything up together:
+
+```go lines
+// main.go
+
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/joho/godotenv"
+
+	"01-Login/platform/authenticator"
+	"01-Login/platform/router"
+)
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("Failed to load the env vars: %v", err)
+	}
+
+	auth, err := authenticator.New()
+	if err != nil {
+		log.Fatalf("Failed to initialize the authenticator: %v", err)
+	}
+
+	rtr := router.New(auth)
+
+	log.Print("Server listening on http://localhost:3000/")
+	if err := http.ListenAndServe("0.0.0.0:3000", rtr); err != nil {
+		log.Fatalf("There was an error with the http server: %v", err)
+	}
+}
+```
+
+
+
+
+
+
+## Logging In
+
+Create a file called `login.go` in the `web/app/login` folder, and add a `Handler` function to handle the `/login`
+route.
+
+```go lines
+// web/app/login/login.go
+
+package login
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+
+	"01-Login/platform/authenticator"
+)
+
+// Handler for our login.
+func Handler(auth *authenticator.Authenticator) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		state, err := generateRandomState()
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		// Save the state inside the session.
+		session := sessions.Default(ctx)
+		session.Set("state", state)
+		if err := session.Save(); err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		ctx.Redirect(http.StatusTemporaryRedirect, auth.AuthCodeURL(state))
+	}
+}
+
+func generateRandomState() (string, error) {
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+
+	state := base64.StdEncoding.EncodeToString(b)
+
+	return state, nil
+}
+```
+
+
+
+
+
+
+Add a link to `/login` route in the `home.html` template.
+
+```html lines
+<!-- web/template/home.html -->
+
+<div>
+    <h3>Auth0 Example</h3>
+    <p>Zero friction identity infrastructure, built for developers</p>
+    <a href="/login">SignIn</a>
+</div>
+```
+
+
+
+
+
+
+## Handling Authentication Callback
+
+Once users have authenticated using Auth0's Universal Login Page, they'll return to the app at the `/callback`
+route that will be handled in the following `Handler` function:
+
+```go lines
+// web/app/callback/callback.go
+
+package callback
+
+import (
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+
+	"01-Login/platform/authenticator"
+)
+
+// Handler for our callback.
+func Handler(auth *authenticator.Authenticator) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		session := sessions.Default(ctx)
+		if ctx.Query("state") != session.Get("state") {
+			ctx.String(http.StatusBadRequest, "Invalid state parameter.")
+			return
+		}
+
+		// Exchange an authorization code for a token.
+		token, err := auth.Exchange(ctx.Request.Context(), ctx.Query("code"))
+		if err != nil {
+			ctx.String(http.StatusUnauthorized, "Failed to exchange an authorization code for a token.")
+			return
+		}
+
+		idToken, err := auth.VerifyIDToken(ctx.Request.Context(), token)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Failed to verify ID Token.")
+			return
+		}
+
+		var profile map[string]interface{}
+		if err := idToken.Claims(&profile); err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		session.Set("access_token", token.AccessToken)
+		session.Set("profile", profile)
+		if err := session.Save(); err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		// Redirect to logged in page.
+		ctx.Redirect(http.StatusTemporaryRedirect, "/user")
+	}
+}
+```
+
+
+
+
+
+
+## Displaying User Information
+
+You can access the user information via the `profile` you stored in the session previously.
+
+```go lines
+// web/app/user/user.go
+
+package user
+
+import (
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+)
+
+// Handler for our logged-in user page.
+func Handler(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+	profile := session.Get("profile")
+
+	ctx.HTML(http.StatusOK, "user.html", profile)
+}
+```
+
+
+
+
+
+
+```html lines
+<!-- web/template/user.html -->
+
+<div>
+    <Frame><img class="avatar" src="{{ .picture }}"/></Frame>
+    <h2>Welcome {{.nickname}}</h2>
+</div>
+```
+
+
+
+
+
+
+For information about the userinfo hash, see [User Profile](/docs/users/concepts/overview-user-profile).
+
+## Logging Out
+
+To log the user out, clear the data from the session and redirect the user to the Auth0 logout endpoint. You can find
+more information about this in the [logout documentation](/docs/logout).
+
+Create a file called `logout.go` in the folder `web/app/logout/logout.go`, and add the function `Handler` to redirect
+the user to Auth0's logout endpoint.
+
+```go lines
+// web/app/logout/logout.go
+
+package logout
+
+import (
+	"net/http"
+	"net/url"
+	"os"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Handler for our logout.
+func Handler(ctx *gin.Context) {
+	logoutUrl, err := url.Parse("https://" + os.Getenv("AUTH0_DOMAIN") + "/v2/logout")
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	scheme := "http"
+	if ctx.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	returnTo, err := url.Parse(scheme + "://" + ctx.Request.Host)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	parameters := url.Values{}
+	parameters.Add("returnTo", returnTo.String())
+	parameters.Add("client_id", os.Getenv("AUTH0_CLIENT_ID"))
+	logoutUrl.RawQuery = parameters.Encode()
+
+	ctx.Redirect(http.StatusTemporaryRedirect, logoutUrl.String())
+}
+```
+
+
+
+
+
+<Callout icon="file-lines" iconType="regular">
+The redirect URL needs to be in the list of Allowed Logout URLs in the settings section of the application, For more information, see [Redirect Users After Logout](/docs/logout/guides/redirect-users-after-logout).
+</Callout>
+
+Create a file called `user.js` in the folder `web/static/js`, and add the code to remove the cookie from a logged-in
+user.
+
+```js lines
+$(document).ready(function () {
+    $('.btn-logout').click(function (e) {
+        Cookies.remove('auth-session');
+    });
+});
+```
+
+
+
+
+
+<Callout icon="file-lines" iconType="regular">
+This sample is using [js.cookie](https://github.com/js-cookie/js-cookie/tree/latest#readme) for cookie handling.
+You need to add the `js.cookie.js` file to the `web/static/js` folder to use it.
+</Callout>
+
+## Optional Steps
+
+### Checking if the user is authenticated
+
+Create a middleware that will check if the user is authenticated or not based on the `profile` session key:
+
+```go lines
+// platform/middleware/isAuthenticated.go
+
+package middleware
+
+import (
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+)
+
+// IsAuthenticated is a middleware that checks if
+// the user has already been authenticated previously.
+func IsAuthenticated(ctx *gin.Context) {
+	if sessions.Default(ctx).Get("profile") == nil {
+		ctx.Redirect(http.StatusSeeOther, "/")
+	} else {
+		ctx.Next()
+	}
+}
+```
+
+
+
+
+
+
+Finally, set up this middleware for any route that needs authentication by adding it to the router.
+
+```go lines
+// platform/router/router.go
+
+router.GET("/user", middleware.IsAuthenticated, user.Handler)
+```
+
+
+
+
+
+
+##### What can you do next?
+
+<Note>
+##### What can you do next?
+<table>
+  <tr>
+    <td><a href="/docs/identityproviders">Configure other identity providers</a></td>
+    <td><a href="/docs/multifactor-authentication">Enable multifactor authentication</a></td>
+  </tr>
+  <tr>
+    <td><a href="/docs/attack-protection">Learn about attack protection</a></td>
+    <td><a href="/docs/rules">Learn about rules</a></td>
+  </tr>
+</table>
+[Edit on GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/native/flutter/01-login.md)
+</Note>
