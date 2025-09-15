@@ -18,7 +18,7 @@ const ServiceId = {
 const ANALYTICS_EVENTS = "ANALYTICS_EVENTS";
 
 function awaitForAnalyticsChange(serviceId) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     function OnEventChange(customEvent) {
       const { id, eventState } = customEvent.detail;
       if (id === serviceId || eventState === State.Timeout) {
