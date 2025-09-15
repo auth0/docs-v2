@@ -20,7 +20,7 @@
     },
   };
 
-  const AUTH0_DOCS_ENV = window.ENV || "prod"; 
+  const AUTH0_DOCS_ENV = window.AUTH0_DOCS_ENV || "prod"; 
   const config = SENTRY_CONFIGS[AUTH0_DOCS_ENV];
 
   var script = document.createElement('script');
