@@ -29,7 +29,7 @@ function awaitForAnalyticsChange(serviceId) {
     window.addEventListener(ANALYTICS_EVENTS, OnEventChange);
   });
 }
-
+,
 class DeferredQueue {
   constructor() {
     this.ready = false;
