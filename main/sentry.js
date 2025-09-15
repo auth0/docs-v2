@@ -20,8 +20,8 @@
     },
   };
 
-  const ENV = window.ENV || "prod"; 
-  const config = SENTRY_CONFIGS[ENV];
+  const AUTH0_DOCS_ENV = window.ENV || "prod"; 
+  const config = SENTRY_CONFIGS[AUTH0_DOCS_ENV];
 
   var script = document.createElement('script');
   script.src = 'https://js.sentry-cdn.com/66b846e0c465bc5aa1b02a23463be6f5.min.js';
