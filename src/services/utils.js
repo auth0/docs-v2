@@ -23,7 +23,7 @@ function startAnalyticsTimeout() {
 }
 
 // Helper to load scripts based on consent
-function loadScriptsWithConsent(consents) {
+function injectConsentScript(consents) {
   if (consents.length <= 1) {
     if (
       window.OneTrust?.IsAlertBoxClosedAndValid() ||
@@ -52,11 +52,11 @@ function loadScriptsWithConsent(consents) {
   startAnalyticsTimeout();
 }
 
-export function optanonWrapper() {
+export function handleOptanonConsent() {
   try {
     if (window.OnetrustActiveGroups) {
       const consents = window.OnetrustActiveGroups.split(",").slice(1, -1);
-      loadScriptsWithConsent(consents);
+      injectConsentScript(consents);
     }
   } catch (e) {
     console.warn("Error loading analytics scripts from wrapper", e);
@@ -71,7 +71,7 @@ export function getCookie(name) {
 export {
   State,
   ANALYTICS_EVENTS,
-  optanonWrapper,
-  loadScriptsWithConsent,
+  handleOptanonConsent,
+  injectConsentScript,
   getCookie
 };

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { State, loadScriptsWithConsent, getCookie, optanonWrapper } from "./src/services/utils";
+import { State, injectConsentScript, getCookie, handleOptanonConsent } from "./src/services/utils";
 import { getCookie } from "./src/services/utils";
 
 /**
@@ -25,11 +25,11 @@ export function AnalyticsConsentLoader() {
   // Effect to load scripts when consents change
   useEffect(() => {
     if (consents.length > 0) {
-      loadScriptsWithConsent(consents);
+      injectConsentScript(consents);
     }
   }, [consents]);
 
-  // Effect to parse initial consent and set up OneTrust callback
+  // useEffect to parse initial consent and set up OneTrust callback
   useEffect(() => {
     function updateConsentsFromCookie() {
       const optanonConsent = getCookie("OptanonConsent");
@@ -53,7 +53,7 @@ export function AnalyticsConsentLoader() {
     updateConsentsFromCookie();
 
     // OneTrust callback for consent changes
-    window.optanonWrapper = function () {
+    window.handleOptanonConsent = function () {
       if (window.OnetrustActiveGroups) {
         const parsedConsents = window.OnetrustActiveGroups.split(",").slice(1, -1);
         setConsents(parsedConsents);
