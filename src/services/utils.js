@@ -1,4 +1,3 @@
-// State constants
 const State = {
   NotLoaded: "not_loaded",
   Loading: "loading",
@@ -7,63 +6,72 @@ const State = {
   Timeout: "timeout",
 };
 
-// ServiceId constants
-const ServiceId = {
-  Heap: "heap",
-  Optimizely: "optimizely",
-  Pendo: "pendo",
-  Qualtrics: "qualtrics",
-  Usabilla: "usabilla",
-};
 const ANALYTICS_EVENTS = "ANALYTICS_EVENTS";
 
-function awaitForAnalyticsChange(serviceId) {
-  return new Promise((resolve, reject) => {
-    function OnEventChange(customEvent) {
-      const { id, eventState } = customEvent.detail;
-      if (id === serviceId || eventState === State.Timeout) {
-        resolve(eventState);
-        window.removeEventListener(ANALYTICS_EVENTS, OnEventChange);
-      }
+// Analytics timeout logic
+function startAnalyticsTimeout() {
+  const TIMEOUT_DELAY = 15000;
+  if (!window.__analyticsTimeoutStarted) {
+    window.__analyticsTimeoutStarted = true;
+    setTimeout(() => {
+      const timeoutEvent = new CustomEvent(ANALYTICS_EVENTS, {
+        detail: { state: State.Timeout },
+      });
+      window.dispatchEvent(timeoutEvent);
+    }, TIMEOUT_DELAY);
+  }
+}
+
+// Helper to load scripts based on consent
+function loadScriptsWithConsent(consents) {
+  if (consents.length <= 1) {
+    if (
+      window.OneTrust?.IsAlertBoxClosedAndValid() ||
+      !!getCookie("OptanonAlertBoxClosed")
+    ) {
+      startAnalyticsTimeout();
     }
-    window.addEventListener(ANALYTICS_EVENTS, OnEventChange);
+    return;
+  }
+  const scripts = document.querySelectorAll('script[class^="consent-required"][type="text/plain"]');
+  if (scripts.length === 0) {
+    return;
+  }
+  const consentsGiven = consents.map((c) => "C000" + c);
+  const scriptsWithConsent = Array.from(scripts).filter((s) => {
+    const consentsRequired = s.className.replace("consent-required:", "").split("-");
+    return consentsRequired.every((cr) => consentsGiven.includes(cr));
   });
+  scriptsWithConsent.forEach((s) => {
+    const [service] = s.id.split("-");
+    window.analyticsScripts = { ...window.analyticsScripts, [service]: State.Loading };
+    s.remove();
+    s.setAttribute("type", "text/javascript");
+    document.head.appendChild(s);
+  });
+  startAnalyticsTimeout();
 }
-,
-class DeferredQueue {
-  constructor() {
-    this.ready = false;
-    this.queue = [];
-  }
 
-  add(callback) {
-    if (this.ready) {
-      callback();
-    } else {
-      this.queue && this.queue.push(callback);
+export function optanonWrapper() {
+  try {
+    if (window.OnetrustActiveGroups) {
+      const consents = window.OnetrustActiveGroups.split(",").slice(1, -1);
+      loadScriptsWithConsent(consents);
     }
-  }
-
-  run() {
-    this.ready = true;
-    this.queue && this.queue.forEach((callback) => {
-      callback();
-    });
-    // no need for a queue anymore, new calls will just run
-    this.queue = null;
-  }
-
-  clear() {
-    // after the queue is cleared newly added calls will not run and be lost
-    this.queue = null;
+  } catch (e) {
+    console.warn("Error loading analytics scripts from wrapper", e);
   }
 }
 
-// Export for use in other files (CommonJS style, or adapt for your module system)
+export function getCookie(name) {
+  const cookieParts = document.cookie.split("; ");
+  return cookieParts.find((s) => s.includes(`${name}=`));
+}
+
 export {
   State,
-  ServiceId,
   ANALYTICS_EVENTS,
-  awaitForAnalyticsChange,
-  DeferredQueue,
+  optanonWrapper,
+  loadScriptsWithConsent,
+  getCookie
 };
