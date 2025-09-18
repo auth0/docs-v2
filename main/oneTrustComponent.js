@@ -3,7 +3,7 @@ function attachOneTrustBanner() {
   oneTrustBanner.innerHTML = `<div
    style="
       position: fixed;
-      left: 24px;
+      right: 24px;
       bottom: 24px;
       width: 340px;
       height: 100px;
@@ -40,10 +40,10 @@ function attachOneTrustBanner() {
         window.OneTrust.ToggleInfoDisplay();
       }
           // Close (remove) the custom banner immediately when clicked
-      const banner = consentLink.closest("div");
-      if (banner && banner.parentElement) {
-        banner.parentElement.remove();
-      }
+    const banner = consentLink.closest("div");
+    if (banner && banner.parentElement) {
+      banner.parentElement.remove();
+    }
     });
   }
 }
