@@ -1,6 +1,6 @@
 export const AuthenticationApiSection = () => {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-gray-800 leading-relaxed">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
       {/* Left column */}
       <div>
         <p>
@@ -9,14 +9,8 @@ export const AuthenticationApiSection = () => {
         </p>
         <p className="mt-3">
           Typically, you should consume this API through one of the Auth0 SDKs, such as{" "}
-          <a href="/docs/libraries/auth0js" className="text-blue-600 hover:underline">
-            Auth0.js
-          </a>
-          , or a library like{" "}
-          <a href="/docs/libraries/lock" className="text-blue-600 hover:underline">
-            Lock
-          </a>
-          . However, if you are building your authentication UI manually, you will need to call the Authentication API
+          <a href="/docs/libraries/auth0js">Auth0.js</a>, or a library like <a href="/docs/libraries/lock">Lock</a>.
+          However, if you are building your authentication UI manually, you will need to call the Authentication API
           directly.
         </p>
       </div>
@@ -26,30 +20,17 @@ export const AuthenticationApiSection = () => {
         <p>Some example tasks include:</p>
         <ul className="space-y-2 !mt-0">
           <li>
-            Get{" "}
-            <a href="/docs/secure/tokens" className="text-blue-600 hover:underline">
-              tokens
-            </a>{" "}
-            during authentication
+            Get <a href="/docs/secure/tokens">tokens</a> during authentication
           </li>
           <li>
-            Request a user's profile using an{" "}
-            <a href="/docs/secure/tokens/access-tokens" className="text-blue-600 hover:underline">
-              Access Token
-            </a>
+            Request a user's profile using an <a href="/docs/secure/tokens/access-tokens">Access Token</a>
           </li>
           <li>
-            Exchange{" "}
-            <a href="/docs/secure/tokens/refresh-tokens" className="text-blue-600 hover:underline">
-              Refresh Tokens
-            </a>{" "}
-            for new Access Tokens
+            Exchange <a href="/docs/secure/tokens/refresh-tokens">Refresh Tokens</a> for new Access Tokens
           </li>
           <li>
             Request a challenge for{" "}
-            <a href="/docs/secure/multi-factor-authentication" className="text-blue-600 hover:underline">
-              multi-factor authentication (MFA)
-            </a>
+            <a href="/docs/secure/multi-factor-authentication">multi-factor authentication (MFA)</a>
           </li>
         </ul>
       </div>
@@ -59,7 +40,7 @@ export const AuthenticationApiSection = () => {
 
 export const ManagementApiSection = () => {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-gray-800 leading-relaxed">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
       {/* Left column */}
       <div>
         <p>
@@ -75,24 +56,13 @@ export const ManagementApiSection = () => {
         <ul className="space-y-2 !mt-0">
           <li>Register your applications and APIs with Auth0</li>
           <li>
-            Set up{" "}
-            <a href="/docs/connections" className="text-blue-600 hover:underline">
-              connections
-            </a>{" "}
-            with which your users can authenticate
+            Set up <a href="/docs/connections">connections</a> with which your users can authenticate
           </li>
           <li>
-            <a href="/docs/manage-users" className="text-blue-600 hover:underline">
-              Manage users
-            </a>
+            <a href="/docs/manage-users">Manage users</a>
           </li>
           <li>
-            <a
-              href="/docs/manage-users/user-accounts/user-account-linking/link-user-accounts"
-              className="text-blue-600 hover:underline"
-            >
-              Link user accounts
-            </a>
+            <a href="/docs/manage-users/user-accounts/user-account-linking/link-user-accounts">Link user accounts</a>
           </li>
         </ul>
       </div>
@@ -102,7 +72,7 @@ export const ManagementApiSection = () => {
 
 export const MyAccountApiSection = () => {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-gray-800 leading-relaxed">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
       {/* Left column */}
       <div>
         <p>
