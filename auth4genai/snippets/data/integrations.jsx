@@ -72,6 +72,16 @@ export const integrations = [
       "Allow your AI Agents to search, create, and modify tasks in Google Tasks.",
   },
   {
+    id: "google-workspace",
+    title: "Google Workspace",
+    icon: "/ai/docs/img/integrations/google-avatar.png",
+    href: "/integrations/google-workspace",
+    status: "Available",
+    type: "Enterprise",
+    description:
+      "Allow your AI Agents to access your Google Workspace services including Gmail, Google Calendar, Drive, and more.",
+  },
+  {
     id: "youtube",
     title: "Youtube",
     icon: "/ai/docs/img/integrations/youtube-avatar.png",
@@ -89,6 +99,15 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description: "Connect to your users via their Microsoft Account.",
+  },
+  {
+    id: "microsoft-azure",
+    title: "Microsoft Azure AD",
+    icon: "/ai/docs/img/integrations/microsoft-avatar.png",
+    href: "/integrations/microsoft-azure",
+    status: "Available",
+    type: "Enterprise",
+    description: "Connect to your users via their Microsoft Azure Account.",
   },
   {
     id: "github",
