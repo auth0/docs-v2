@@ -376,33 +376,44 @@ createRoot(document.getElementById("root")!).render(
 
 #### Client-Side Chat Component Integration
 
-Use the Auth0 context in your components:
+Use the Auth0 context with the LangGraph's streaming capabilities in your Chat components:
 
 ```tsx src/components/Chat.tsx wrap lines
 import { useAuth0 } from "@/hooks/useAuth0";
+import { useStream } from "@langchain/langgraph-sdk/react";
 
 export default function ChatInterface() {
   const { user, isLoading, isAuthenticated, login, logout, getToken } = useAuth0();
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const apiUrl = import.meta.env.VITE_LANGGRAPH_API_URL || "http://localhost:2024";
 
-  // Handle direct API calls to LangGraph with JWT token
-  const sendMessage = async (content: string) => {
-    if (!isAuthenticated) return;
+  // Get access token when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      getToken().then(setAccessToken).catch(console.error);
+    }
+  }, [isAuthenticated, getToken]);
 
-    const token = await getToken();
-    const response = await fetch(`${VITE_LANGGRAPH_API_URL}/threads/${threadId}/runs/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        input: content,
-        context: { userId: user?.sub },
-      }),
+  // Initialize LangGraph stream with Auth0 token
+  const stream = useStream({
+    apiUrl,
+    assistantId: "memory_agent",
+    defaultHeaders: accessToken
+      ? { Authorization: `Bearer ${accessToken}` }
+      : undefined,
+  });
+
+  const sendMessage = (content: string) => {
+    if (!isAuthenticated || !content.trim()) return;
+
+    stream.submit({
+      messages: [{
+        type: "human",
+        content,
+        // User context available in agent workflows
+        metadata: { userId: user?.sub }
+      }]
     });
-
-    const data = await response.json();
-    // ... handle response
   };
 
   if (isLoading) return <div>Loading...</div>;
@@ -422,7 +433,24 @@ export default function ChatInterface() {
         <span>Welcome, {user?.name}</span>
         <button onClick={() => logout()}>Logout</button>
       </header>
-      {/* ... rest of chat UI */}
+
+      <div className="messages">
+        {stream.messages?.map((msg, i) => (
+          <div key={i}>{msg.content}</div>
+        ))}
+      </div>
+
+      <form onSubmit={(e) => {
+        e.preventDefault();
+        const input = new FormData(e.target).get('message');
+        sendMessage(input as string);
+        e.target.reset();
+      }}>
+        <input name="message" placeholder="Type a message..." />
+        <button type="submit" disabled={stream.isLoading}>
+          Send
+        </button>
+      </form>
     </div>
   );
 }
