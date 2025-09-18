@@ -107,7 +107,7 @@ export const integrations = [
     href: "/integrations/microsoft-azure",
     status: "Available",
     type: "Enterprise",
-    description: "Connect to your users via their Microsoft Azure Account.",
+    description: "Allow your AI Agents to Microsoft Azure AD services including Outlook, Teams, OneDrive, and more.",
   },
   {
     id: "github",
