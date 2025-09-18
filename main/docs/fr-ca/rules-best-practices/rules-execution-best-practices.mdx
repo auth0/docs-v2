@@ -1,0 +1,100 @@
+---
+og:description: Learn about best practices for executing Auth0 rules.
+og:image: https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+og:title: Meilleures pratiques d’exécution des règles
+og:url: https://auth0.com/docs/
+permalink: rules-execution-best-practices
+title: Meilleures pratiques d’exécution des règles
+twitter:description: Learn about best practices for executing Auth0 rules.
+twitter:title: Meilleures pratiques d’exécution des règles
+---
+
+
+
+Chaque règle est exécutée en tant que fonction JavaScript appelée dans l’ordre défini. La règle suivante dans l’ordre ne sera pas exécutée tant que la règle précédente ne sera pas terminée. En outre, le pipeline de règles ne s’exécute que pour les flux de production qui impliquent des identifiants de l’utilisateur; le pipeline de règles **ne s’exécute pas** pendant le [Client Flux des identifiants client](/login/flows/client-credentials-flow). Pour une fonctionnalité similaire à une règle, une [Action](/actions) dans le [Flux de communication entre machines](/actions/explore-triggers/machine-to-machine-trigger) sur le déclencheur `credentials-exchange` peut être utilisée à la place.
+
+En termes de pipeline, une règle s’achève lorsque la fonction `callback` fournie à la règle est appelée. Si la fonction n’est pas appelée, l’exécution du pipeline est bloquée et une erreur est renvoyée. Chaque règle doit appeler la fonction `callback`**exactement** une fois.
+
+L’exécution des règles prend en charge la nature asynchrone de JavaScript, et des constructions telles que les objets [`Promise`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) et autres constructions similaires peuvent être utilisées. Le traitement asynchrone entraîne effectivement la suspension d’un pipeline en attendant l’achèvement de l’opération asynchrone. Un conteneur Webtask sans serveur Auth0 dispose généralement d’une limite d’exécution d’environ 20 secondes, après laquelle le conteneur peut être recyclé. Le recyclage d’un conteneur en raison de cette limite mettra fin prématurément à un pipeline (état suspendu ou autre) ce qui entraînera une erreur d’authentification (ainsi que la réinitialisation éventuelle de l’objet `global`).
+
+La définition de `context.redirect` déclenche une redirection une fois que toutes les règles sont terminées (la redirection n’est pas forcée au moment où elle est définie). Bien que toutes les règles doivent être terminées dans la limite d’exécution du conteneur Webtask pour que la redirection se produise, le temps pris dans le cadre du traitement de la redirection peut s’étendre au-delà de cette limite. Nous recommandons que la redirection vers Auth0 via le point de terminaison `/continue` se produise idéalement dans un délai d’une heure. La redirection vers le point de terminaison `/continue` entraînera également la création d’un nouveau conteneur dans le contexte du pipeline actuel, dans lequel toutes les règles seront à nouveau exécutées.
+
+L’exécution asynchrone entraînera l’exécution d’un rappel (JavaScript) une fois l’opération asynchrone terminée. Ce rappel est généralement déclenché à un moment donné après que le corps principal (synchrone) d’une fonction JavaScript se soit achevé. Si une règle utilise le traitement asynchrone, l’appel à la fonction `callback` fournie par (Auth0) doit être reporté au moment où le traitement asynchrone s’achève et doit être le dernier élément appelé. Comme indiqué ci-dessus, la fonction `callback` fournie par Auth0 doit être appelée exactement une fois; si la fonction est appelée plusieurs fois dans le cadre d’une règle, des résultats imprévisibles et/ou des erreurs pourraient se produire.
+
+## Objet `context`
+
+L’objet `context` fournit des informations sur le contexte dans lequel une règle est exécutée (identifiant du client, nom de la connexion, identifiant de la session, contexte de la demande, protocole, etc.) À l’aide de l’objet context, une règle peut déterminer la raison de l’exécution. Par exemple, comme l’illustre le fragment d’exemple ci-dessous, `context.clientID` ainsi que `context.protocol` peuvent être utilisés pour mettre en œuvre un traitement conditionnel afin de déterminer quand la logique de la règle est exécutée. L’exemple montre également quelques bonnes pratiques pour la gestion des exceptions, l’utilisation des modules `npm` (pour un traitement de type `Promise`) et l’objet `callback`. Pour en savoir plus, lisez [Meilleures pratiques de l’environnement de script d’action des bases de données personnalisées](/custom-database-connections-scripts/environment)`.`
+
+
+
+Nous vous recommandons vivement d’examiner les meilleures pratiques lorsque vous utilisez la logique de contournement contextuel pour la vérification de l’authentification multifacteur (MFA). Par exemple, **de graves failles de sécurité** peuvent se produire si l’utilisation de la MFA si `context.request.query.prompt === ’none’`. En outre, le contenu de l’objet `context` est **sensible du point de vue de la sécurité**, de sorte que vous **ne devez pas** transmettre directement l’objet à un service externe ou tiers.
+
+### Redirection
+
+Il peut ne pas être pratique de recueillir des informations auprès d’un utilisateur dans le cadre d’un flux de connexion lorsqu’il existe de nombreuses applications et que vous souhaitez qu’un service centralisé gère cela, ou si vous utilisez une application monopage et que vous souhaitez empêcher l’utilisateur d’obtenir un jeton d’accès sous certaines conditions.  Dans ces cas, il est nécessaire de disposer d’un moyen centralisé de recueillir des informations ou d’imposer un défi-réponse à un utilisateur.
+
+Auth0 vous permet de rediriger l’utilisateur vers n’importe quelle URL où vous pouvez recueillir des informations auprès de l’utilisateur, puis de renvoyer l’utilisateur vers le point de terminaison `/continue` où il peut compléter la requête /authorize originale qui a déclenché la redirection.  C’est une fonctionnalité puissante et, selon le cas d’utilisation, les conséquences d’une mauvaise implémentation peuvent aller de bénignes à l’introduction d’une vulnérabilité de sécurité dans l’application.  Il est donc important de veiller à ce que cette opération soit effectuée correctement.
+
+Dans la plupart des cas, une règle de redirection est utilisée pour inviter l’utilisateur à effectuer des modifications à son profil, telles que :
+
+* Forcer un changement de mot de passe
+* Vérifier son adresse courriel
+* Ajouter des informations à son profil
+
+Nous recommandons que la règle vérifie la présence d’un indicateur ou d’une valeur dans les `app_metadata` de l’utilisateur, puis qu’elle redirige l’utilisateur vers une application qui effectue son propre appel /authorize à Auth0, qu’elle modifie les métadonnées de l’utilisateur et qu’elle redirige l’utilisateur vers Auth0.  Cela fonctionne très bien pour les redirections qui modifient le profil ou pour tout ce qui ne doit pas empêcher l’utilisateur de se connecter.
+
+La règle « Rediriger depuis » vous permet de mettre en œuvre des flux d’authentification personnalisés qui nécessitent une interaction supplémentaire de l’utilisateur déclenchée par context.redirect. La règle de redirection ne peut être utilisée que lors de l’appel du point de terminaison `/authorize`.
+
+La redirection vers votre propre interface utilisateur hébergée est effectuée avant la fin d’un pipeline et peut être déclenchée une fois par contexte `context.clientID`. La redirection ne doit utiliser que HTTPS lorsqu’elle est exécutée dans un environnement de production, et les paramètres supplémentaires doivent être réduits au minimum pour aider à atténuer les menaces de sécurité courantes. De préférence, le paramètre Auth0 `state` est le seul paramètre fourni.
+
+Une fois redirigée, votre propre interface utilisateur hébergée s’exécute dans un contexte authentifié par l’utilisateur et obtient des artefacts d’authenticité en vertu de la SSO Auth0. L’obtention de ces artefacts, par exemple, un jeton d’ID dans OpenID Connect (OIDC), et/ou un jeton d’accès dans OAuth 2.0, est réalisée en utilisant un contexte `context.clientID`**qui n’est pas** celui qui a déclenché la redirection. Pour ce faire, il faut rediriger vers le point de terminaison `/authorize`. Dans le cas d’une application à page unique par exemple, utiliser l’authentification silencieuse. Cela crée un nouveau pipeline qui entraîne une nouvelle exécution de toutes les règles, et vous pouvez utiliser l’objet `context` dans une règle pour effectuer un traitement conditionnel.
+
+Une fois le traitement effectué, l’exécution du pipeline se poursuit en redirigeant l’utilisateur vers Auth0 via le point de terminaison `/continue` (et en spécifiant l’objet `state` fourni). Toutes les règles s’exécutent à nouveau dans le pipeline actuel, et vous pouvez utiliser l’objet `context` dans une règle pour effectuer des contrôles de traitement conditionnels.
+
+Remarque : Veillez à ne pas stocker trop de données dans le profil Auth0. Ces données sont destinées à des fins d’authentification et d’autorisation. Les métadonnées et les capacités de recherche d’Auth0 ne sont pas conçues pour la recherche marketing ou toute autre activité nécessitant une fréquence de recherche ou de mise à jour élevée. Votre système risque de rencontrer des problèmes de croissance et de performance si vous utilisez Auth0 à cette fin. Une meilleure approche consiste à stocker les données dans un système externe et à stocker un pointeur (l’identifiant de l’utilisateur) dans Auth0 afin que les systèmes dorsaux puissent récupérer les données en cas de besoin. Une règle simple à suivre est de ne stocker que les éléments que vous prévoyez utiliser dans les règles pour ajouter des jetons ou prendre des décisions.
+
+La transmission d’informations dans les deux sens sur le canal frontal ouvre une surface d’attaque aux acteurs menaçants. Cela ne doit se faire que dans les conditions où vous devez prendre des mesures dans la règle (comme le rejet de la tentative d’autorisation avec `UnauthorizedError`).
+
+## Objet `user`
+
+L’objet `user` permet d’accéder à une copie en cache de l’enregistrement du compte d’utilisateur (profil utilisateur) dans Auth0. L’objet permet d’accéder aux informations relatives à l’utilisateur sans qu’il soit nécessaire d’accéder à l’Auth0 Management API, lequel accès est à la fois limité en termes de débit et soumis à des temps de latence.
+
+Bien que le contenu de l’objet `user` puisse être modifié, par exemple, une règle pourrait apporter une modification qu’une autre règle pourrait utiliser pour influencer son exécution, toutes les modifications apportées ne seront pas conservées. Il peut arriver qu’il soit nécessaire de conserver, par exemple, les mises à jour des métadonnées associées à un utilisateur, et l’objet `auth0` peut être utilisé pour effectuer ces opérations le cas échéant.
+
+La mise à jour d’un utilisateur au moyen de l’objet `auth0` entraîne en fin de compte un appel à l’Auth0 Management API. L’Auth0 Management API étant à la fois limitée en débit et sujette à des temps de latence, il convient d’être prudent quant au moment et à la fréquence des mises à jour.
+
+L’objet `context` contient la propriété `primaryUser` qui renvoie à l’identifiant de l’utilisateur principal. Cet identifiant est généralement le même que celui de la propriété `user_id` dans la racine de l’objet `user`. L’utilisateur principal est l’utilisateur qui est renvoyé au moteur Auth0 lorsque le pipeline de règles se termine, et `user_id` est une valeur unique générée par Auth0 pour identifier de manière unique l’utilisateur au sein du locataire Auth0. Ce `user_id` doit être traité comme une valeur opaque.
+
+Il arrive que `primaryUser` doive être mis à jour car l’utilisateur principal peut changer, c’est-à-dire que l’utilisateur renvoyé au moteur Auth0 sera différent de l’utilisateur à l’entrée du pipeline de règles. Dans ce cas, une règle doit mettre à jour `primaryUser` pour refléter le nouvel identifiant de l’utilisateur principal. Notez que cette modification n’affectera pas les règles ultérieures exécutées dans l’instance actuelle du pipeline; l’objet `user` restera inchangé.
+
+### Identités
+
+L’objet `user` contient également une référence aux identités associées au compte d’utilisateur. La propriété `identities` est un tableau d’objets, dont chacun contient des propriétés associées à l’identité respective connue du fournisseur d’identité (par exemple, le nom `provider`, la `connection` associée dans Auth0 et les `profileData` obtenues du fournisseur d’identité lors de la dernière authentification à l’aide de cette identité). Le fait de lier des comptes d’utilisateurs crée plusieurs entrées dans le tableau.
+
+Chaque identité du tableau `identities` contient également une propriété `user_id`. Cette propriété est l’identifiant de l’utilisateur tel qu’il est connu du fournisseur d’identité. Bien que la propriété `user_id` dans la racine de l’objet `user` puisse également inclure l’identifiant de l’utilisateur tel qu’il est connu du fournisseur d’identité, la meilleure pratique consiste à préférer l’utilisation de la propriété `user_id` dans un tableau d’identités. Le `user_id` à la racine de l’objet utilisateur doit être traité comme une valeur opaque et ne doit pas être analysé.
+
+### Métadonnées
+
+Les propriétés `user_metadata` et `app_metadata` font référence aux deux aspects différents des métadonnées associées à un utilisateur. Les propriétés `user_metadata` et `app_metadata` permettent toutes deux d’accéder à des copies mises en cache.
+
+Les attributs liés à l’autorisation d’un utilisateur, tels que le(s) rôle(s), le(s) groupe(s), le département et les codes de job, doivent être stockés dans `app_metadata` et non dans `user_metadata`. En effet, `user_utilisateur` peut être modifié par un utilisateur, alors que `app_metadata` ne peut pas l’être.
+
+Il peut arriver qu’il soit nécessaire de conserver, par exemple, les mises à jour des métadonnées associées à un utilisateur, et l’objet `auth0` peut être utilisé pour effectuer ces opérations le cas échéant. Lors de la mise à jour de l’un ou l’autre objet de métadonnées, il est important de faire preuve de discernement en ce qui concerne les informations stockées : conformément aux meilleures pratiques en matière de métadonnées, il convient de faire attention à l’utilisation excessive des métadonnées, qui peut entraîner une augmentation de la latence en raison d’un traitement excessif au sein du pipeline. Pour en savoir plus, veuillez consulter l’article [Metadata Field Names and Data Types (Noms des champs de métadonnées et types de données)](/users/metadata/metadata-fields-data). L’utilisation de l’objet `auth0` entraîne également un appel à l’Auth0 Management API; il convient donc de faire preuve de prudence quant au moment et à la fréquence des mises à jour, car l’Auth0 Management API est à la fois limitée en termes de débit et sujette à des temps de latence.
+
+## Fonction `callback`
+
+La fonction `callback` fournie à une règle agit effectivement comme un signal pour indiquer l’achèvement de la règle. Une règle doit se terminer immédiatement après un appel à la fonction de rappel, soit implicitement, soit en exécutant explicitement une déclaration (JavaScript) `return`, et doit s’abstenir de toute autre opération.
+
+Si la fonction n’est pas appelée, l’exécution du pipeline sera bloquée et une condition d’erreur sera renvoyée. Chaque règle doit ensuite appeler la fonction `callback` exactement une fois. Un seul appel permet d’éviter le blocage du pipeline, mais un plus grand nombre d’appels pourrait entraîner des résultats imprévisibles ou des erreurs.
+
+
+
+Comme le montre l’exemple ci-dessus, la fonction `callback` peut être appelée avec trois paramètres au maximum. Le premier paramètre est obligatoire et fournit une indication sur l’état de l’opération de règle. Les deuxième et troisième paramètres sont facultatifs et représentent l’utilisateur et le contexte à fournir à la règle suivante dans le pipeline. Si ces paramètres sont spécifiés, il est recommandé de transmettre les objets `user` et `context` (respectivement) tels qu’ils sont fournis à la règle.
+
+Bien qu’il puisse être acceptable de modifier certains contenus de l’objet `user` ou `context` dans certaines situations, il est recommandé de ne pas transmettre une instance nouvellement créée de l’objet `user` ou `context`. Transmettre autre chose qu’un objet `user` ou `context` aura des résultats imprévisibles et pourrait entraîner une exception ou à une condition d’erreur.
+
+Le paramètre d’état doit être transmis sous la forme de `null`, d’une instance d’un objet `Error` ou d’une instance d’un objet `UnauthorizedError`. La valeur null permet de poursuivre le traitement du pipeline, tandis que les autres valeurs y mettent fin; l’objet `UnauthorizedError` signale un refus d’accès et permet de renvoyer à l’auteur de l’opération d’authentification des informations sur la raison du refus d’accès. La transmission de toute autre valeur pour l’un de ces paramètres aura des résultats imprévisibles et pourrait entraîner une exception ou à une condition d’erreur.
+
+Comme l’authentification a déjà eu lieu, toute sortie prématurée du pipeline avec une erreur (d’autorisation) n’aura pas d’impact sur la session authentifiée dans le navigateur; les redirections ultérieures vers /authorize se traduiront généralement par une connexion automatique. La sortie prématurée du pipeline interrompt simplement la génération des jetons et autres. Une option consiste pour l’application à rediriger vers le point de terminaison [Logout](/api/authentication#logout) de Authentication API, si nécessaire, pour forcer la fin de la session Auth0 dans le navigateur.
+
+Tout appel au point de terminaison Logout peut être interrompu, de sorte que la fin explicite de la session Auth0 n’est pas garantie. Cela est important, car toute condition explicite qui a causé une erreur `unauthorized` doit être revérifiée dans toute exécution ultérieure du pipeline de règles, et il ne devrait pas être possible de contourner cette ou ces vérifications par d’autres conditions (telles que `prompt===none`).
