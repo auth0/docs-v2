@@ -11,15 +11,77 @@ twitter:description: The ASP.NET Core implementation for the Single Sign-on (SSO
 twitter:title: Mise en œuvre d’ASP.NET Core (Web Apps + SSO)
 ---
 
-Le code source complet de l’implémentation ASP.NET Core se trouve dans [ce répertoire GitHub](https://github.com/auth0-samples/auth0-pnp-webapp-oidc).
+Full source code for the ASP.NET Core implementation can be found in [this GitHub repository](https://github.com/auth0-samples/auth0-pnp-webapp-oidc).
 
 ## Configurer le témoin et le logiciel médiateur OIDC
 
 Pour les besoins de ce guide, nous utiliserons une simple connexion hébergée. Vous pouvez utiliser le témoin standard et le logiciel médiateur OIDC qui est disponible avec ASP.NET Core, assurez-vous donc d’installer les paquets NuGet.
 
+```bash lines
+Install-Package Microsoft.AspNetCore.Authentication.Cookies
+Install-Package Microsoft.AspNetCore.Authentication.OpenIdConnect
+```
+
+
+
+
 
 
 Configurez ensuite le logiciel médiateur OIDC et le témoin dans le pipeline du logiciel médiateur de votre application.
+
+```csharp lines expandable
+public class Startup
+{
+    public void ConfigureServices(IServiceCollection services)
+    {
+        // Add authentication services
+        services.AddAuthentication(
+            options => options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme);
+
+        // Code omitted for brevity...
+    }
+
+    public void Configure(IApplicationBuilder app, IHostingEnvironment env, ILoggerFactory loggerFactory, IOptions<Auth0Settings> auth0Settings)
+    {
+        // Code omitted for brevity...
+
+        // Add the cookie middleware
+        app.UseCookieAuthentication(new CookieAuthenticationOptions
+        {
+            AutomaticAuthenticate = true,
+            AutomaticChallenge = true
+        });
+
+        // Add the OIDC middleware
+        app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions("Auth0")
+        {
+            // Set the authority to your Auth0 domain
+            Authority = "https://{yourDomain}/",
+
+            // Configure the Auth0 Client ID and Client Secret
+            ClientId = {yourClientId},
+            ClientSecret = YOUR_CLIENT_SECRET,
+
+            // Do not automatically authenticate and challenge
+            AutomaticAuthenticate = false,
+            AutomaticChallenge = false,
+
+            // Set response type to code
+            ResponseType = "code",
+
+            CallbackPath = new PathString("/signin-auth0"),
+
+            // Configure the Claims Issuer to be Auth0
+            ClaimsIssuer = "Auth0"
+        });
+
+        // Code omitted for brevity...
+    }
+}
+```
+
+
+
 
 
 
@@ -27,9 +89,9 @@ Comme vous pouvez le voir dans le code ci-dessus, nous avons configuré deux typ
 
 Le premier est le logiciel médiateur de gestion des témoin qui a été enregistré avec l’appel à `UseCookieAuthentication`. Le second est le logiciel médiateur OIDC qui a été enregistré avec l’appel à `UseOpenIdConnectAuthentication`.
 
-Une fois que l’utilisateur s’est connecté à Auth0 à l’aide du logiciel médiateur OIDC, ses informations sont automatiquement stockées dans un témoin de session. Il suffit de configurer le logiciel médiateur comme indiqué ci-dessus pour qu’il s’occupe de la gestion de la session de l’utilisateur.
+Once the user has signed in to Auth0 using the OIDC middleware, their information will automatically be stored inside a <Tooltip tip="Session Cookie: Entity that, when present, allows the user to be considered authenticated." cta="View Glossary" href="/docs/glossary?term=session+cookie">session cookie</Tooltip>. All you need to do is to configure the middleware as above and it will take care of managing the user session.
 
-Le logiciel médiateur OpenID Connect (OIDC) extraira également toutes les demandes du jeton d’ID, qui est envoyé par Auth0 une fois que l’utilisateur s’est authentifié, et les ajoutera en tant que demandes sur le `ClaimsIdentity`.
+The <Tooltip tip="OpenID: Open standard for authentication that allows applications to verify users' identities without collecting and storing login information." cta="View Glossary" href="/docs/glossary?term=OpenID">OpenID</Tooltip> Connect (OIDC) middleware will also extract all the claims from the <Tooltip tip="OpenID: Open standard for authentication that allows applications to verify users' identities without collecting and storing login information." cta="View Glossary" href="/docs/glossary?term=ID+Token">ID Token</Tooltip>, which is sent from Auth0 once the user has authenticated, and add them as claims on the `ClaimsIdentity`.
 
 ## Mise en œuvre de la déconnexion
 
@@ -37,21 +99,62 @@ Vous pouvez contrôler à la fois la session de l’application et la session Au
 
 Par exemple, pour se déconnecter du logiciel médiateur de gestion des témoins, et ainsi effacer le témoin d’authentification de votre application, vous pouvez effectuer l’appel suivant :
 
+```csharp wrap lines
+await HttpContext.Authentication.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+```
+
+
+
+
 
 
 De même, vous pouvez déconnecter l’utilisateur d'Auth0 en appelant la méthode `SignOutAsync` et en transmettant `Auth0` comme schéma d’authentification à déconnecter.
 
+```csharp lines
+await HttpContext.Authentication.SignOutAsync("Auth0");
+```
 
 
-Pour que cela fonctionne, vous devrez cependant ajouter une configuration supplémentaire lors de l’enregistrement du logiciel médiateur OIDC en gérant l’événement `OnRedirectToIdentityProviderForSignOut`. Dans cet événement, vous devrez rediriger vers [le point de terminaison de déconnexion Auth0](https://auth0.com/docs/api/authentication/reference#logout), ce qui effacera le témoin Auth0.
 
 
 
-Vous devrez également vous assurer que vous ajoutez l’URL de votre application à **URL de déconnexion autorisées** de votre application dans le tableau de bord Auth0. Pour plus d’informations, reportez-vous à [Déconnexion](https://auth0.com/docs/logout).
+
+For the above to work you will however also need to add extra configuration when registering the OIDC middleware by handling the `OnRedirectToIdentityProviderForSignOut` event. Inside the event you will need to redirect to the [Auth0 logout endpoint](https://auth0.com/docs/api/authentication/reference#logout) which will clear the Auth0 cookie.
+
+```csharp lines
+app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions("Auth0")
+{
+    // Some code omitted for brevity
+    Events = new OpenIdConnectEvents
+    {
+        OnRedirectToIdentityProviderForSignOut = context =>
+        {
+            context.Response.Redirect($"https://{auth0Settings.Value.Domain}/v2/logout?client_id={auth0Settings.Value.ClientId}&returnTo={context.Request.Scheme}://{context.Request.Host}/");
+            context.HandleResponse();
+
+            return Task.FromResult(0);
+        }
+    }
+});
+```
+
+
+
+
+
+
+You will also need to ensure that you add your application's URL to the **Allowed Logout URLs** for your application inside the <Tooltip tip="Auth0 Dashboard: Auth0's main product to configure your services." cta="View Glossary" href="/docs/glossary?term=Auth0+dashboard">Auth0 dashboard</Tooltip>. For more information refer to [Logout](/docs/authenticate/login/logout).
 
 ## Mettre en oeuvre les permissions d’administration
 
-La manière la plus simple d’intégrer les groupes dans une application ASP.NET Core est d’utiliser l’autorisation intégrée [Autorisation basée sur les rôles](https://docs.asp.net/en/latest/security/authorization/roles.html) disponible dans ASP.NET Core. Pour ce faire, nous devrons ajouter une Demande de type
+The easiest way to integrate the groups into an ASP.NET Core application is to use the built-in [Role-based Authorization](https://docs.asp.net/en/latest/security/authorization/roles.html) available in ASP.NET Core. In order to achieve this we will need to add a Claim of type
+
+```http lines
+http://schemas.microsoft.com/ws/2008/06/identity/claims/role
+```
+
+
+
 
 
 
@@ -59,8 +162,55 @@ pour chacun des groupes auxquels un utilisateur est assigné.
 
 Une fois les demandes ajoutées, nous pouvons facilement nous assurer qu’une action spécifique n’est disponible que pour les utilisateurs `Admin` en décorant la demande avec l’attribut `[Authorize(Roles = "Admin")]`. Vous pouvez également vérifier si un utilisateur occupe un rôle spécifique à partir du code en appelant `User.IsInRole("Admin")` à l’intérieur de votre contrôleur.
 
-Le logiciel médiateur ASP.NET OIDC ajoutera automatiquement toutes les demandes renvoyées dans le JWT en tant que demandes à l’identité `ClaimsIdentity`. Nous devrions donc extraire les informations de la demande `authorization`, désérialiser le corps JSON de la demande et, pour chacun des groupes, ajouter une demande `http://schemas.microsoft.com/ws/2008/06/identity/claims/role` à `ClaimsIdentity`.
+The ASP.NET OIDC middleware will automatically add all claims returned in the <Tooltip tip="JSON Web Token (JWT): Standard ID Token format (and often Access Token format) used to represent claims securely between two parties." cta="View Glossary" href="/docs/glossary?term=JWT">JWT</Tooltip> as claims to the `ClaimsIdentity`. We would therefore need to extract the information from the `authorization` claim, deserialize the JSON body of the claim, and for each of the groups add a `http://schemas.microsoft.com/ws/2008/06/identity/claims/role` claim to the `ClaimsIdentity`.
+
+```csharp lines expandable
+app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions("Auth0")
+{
+    // Some configuration omitted for brevity
+
+    Events = new OpenIdConnectEvents
+    {
+        OnTicketReceived = context =>
+        {
+            var options = context.Options as OpenIdConnectOptions;
+
+            // Get the ClaimsIdentity
+            var identity = context.Principal.Identity as ClaimsIdentity;
+            if (identity != null)
+            {
+                // Add the groups as roles
+                var authzClaim = context.Principal.FindFirst(c => c.Type == "authorization");
+                if (authzClaim != null)
+                {
+                    var authorization = JsonConvert.DeserializeObject<Auth0Authorization>(authzClaim.Value);
+                    if (authorization != null)
+                    {
+                        foreach (var group in authorization.Groups)
+                        {
+                            identity.AddClaim(new Claim(ClaimTypes.Role, group, ClaimValueTypes.String, options.Authority));
+                        }
+                    }
+                }
+            }
+
+            return Task.FromResult(0);
+        }
+    }
+});
+```
+
+
+
 
 
 
 Ensuite, nous pouvons ajouter une action qui permet aux Administrateurs d’approuver les feuilles de temps :
+
+```csharp lines
+[Authorize(Roles = "Admin")]
+public IActionResult TimesheetApproval()
+{          
+    return View();
+}
+```
