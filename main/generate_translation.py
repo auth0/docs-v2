@@ -1,8 +1,17 @@
-import json
+import json, ijson
 import os
 from pathlib import Path
-import frontmatter # Apenas esta importação é necessária
+import frontmatter
+from bs4 import BeautifulSoup
 import argparse
+import re
+
+# Tenta importar o mapa de um arquivo separado. Se não existir, usa um mapa vazio.
+try:
+    from map import URL_CORRECTION_MAP
+except ImportError:
+    print("Aviso: Arquivo 'map.py' não encontrado. Usando um mapa de correção vazio.")
+    URL_CORRECTION_MAP = {}
 
 # --- CONFIGURAÇÕES ---
 TRANSLATIONS_FILE = 'mapeamento_paginas_corrigido.json'
@@ -10,1303 +19,8 @@ SOURCE_DIR = 'docs'
 TARGET_LANGUAGES = {'fr': 'fr-ca', 'ja': 'ja-jp'}
 CANONICAL_LOCALE = 'en-US'
 
-# ==============================================================================
-# <<< MAPA DE CORREÇÃO DE URLS >>>
-# Cole aqui o output gerado pelo script 'sugerir_mapeamento.py'
-# Exemplo:
-# URL_CORRECTION_MAP = {
-#     "/architecture-scenarios/business-to-business": "/architecture-scenarios/b2b",
-#     "/architecture-scenarios/business-to-consumer": "/architecture-scenarios/b2c",
-# }
-# ==============================================================================
-URL_CORRECTION_MAP = {
-    "/android-development-keystores-hashes": "/libraries/auth0-android/android-development-keystores-hashes",
-    "/auth0-android-database-authentication": "/libraries/auth0-android/auth0-android-database-authentication",
-    "/auth0-android-passwordless": "/libraries/auth0-android/auth0-android-passwordless",
-    "/auth0-android-save-and-renew-tokens": "/libraries/auth0-android/auth0-android-save-and-renew-tokens",
-    "/auth0-android-user-management": "/libraries/auth0-android/auth0-android-user-management",
-    "/authenticate": "/login/authentication",
-    "/authenticate/connection-settings-best-practices": "/connection-settings-best-practices",
-    "/authenticate/custom-token-exchange": "/custom-token-exchange",
-    "/authenticate/database-connections": "/connections/database",
-    "/authenticate/database-connections/activate-and-configure-attributes-for-flexible-identifiers": "/connections/database/activate-and-configure-attributes-for-flexible-identifiers",
-    "/authenticate/database-connections/auth0-user-store": "/auth0-user-store",
-    "/authenticate/database-connections/custom-db": "/connections/database/custom-db",
-    "/authenticate/database-connections/custom-db/create-db-connection": "/connections/database/custom-db/create-db-connection",
-    "/authenticate/database-connections/custom-db/custom-database-connections-scripts": "/custom-database-connections-scripts",
-    "/authenticate/database-connections/custom-db/custom-database-connections-scripts/anatomy": "/custom-database-connections-scripts/anatomy",
-    "/authenticate/database-connections/custom-db/custom-database-connections-scripts/connection-security": "/custom-database-connections-scripts/connection-security",
-    "/authenticate/database-connections/custom-db/custom-database-connections-scripts/environment": "/custom-database-connections-scripts/environment",
-    "/authenticate/database-connections/custom-db/custom-database-connections-scripts/execution": "/custom-database-connections-scripts/execution",
-    "/authenticate/database-connections/custom-db/error-handling": "/connections/database/custom-db/error-handling",
-    "/authenticate/database-connections/custom-db/overview-custom-db-connections": "/overview-custom-db-connections",
-    "/authenticate/database-connections/custom-db/templates": "/templates",
-    "/authenticate/database-connections/custom-db/templates/change-email": "/change-email",
-    "/authenticate/database-connections/custom-db/templates/change-password": "/change-password",
-    "/authenticate/database-connections/custom-db/templates/create": "/create",
-    "/authenticate/database-connections/custom-db/templates/delete": "/delete",
-    "/authenticate/database-connections/custom-db/templates/get-user": "/get-user",
-    "/authenticate/database-connections/custom-db/templates/login": "/login",
-    "/authenticate/database-connections/custom-db/templates/verify": "/verify",
-    "/authenticate/database-connections/custom-db/test-custom-database-connections": "/test-custom-database-connections",
-    "/authenticate/database-connections/db2-script": "/connections/database/db2-script",
-    "/authenticate/database-connections/flexible-identifiers-and-attributes": "/connections/database/flexible-identifiers-and-attributes",
-    "/authenticate/database-connections/non-unique-emails": "/connections/database/non-unique-emails",
-    "/authenticate/database-connections/passkeys": "/passkeys",
-    "/authenticate/database-connections/passkeys/configure-passkey-policy": "/configure-passkey-policy",
-    "/authenticate/database-connections/passkeys/monitor-passkey-events-in-tenant-logs": "/monitor-passkey-events-in-tenant-logs",
-    "/authenticate/database-connections/password-change": "/connections/database/password-change",
-    "/authenticate/database-connections/password-options": "/connections/database/password-options",
-    "/authenticate/database-connections/password-strength": "/connections/database/password-strength",
-    "/authenticate/database-connections/require-username": "/require-username",
-    "/authenticate/enterprise-connections": "/enterprise-connections",
-    "/authenticate/enterprise-connections/private-key-jwt-client-auth": "/private-key-jwt-client-auth",
-    "/authenticate/enterprise-connections/self-service-SSO": "/self-service-SSO",
-    "/authenticate/enterprise-connections/self-service-SSO/manage-self-service-sso": "/manage-self-service-sso",
-    "/authenticate/identity-providers": "/connections",
-    "/authenticate/identity-providers/adding-scopes-for-an-external-idp": "/adding-scopes-for-an-external-idp",
-    "/authenticate/identity-providers/calling-an-external-idp-api": "/calling-an-external-idp-api",
-    "/authenticate/identity-providers/enterprise-identity-providers": "/enterprise",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap": "/active-directory-ldap",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector": "/extensions/ad-ldap-connector",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/ad-ldap-connector-config-file-schema": "/extensions/ad-ldap-connector/ad-ldap-connector-config-file-schema",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/ad-ldap-connector-requirements": "/extensions/ad-ldap-connector/ad-ldap-connector-requirements",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/ad-ldap-connector-scom": "/extensions/ad-ldap-connector/ad-ldap-connector-scom",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/ad-ldap-connector-test-environment": "/extensions/ad-ldap-connector/ad-ldap-connector-test-environment",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/ad-ldap-connector-to-auth0": "/extensions/ad-ldap-connector/ad-ldap-connector-to-auth0",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/ad-ldap-high-availability": "/extensions/ad-ldap-connector/ad-ldap-high-availability",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/configure-ad-ldap-connector-client-certificates": "/extensions/ad-ldap-connector/configure-ad-ldap-connector-client-certificates",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/configure-ad-ldap-connector-with-kerberos": "/extensions/ad-ldap-connector/configure-ad-ldap-connector-with-kerberos",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/disable-credential-caching": "/extensions/ad-ldap-connector/disable-credential-caching",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/import-export-ad-ldap-connector-configs": "/extensions/ad-ldap-connector/import-export-ad-ldap-connector-configs",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/install-configure-ad-ldap-connector": "/extensions/ad-ldap-connector/install-configure-ad-ldap-connector",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/map-ad-ldap-profile-attributes-to-auth0": "/extensions/ad-ldap-connector/map-ad-ldap-profile-attributes-to-auth0",
-    "/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap/ad-ldap-connector/update-ad-ldap-connectors": "/extensions/ad-ldap-connector/update-ad-ldap-connectors",
-    "/authenticate/identity-providers/enterprise-identity-providers/adfs": "/adfs",
-    "/authenticate/identity-providers/enterprise-identity-providers/azure-active-directory-native": "/azure-active-directory-native",
-    "/authenticate/identity-providers/enterprise-identity-providers/azure-active-directory/v2": "/azure-active-directory/v2",
-    "/authenticate/identity-providers/enterprise-identity-providers/azuread-adfs-email-verification": "/azuread-adfs-email-verification",
-    "/authenticate/identity-providers/enterprise-identity-providers/choose-a-connection-type-for-azure-ad": "/choose-a-connection-type-for-azure-ad",
-    "/authenticate/identity-providers/enterprise-identity-providers/configure-pkce-claim-mapping-for-oidc": "/configure-pkce-claim-mapping-for-oidc",
-    "/authenticate/identity-providers/enterprise-identity-providers/enable-enterprise-connections": "/connections/enable-enterprise-connections",
-    "/authenticate/identity-providers/enterprise-identity-providers/google-apps": "/google-apps",
-    "/authenticate/identity-providers/enterprise-identity-providers/oidc": "/oidc",
-    "/authenticate/identity-providers/enterprise-identity-providers/okta": "/okta",
-    "/authenticate/identity-providers/enterprise-identity-providers/ping-federate": "/ping-federate",
-    "/authenticate/identity-providers/enterprise-identity-providers/test-enterprise-connections": "/connections/test-enterprise-connections",
-    "/authenticate/identity-providers/legal": "/legal",
-    "/authenticate/identity-providers/locate-the-connection-id": "/get-started/dashboard/locate-the-connection-id",
-    "/authenticate/identity-providers/pass-parameters-to-idps": "/pass-parameters-to-idps",
-    "/authenticate/identity-providers/promote-connections-to-domain-level": "/connections/promote-connections-to-domain-level",
-    "/authenticate/identity-providers/retrieve-connection-options": "/connections/retrieve-connection-options",
-    "/authenticate/identity-providers/social-identity-providers": "/social",
-    "/authenticate/identity-providers/social-identity-providers/apple-native": "/apple-native",
-    "/authenticate/identity-providers/social-identity-providers/devkeys": "/devkeys",
-    "/authenticate/identity-providers/social-identity-providers/facebook-native": "/social/facebook-native",
-    "/authenticate/identity-providers/social-identity-providers/google-native": "/google-native",
-    "/authenticate/identity-providers/social-identity-providers/oauth2": "/oauth2",
-    "/authenticate/identity-providers/social-identity-providers/reprompt-permissions": "/reprompt-permissions",
-    "/authenticate/identity-providers/social-identity-providers/tiktok": "/tiktok",
-    "/authenticate/identity-providers/test-connections": "/test-connections",
-    "/authenticate/identity-providers/view-connections": "/connections/view-connections",
-    "/authenticate/login/auth0-universal-login": "/login/universal-login",
-    "/authenticate/login/auth0-universal-login/configure-default-login-routes": "/login/universal-login/configure-default-login-routes",
-    "/authenticate/login/auth0-universal-login/error-pages": "/login/universal-login/error-pages",
-    "/authenticate/login/auth0-universal-login/identifier-first": "/login/universal-login/identifier-first",
-    "/authenticate/login/auth0-universal-login/passwordless-login": "/login/universal-login/configure-universal-login-with-passwordless",
-    "/authenticate/login/auth0-universal-login/passwordless-login/email-or-sms": "/login/universal-login/configure-universal-login-with-passwordless/email-or-sms",
-    "/authenticate/login/auth0-universal-login/passwordless-login/webauthn-device-biometrics": "/login/universal-login/configure-universal-login-with-passwordless/webauthn-device-biometrics",
-    "/authenticate/login/auth0-universal-login/universal-login-vs-classic-login": "/login/universal-login/universal-login-vs-classic-login",
-    "/authenticate/login/auth0-universal-login/universal-login-vs-classic-login/classic-experience": "/login/universal-login/classic-experience",
-    "/authenticate/login/auth0-universal-login/universal-login-vs-classic-login/universal-experience": "/login/universal-login/universal-experience",
-    "/authenticate/login/configure-silent-authentication": "/login/configure-silent-authentication",
-    "/authenticate/login/cross-origin-authentication": "/login/cross-origin-authentication",
-    "/authenticate/login/embedded-login": "/login/embedded-login",
-    "/authenticate/login/logout": "/logout",
-    "/authenticate/login/logout/back-channel-logout": "/back-channel-logout",
-    "/authenticate/login/logout/back-channel-logout/configure-back-channel-logout": "/back-channel-logout/configure-back-channel-logout",
-    "/authenticate/login/logout/back-channel-logout/oidc-back-channel-logout-initiators": "/oidc-back-channel-logout-initiators",
-    "/authenticate/login/logout/log-users-out-of-applications": "/logout/log-users-out-of-applications",
-    "/authenticate/login/logout/log-users-out-of-auth0": "/logout/log-users-out-of-auth0",
-    "/authenticate/login/logout/log-users-out-of-idps": "/logout/log-users-out-of-idps",
-    "/authenticate/login/logout/log-users-out-of-saml-idps": "/logout/log-users-out-of-saml-idps",
-    "/authenticate/login/logout/redirect-users-after-logout": "/logout/redirect-users-after-logout",
-    "/authenticate/login/logout/universal-logout": "/universal-logout",
-    "/authenticate/login/max-age-reauthentication": "/login/max-age-reauthentication",
-    "/authenticate/login/native-login": "/login/native-login",
-    "/authenticate/login/oidc-conformant-authentication": "/login/adopt-oidc-conformant-authentication",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-access-tokens": "/login/adopt-oidc-conformant-authentication/oidc-adoption-access-tokens",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-apis": "/login/adopt-oidc-conformant-authentication/oidc-adoption-apis",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-auth-code-flow": "/login/adopt-oidc-conformant-authentication/oidc-adoption-auth-code-flow",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-client-credentials-flow": "/login/adopt-oidc-conformant-authentication/oidc-adoption-client-credentials-flow",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-delegation": "/login/adopt-oidc-conformant-authentication/oidc-adoption-delegation",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-implicit-flow": "/login/adopt-oidc-conformant-authentication/oidc-adoption-implicit-flow",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-refresh-tokens": "/login/adopt-oidc-conformant-authentication/oidc-adoption-refresh-tokens",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-rop-flow": "/login/adopt-oidc-conformant-authentication/oidc-adoption-rop-flow",
-    "/authenticate/login/oidc-conformant-authentication/oidc-adoption-sso": "/login/adopt-oidc-conformant-authentication/oidc-adoption-sso",
-    "/authenticate/login/redirect-users-after-login": "/login/redirect-users-after-login",
-    "/authenticate/login/universal-vs-embedded-login": "/login/universal-vs-embedded-login",
-    "/authenticate/passwordless": "/passwordless",
-    "/authenticate/passwordless/authentication-methods": "/authentication-methods",
-    "/authenticate/passwordless/authentication-methods/email-magic-link": "/email-magic-link",
-    "/authenticate/passwordless/authentication-methods/email-otp": "/email-otp",
-    "/authenticate/passwordless/authentication-methods/sms-otp": "/use-sms-gateway-passwordless/sms-otp",
-    "/authenticate/passwordless/authentication-methods/use-sms-gateway-passwordless": "/use-sms-gateway-passwordless",
-    "/authenticate/passwordless/best-practices": "/best-practices",
-    "/authenticate/passwordless/implement-login": "/implement-login",
-    "/authenticate/passwordless/implement-login/embedded-login": "/embedded-login",
-    "/authenticate/passwordless/implement-login/embedded-login/native": "/native",
-    "/authenticate/passwordless/implement-login/embedded-login/relevant-api-endpoints": "/relevant-api-endpoints",
-    "/authenticate/passwordless/implement-login/embedded-login/spa": "/spa",
-    "/authenticate/passwordless/implement-login/embedded-login/webapps": "/webapps",
-    "/authenticate/passwordless/passwordless-connection-limitations": "/passwordless-connection-limitations",
-    "/authenticate/passwordless/passwordless-with-universal-login": "/passwordless-with-universal-login",
-    "/authenticate/passwordless/sample-use-cases-rules": "/sample-use-cases-rules",
-    "/authenticate/protocols": "/protocols",
-    "/authenticate/protocols/ldap-protocol": "/protocols/ldap-protocol",
-    "/authenticate/protocols/oauth": "/protocols/oauth",
-    "/authenticate/protocols/openid-connect-protocol": "/protocols/openid-connect-protocol",
-    "/authenticate/protocols/saml": "/saml",
-    "/authenticate/protocols/saml/saml-configuration": "/saml-configuration",
-    "/authenticate/protocols/saml/saml-configuration/configure-auth0-as-service-and-identity-provider": "/saml-configuration/configure-auth0-as-service-and-identity-provider",
-    "/authenticate/protocols/saml/saml-configuration/customize-saml-assertions": "/saml-configuration/customize-saml-assertions",
-    "/authenticate/protocols/saml/saml-configuration/deprovision-users-in-saml-integrations": "/saml-configuration/deprovision-users-in-saml-integrations",
-    "/authenticate/protocols/saml/saml-configuration/saml-attribute-mapping-examples": "/saml-attribute-mapping-examples",
-    "/authenticate/protocols/saml/saml-identity-provider-configuration-settings": "/saml-configuration/saml-identity-provider-configuration-settings",
-    "/authenticate/protocols/saml/saml-sso-integrations": "/saml-configuration/saml-sso-integrations",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider": "/saml-configuration/configure-auth0-saml-service-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-adfs-saml-connections": "/saml-configuration/configure-auth0-saml-service-provider/configure-adfs-saml-connections",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-okta-as-saml-identity-provider": "/saml-configuration/configure-auth0-saml-service-provider/configure-okta-as-saml-identity-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-onelogin-as-saml-identity-provider": "/saml-configuration/configure-auth0-saml-service-provider/configure-onelogin-as-saml-identity-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-pingfederate-as-saml-identity-provider": "/saml-configuration/configure-auth0-saml-service-provider/configure-pingfederate-as-saml-identity-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-salesforce-as-saml-identity-provider": "/saml-configuration/configure-auth0-saml-service-provider/configure-salesforce-as-saml-identity-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-siteminder-as-saml-identity-provider": "/saml-configuration/configure-auth0-saml-service-provider/configure-siteminder-as-saml-identity-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-auth0-saml-service-provider/configure-ssocircle-as-saml-identity-provider": "/saml-configuration/configure-auth0-saml-service-provider/configure-ssocircle-as-saml-identity-provider",
-    "/authenticate/protocols/saml/saml-sso-integrations/configure-idp-initiated-saml-sign-on-to-oidc-apps": "/configure-idp-initiated-saml-sign-on-to-oidc-apps",
-    "/authenticate/protocols/saml/saml-sso-integrations/enable-saml2-web-app-addon": "/saml-configuration/saml-sso-integrations/enable-saml2-web-app-addon",
-    "/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on": "/saml-configuration/saml-sso-integrations/identity-provider-initiated-single-sign-on",
-    "/authenticate/protocols/saml/saml-sso-integrations/sign-and-encrypt-saml-requests": "/saml-configuration/saml-sso-integrations/sign-and-encrypt-saml-requests",
-    "/authenticate/protocols/saml/saml-sso-integrations/work-with-certificates-and-keys-as-strings": "/saml-configuration/saml-sso-integrations/work-with-certificates-and-keys-as-strings",
-    "/authenticate/protocols/scim": "/protocols/scim",
-    "/authenticate/protocols/scim/configure-inbound-scim": "/protocols/scim/configure-inbound-scim",
-    "/authenticate/protocols/scim/configure-inbound-scim-for-identity-providers-using-saml-or-openid": "/protocols/scim/configure-inbound-scim/configure-inbound-scim-for-identity-providers-using-saml-or-openid",
-    "/authenticate/protocols/scim/inbound-scim-for-azure-ad-saml-connections": "/protocols/scim/configure-inbound-scim/inbound-scim-for-azure-ad-saml-connections",
-    "/authenticate/protocols/scim/inbound-scim-for-new-azure-ad-connections": "/protocols/scim/configure-inbound-scim/inbound-scim-for-new-azure-ad-connections",
-    "/authenticate/protocols/scim/inbound-scim-for-okta-workforce-connections": "/protocols/scim/configure-inbound-scim/inbound-scim-for-okta-workforce-connections",
-    "/authenticate/protocols/scim/inbound-scim-for-okta-workforce-saml-connections": "/protocols/scim/configure-inbound-scim/inbound-scim-for-okta-workforce-saml-connections",
-    "/authenticate/protocols/scim/inbound-scim-for-older-azure-ad-connections": "/protocols/scim/configure-inbound-scim/inbound-scim-for-older-azure-ad-connections",
-    "/authenticate/protocols/scim/manage-an-inbound-scim-deployment-with-the-management-api": "/protocols/scim/configure-inbound-scim/manage-an-inbound-scim-deployment-with-the-management-api",
-    "/authenticate/protocols/ws-fed-protocol": "/protocols/ws-fed-protocol",
-    "/authenticate/single-sign-on": "/single-sign-on",
-    "/authenticate/single-sign-on/api-endpoints-for-single-sign-on": "/single-sign-on/api-endpoints-for-single-sign-on",
-    "/authenticate/single-sign-on/inbound-single-sign-on": "/single-sign-on/inbound-single-sign-on",
-    "/authenticate/single-sign-on/native-to-web": "/native-to-web-sso",
-    "/authenticate/single-sign-on/native-to-web/configure-implement-native-to-web": "/configure-implement-native-to-web",
-    "/authenticate/single-sign-on/native-to-web/configure-mobile-to-web-payment-flows": "/configure-mobile-to-web-payment-flows",
-    "/authenticate/single-sign-on/native-to-web/native-to-web-sso-and-sessions": "/native-to-web-sso-and-sessions",
-    "/authenticate/single-sign-on/native-to-web/native-to-web-sso-best-practices": "/native-to-web-sso-best-practices",
-    "/authenticate/single-sign-on/okta-access-gateway": "/okta-access-gateway",
-    "/authenticate/single-sign-on/outbound-single-sign-on": "/single-sign-on/outbound-single-sign-on",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider": "/saml-configuration/configure-auth0-saml-identity-provider",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-atlassian": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-atlassian",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-cisco-webex": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-cisco-webex",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-datadog": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-datadog",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-egencia": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-egencia",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-freshdesk": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-freshdesk",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-hosted-graphite": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-hosted-graphite",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-litmos": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-litmos",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-pluralsight": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-pluralsight",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-sprout-video": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-sprout-video",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-tableau-online": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-tableau-online",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-tableau-server": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-tableau-server",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-workday": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-workday",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-workpath": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-identity-provider-for-workpath",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-auth0-as-idp-for-google-g-suite": "/saml-configuration/configure-auth0-saml-identity-provider/configure-auth0-as-idp-for-google-g-suite",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-addon-eloqua": "/saml-configuration/configure-auth0-saml-identity-provider/configure-saml2-addon-eloqua",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-aws": "/saml-configuration/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-aws",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-github-enterprise-cloud": "/saml-configuration/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-github-enterprise-cloud",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-github-enterprise-server": "/saml-configuration/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-github-enterprise-server",
-    "/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-heroku": "/saml-configuration/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-heroku",
-    "/customize": "/brand-and-customize",
-    "/customize/actions": "/actions",
-    "/customize/actions/action-coding-guidelines": "/action-coding-guidelines",
-    "/customize/actions/actions-overview": "/actions/actions-overview",
-    "/customize/actions/actions-real-time-logs": "/actions/actions-real-time-logs",
-    "/customize/actions/actions-templates": "/actions-templates",
-    "/customize/actions/explore-triggers": "/actions/explore-triggers",
-    "/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-api-object": "/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-api-object",
-    "/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-event-object": "/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-event-object",
-    "/customize/actions/explore-triggers/mfa-notifications-trigger": "/actions/explore-triggers/mfa-notifications-trigger",
-    "/customize/actions/explore-triggers/mfa-notifications-trigger/send-phone-message-api-object": "/actions/explore-triggers/mfa-notifications-trigger/send-phone-message-api-object",
-    "/customize/actions/explore-triggers/mfa-notifications-trigger/send-phone-message-event-object": "/actions/explore-triggers/mfa-notifications-trigger/send-phone-message-event-object",
-    "/customize/actions/explore-triggers/password-reset-triggers": "/password-reset-triggers",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-challenge-trigger": "/post-challenge-trigger",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-challenge-trigger/post-challenge-api-object": "/post-challenge-api-object",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-challenge-trigger/post-challenge-event-object": "/post-challenge-event-object",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger": "/actions/explore-triggers/post-change-password-trigger",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger/api-object": "/actions/explore-triggers/post-change-password-trigger/api-object",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger/post-change-password-api-object": "/actions/explore-triggers/post-change-password-trigger/post-change-password-api-object",
-    "/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger/post-change-password-event-object": "/actions/explore-triggers/post-change-password-trigger/post-change-password-event-object",
-    "/customize/actions/explore-triggers/signup-and-login-triggers": "/signup-and-login-triggers",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger": "/signup-and-login-triggers/login-trigger",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object": "/signup-and-login-triggers/login-trigger/post-login-api-object",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object": "/signup-and-login-triggers/login-trigger/post-login-event-object",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/redirect-with-actions": "/signup-and-login-triggers/login-trigger/redirect-with-actions",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/releases": "/releases",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger": "/signup-and-login-triggers/post-user-registration-trigger",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger/api-object": "/signup-and-login-triggers/post-user-registration-trigger/api-object",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger/post-user-registration-api-object": "/signup-and-login-triggers/post-user-registration-trigger/post-user-registration-api-object",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger": "/signup-and-login-triggers/pre-user-registration-trigger",
-    "/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-api-object": "/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-api-object",
-    "/customize/actions/limitations": "/actions/limitations",
-    "/customize/actions/manage-dependencies": "/actions/manage-dependencies",
-    "/customize/actions/manage-versions": "/actions/manage-versions",
-    "/customize/actions/migrate": "/migrate",
-    "/customize/actions/migrate/actions-migration-limitations": "/actions-migration-limitations",
-    "/customize/actions/migrate/migrate-a-rule-to-an-action": "/migrate-a-rule-to-an-action",
-    "/customize/actions/migrate/migrate-from-hooks-to-actions": "/migrate-from-hooks-to-actions",
-    "/customize/actions/migrate/migrate-from-rules-to-actions": "/migrate-from-rules-to-actions",
-    "/customize/actions/releases": "/releases",
-    "/customize/actions/test-actions": "/actions/test-actions",
-    "/customize/actions/transaction-metadata": "/transaction-metadata",
-    "/customize/actions/use-cases": "/actions/use-cases",
-    "/customize/actions/write-your-first-action": "/actions/write-your-first-action",
-    "/customize/custom-domains": "/custom-domains",
-    "/customize/custom-domains/auth0-managed-certificates": "/custom-domains/auth0-managed-certificates",
-    "/customize/custom-domains/configure-features-to-use-custom-domains": "/custom-domains/configure-features-to-use-custom-domains",
-    "/customize/custom-domains/multiple-custom-domains": "/multiple-custom-domains",
-    "/customize/custom-domains/multiple-custom-domains/mcd-best-practices": "/multiple-custom-domains/mcd-best-practices",
-    "/customize/custom-domains/multiple-custom-domains/mcd-use-cases": "/multiple-custom-domains/mcd-use-cases",
-    "/customize/custom-domains/self-managed-certificates": "/custom-domains/self-managed-certificates",
-    "/customize/custom-domains/self-managed-certificates/configure-akamai-for-use-as-reverse-proxy": "/custom-domains/self-managed-certificates/configure-akamai-for-use-as-reverse-proxy",
-    "/customize/custom-domains/self-managed-certificates/configure-aws-cloudfront-for-use-as-reverse-proxy": "/custom-domains/self-managed-certificates/configure-aws-cloudfront-for-use-as-reverse-proxy",
-    "/customize/custom-domains/self-managed-certificates/configure-azure-cdn-for-use-as-reverse-proxy": "/custom-domains/self-managed-certificates/configure-azure-cdn-for-use-as-reverse-proxy",
-    "/customize/custom-domains/self-managed-certificates/configure-cloudflare-for-use-as-reverse-proxy": "/custom-domains/self-managed-certificates/configure-cloudflare-for-use-as-reverse-proxy",
-    "/customize/custom-domains/self-managed-certificates/configure-gcp-as-reverse-proxy": "/custom-domains/self-managed-certificates/configure-gcp-as-reverse-proxy",
-    "/customize/custom-domains/self-managed-certificates/tls-ssl": "/custom-domains/self-managed-certificates/tls-ssl",
-    "/customize/customize-sms-or-voice-messages": "/brand-and-customize/customize-sms-or-voice-messages",
-    "/customize/email": "/brand-and-customize/email",
-    "/customize/email/configure-a-custom-email-provider": "/configure-a-custom-email-provider",
-    "/customize/email/configure-a-custom-email-provider/action-triggers-custom-email-provider-api-object": "/action-triggers-custom-email-provider-api-object",
-    "/customize/email/configure-a-custom-email-provider/action-triggers-custom-email-provider-event-object": "/configure-a-custom-email-provider/action-triggers-custom-email-provider-event-object",
-    "/customize/email/configure-a-custom-email-provider/configure-a-custom-email-provider-with-terraform": "/configure-a-custom-email-provider-with-terraform",
-    "/customize/email/configure-test-smtp-email-servers": "/brand-and-customize/email/configure-test-smtp-email-servers",
-    "/customize/email/customize-blocked-account-emails": "/brand-and-customize/email/customize-blocked-account-emails",
-    "/customize/email/email-templates": "/brand-and-customize/email/customize-email-templates",
-    "/customize/email/email-templates/email-template-descriptions": "/brand-and-customize/email/email-template-descriptions",
-    "/customize/email/email-templates/use-liquid-syntax-in-email-templates": "/brand-and-customize/email/use-liquid-syntax-in-email-templates",
-    "/customize/email/manage-email-flow": "/brand-and-customize/email/manage-email-flow",
-    "/customize/email/send-email-invitations-for-application-signup": "/brand-and-customize/email/send-email-invitations-for-application-signup",
-    "/customize/email/smtp-email-providers": "/brand-and-customize/email/smtp-email-providers",
-    "/customize/email/smtp-email-providers/configure-365-exchange-as-smtp-email-provider": "/configure-365-exchange-as-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-amazon-ses-as-external-smtp-email-provider": "/brand-and-customize/email/smtp-email-providers/configure-amazon-ses-as-external-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-azure-comm-service-as-smtp-email-provider": "/configure-azure-comm-service-as-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-custom-external-smtp-email-provider": "/brand-and-customize/email/configure-custom-external-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-mailgun-as-external-smtp-email-provider": "/brand-and-customize/email/smtp-email-providers/configure-mailgun-as-external-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-mandrill-as-external-smtp-email-provider": "/brand-and-customize/email/smtp-email-providers/configure-mandrill-as-external-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-sendgrid-as-external-smtp-email-provider": "/brand-and-customize/email/smtp-email-providers/configure-sendgrid-as-external-smtp-email-provider",
-    "/customize/email/smtp-email-providers/configure-sparkpost-as-external-smtp-email-provider": "/brand-and-customize/email/smtp-email-providers/configure-sparkpost-as-external-smtp-email-provider",
-    "/customize/email/troubleshoot-custom-email-provider-delivery-issues": "/troubleshoot-custom-email-provider-delivery-issues",
-    "/customize/events": "/events",
-    "/customize/events/create-an-event-stream": "/create-an-event-stream",
-    "/customize/events/event-testing-observability-and-failure-recovery": "/event-testing-observability-and-failure-recovery",
-    "/customize/events/event-types": "/event-types",
-    "/customize/events/events-best-practices": "/events-best-practices",
-    "/customize/extensions": "/extensions",
-    "/customize/extensions/account-link-extension": "/extensions/account-link-extension",
-    "/customize/extensions/ad-ldap-connector-health-monitor": "/extensions/ad-ldap-connector/ad-ldap-connector-health-monitor",
-    "/customize/extensions/authentication-api-debugger-extension": "/extensions/authentication-api-debugger-extension",
-    "/customize/extensions/authorization-extension": "/extensions/authorization-extension",
-    "/customize/extensions/authorization-extension/configure-authorization-extension": "/extensions/authorization-extension/configure-authorization-extension",
-    "/customize/extensions/authorization-extension/enable-api-access-to-authorization-extension": "/extensions/authorization-extension/enable-api-access-to-authorization-extension",
-    "/customize/extensions/authorization-extension/import-and-export-authorization-extension-data": "/extensions/authorization-extension/import-and-export-authorization-extension-data",
-    "/customize/extensions/authorization-extension/install-authorization-extension": "/extensions/authorization-extension/install-authorization-extension",
-    "/customize/extensions/authorization-extension/migrate-to-authorization-extension-v2": "/extensions/authorization-extension/migrate-to-authorization-extension-v2",
-    "/customize/extensions/authorization-extension/set-up-authorization-extension-users": "/extensions/authorization-extension/set-up-authorization-extension-users",
-    "/customize/extensions/authorization-extension/use-rules-with-the-authorization-extension": "/extensions/authorization-extension/use-rules-with-the-authorization-extension",
-    "/customize/extensions/delegated-administration-extension": "/extensions/delegated-administration-extension",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-hooks": "/extensions/delegated-administration-extension/delegated-administration-hooks",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-hooks/delegated-administration-access-hook": "/extensions/delegated-administration-extension/delegated-administration-access-hook",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-hooks/delegated-administration-filter-hook": "/extensions/delegated-administration-extension/delegated-administration-filter-hook",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-hooks/delegated-administration-memberships-query-hook": "/extensions/delegated-administration-extension/delegated-administration-memberships-query-hook",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-hooks/delegated-administration-settings-query-hook": "/extensions/delegated-administration-extension/delegated-administration-settings-query-hook",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-hooks/delegated-administration-write-hook": "/extensions/delegated-administration-extension/delegated-administration-write-hook",
-    "/customize/extensions/delegated-administration-extension/delegated-administration-manage-users": "/extensions/delegated-administration-extension/delegated-administration-manage-users",
-    "/customize/extensions/delegated-administration-extension/install-delegated-admin-extension": "/extensions/delegated-administration-extension/install-delegated-admin-extension",
-    "/customize/extensions/log-export-extensions": "/extensions/log-export-extensions",
-    "/customize/extensions/real-time-webtask-logs": "/extensions/real-time-webtask-logs",
-    "/customize/extensions/single-sign-on-dashboard-extension": "/extensions/single-sign-on-dashboard-extension",
-    "/customize/extensions/single-sign-on-dashboard-extension/add-applications-to-the-sso-dashboard": "/extensions/single-sign-on-dashboard-extension/add-applications-to-the-sso-dashboard",
-    "/customize/extensions/single-sign-on-dashboard-extension/create-sso-dashboard-application": "/extensions/single-sign-on-dashboard-extension/create-sso-dashboard-application",
-    "/customize/extensions/single-sign-on-dashboard-extension/install-sso-dashboard-extension": "/extensions/single-sign-on-dashboard-extension/install-sso-dashboard-extension",
-    "/customize/extensions/single-sign-on-dashboard-extension/update-applications-on-the-sso-dashboard": "/extensions/single-sign-on-dashboard-extension/update-applications-on-the-sso-dashboard",
-    "/customize/extensions/user-import-export-extension": "/extensions/user-import-export-extension",
-    "/customize/forms": "/forms",
-    "/customize/forms/configure-additional-signup-steps": "/configure-additional-signup-steps",
-    "/customize/forms/configure-progressive-profile-form": "/configure-progressive-profile-form",
-    "/customize/forms/configure-update-policy-form": "/configure-update-policy-form",
-    "/customize/forms/custom-field-components": "/custom-field-components",
-    "/customize/forms/custom-messages-and-translation": "/custom-messages-and-translation",
-    "/customize/forms/flows": "/intro-to-flows",
-    "/customize/forms/flows/flow-execution-and-debugger": "/flow-execution-and-debugger",
-    "/customize/forms/flows/integrations": "/integration",
-    "/customize/forms/flows/integrations/auth0": "/auth0",
-    "/customize/forms/flows/integrations/data-verification": "/data-verification",
-    "/customize/forms/flows/integrations/http-request": "/http-request",
-    "/customize/forms/flows/integrations/json": "/json",
-    "/customize/forms/flows/integrations/json-web-token": "/json-web-token",
-    "/customize/forms/flows/integrations/logic": "/logic",
-    "/customize/forms/flows/integrations/mailjet": "/mailjet",
-    "/customize/forms/flows/integrations/sendgrid": "/sendgrid",
-    "/customize/forms/flows/integrations/telegram": "/telegram",
-    "/customize/forms/flows/integrations/twilio": "/twilio",
-    "/customize/forms/flows/integrations/whatsapp": "/whatsapp",
-    "/customize/forms/flows/integrations/xml": "/xml",
-    "/customize/forms/nodes-and-components": "/nodes-and-components",
-    "/customize/forms/render": "/render",
-    "/customize/forms/routers": "/routers",
-    "/customize/forms/variables": "/variables",
-    "/customize/forms/vault": "/vault",
-    "/customize/hooks": "/hooks",
-    "/customize/hooks/create-hooks": "/create-hooks",
-    "/customize/hooks/delete-hooks": "/hooks/delete-hooks",
-    "/customize/hooks/enable-disable-hooks": "/hooks/enable-disable-hooks",
-    "/customize/hooks/hook-secrets": "/hooks/hook-secrets",
-    "/customize/hooks/hook-secrets/create-hook-secrets": "/hooks/hook-secrets/create-hook-secrets",
-    "/customize/hooks/hook-secrets/delete-hook-secrets": "/hooks/hook-secrets/delete-hook-secrets",
-    "/customize/hooks/hook-secrets/update-hook-secrets": "/hooks/hook-secrets/update-hook-secrets",
-    "/customize/hooks/hook-secrets/view-hook-secrets": "/hooks/hook-secrets/view-hook-secrets",
-    "/customize/hooks/update-hooks": "/hooks/update-hooks",
-    "/customize/hooks/view-hooks": "/hooks/view-hooks",
-    "/customize/hooks/view-logs-for-hooks": "/hooks/view-logs-for-hooks",
-    "/customize/integrations": "/integrations",
-    "/customize/integrations/apigee": "/integrations/apigee",
-    "/customize/integrations/authenticate-devices-using-mqtt": "/integrations/authenticate-devices-using-mqtt",
-    "/customize/integrations/authenticating-and-authorizing-a-tessel-device-with-auth0": "/integrations/authenticating-and-authorizing-a-tessel-device-with-auth0",
-    "/customize/integrations/aws": "/integrations/aws",
-    "/customize/integrations/aws/amazon-cognito": "/integrations/amazon-cognito",
-    "/customize/integrations/aws/aws-api-gateway-cognito": "/integrations/aws-api-gateway-cognito",
-    "/customize/integrations/aws/aws-api-gateway-custom-authorizers": "/integrations/aws-api-gateway-custom-authorizers",
-    "/customize/integrations/aws/aws-api-gateway-delegation": "/integrations/aws-api-gateway-delegation",
-    "/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-1": "/integrations/aws-api-gateway-delegation-1",
-    "/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-2": "/integrations/aws-api-gateway-delegation-2",
-    "/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-3": "/integrations/aws-api-gateway-delegation-3",
-    "/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-4": "/integrations/aws-api-gateway-delegation-4",
-    "/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-5": "/integrations/aws-api-gateway-delegation-5",
-    "/customize/integrations/aws/configure-amazon-web-services-for-sso": "/integrations/aws/configure-amazon-web-services-for-sso",
-    "/customize/integrations/aws/how-to-set-up-aws-for-delegated-authentication": "/integrations/how-to-set-up-aws-for-delegated-authentication",
-    "/customize/integrations/aws/session-tags": "/integrations/aws/session-tags",
-    "/customize/integrations/azure-api-management": "/integrations/azure-api-management",
-    "/customize/integrations/cms": "/cms",
-    "/customize/integrations/cms/wordpress-plugin": "/cms/wordpress-plugin",
-    "/customize/integrations/cms/wordpress-plugin/configure-login-by-auth0": "/cms/wordpress-plugin/configure-login-by-auth0",
-    "/customize/integrations/cms/wordpress-plugin/extend-login-by-auth0": "/cms/wordpress-plugin/extend-login-by-auth0",
-    "/customize/integrations/cms/wordpress-plugin/install-login-by-auth0": "/cms/wordpress-plugin/install-login-by-auth0",
-    "/customize/integrations/cms/wordpress-plugin/integrate-with-wordpress": "/cms/wordpress-plugin/integrate-with-wordpress",
-    "/customize/integrations/cms/wordpress-plugin/troubleshoot-login-by-auth0": "/cms/wordpress-plugin/troubleshoot-login-by-auth0",
-    "/customize/integrations/cms/wordpress-plugin/troubleshoot-wordpress-plugin-invalid-state-errors": "/cms/wordpress-plugin/troubleshoot-wordpress-plugin-invalid-state-errors",
-    "/customize/integrations/cms/wordpress-plugin/user-migration-in-login-by-auth0": "/cms/wordpress-plugin/user-migration-in-login-by-auth0",
-    "/customize/integrations/connecting-provider-hosted-apps-to-sharepoint-online": "/integrations/connecting-provider-hosted-apps-to-sharepoint-online",
-    "/customize/integrations/google-cloud-endpoints": "/integrations/google-cloud-endpoints",
-    "/customize/integrations/integrate-with-netlify": "/integrations/integrate-with-netlify",
-    "/customize/integrations/integrate-with-vercel": "/integrations/integrate-with-vercel",
-    "/customize/integrations/marketing-tool-integrations": "/integrations/marketing",
-    "/customize/integrations/marketing-tool-integrations/adobe-campaign": "/integrations/marketing/adobe-campaign",
-    "/customize/integrations/marketing-tool-integrations/alterian": "/integrations/marketing/alterian",
-    "/customize/integrations/marketing-tool-integrations/constant-contact": "/integrations/marketing/constant-contact",
-    "/customize/integrations/marketing-tool-integrations/eloqua": "/integrations/marketing/eloqua",
-    "/customize/integrations/marketing-tool-integrations/export-user-data-salesforce": "/integrations/marketing/export-user-data-salesforce",
-    "/customize/integrations/marketing-tool-integrations/mailchimp": "/integrations/marketing/mailchimp",
-    "/customize/integrations/marketing-tool-integrations/marketo": "/integrations/marketing/marketo",
-    "/customize/integrations/marketing-tool-integrations/sailthru": "/integrations/marketing/sailthru",
-    "/customize/integrations/marketing-tool-integrations/salesforce-marketing-cloud": "/integrations/marketing/salesforce-marketing-cloud",
-    "/customize/integrations/marketing-tool-integrations/watson-campaign-automation": "/integrations/marketing/watson-campaign-automation",
-    "/customize/integrations/marketplace-partners": "/marketplace-partners",
-    "/customize/integrations/marketplace-partners/actions-integrations-for-partners": "/marketplace-partners/actions-integrations-for-partners",
-    "/customize/integrations/marketplace-partners/defining-an-integration-use-case": "/marketplace-partners/defining-an-integration-use-case",
-    "/customize/integrations/marketplace-partners/introduction-to-integrating-with-auth0": "/marketplace-partners/introduction-to-integrating-with-auth0",
-    "/customize/integrations/marketplace-partners/redirect-actions-for-partners": "/marketplace-partners/redirect-actions-for-partners",
-    "/customize/integrations/marketplace-partners/social-connections-for-partners": "/marketplace-partners/social-connections-for-partners",
-    "/customize/integrations/marketplace-partners/sso-integrations-for-partners": "/marketplace-partners/sso-integrations-for-partners",
-    "/customize/integrations/marketplace-partners/writing-tips-for-installation-guides": "/marketplace-partners/writing-tips-for-installation-guides",
-    "/customize/integrations/migrate-office365-connections-to-windows-azure-ad": "/integrations/migrate-office365-connections-to-windows-azure-ad",
-    "/customize/integrations/office-365-custom-provisioning": "/integrations/office-365-custom-provisioning",
-    "/customize/integrations/secure-a-cli-with-auth0": "/integrations/secure-a-cli-with-auth0",
-    "/customize/integrations/sharepoint-2010-2013": "/integrations/sharepoint-2010-2013",
-    "/customize/integrations/sso-integrations": "/integrations/sso-integrations",
-    "/customize/internationalization-and-localization": "/brand-and-customize/internationalization-and-localization",
-    "/customize/internationalization-and-localization/lock-android-internationalization": "/brand-and-customize/internationalization-and-localization/lock-android-internationalization",
-    "/customize/internationalization-and-localization/lock-internationalization": "/libraries/lock/lock-internationalization",
-    "/customize/internationalization-and-localization/lock-swift-internationalization": "/brand-and-customize/internationalization-and-localization/lock-swift-internationalization",
-    "/customize/internationalization-and-localization/password-options-translation": "/brand-and-customize/internationalization-and-localization/password-options-translation",
-    "/customize/internationalization-and-localization/universal-login-internationalization": "/brand-and-customize/internationalization-and-localization/universal-login-internationalization",
-    "/customize/log-streams": "/monitor-auth0/streams",
-    "/customize/log-streams/check-log-stream-health": "/monitor-auth0/streams/check-log-stream-health",
-    "/customize/log-streams/custom-log-streams": "/monitor-auth0/streams/custom-log-streams",
-    "/customize/log-streams/datadog-dashboard-templates": "/monitor-auth0/streams/datadog-dashboard-templates",
-    "/customize/log-streams/event-filters": "/monitor-auth0/streams/event-filters",
-    "/customize/log-streams/splunk-dashboard": "/monitor-auth0/streams/splunk-dashboard",
-    "/customize/log-streams/sumo-logic-dashboard": "/monitor-auth0/streams/sumo-logic-dashboard",
-    "/customize/login-pages": "/login-pages",
-    "/customize/login-pages/advanced-customizations": "/login-pages/advanced-customizations",
-    "/customize/login-pages/advanced-customizations/build-user-flows": "/build-user-flows",
-    "/customize/login-pages/advanced-customizations/build-user-flows/add-a-captcha": "/build-user-flows/add-a-captcha",
-    "/customize/login-pages/advanced-customizations/build-user-flows/add-custom-prompts-to-your-identifier-first-signup-screen": "/build-user-flows/add-custom-prompts-to-your-identifier-first-signup-screen",
-    "/customize/login-pages/advanced-customizations/build-user-flows/id-first-login": "/login-pages/advanced-customizations/getting-started/id-first-login",
-    "/customize/login-pages/advanced-customizations/build-user-flows/id-first-signup": "/login-pages/advanced-customizations/getting-started/id-first-signup",
-    "/customize/login-pages/advanced-customizations/build-user-flows/login-password": "/login-pages/advanced-customizations/getting-started/login-password",
-    "/customize/login-pages/advanced-customizations/build-user-flows/signup-password": "/login-pages/advanced-customizations/getting-started/signup-password",
-    "/customize/login-pages/advanced-customizations/build-user-flows/sms-email-passwordless": "/login-pages/advanced-customizations/getting-started/sms-email-passwordless",
-    "/customize/login-pages/advanced-customizations/getting-started": "/login-pages/advanced-customizations/getting-started",
-    "/customize/login-pages/advanced-customizations/getting-started/configure-acul-screens": "/login-pages/advanced-customizations/getting-started/configure-acul-screens",
-    "/customize/login-pages/advanced-customizations/getting-started/deploy-and-host-advanced-customizations": "/login-pages/advanced-customizations/getting-started/deploy-and-host-advanced-customizations",
-    "/customize/login-pages/advanced-customizations/reference": "/acul-js-sdk",
-    "/customize/login-pages/advanced-customizations/reference/accept-invitation": "/accept-invitation",
-    "/customize/login-pages/advanced-customizations/reference/consent-screen-class": "/consent-screen-class",
-    "/customize/login-pages/advanced-customizations/reference/customized-consent-screen-class": "/customized-consent-screen-class",
-    "/customize/login-pages/advanced-customizations/reference/device-code-activation": "/device-code-activation",
-    "/customize/login-pages/advanced-customizations/reference/email-otp-challenge-screen-class": "/email-otp-challenge-screen-class",
-    "/customize/login-pages/advanced-customizations/reference/email-verification-result-screen-class": "/email-verification-result-screen-class",
-    "/customize/login-pages/advanced-customizations/reference/interstitial-captcha-screen-class": "/interstitial-captcha-screen-class",
-    "/customize/login-pages/advanced-customizations/reference/login-screen-classes": "/login-screen-classes",
-    "/customize/login-pages/advanced-customizations/reference/logout-screen-classes": "/logout-screen-classes",
-    "/customize/login-pages/advanced-customizations/reference/mfa": "/multi-factor-authentication-screen-classes",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-email": "/mfa-email",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-otp": "/mfa-otp",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-phone": "/mfa-phone",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-push": "/mfa-push",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-recovery-code": "/mfa-recovery-code",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-sms": "/mfa-sms",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-voice": "/mfa-voice",
-    "/customize/login-pages/advanced-customizations/reference/mfa/mfa-webauthn": "/mfa-webauthn",
-    "/customize/login-pages/advanced-customizations/reference/organization": "/organization",
-    "/customize/login-pages/advanced-customizations/reference/redeem-ticket": "/redeem-ticket",
-    "/customize/login-pages/advanced-customizations/reference/reset-password-screen-classes": "/reset-password-screen-classes",
-    "/customize/login-pages/advanced-customizations/reference/signup-screen-classes": "/signup-screen-classes",
-    "/customize/login-pages/classic-login": "/classic-login",
-    "/customize/login-pages/classic-login/customization-classic": "/brand-and-customize/customization-classic",
-    "/customize/login-pages/classic-login/customize-lock-error-messages": "/brand-and-customize/customize-lock-error-messages",
-    "/customize/login-pages/classic-login/customize-password-reset-page": "/brand-and-customize/customize-password-reset-page",
-    "/customize/login-pages/classic-login/customize-with-lock-sdk": "/brand-and-customize/customize-with-lock-sdk",
-    "/customize/login-pages/classic-login/version-control": "/brand-and-customize/version-control",
-    "/customize/login-pages/custom-error-pages": "/brand-and-customize/custom-error-pages",
-    "/customize/login-pages/customize-consent-prompts": "/brand-and-customize/customize-consent-prompts",
-    "/customize/login-pages/universal-login": "/universal-login",
-    "/customize/login-pages/universal-login/customize-signup-and-login-prompts": "/brand-and-customize/customize-signup-and-login-prompts",
-    "/customize/login-pages/universal-login/customize-signup-and-login-prompts/connection-switching": "/connection-switching",
-    "/customize/login-pages/universal-login/customize-signup-and-login-prompts/language-selection": "/language-selection",
-    "/customize/login-pages/universal-login/customize-signup-and-login-prompts/use-actions-to-validate-and-store-end-user-data-gathered-by-signup-prompt": "/brand-and-customize/customize-signup-and-login-prompts/use-actions-to-validate-and-store-end-user-data-gathered-by-signup-prompt",
-    "/customize/login-pages/universal-login/customize-signup-and-login-prompts/use-dynamic-variables-to-internationalize-custom-form-elements": "/use-dynamic-variables-to-internationalize-custom-form-elements",
-    "/customize/login-pages/universal-login/customize-templates": "/login/universal-login/universal-experience/customize-templates",
-    "/customize/login-pages/universal-login/customize-text-elements": "/brand-and-customize/customize-text-elements",
-    "/customize/login-pages/universal-login/customize-themes": "/customize-themes",
-    "/customize/phone-messages": "/customize-phone-messages",
-    "/customize/phone-messages/configure-phone-messaging-providers": "/configure-phone-messaging-providers",
-    "/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider": "/configure-a-custom-phone-provider",
-    "/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/action-triggers-custom-phone-provider-api-object": "/action-triggers-custom-phone-provider-api-object",
-    "/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/actions-triggers-custom-phone-provider-event-object": "/actions-triggers-custom-phone-provider-event-object",
-    "/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/configure-a-custom-phone-provider-with-terraform": "/configure-a-custom-phone-provider-with-terraform",
-    "/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/configure-a-custom-phone-provider-with-twilio-verify": "/configure-a-custom-phone-provider-with-twilio-verify",
-    "/customize/phone-messages/configure-phone-messaging-providers/configure-twilio-as-a-phone-messaging-provider": "/configure-twilio-as-a-phone-messaging-provider",
-    "/customize/phone-messages/customize-phone-templates": "/customize-phone-templates",
-    "/customize/phone-messages/unified-phone": "/auth0s-unified-phone-experience",
-    "/customize/phone-messages/unified-phone/configure-unified-phone": "/configure-unified-phone",
-    "/customize/phone-messages/unified-phone/unified-phone-experience-passwordless": "/unified-phone-experience-passwordless",
-    "/customize/phone-messages/unified-phone/use-auth0s-unified-phone-experience-for-multi-factor-authentication": "/use-auth0s-unified-phone-experience-for-multi-factor-authentication",
-    "/customize/rules": "/rules",
-    "/customize/rules/cache-resources": "/rules/cache-resources",
-    "/customize/rules/configuration": "/rules/configuration",
-    "/customize/rules/configure-global-variables-for-rules": "/rules/configure-global-variables-for-rules",
-    "/customize/rules/context-object": "/rules/context-object",
-    "/customize/rules/create-rules": "/rules/create-rules",
-    "/customize/rules/debug-rules": "/rules/debug-rules",
-    "/customize/rules/raise-errors-from-rules": "/rules/raise-errors-from-rules",
-    "/customize/rules/redirect-users": "/rules/redirect-users",
-    "/customize/rules/use-cases": "/actions/use-cases",
-    "/customize/rules/use-management-api": "/rules/use-management-api",
-    "/customize/rules/user-object-in-rules": "/rules/user-object-in-rules",
-    "/deploy-advanced-customizations-to-production": "/login-pages/advanced-customizations/getting-started/deploy-and-host-advanced-customizations",
-    "/deploy-monitor": "/deploy",
-    "/deploy-monitor/auth0-terraform-provider": "/auth0-terraform-provider",
-    "/deploy-monitor/deploy-checklist": "/deploy/deploy-checklist",
-    "/deploy-monitor/deploy-cli-tool": "/deploy/deploy-cli-tool",
-    "/deploy-monitor/deploy-cli-tool/authenticate-with-your-tenant": "/authenticate-with-your-tenant",
-    "/deploy-monitor/deploy-cli-tool/available-resource-configuration-formats": "/available-resource-configuration-formats",
-    "/deploy-monitor/deploy-cli-tool/configure-the-deploy-cli": "/configure-the-deploy-cli",
-    "/deploy-monitor/deploy-cli-tool/exclude-resources-from-management": "/exclude-resources-from-management",
-    "/deploy-monitor/deploy-cli-tool/incorporate-into-multi-environment-workflows": "/incorporate-into-multi-environment-workflows",
-    "/deploy-monitor/deploy-cli-tool/keyword-replacement": "/keyword-replacement",
-    "/deploy-monitor/deploy-cli-tool/resource-specific-documentation": "/resource-specific-documentation",
-    "/deploy-monitor/deploy-cli-tool/use-as-a-cli": "/use-as-a-cli",
-    "/deploy-monitor/deploy-cli-tool/use-as-a-node-module": "/use-as-a-node-module",
-    "/deploy-monitor/deploy-private-cloud": "/deploy-private-cloud",
-    "/deploy-monitor/deploy-private-cloud/private-cloud-add-on-features": "/private-cloud-add-on-features",
-    "/deploy-monitor/deploy-private-cloud/private-cloud-on-aws": "/private-cloud-on-aws",
-    "/deploy-monitor/deploy-private-cloud/private-cloud-on-azure": "/deploy/private-cloud-on-azure",
-    "/deploy-monitor/deployment-best-practices": "/not-found/70zpztJMDHy4q0bwO4Xzgn/deployment-best-practices",
-    "/deploy-monitor/deployment-options": "/deployment-options",
-    "/deploy-monitor/logs": "/logs",
-    "/deploy-monitor/logs/log-data-retention": "/logs/log-data-retention",
-    "/deploy-monitor/logs/log-event-filters": "/logs/log-event-filters",
-    "/deploy-monitor/logs/log-event-type-codes": "/logs/log-event-type-codes",
-    "/deploy-monitor/logs/log-search-query-syntax": "/logs/log-search-query-syntax",
-    "/deploy-monitor/logs/pii-in-logs": "/logs/pii-in-logs",
-    "/deploy-monitor/logs/prompt-details-in-tenant-logs": "/prompt-details-in-tenant-logs",
-    "/deploy-monitor/logs/retrieve-log-events-using-mgmt-api": "/logs/retrieve-log-events-using-mgmt-api",
-    "/deploy-monitor/logs/view-log-events": "/logs/view-log-events",
-    "/deploy-monitor/monitor": "/monitor-auth0",
-    "/deploy-monitor/monitor/check-auth0-status": "/monitor-auth0/check-auth0-status",
-    "/deploy-monitor/monitor/check-external-services-status": "/monitor-auth0/check-external-services-status",
-    "/deploy-monitor/monitor/monitor-applications": "/monitor-auth0/monitor-applications",
-    "/deploy-monitor/monitor/monitor-using-scom": "/monitor-auth0/monitor-using-scom",
-    "/deploy-monitor/pre-deployment-checks": "/deploy/pre-deployment",
-    "/deploy-monitor/pre-deployment-checks/how-to-run-production-checks": "/deploy/pre-deployment/how-to-run-production-checks",
-    "/deploy-monitor/pre-deployment-checks/pre-launch-tips": "/deploy/pre-deployment/pre-launch-tips",
-    "/deploy-monitor/pre-deployment-checks/predeployment-tests": "/deploy/pre-deployment/predeployment-tests",
-    "/deploy-monitor/pre-deployment-checks/production-check-recommended-fixes": "/deploy/pre-deployment/production-check-recommended-fixes",
-    "/deploy-monitor/pre-deployment-checks/production-check-required-fixes": "/deploy/pre-deployment/production-check-required-fixes",
-    "/deploy-monitor/pre-deployment-checks/production-checks-best-practices": "/deploy/pre-deployment/production-checks-best-practices",
-    "/get-started/apis": "/apis",
-    "/get-started/apis/add-api-permissions": "/apis/add-api-permissions",
-    "/get-started/apis/api-access-policies-for-applications": "/api-access-policies-for-applications",
-    "/get-started/apis/api-settings": "/apis/api-settings",
-    "/get-started/apis/configure-access-token-profile": "/configure-access-token-profile",
-    "/get-started/apis/configure-json-web-encryption": "/configure-json-web-encryption",
-    "/get-started/apis/configure-rich-authorization-requests": "/configure-rich-authorization-requests",
-    "/get-started/apis/create-m2m-app-test": "/apis/create-m2m-app-test",
-    "/get-started/apis/delete-api-permissions": "/apis/delete-api-permissions",
-    "/get-started/apis/enable-role-based-access-control-for-apis": "/apis/enable-role-based-access-control-for-apis",
-    "/get-started/apis/scopes": "/apis/scopes",
-    "/get-started/apis/scopes/api-scopes": "/apis/scopes/api-scopes",
-    "/get-started/apis/scopes/openid-connect-scopes": "/apis/scopes/openid-connect-scopes",
-    "/get-started/apis/scopes/sample-use-cases-scopes-and-claims": "/apis/scopes/sample-use-cases-scopes-and-claims",
-    "/get-started/apis/set-logical-api": "/apis/set-logical-api",
-    "/get-started/applications": "/applications",
-    "/get-started/applications/application-access-to-apis-client-grants": "/application-access-to-apis-client-grants",
-    "/get-started/applications/application-grant-types": "/applications/application-grant-types",
-    "/get-started/applications/application-settings": "/applications/application-settings",
-    "/get-started/applications/change-application-signing-algorithms": "/applications/change-application-signing-algorithms",
-    "/get-started/applications/confidential-and-public-applications": "/applications/confidential-and-public-applications",
-    "/get-started/applications/confidential-and-public-applications/enable-third-party-applications": "/applications/confidential-and-public-applications/enable-third-party-applications",
-    "/get-started/applications/confidential-and-public-applications/first-party-and-third-party-applications": "/applications/confidential-and-public-applications/first-party-and-third-party-applications",
-    "/get-started/applications/confidential-and-public-applications/update-application-ownership": "/applications/confidential-and-public-applications/update-application-ownership",
-    "/get-started/applications/confidential-and-public-applications/user-consent-and-third-party-applications": "/applications/confidential-and-public-applications/user-consent-and-third-party-applications",
-    "/get-started/applications/confidential-and-public-applications/view-application-ownership": "/applications/confidential-and-public-applications/view-application-ownership",
-    "/get-started/applications/confidential-and-public-applications/view-application-type": "/applications/confidential-and-public-applications/view-application-type",
-    "/get-started/applications/configure-application-metadata": "/applications/configure-application-metadata",
-    "/get-started/applications/configure-applications-with-oidc-discovery": "/applications/configure-applications-with-oidc-discovery",
-    "/get-started/applications/configure-client-initiated-backchannel-authentication": "/configure-client-initiated-backchannel-authentication",
-    "/get-started/applications/configure-fapi-compliance": "/configure-fapi-compliance",
-    "/get-started/applications/configure-fapi-compliance/configure-auth0-to-pass-openid-fapi-certification-tests": "/configure-fapi-compliance/configure-auth0-to-pass-openid-fapi-certification-tests",
-    "/get-started/applications/configure-jar": "/configure-jar",
-    "/get-started/applications/configure-mtls": "/configure-mtls",
-    "/get-started/applications/configure-mtls/configure-mtls-for-a-client": "/configure-mtls/configure-mtls-for-a-client",
-    "/get-started/applications/configure-mtls/configure-mtls-for-a-tenant": "/configure-mtls/configure-mtls-for-a-tenant",
-    "/get-started/applications/configure-mtls/set-up-the-customer-edge": "/configure-mtls/set-up-the-customer-edge",
-    "/get-started/applications/configure-par": "/configure-par",
-    "/get-started/applications/configure-private-key-jwt": "/applications/configure-private-key-jwt",
-    "/get-started/applications/configure-sender-constraining": "/sender-constraining",
-    "/get-started/applications/configure-sender-constraining/configure-client-for-sender-constraining": "/configure-sender-constraining",
-    "/get-started/applications/configure-sender-constraining/configure-resource-server-for-sender-constraining": "/configure-sender-constraining",
-    "/get-started/applications/configure-ws-fed-applications": "/applications/configure-ws-fed-applications",
-    "/get-started/applications/credentials": "/applications/credentials",
-    "/get-started/applications/dynamic-client-registration": "/applications/dynamic-client-registration",
-    "/get-started/applications/enable-android-app-links-support": "/applications/enable-android-app-links-support",
-    "/get-started/applications/enable-sso-for-applications": "/applications/enable-sso-for-applications",
-    "/get-started/applications/enable-universal-links-support-in-apple-xcode": "/applications/enable-universal-links-support-in-apple-xcode",
-    "/get-started/applications/remove-applications": "/applications/remove-applications",
-    "/get-started/applications/rotate-client-secret": "/applications/rotate-client-secret",
-    "/get-started/applications/rotate-credentials": "/applications/rotate-credentials",
-    "/get-started/applications/set-up-cors": "/applications/set-up-cors",
-    "/get-started/applications/set-up-database-connections": "/applications/set-up-database-connections",
-    "/get-started/applications/signing-algorithms": "/applications/signing-algorithms",
-    "/get-started/applications/test-database-connections": "/applications/test-database-connections",
-    "/get-started/applications/update-application-connections": "/applications/update-application-connections",
-    "/get-started/applications/update-grant-types": "/applications/update-grant-types",
-    "/get-started/applications/wildcards-for-subdomains": "/applications/wildcards-for-subdomains",
-    "/get-started/applications/work-with-auth0-locally": "/applications/work-with-auth0-locally",
-    "/get-started/architecture-scenarios": "/architecture-scenarios",
-    "/get-started/architecture-scenarios/b2e": "/architecture-scenarios/b2e",
-    "/get-started/architecture-scenarios/business-to-business": "/architecture-scenarios/b2b",
-    "/get-started/architecture-scenarios/business-to-business/architecture": "/architecture-scenarios/b2b/architecture",
-    "/get-started/architecture-scenarios/business-to-business/authentication": "/architecture-scenarios/b2b/authentication",
-    "/get-started/architecture-scenarios/business-to-business/authorization": "/architecture-scenarios/b2b/authorization",
-    "/get-started/architecture-scenarios/business-to-business/branding": "/architecture-scenarios/b2b/branding",
-    "/get-started/architecture-scenarios/business-to-business/deployment": "/architecture-scenarios/b2b/deployment",
-    "/get-started/architecture-scenarios/business-to-business/launch": "/architecture-scenarios/b2b/launch",
-    "/get-started/architecture-scenarios/business-to-business/launch/compliance-readiness": "/architecture-scenarios/b2b/launch/compliance-readiness",
-    "/get-started/architecture-scenarios/business-to-business/launch/launch-day": "/architecture-scenarios/b2b/launch/launch-day",
-    "/get-started/architecture-scenarios/business-to-business/launch/operations-readiness": "/architecture-scenarios/b2b/launch/operations-readiness",
-    "/get-started/architecture-scenarios/business-to-business/launch/support-readiness": "/architecture-scenarios/b2b/launch/support-readiness",
-    "/get-started/architecture-scenarios/business-to-business/launch/tenant-check": "/architecture-scenarios/b2b/launch/tenant-check",
-    "/get-started/architecture-scenarios/business-to-business/launch/testing": "/architecture-scenarios/b2b/launch/testing",
-    "/get-started/architecture-scenarios/business-to-business/logout": "/architecture-scenarios/b2b/logout",
-    "/get-started/architecture-scenarios/business-to-business/operations": "/architecture-scenarios/b2b/operations",
-    "/get-started/architecture-scenarios/business-to-business/profile-management": "/architecture-scenarios/b2b/profile-management",
-    "/get-started/architecture-scenarios/business-to-business/provisioning": "/architecture-scenarios/b2b/provisioning",
-    "/get-started/architecture-scenarios/business-to-business/quality-assurance": "/architecture-scenarios/b2b/quality-assurance",
-    "/get-started/architecture-scenarios/business-to-consumer": "/architecture-scenarios/b2c",
-    "/get-started/architecture-scenarios/business-to-consumer/architecture": "/architecture-scenarios/b2c/architecture",
-    "/get-started/architecture-scenarios/business-to-consumer/authentication": "/architecture-scenarios/b2c/authentication",
-    "/get-started/architecture-scenarios/business-to-consumer/authorization": "/architecture-scenarios/b2c/authorization",
-    "/get-started/architecture-scenarios/business-to-consumer/branding": "/architecture-scenarios/b2c/branding",
-    "/get-started/architecture-scenarios/business-to-consumer/deployment": "/architecture-scenarios/b2c/deployment",
-    "/get-started/architecture-scenarios/business-to-consumer/launch": "/architecture-scenarios/b2c/launch",
-    "/get-started/architecture-scenarios/business-to-consumer/launch/compliance-readiness": "/architecture-scenarios/b2c/launch/compliance-readiness",
-    "/get-started/architecture-scenarios/business-to-consumer/launch/launch-day": "/architecture-scenarios/b2c/launch/launch-day",
-    "/get-started/architecture-scenarios/business-to-consumer/launch/operations-readiness": "/architecture-scenarios/b2c/launch/operations-readiness",
-    "/get-started/architecture-scenarios/business-to-consumer/launch/support-readiness": "/architecture-scenarios/b2c/launch/support-readiness",
-    "/get-started/architecture-scenarios/business-to-consumer/launch/tenant-check": "/architecture-scenarios/b2c/launch/tenant-check",
-    "/get-started/architecture-scenarios/business-to-consumer/launch/testing": "/architecture-scenarios/b2c/launch/testing",
-    "/get-started/architecture-scenarios/business-to-consumer/logout": "/architecture-scenarios/b2c/logout",
-    "/get-started/architecture-scenarios/business-to-consumer/operations": "/architecture-scenarios/b2c/operations",
-    "/get-started/architecture-scenarios/business-to-consumer/profile-management": "/architecture-scenarios/b2c/profile-management",
-    "/get-started/architecture-scenarios/business-to-consumer/provisioning": "/architecture-scenarios/b2c/provisioning",
-    "/get-started/architecture-scenarios/business-to-consumer/quality-assurance": "/architecture-scenarios/b2c/quality-assurance",
-    "/get-started/architecture-scenarios/checklists": "/architecture-scenarios/checklists",
-    "/get-started/architecture-scenarios/implementation-resources": "/architecture-scenarios/implementation-resources",
-    "/get-started/architecture-scenarios/mobile-api": "/architecture-scenarios/mobile-api",
-    "/get-started/architecture-scenarios/mobile-api/api-implementation-nodejs": "/architecture-scenarios/mobile-api/api-implementation-nodejs",
-    "/get-started/architecture-scenarios/mobile-api/mobile-implementation-android": "/architecture-scenarios/mobile-api/mobile-implementation-android",
-    "/get-started/architecture-scenarios/mobile-api/part-1": "/architecture-scenarios/mobile-api/part-1",
-    "/get-started/architecture-scenarios/mobile-api/part-2": "/architecture-scenarios/mobile-api/part-2",
-    "/get-started/architecture-scenarios/mobile-api/part-3": "/architecture-scenarios/mobile-api/part-3",
-    "/get-started/architecture-scenarios/mobile-api/part-4": "/architecture-scenarios/mobile-api/part-4",
-    "/get-started/architecture-scenarios/multiple-organization-architecture": "/architecture-scenarios/multiple-organization-architecture",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/multiple-idp-orgs": "/architecture-scenarios/multiple-organization-architecture/multiple-idp-orgs",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/authentication": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/authentication",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/authorization": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/authorization",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/branding": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/branding",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/logout": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/logout",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/profile-management": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/profile-management",
-    "/get-started/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/provisioning": "/architecture-scenarios/multiple-organization-architecture/single-identity-provider-organizations/provisioning",
-    "/get-started/architecture-scenarios/server-application-api": "/architecture-scenarios/server-api",
-    "/get-started/architecture-scenarios/server-application-api/api-implementation-nodejs": "/architecture-scenarios/server-api/api-implementation-nodejs",
-    "/get-started/architecture-scenarios/server-application-api/cron-implementation-python": "/architecture-scenarios/server-api/cron-implementation-python",
-    "/get-started/architecture-scenarios/server-application-api/part-1": "/architecture-scenarios/server-api/part-1",
-    "/get-started/architecture-scenarios/server-application-api/part-2": "/architecture-scenarios/server-api/part-2",
-    "/get-started/architecture-scenarios/server-application-api/part-3": "/architecture-scenarios/server-api/part-3",
-    "/get-started/architecture-scenarios/server-application-api/part-4": "/architecture-scenarios/server-api/part-4",
-    "/get-started/architecture-scenarios/spa-api": "/architecture-scenarios/spa-api",
-    "/get-started/architecture-scenarios/spa-api/api-implementation-nodejs": "/architecture-scenarios/spa-api/api-implementation-nodejs",
-    "/get-started/architecture-scenarios/spa-api/part-1": "/architecture-scenarios/spa-api/part-1",
-    "/get-started/architecture-scenarios/spa-api/part-2": "/architecture-scenarios/spa-api/part-2",
-    "/get-started/architecture-scenarios/spa-api/part-3": "/architecture-scenarios/spa-api/part-3",
-    "/get-started/architecture-scenarios/spa-api/part-4": "/architecture-scenarios/spa-api/part-4",
-    "/get-started/architecture-scenarios/spa-api/spa-implementation-angular2": "/architecture-scenarios/spa-api/spa-implementation-angular2",
-    "/get-started/architecture-scenarios/sso-for-regular-web-apps": "/architecture-scenarios/web-app-sso",
-    "/get-started/architecture-scenarios/sso-for-regular-web-apps/implementation-aspnetcore": "/architecture-scenarios/web-app-sso/implementation-aspnetcore",
-    "/get-started/architecture-scenarios/sso-for-regular-web-apps/part-1": "/architecture-scenarios/web-app-sso/part-1",
-    "/get-started/architecture-scenarios/sso-for-regular-web-apps/part-2": "/architecture-scenarios/web-app-sso/part-2",
-    "/get-started/architecture-scenarios/sso-for-regular-web-apps/part-3": "/architecture-scenarios/web-app-sso/part-3",
-    "/get-started/architecture-scenarios/sso-for-regular-web-apps/part-4": "/architecture-scenarios/web-app-sso/part-4",
-    "/get-started/auth-for-genai": "/auth-for-genai",
-    "/get-started/auth0-guide": "/auth0-guide",
-    "/get-started/auth0-overview/create-applications": "/get-started/create-apps",
-    "/get-started/auth0-overview/create-applications/configure-an-identity-provider-in-access-gateway": "/get-started/create-apps/configure-an-identity-provider-in-access-gateway",
-    "/get-started/auth0-overview/create-applications/machine-to-machine-apps": "/get-started/create-apps/machine-to-machine-apps",
-    "/get-started/auth0-overview/create-applications/native-apps": "/get-started/create-apps/native-apps",
-    "/get-started/auth0-overview/create-applications/regular-web-apps": "/get-started/create-apps/regular-web-apps",
-    "/get-started/auth0-overview/create-applications/single-page-web-apps": "/get-started/create-apps/single-page-web-apps",
-    "/get-started/auth0-overview/create-tenants": "/get-started/create-tenants",
-    "/get-started/auth0-overview/create-tenants/child-tenants": "/get-started/create-tenants/child-tenants",
-    "/get-started/auth0-overview/create-tenants/create-multiple-tenants": "/get-started/create-tenants/create-multiple-tenants",
-    "/get-started/auth0-overview/create-tenants/multi-tenant-apps-best-practices": "/get-started/create-tenants/multi-tenant-apps-best-practices",
-    "/get-started/auth0-overview/create-tenants/set-up-multiple-environments": "/get-started/create-tenants/set-up-multiple-environments",
-    "/get-started/auth0-overview/dashboard": "/get-started/dashboard",
-    "/get-started/auth0-overview/dashboard/activity": "/get-started/dashboard/activity",
-    "/get-started/auth0-overview/set-up-apis": "/get-started/set-up-apis",
-    "/get-started/auth0-teams": "/auth0-teams",
-    "/get-started/auth0-teams/configure-security-policies": "/configure-security-policies",
-    "/get-started/auth0-teams/quarterly-snapshot": "/quarterly-snapshot",
-    "/get-started/auth0-teams/team-activity": "/team-activity",
-    "/get-started/auth0-teams/team-member-management": "/auth0-teams/team-member-management",
-    "/get-started/auth0-teams/tenant-management": "/auth0-teams/tenant-management",
-    "/get-started/auth0-teams/tenant-member-management": "/auth0-teams/tenant-member-management",
-    "/get-started/auth0-teams/troubleshoot-teams": "/auth0-teams/troubleshoot-teams",
-    "/get-started/authentication-and-authorization-flow": "/login/flows",
-    "/get-started/authentication-and-authorization-flow/authenticate-with-mtls": "/authenticate-with-mtls",
-    "/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt": "/authenticate-with-private-key-jwt",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow": "/login/flows/authorization-code-flow",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce": "/login/flows/authorization-code-flow-with-proof-key-for-code-exchange-pkce",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce/add-login-using-the-authorization-code-flow-with-pkce": "/login/authentication/add-login-using-the-authorization-code-flow-with-pkce",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce/call-your-api-using-the-authorization-code-flow-with-pkce": "/login/flows/call-your-api-using-the-authorization-code-flow-with-pkce",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow/add-login-auth-code-flow": "/login/authentication/add-login-auth-code-flow",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-jar": "/authorization-code-flow-with-jar",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-par": "/authorization-code-flow-with-par",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-par-and-jar": "/authorization-code-flow-with-par-and-jar",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-rar": "/authorization-code-flow-with-rar",
-    "/get-started/authentication-and-authorization-flow/authorization-code-flow/call-your-api-using-the-authorization-code-flow": "/login/flows/call-your-api-using-the-authorization-code-flow",
-    "/get-started/authentication-and-authorization-flow/client-credentials-exchange": "/client-credentials-exchange",
-    "/get-started/authentication-and-authorization-flow/client-credentials-flow": "/login/flows/client-credentials-flow",
-    "/get-started/authentication-and-authorization-flow/client-credentials-flow/call-your-api-using-the-client-credentials-flow": "/login/flows/call-your-api-using-the-client-credentials-flow",
-    "/get-started/authentication-and-authorization-flow/client-credentials-flow/customize-tokens-using-hooks-with-client-credentials-flow": "/login/flows/customize-tokens-using-hooks-with-client-credentials-flow",
-    "/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow": "/client-initiated-backchannel-authentication-flow",
-    "/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow/user-authentication-with-ciba": "/user-authentication-with-ciba",
-    "/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow/user-authorization-with-ciba": "/user-authorization-with-ciba",
-    "/get-started/authentication-and-authorization-flow/device-authorization-flow": "/login/flows/device-authorization-flow",
-    "/get-started/authentication-and-authorization-flow/device-authorization-flow/call-your-api-using-the-device-authorization-flow": "/login/flows/call-your-api-using-the-device-authorization-flow",
-    "/get-started/authentication-and-authorization-flow/hybrid-flow": "/login/flows/hybrid-flow",
-    "/get-started/authentication-and-authorization-flow/hybrid-flow/call-api-hybrid-flow": "/login/flows/call-api-hybrid-flow",
-    "/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post": "/login/flows/implicit-flow-with-form-post",
-    "/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/add-login-using-the-implicit-flow-with-form-post": "/login/authentication/add-login-using-the-implicit-flow-with-form-post",
-    "/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/mitigate-replay-attacks-when-using-the-implicit-flow": "/login/flows/mitigate-replay-attacks-when-using-the-implicit-flow",
-    "/get-started/authentication-and-authorization-flow/resource-owner-password-flow": "/login/flows/resource-owner-password-flow",
-    "/get-started/authentication-and-authorization-flow/resource-owner-password-flow/avoid-common-issues-with-resource-owner-password-flow-and-attack-protection": "/login/flows/avoid-common-issues-with-resource-owner-password-flow-and-attack-protection",
-    "/get-started/authentication-and-authorization-flow/resource-owner-password-flow/call-your-api-using-resource-owner-password-flow": "/login/flows/call-your-api-using-resource-owner-password-flow",
-    "/get-started/authentication-and-authorization-flow/which-oauth-2-0-flow-should-i-use": "/login/flows/which-oauth-2-0-flow-should-i-use",
-    "/get-started/dashboard-profile": "/dashboard-profile",
-    "/get-started/dashboard-profile/auth0-dashboard-login-session-management": "/auth0-dashboard-login-session-management",
-    "/get-started/dashboard-profile/light-and-dark-themes": "/light-and-dark-themes",
-    "/get-started/identity-fundamentals": "/identity-fundamentals",
-    "/get-started/identity-fundamentals/authentication-and-authorization": "/get-started/authentication-and-authorization",
-    "/get-started/identity-fundamentals/identity-and-access-management": "/identity-fundamentals/identity-and-access-management",
-    "/get-started/identity-fundamentals/introduction-to-auth0": "/introduction-to-auth0",
-    "/get-started/manage-dashboard-access": "/manage-dashboard-access",
-    "/get-started/manage-dashboard-access/add-change-remove-mfa": "/manage-dashboard-access/add-change-remove-mfa",
-    "/get-started/manage-dashboard-access/add-change-remove-mfa/add-mfa": "/manage-dashboard-access/add-change-remove-mfa/add-mfa",
-    "/get-started/manage-dashboard-access/add-change-remove-mfa/remove-or-change-dashboard-multi-factor-authentication": "/manage-dashboard-access/add-change-remove-mfa/remove-or-change-dashboard-multi-factor-authentication",
-    "/get-started/manage-dashboard-access/add-dashboard-users": "/manage-dashboard-access/add-dashboard-users",
-    "/get-started/manage-dashboard-access/configure-single-sign-on-for-auth0-dashboard": "/configure-single-sign-on-for-auth0-dashboard",
-    "/get-started/manage-dashboard-access/edit-dashboard-users": "/manage-dashboard-access/edit-dashboard-users",
-    "/get-started/manage-dashboard-access/feature-access-by-role": "/manage-dashboard-access/feature-access-by-role",
-    "/get-started/manage-dashboard-access/remove-dashboard-users": "/manage-dashboard-access/remove-dashboard-users",
-    "/get-started/manage-dashboard-access/support-center-users": "/manage-dashboard-access/feature-access-by-role",
-    "/get-started/manage-dashboard-access/update-dashboard-user-email": "/manage-dashboard-access/update-dashboard-user-email",
-    "/get-started/onboarding": "/onboarding",
-    "/get-started/onboarding/self-service-m2m": "/onboarding/self-service-m2m",
-    "/get-started/professional-services": "/professional-services",
-    "/get-started/professional-services/discover-design": "/professional-services/discover-design",
-    "/get-started/professional-services/implement": "/professional-services/implement",
-    "/get-started/professional-services/maintain-improve": "/professional-services/maintain-improve",
-    "/get-started/tenant-settings": "/tenant-settings",
-    "/get-started/tenant-settings/configure-device-user-code-settings": "/tenant-settings/configure-device-user-code-settings",
-    "/get-started/tenant-settings/enable-sso-for-legacy-tenants": "/tenant-settings/enable-sso-for-legacy-tenants",
-    "/get-started/tenant-settings/find-your-tenant-name-or-tenant-id": "/find-your-tenant-name-or-tenant-id",
-    "/get-started/tenant-settings/signing-keys": "/tenant-settings/signing-keys",
-    "/get-started/tenant-settings/signing-keys/customer-signing-keys": "/customer-signing-keys",
-    "/get-started/tenant-settings/signing-keys/revoke-signing-keys": "/tenant-settings/signing-keys/revoke-signing-keys",
-    "/get-started/tenant-settings/signing-keys/rotate-signing-keys": "/tenant-settings/signing-keys/rotate-signing-keys",
-    "/get-started/tenant-settings/signing-keys/view-signing-certificates": "/tenant-settings/signing-keys/view-signing-certificates",
-    "/lock-android-custom-fields-at-signup": "/libraries/lock-android/lock-android-custom-fields-at-signup",
-    "/lock-swift-customization": "/libraries/lock-swift/lock-swift-customization",
-    "/lock-swift-logging": "/libraries/lock-swift/lock-swift-logging",
-    "/lock-swift-passwordless": "/libraries/lock-swift/lock-swift-passwordless",
-    "/manage-users": "/users",
-    "/manage-users/access-control": "/access-control",
-    "/manage-users/access-control/authorization-core-vs-authorization-extension": "/rbac/authorization-core-vs-authorization-extension",
-    "/manage-users/access-control/authorization-policies": "/authorization-policies",
-    "/manage-users/access-control/configure-core-rbac": "/rbac/auth-core-features",
-    "/manage-users/access-control/configure-core-rbac/enable-role-based-access-control-for-apis": "/apis/enable-role-based-access-control-for-apis",
-    "/manage-users/access-control/configure-core-rbac/manage-permissions": "/rbac/manage-permissions",
-    "/manage-users/access-control/configure-core-rbac/rbac-users": "/rbac/rbac-users",
-    "/manage-users/access-control/configure-core-rbac/rbac-users/assign-permissions-to-users": "/rbac/rbac-users/assign-permissions-to-users",
-    "/manage-users/access-control/configure-core-rbac/rbac-users/assign-roles-to-users": "/rbac/rbac-users/assign-roles-to-users",
-    "/manage-users/access-control/configure-core-rbac/rbac-users/remove-permissions-from-users": "/rbac/rbac-users/remove-permissions-from-users",
-    "/manage-users/access-control/configure-core-rbac/rbac-users/remove-roles-from-users": "/rbac/rbac-users/remove-roles-from-users",
-    "/manage-users/access-control/configure-core-rbac/rbac-users/view-user-permissions": "/rbac/rbac-users/view-user-permissions",
-    "/manage-users/access-control/configure-core-rbac/rbac-users/view-user-roles": "/rbac/rbac-users/view-user-roles",
-    "/manage-users/access-control/configure-core-rbac/roles": "/rbac/roles",
-    "/manage-users/access-control/configure-core-rbac/roles/add-permissions-to-roles": "/rbac/roles/add-permissions-to-roles",
-    "/manage-users/access-control/configure-core-rbac/roles/create-roles": "/rbac/roles/create-roles",
-    "/manage-users/access-control/configure-core-rbac/roles/delete-roles": "/rbac/roles/delete-roles",
-    "/manage-users/access-control/configure-core-rbac/roles/edit-role-definitions": "/rbac/roles/edit-role-definitions",
-    "/manage-users/access-control/configure-core-rbac/roles/remove-permissions-from-roles": "/rbac/roles/remove-permissions-from-roles",
-    "/manage-users/access-control/configure-core-rbac/roles/view-role-permissions": "/rbac/roles/view-role-permissions",
-    "/manage-users/access-control/configure-core-rbac/roles/view-users-assigned-to-roles": "/rbac/roles/view-users-assigned-to-roles",
-    "/manage-users/access-control/rbac": "/rbac",
-    "/manage-users/access-control/rules-for-authorization-policies": "/authorization-policies/rules-for-authorization-policies",
-    "/manage-users/access-control/sample-use-cases-actions-with-authorization": "/access-control/sample-use-cases-actions-with-authorization",
-    "/manage-users/access-control/sample-use-cases-role-based-access-control": "/rbac/sample-use-cases-role-based-access-control",
-    "/manage-users/access-control/sample-use-cases-rules-with-authorization": "/authorization-policies/sample-use-cases-rules-with-authorization",
-    "/manage-users/cookies": "/users/cookies",
-    "/manage-users/cookies/authentication-api-cookies": "/users/cookies/authentication-api-cookies",
-    "/manage-users/cookies/samesite-cookie-attribute-changes": "/users/cookies/samesite-cookie-attribute-changes",
-    "/manage-users/cookies/spa-authenticate-with-cookies": "/users/cookies/spa-authenticate-with-cookies",
-    "/manage-users/my-account-api": "/my-account-api",
-    "/manage-users/organizations": "/organizations",
-    "/manage-users/organizations/configure-organizations": "/organizations/configure-organizations",
-    "/manage-users/organizations/configure-organizations/add-member-roles": "/organizations/add-member-roles",
-    "/manage-users/organizations/configure-organizations/assign-members": "/organizations/assign-members",
-    "/manage-users/organizations/configure-organizations/create-organizations": "/organizations/create-organizations",
-    "/manage-users/organizations/configure-organizations/define-organization-behavior": "/organizations/define-organization-behavior",
-    "/manage-users/organizations/configure-organizations/delete-organizations": "/organizations/delete-organizations",
-    "/manage-users/organizations/configure-organizations/disable-connections": "/organizations/disable-connections",
-    "/manage-users/organizations/configure-organizations/enable-connections": "/organizations/enable-connections",
-    "/manage-users/organizations/configure-organizations/grant-just-in-time-membership": "/organizations/grant-just-in-time-membership",
-    "/manage-users/organizations/configure-organizations/invite-members": "/organizations/invite-members",
-    "/manage-users/organizations/configure-organizations/remove-member-roles": "/organizations/remove-member-roles",
-    "/manage-users/organizations/configure-organizations/remove-members": "/organizations/remove-members",
-    "/manage-users/organizations/configure-organizations/retrieve-connections": "/organizations/retrieve-connections",
-    "/manage-users/organizations/configure-organizations/retrieve-member-roles": "/organizations/retrieve-member-roles",
-    "/manage-users/organizations/configure-organizations/retrieve-members": "/organizations/retrieve-members",
-    "/manage-users/organizations/configure-organizations/retrieve-organizations": "/organizations/retrieve-organizations",
-    "/manage-users/organizations/configure-organizations/retrieve-user-membership": "/organizations/retrieve-user-membership",
-    "/manage-users/organizations/configure-organizations/search-for-organizations": "/organizations/search-for-organizations",
-    "/manage-users/organizations/configure-organizations/search-organization-members": "/organizations/configure-organizations/search-organization-members",
-    "/manage-users/organizations/configure-organizations/send-membership-invitations": "/organizations/send-membership-invitations",
-    "/manage-users/organizations/configure-organizations/use-org-name-authentication-api": "/use-org-name-authentication-api",
-    "/manage-users/organizations/create-first-organization": "/organizations/create-first-organization",
-    "/manage-users/organizations/custom-development": "/organizations/custom-development",
-    "/manage-users/organizations/login-flows-for-organizations": "/signup-and-login-triggers/login-trigger/login-flows-for-organizations",
-    "/manage-users/organizations/organizations-for-m2m-applications": "/machine-to-machine-m2m-access-for-organizations",
-    "/manage-users/organizations/organizations-for-m2m-applications/audit-m2m-access": "/audit-m2m-access",
-    "/manage-users/organizations/organizations-for-m2m-applications/authorize-m2m-access": "/authorize-m2m-access",
-    "/manage-users/organizations/organizations-for-m2m-applications/configure-your-application-for-m2m-access": "/configure-your-application-for-m2m-access",
-    "/manage-users/organizations/organizations-for-m2m-applications/revoke-m2m-access": "/revoke-m2m-access",
-    "/manage-users/organizations/organizations-overview": "/organizations/organizations-overview",
-    "/manage-users/organizations/using-tokens": "/organizations/using-tokens",
-    "/manage-users/sessions": "/users/sessions",
-    "/manage-users/sessions/configure-session-lifetime-settings": "/users/sessions/configure-session-lifetime-settings",
-    "/manage-users/sessions/manage-multi-site-sessions": "/users/sessions/manage-multi-site-sessions",
-    "/manage-users/sessions/manage-sessions-actions": "/manage-sessions-actions",
-    "/manage-users/sessions/manage-user-sessions-with-auth0-management-api": "/manage-user-sessions-with-auth0-management-api",
-    "/manage-users/sessions/non-persistent-sessions": "/users/sessions/non-persistent-sessions",
-    "/manage-users/sessions/session-layers": "/users/sessions/session-layers",
-    "/manage-users/sessions/session-lifetime-limits": "/users/sessions/session-lifetime-limits",
-    "/manage-users/user-accounts": "/user-accounts",
-    "/manage-users/user-accounts/block-and-unblock-users": "/users/block-and-unblock-users",
-    "/manage-users/user-accounts/change-user-picture": "/users/change-user-picture",
-    "/manage-users/user-accounts/create-users": "/users/create-users",
-    "/manage-users/user-accounts/delete-users": "/users/delete-users",
-    "/manage-users/user-accounts/deny-api-access": "/users/deny-api-access",
-    "/manage-users/user-accounts/get-user-information-on-unbounce-landing-pages": "/users/get-user-information-on-unbounce-landing-pages",
-    "/manage-users/user-accounts/identify-users": "/users/identify-users",
-    "/manage-users/user-accounts/manage-user-access-to-applications": "/users/manage-user-access-to-applications",
-    "/manage-users/user-accounts/manage-users-using-the-dashboard": "/users/manage-users-using-the-dashboard",
-    "/manage-users/user-accounts/manage-users-using-the-management-api": "/users/manage-users-using-the-management-api",
-    "/manage-users/user-accounts/metadata": "/users/metadata",
-    "/manage-users/user-accounts/metadata/configure-application-metadata": "/applications/configure-application-metadata",
-    "/manage-users/user-accounts/metadata/manage-metadata-api": "/users/metadata/manage-metadata-api",
-    "/manage-users/user-accounts/metadata/manage-metadata-lock": "/users/metadata/manage-metadata-lock",
-    "/manage-users/user-accounts/metadata/manage-metadata-rules": "/users/metadata/manage-metadata-rules",
-    "/manage-users/user-accounts/metadata/manage-user-metadata": "/signup-and-login-triggers/login-trigger/manage-user-metadata",
-    "/manage-users/user-accounts/metadata/metadata-fields-data": "/users/metadata/metadata-fields-data",
-    "/manage-users/user-accounts/resend-verification-emails": "/resend-verification-emails",
-    "/manage-users/user-accounts/unlink-devices-from-users": "/users/unlink-devices-from-users",
-    "/manage-users/user-accounts/user-account-linking": "/users/user-account-linking",
-    "/manage-users/user-accounts/user-account-linking/link-user-accounts": "/users/user-account-linking/link-user-accounts",
-    "/manage-users/user-accounts/user-account-linking/suggested-account-linking-server-side-implementation": "/users/user-account-linking/suggested-account-linking-server-side-implementation",
-    "/manage-users/user-accounts/user-account-linking/unlink-user-accounts": "/users/user-account-linking/unlink-user-accounts",
-    "/manage-users/user-accounts/user-account-linking/user-initiated-account-linking-client-side-implementation": "/users/user-account-linking/user-initiated-account-linking-client-side-implementation",
-    "/manage-users/user-accounts/user-profiles": "/users/user-profiles",
-    "/manage-users/user-accounts/user-profiles/configure-connection-sync-with-auth0": "/users/user-profiles/configure-connection-sync-with-auth0",
-    "/manage-users/user-accounts/user-profiles/normalized-user-profile-schema": "/users/user-profiles/normalized-user-profile-schema",
-    "/manage-users/user-accounts/user-profiles/normalized-user-profiles": "/users/user-profiles/normalized-user-profiles",
-    "/manage-users/user-accounts/user-profiles/progressive-profiling": "/users/user-profiles/progressive-profiling",
-    "/manage-users/user-accounts/user-profiles/root-attributes": "/users/user-profiles/root-attributes",
-    "/manage-users/user-accounts/user-profiles/root-attributes/set-root-attributes-during-user-import": "/users/user-profiles/root-attributes/set-root-attributes-during-user-import",
-    "/manage-users/user-accounts/user-profiles/root-attributes/set-root-attributes-during-user-sign-up": "/users/user-profiles/root-attributes/set-root-attributes-during-user-sign-up",
-    "/manage-users/user-accounts/user-profiles/root-attributes/update-root-attributes-for-users": "/users/user-profiles/root-attributes/update-root-attributes-for-users",
-    "/manage-users/user-accounts/user-profiles/sample-user-profiles": "/users/user-profiles/sample-user-profiles",
-    "/manage-users/user-accounts/user-profiles/update-user-profiles-using-your-database": "/users/user-profiles/update-user-profiles-using-your-database",
-    "/manage-users/user-accounts/user-profiles/user-profile-structure": "/users/user-profiles/user-profile-structure",
-    "/manage-users/user-accounts/user-profiles/verified-email-usage": "/users/user-profiles/verified-email-usage",
-    "/manage-users/user-accounts/verify-emails": "/users/verify-emails",
-    "/manage-users/user-accounts/view-user-details": "/users/view-user-details",
-    "/manage-users/user-migration": "/users/import-and-export-users",
-    "/manage-users/user-migration/bulk-user-exports": "/users/import-and-export-users/bulk-user-exports",
-    "/manage-users/user-migration/bulk-user-import-database-schema-and-examples": "/users/import-and-export-users/bulk-user-import-database-schema-and-examples",
-    "/manage-users/user-migration/bulk-user-import-export": "/users/import-and-export-users/bulk-user-import-export",
-    "/manage-users/user-migration/bulk-user-imports": "/users/import-and-export-users/bulk-user-imports",
-    "/manage-users/user-migration/configure-automatic-migration-from-your-database": "/users/import-and-export-users/configure-automatic-migration-from-your-database",
-    "/manage-users/user-migration/migrate-users-from-amazon-web-services": "/users/import-and-export-users/migrate-users-from-amazon-web-services",
-    "/manage-users/user-migration/migrate-users-from-azure": "/users/import-and-export-users/migrate-users-from-azure",
-    "/manage-users/user-migration/user-import-export-extension": "/extensions/user-import-export-extension",
-    "/manage-users/user-migration/user-migration-scenarios": "/users/import-and-export-users/user-migration-scenarios",
-    "/manage-users/user-search": "/users/user-search",
-    "/manage-users/user-search/retrieve-users-with-get-users-by-email-endpoint": "/users/user-search/retrieve-users-with-get-users-by-email-endpoint",
-    "/manage-users/user-search/retrieve-users-with-get-users-by-id-endpoint": "/users/user-search/retrieve-users-with-get-users-by-id-endpoint",
-    "/manage-users/user-search/retrieve-users-with-get-users-endpoint": "/users/user-search/retrieve-users-with-get-users-endpoint",
-    "/manage-users/user-search/sort-search-results": "/users/user-search/sort-search-results",
-    "/manage-users/user-search/user-search-best-practices": "/users/user-search/user-search-best-practices",
-    "/manage-users/user-search/user-search-query-syntax": "/users/user-search/user-search-query-syntax",
-    "/manage-users/user-search/view-search-results-by-page": "/users/user-search/view-search-results-by-page",
-    "/microsites/manage-users/define-maintain-custom-user-data": "/users/metadata",
-    "/migrate-private-cloud-custom-domains": "/not-found/73b5vuie7u1mtL0DLQac7K/migrate-private-cloud-custom-domains",
-    "/quickstart/backend/aspnet-core-webapi/_index": "/aspnet-core-webapi",
-    "/quickstart/backend/aspnet-core-webapi/interactive": "/aspnet-core-webapi",
-    "/quickstart/backend/django/_index": "/django-api",
-    "/quickstart/backend/django/interactive": "/django-api",
-    "/quickstart/backend/golang/_index": "/golang-api",
-    "/quickstart/backend/golang/interactive": "/golang-api",
-    "/quickstart/backend/java-spring-security5/_index": "/spring-boot-api",
-    "/quickstart/backend/java-spring-security5/interactive": "/spring-boot-api",
-    "/quickstart/backend/laravel/_index": "/laravel",
-    "/quickstart/backend/laravel/interactive": "/laravel",
-    "/quickstart/backend/nodejs/_index": "/express-js-api",
-    "/quickstart/backend/nodejs/interactive": "/express-js-api",
-    "/quickstart/backend/php/_index": "/php-api",
-    "/quickstart/backend/php/interactive": "/php-api",
-    "/quickstart/backend/python/_index": "/flask-api",
-    "/quickstart/backend/python/interactive": "/flask-api",
-    "/quickstart/backend/rails/_index": "/ruby-on-rails-api",
-    "/quickstart/backend/rails/interactive": "/ruby-on-rails-api",
-    "/quickstart/backend/webapi-owin/_index": "/webapi-owin",
-    "/quickstart/backend/webapi-owin/interactive": "/webapi-owin",
-    "/quickstart/native/android-facebook-login/": "/android-facebook-login",
-    "/quickstart/native/android-facebook-login/_index": "/android-facebook-login",
-    "/quickstart/native/android-facebook-login/interactive": "/android-facebook-login",
-    "/quickstart/native/android/_index": "/android",
-    "/quickstart/native/android/interactive": "/android",
-    "/quickstart/native/device/": "/login/flows/device-authorization-flow",
-    "/quickstart/native/device/_index": "/login/flows/device-authorization-flow",
-    "/quickstart/native/device/interactive": "/login/flows/device-authorization-flow",
-    "/quickstart/native/flutter/_index": "/flutter-web",
-    "/quickstart/native/flutter/interactive": "/flutter-web",
-    "/quickstart/native/ionic-angular/_index": "/ionic-capacitor-angular",
-    "/quickstart/native/ionic-angular/interactive": "/ionic-capacitor-angular",
-    "/quickstart/native/ionic-react/_index": "/ionic-capacitor-react",
-    "/quickstart/native/ionic-react/interactive": "/ionic-capacitor-react",
-    "/quickstart/native/ionic-vue/_index": "/ionic-vue",
-    "/quickstart/native/ionic-vue/interactive": "/ionic-vue",
-    "/quickstart/native/ios-swift/_index": "/ios-swift",
-    "/quickstart/native/ios-swift/interactive": "/ios-swift",
-    "/quickstart/native/maui/_index": "/maui",
-    "/quickstart/native/maui/interactive": "/maui",
-    "/quickstart/native/net-android-ios/_index": "/net-android-ios",
-    "/quickstart/native/net-android-ios/interactive": "/net-android-ios",
-    "/quickstart/native/react-native-expo/_index": "/expo",
-    "/quickstart/native/react-native-expo/interactive": "/expo",
-    "/quickstart/native/react-native/_index": "/react-native",
-    "/quickstart/native/react-native/interactive": "/react-native",
-    "/quickstart/native/windows-uwp-csharp/_index": "/add-login-to-your-uwp-application",
-    "/quickstart/native/windows-uwp-csharp/interactive": "/add-login-to-your-uwp-application",
-    "/quickstart/native/wpf-winforms/_index": "/wpf-winforms",
-    "/quickstart/native/wpf-winforms/interactive": "/wpf-winforms",
-    "/quickstart/spa/angular/_index": "/angular",
-    "/quickstart/spa/angular/interactive": "/angular",
-    "/quickstart/spa/flutter/_index": "/flutter-web",
-    "/quickstart/spa/flutter/interactive": "/flutter-web",
-    "/quickstart/spa/react/_index": "/react",
-    "/quickstart/spa/react/interactive": "/react",
-    "/quickstart/spa/vanillajs/_index": "/javascript",
-    "/quickstart/spa/vanillajs/interactive": "/javascript",
-    "/quickstart/spa/vuejs/_index": "/vue",
-    "/quickstart/spa/vuejs/interactive": "/vue",
-    "/quickstart/webapp/apache/": "/apache",
-    "/quickstart/webapp/apache/_index": "/apache",
-    "/quickstart/webapp/apache/interactive": "/apache",
-    "/quickstart/webapp/aspnet-core-blazor-server/_index": "/aspnet-core-blazor-server",
-    "/quickstart/webapp/aspnet-core-blazor-server/interactive": "/aspnet-core-blazor-server",
-    "/quickstart/webapp/aspnet-core/_index": "/asp-net-mvc",
-    "/quickstart/webapp/aspnet-core/interactive": "/asp-net-mvc",
-    "/quickstart/webapp/aspnet-owin/_index": "/aspnet-owin",
-    "/quickstart/webapp/aspnet-owin/interactive": "/aspnet-owin",
-    "/quickstart/webapp/django/_index": "/django",
-    "/quickstart/webapp/django/interactive": "/django",
-    "/quickstart/webapp/express/_index": "/express",
-    "/quickstart/webapp/express/interactive": "/express",
-    "/quickstart/webapp/golang/_index": "/go",
-    "/quickstart/webapp/golang/interactive": "/go",
-    "/quickstart/webapp/java-ee/_index": "/add-login-to-your-java-ee-web-application",
-    "/quickstart/webapp/java-ee/interactive": "/add-login-to-your-java-ee-web-application",
-    "/quickstart/webapp/java-spring-boot/_index": "/spring-web",
-    "/quickstart/webapp/java-spring-boot/interactive": "/spring-web",
-    "/quickstart/webapp/java/_index": "/java",
-    "/quickstart/webapp/java/interactive": "/java",
-    "/quickstart/webapp/nextjs/_index": "/next-js",
-    "/quickstart/webapp/nextjs/interactive": "/next-js",
-    "/quickstart/webapp/nginx-plus/": "/nginx-plus",
-    "/quickstart/webapp/nginx-plus/_index": "/nginx-plus",
-    "/quickstart/webapp/nginx-plus/interactive": "/nginx-plus",
-    "/quickstart/webapp/php/_index": "/php",
-    "/quickstart/webapp/php/interactive": "/php",
-    "/quickstart/webapp/python/_index": "/python",
-    "/quickstart/webapp/python/interactive": "/python",
-    "/quickstart/webapp/rails/_index": "/ruby-on-rails",
-    "/quickstart/webapp/rails/interactive": "/ruby-on-rails",
-    "/secure": "/security",
-    "/secure/application-credentials": "/application-credentials",
-    "/secure/application-credentials/generate-rsa-key-pair": "/generate-rsa-key-pair",
-    "/secure/attack-protection": "/attack-protection",
-    "/secure/attack-protection/bot-detection": "/attack-protection/bot-detection",
-    "/secure/attack-protection/bot-detection/bot-detection-custom-login-pages": "/attack-protection/bot-detection/bot-detection-custom-login-pages",
-    "/secure/attack-protection/bot-detection/bot-detection-native-apps": "/attack-protection/bot-detection/bot-detection-native-apps",
-    "/secure/attack-protection/bot-detection/bot-detection-passwordless-flows": "/attack-protection/bot-detection/bot-detection-passwordless-flows",
-    "/secure/attack-protection/bot-detection/configure-captcha": "/attack-protection/bot-detection/configure-captcha",
-    "/secure/attack-protection/breached-password-detection": "/attack-protection/breached-password-detection",
-    "/secure/attack-protection/brute-force-protection": "/attack-protection/brute-force-protection",
-    "/secure/attack-protection/playbooks": "/playbooks",
-    "/secure/attack-protection/playbooks/bot-detection-playbook": "/playbooks/bot-detection-playbook",
-    "/secure/attack-protection/playbooks/breached-password-playbook": "/playbooks/breached-password-playbook",
-    "/secure/attack-protection/playbooks/brute-force-protection-playbook": "/playbooks/brute-force-protection-playbook",
-    "/secure/attack-protection/playbooks/mfa-playbook": "/playbooks/mfa-playbook",
-    "/secure/attack-protection/state-parameters": "/attack-protection/state-parameters",
-    "/secure/attack-protection/suspicious-ip-throttling": "/attack-protection/suspicious-ip-throttling",
-    "/secure/attack-protection/view-attack-protection-events": "/attack-protection/view-attack-protection-events",
-    "/secure/continuous-session-protection": "/continuous-session-protection",
-    "/secure/data-privacy-and-compliance": "/compliance",
-    "/secure/data-privacy-and-compliance/data-processing": "/compliance/data-processing",
-    "/secure/data-privacy-and-compliance/gdpr": "/compliance/gdpr",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-conditions-for-consent": "/compliance/gdpr/gdpr-conditions-for-consent",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-data-minimization": "/compliance/gdpr/gdpr-data-minimization",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-data-portability": "/compliance/gdpr/gdpr-data-portability",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-protect-and-secure-user-data": "/compliance/gdpr/gdpr-protect-and-secure-user-data",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-right-to-access-correct-and-erase-data": "/compliance/gdpr/gdpr-right-to-access-correct-and-erase-data",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-track-consent-with-custom-ui": "/compliance/gdpr/gdpr-track-consent-with-custom-ui",
-    "/secure/data-privacy-and-compliance/gdpr/gdpr-track-consent-with-lock": "/compliance/gdpr/gdpr-track-consent-with-lock",
-    "/secure/highly-regulated-identity": "/highly-regulated-identity",
-    "/secure/highly-regulated-identity/customer-managed-keys": "/customer-managed-keys",
-    "/secure/highly-regulated-identity/customer-managed-keys/customer-managed-keys-dashboard": "/customer-managed-keys-dashboard",
-    "/secure/highly-regulated-identity/customer-managed-keys/customer-managed-keys-management-api": "/customer-managed-keys-management-api",
-    "/secure/highly-regulated-identity/transactional-authorization-with-authorization-code-flow": "/highly-regulated-identity/transactional-authorization-with-authorization-code-flow",
-    "/secure/mdl-verification": "/mdl-verification",
-    "/secure/mdl-verification/configure-mdl-verification-request": "/configure-mdl-verification-request",
-    "/secure/mdl-verification/create-mdl-api": "/create-mdl-api",
-    "/secure/mdl-verification/mdl-conditional-check": "/mdl-conditional-check",
-    "/secure/mdl-verification/mdl-verification-api": "/mdl-verification-api",
-    "/secure/multi-factor-authentication": "/mfa",
-    "/secure/multi-factor-authentication/adaptive-mfa": "/mfa/adaptive-mfa",
-    "/secure/multi-factor-authentication/adaptive-mfa/adaptive-mfa-log-events": "/mfa/adaptive-mfa/adaptive-mfa-log-events",
-    "/secure/multi-factor-authentication/adaptive-mfa/customize-adaptive-mfa": "/mfa/adaptive-mfa/customize-adaptive-mfa",
-    "/secure/multi-factor-authentication/adaptive-mfa/enable-adaptive-mfa": "/mfa/adaptive-mfa/enable-adaptive-mfa",
-    "/secure/multi-factor-authentication/auth0-guardian": "/mfa/auth0-guardian",
-    "/secure/multi-factor-authentication/auth0-guardian/guardian-for-android-sdk": "/mfa/auth0-guardian/guardian-for-android-sdk",
-    "/secure/multi-factor-authentication/auth0-guardian/guardian-for-ios-sdk": "/mfa/auth0-guardian/guardian-for-ios-sdk",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa": "/mfa/ropg-mfa",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa/challenge-with-recovery-codes": "/mfa/ropg-mfa/challenge-with-recovery-codes",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa/enroll-and-challenge-email-authenticators": "/mfa/ropg-mfa/enroll-and-challenge-email-authenticators",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa/enroll-and-challenge-otp-authenticators": "/mfa/ropg-mfa/enroll-and-challenge-otp-authenticators",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa/enroll-and-challenge-push-authenticators": "/mfa/ropg-mfa/enroll-and-challenge-push-authenticators",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa/enroll-challenge-sms-voice-authenticators": "/mfa/ropg-mfa/enroll-challenge-sms-voice-authenticators",
-    "/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa/import-user-mfa-authenticator-enrollments": "/mfa/ropg-mfa/import-user-mfa-authenticator-enrollments",
-    "/secure/multi-factor-authentication/configure-cisco-duo-for-mfa": "/mfa/mfa-factors/configure-cisco-duo-for-mfa",
-    "/secure/multi-factor-authentication/configure-recovery-codes-for-mfa": "/mfa/configure-recovery-codes-for-mfa",
-    "/secure/multi-factor-authentication/customize-mfa": "/mfa/customize-mfa-user-pages",
-    "/secure/multi-factor-authentication/customize-mfa/customize-mfa-classic-login": "/mfa/customize-mfa-user-pages/customize-mfa-classic-login",
-    "/secure/multi-factor-authentication/customize-mfa/customize-mfa-enrollments-universal-login": "/customize-mfa-enrollments-universal-login",
-    "/secure/multi-factor-authentication/customize-mfa/customize-mfa-selection-universal-login": "/customize-mfa-selection-universal-login",
-    "/secure/multi-factor-authentication/customize-mfa/mfa-theme-language-dictionary": "/mfa/customize-mfa-user-pages/mfa-theme-language-dictionary",
-    "/secure/multi-factor-authentication/customize-mfa/mfa-widget-theme-options": "/mfa/customize-mfa-user-pages/mfa-widget-theme-options",
-    "/secure/multi-factor-authentication/enable-mfa": "/mfa/enable-mfa",
-    "/secure/multi-factor-authentication/fido-authentication-with-webauthn": "/mfa/mfa-factors/fido-authentication-with-webauthn",
-    "/secure/multi-factor-authentication/fido-authentication-with-webauthn/configure-webauthn-device-biometrics-for-mfa": "/mfa/mfa-factors/fido-authentication-with-webauthn/configure-webauthn-device-biometrics-for-mfa",
-    "/secure/multi-factor-authentication/fido-authentication-with-webauthn/configure-webauthn-security-keys-for-mfa": "/mfa/mfa-factors/fido-authentication-with-webauthn/configure-webauthn-security-keys-for-mfa",
-    "/secure/multi-factor-authentication/manage-mfa-auth0-apis": "/manage-authentication-factors-with-auth0-apis",
-    "/secure/multi-factor-authentication/manage-mfa-auth0-apis/manage-authentication-methods-with-management-api": "/manage-authentication-factors-with-auth0-apis/manage-authentication-methods-with-management-api",
-    "/secure/multi-factor-authentication/manage-mfa-auth0-apis/manage-authenticator-factors-mfa-api": "/mfa/ropg-mfa/manage-authenticator-factors-mfa-api",
-    "/secure/multi-factor-authentication/multi-factor-authentication-developer-resources": "/mfa/mfa-developer-resources",
-    "/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/create-custom-enrollment-tickets": "/mfa/auth0-guardian/create-custom-enrollment-tickets",
-    "/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/guardian-error-code-reference": "/mfa/auth0-guardian/guardian-error-code-reference",
-    "/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/install-guardian-sdk": "/mfa/auth0-guardian/install-guardian-sdk",
-    "/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/mfa-api": "/mfa/mfa-developer-resources/mfa-api",
-    "/secure/multi-factor-authentication/multi-factor-authentication-factors": "/mfa/mfa-factors",
-    "/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-email-notifications-for-mfa": "/mfa/mfa-factors/configure-email-notifications-for-mfa",
-    "/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-otp-notifications-for-mfa": "/mfa/mfa-factors/configure-otp-notifications-for-mfa",
-    "/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa": "/mfa/mfa-factors/configure-push-notifications-for-mfa",
-    "/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-sms-voice-notifications-mfa": "/mfa/mfa-factors/configure-sms-voice-notifications-mfa",
-    "/secure/multi-factor-authentication/reset-user-mfa": "/mfa/reset-user-mfa",
-    "/secure/multi-factor-authentication/step-up-authentication": "/mfa/step-up-authentication",
-    "/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-apis": "/mfa/step-up-authentication/configure-step-up-authentication-for-apis",
-    "/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-web-apps": "/mfa/step-up-authentication/configure-step-up-authentication-for-web-apps",
-    "/secure/multi-factor-authentication/webauthn-as-mfa": "/mfa/webauthn-as-mfa",
-    "/secure/security-center": "/security-center",
-    "/secure/security-center/metrics": "/metrics",
-    "/secure/security-center/prioritized-log-streams": "/security-center/prioritized-log-streams",
-    "/secure/security-guidance": "/security-guidance",
-    "/secure/security-guidance/data-security": "/security/data-security",
-    "/secure/security-guidance/data-security/allowlist": "/security/data-security/allowlist",
-    "/secure/security-guidance/data-security/denylist": "/security/data-security/denylist",
-    "/secure/security-guidance/data-security/token-storage": "/security/data-security/token-storage",
-    "/secure/security-guidance/data-security/user-data-storage": "/security/data-security/user-data-storage",
-    "/secure/security-guidance/incident-response-using-logs": "/security/incident-response-using-logs",
-    "/secure/security-guidance/prevent-threats": "/security/prevent-threats",
-    "/secure/security-guidance/security-bulletins": "/security/security-bulletins",
-    "/secure/security-guidance/security-bulletins/2019-01-10-rules": "/security/security-bulletins/2019-01-10-rules",
-    "/secure/security-guidance/security-bulletins/2019-09-05-scopes": "/security/security-bulletins/2019-09-05-scopes",
-    "/secure/security-guidance/security-bulletins/2020-03-31-wpauth0": "/security/security-bulletins/2020-03-31-wpauth0",
-    "/secure/security-guidance/security-bulletins/2022-12-21-jsonwebtoken": "/2022-12-21-jsonwebtoken",
-    "/secure/security-guidance/security-bulletins/cve-2017-16897": "/security/security-bulletins/cve-2017-16897",
-    "/secure/security-guidance/security-bulletins/cve-2017-17068": "/security/security-bulletins/cve-2017-17068",
-    "/secure/security-guidance/security-bulletins/cve-2018-11537": "/security/security-bulletins/cve-2018-11537",
-    "/secure/security-guidance/security-bulletins/cve-2018-15121": "/security/security-bulletins/cve-2018-15121",
-    "/secure/security-guidance/security-bulletins/cve-2018-6873": "/security/security-bulletins/cve-2018-6873",
-    "/secure/security-guidance/security-bulletins/cve-2018-6874": "/security/security-bulletins/cve-2018-6874",
-    "/secure/security-guidance/security-bulletins/cve-2018-7307": "/security/security-bulletins/cve-2018-7307",
-    "/secure/security-guidance/security-bulletins/cve-2019-13483": "/security/security-bulletins/cve-2019-13483",
-    "/secure/security-guidance/security-bulletins/cve-2019-16929": "/security/security-bulletins/cve-2019-16929",
-    "/secure/security-guidance/security-bulletins/cve-2019-20173": "/security/security-bulletins/cve-2019-20173",
-    "/secure/security-guidance/security-bulletins/cve-2019-20174": "/security/security-bulletins/cve-2019-20174",
-    "/secure/security-guidance/security-bulletins/cve-2019-7644": "/security/security-bulletins/cve-2019-7644",
-    "/secure/security-guidance/security-bulletins/cve-2020-15084": "/security/security-bulletins/cve-2020-15084",
-    "/secure/security-guidance/security-bulletins/cve-2020-15119": "/security/security-bulletins/cve-2020-15119",
-    "/secure/security-guidance/security-bulletins/cve-2020-15125": "/security/security-bulletins/cve-2020-15125",
-    "/secure/security-guidance/security-bulletins/cve-2020-15240": "/security/security-bulletins/cve-2020-15240",
-    "/secure/security-guidance/security-bulletins/cve-2020-15259": "/security/security-bulletins/cve-2020-15259",
-    "/secure/security-guidance/security-bulletins/cve-2020-5263": "/security/security-bulletins/cve-2020-5263",
-    "/secure/security-guidance/security-bulletins/cve-2021-32641": "/security/security-bulletins/cve-2021-32641",
-    "/secure/security-guidance/security-bulletins/cve-2021-32702": "/security/security-bulletins/cve-2021-32702",
-    "/secure/security-guidance/security-bulletins/cve-2021-41246": "/security/security-bulletins/cve-2021-41246",
-    "/secure/security-guidance/security-bulletins/cve-2021-43812": "/security/security-bulletins/cve-2021-43812",
-    "/secure/security-guidance/security-bulletins/cve-2022-23505": "/cve-2022-23505",
-    "/secure/security-guidance/security-bulletins/cve-2022-24794": "/security/security-bulletins/cve-2022-24794",
-    "/secure/security-guidance/tips": "/security/tips",
-    "/secure/sender-constraining": "/sender-constraining",
-    "/secure/sender-constraining/configure-sender-constraining": "/configure-sender-constraining",
-    "/secure/sender-constraining/configure-sender-constraining/configure-resource-server-for-sender-constraining": "/configure-sender-constraining/configure-resource-server-for-sender-constraining",
-    "/secure/sender-constraining/demonstrating-proof-of-possession-dpop": "/demonstrating-proof-of-possession-dpop",
-    "/secure/sender-constraining/mtls-sender-constraining": "/mtls-sender-constraining",
-    "/secure/tenant-access-control-list": "/tenant-access-control-list",
-    "/secure/tenant-access-control-list/configure-rules": "/configure-rules",
-    "/secure/tenant-access-control-list/reference": "/reference",
-    "/secure/tenant-access-control-list/use-cases": "/use-cases",
-    "/secure/tokens": "/security/tokens",
-    "/secure/tokens/access-tokens": "/security/tokens/access-tokens",
-    "/secure/tokens/access-tokens/access-token-profiles": "/access-token-profiles",
-    "/secure/tokens/access-tokens/get-access-tokens": "/security/tokens/access-tokens/get-access-tokens",
-    "/secure/tokens/access-tokens/identity-provider-access-tokens": "/security/tokens/access-tokens/identity-provider-access-tokens",
-    "/secure/tokens/access-tokens/json-web-encryption": "/json-web-encryption",
-    "/secure/tokens/access-tokens/management-api-access-tokens": "/security/tokens/access-tokens/management-api-access-tokens",
-    "/secure/tokens/access-tokens/management-api-access-tokens/changes-in-auth0-management-apiv2-tokens": "/security/tokens/access-tokens/management-api-access-tokens/changes-in-auth0-management-apiv2-tokens",
-    "/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-production": "/security/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-production",
-    "/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-testing": "/security/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-testing",
-    "/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-tokens-for-single-page-applications": "/security/tokens/access-tokens/management-api-access-tokens/get-management-api-tokens-for-single-page-applications",
-    "/secure/tokens/access-tokens/update-access-token-lifetime": "/security/tokens/access-tokens/update-access-token-lifetime",
-    "/secure/tokens/access-tokens/use-access-tokens": "/security/tokens/access-tokens/use-access-tokens",
-    "/secure/tokens/access-tokens/validate-access-tokens": "/security/tokens/access-tokens/validate-access-tokens",
-    "/secure/tokens/delegation-tokens": "/security/tokens/delegation-tokens",
-    "/secure/tokens/id-tokens": "/security/tokens/id-tokens",
-    "/secure/tokens/id-tokens/get-id-tokens": "/security/tokens/id-tokens/get-id-tokens",
-    "/secure/tokens/id-tokens/id-token-structure": "/security/tokens/id-tokens/id-token-structure",
-    "/secure/tokens/id-tokens/update-id-token-lifetime": "/security/tokens/id-tokens/update-id-token-lifetime",
-    "/secure/tokens/id-tokens/validate-id-tokens": "/security/tokens/id-tokens/validate-id-tokens",
-    "/secure/tokens/json-web-tokens": "/security/tokens/json-web-tokens",
-    "/secure/tokens/json-web-tokens/create-custom-claims": "/security/tokens/json-web-tokens/create-custom-claims",
-    "/secure/tokens/json-web-tokens/json-web-key-set-properties": "/security/tokens/json-web-tokens/json-web-key-set-properties",
-    "/secure/tokens/json-web-tokens/json-web-key-sets": "/security/tokens/json-web-tokens/json-web-key-sets",
-    "/secure/tokens/json-web-tokens/json-web-token-claims": "/security/tokens/json-web-tokens/json-web-token-claims",
-    "/secure/tokens/json-web-tokens/json-web-token-structure": "/security/tokens/json-web-tokens/json-web-token-structure",
-    "/secure/tokens/json-web-tokens/locate-json-web-key-sets": "/security/tokens/json-web-tokens/locate-json-web-key-sets",
-    "/secure/tokens/json-web-tokens/validate-json-web-tokens": "/security/tokens/json-web-tokens/validate-json-web-tokens",
-    "/secure/tokens/manage-refresh-tokens-with-auth0-management-api": "/manage-refresh-tokens-with-auth0-management-api",
-    "/secure/tokens/refresh-tokens": "/security/tokens/refresh-tokens",
-    "/secure/tokens/refresh-tokens/configure-refresh-token-expiration": "/security/tokens/refresh-tokens/configure-refresh-token-expiration",
-    "/secure/tokens/refresh-tokens/configure-refresh-token-rotation": "/security/tokens/refresh-tokens/configure-refresh-token-rotation",
-    "/secure/tokens/refresh-tokens/disable-refresh-token-rotation": "/security/tokens/refresh-tokens/disable-refresh-token-rotation",
-    "/secure/tokens/refresh-tokens/get-refresh-tokens": "/security/tokens/refresh-tokens/get-refresh-tokens",
-    "/secure/tokens/refresh-tokens/manage-refresh-tokens-actions": "/manage-refresh-tokens-actions",
-    "/secure/tokens/refresh-tokens/multi-resource-refresh-token": "/multi-resource-refresh-token",
-    "/secure/tokens/refresh-tokens/multi-resource-refresh-token/configure-and-implement-multi-resource-refresh-token": "/configure-and-implement-multi-resource-refresh-token",
-    "/secure/tokens/refresh-tokens/refresh-token-rotation": "/security/tokens/refresh-tokens/refresh-token-rotation",
-    "/secure/tokens/refresh-tokens/revoke-refresh-tokens": "/security/tokens/refresh-tokens/revoke-refresh-tokens",
-    "/secure/tokens/refresh-tokens/use-refresh-token-rotation": "/security/tokens/refresh-tokens/use-refresh-token-rotation",
-    "/secure/tokens/refresh-tokens/use-refresh-tokens": "/security/tokens/refresh-tokens/use-refresh-tokens",
-    "/secure/tokens/revoke-tokens": "/security/tokens/revoke-tokens",
-    "/secure/tokens/token-best-practices": "/security/tokens/token-best-practices",
-    "/secure/tokens/token-vault": "/token-vault",
-    "/secure/tokens/token-vault/configure-token-vault": "/configure-token-vault",
-    "/troubleshoot/authentication-issues": "/troubleshoot/troubleshoot-authentication",
-    "/troubleshoot/authentication-issues/check-api-calls": "/troubleshoot/troubleshoot-authentication/check-api-calls",
-    "/troubleshoot/authentication-issues/check-login-and-logout-issues": "/troubleshoot/troubleshoot-authentication/check-login-and-logout-issues",
-    "/troubleshoot/authentication-issues/check-user-profiles": "/troubleshoot/troubleshoot-authentication/check-user-profiles",
-    "/troubleshoot/authentication-issues/renew-tokens-when-using-safari": "/troubleshoot/troubleshoot-authentication/renew-tokens-when-using-safari",
-    "/troubleshoot/authentication-issues/saml-errors": "/troubleshoot/troubleshoot-authentication/saml-errors",
-    "/troubleshoot/authentication-issues/self-change-password-errors": "/troubleshoot/troubleshoot-authentication/self-change-password-errors",
-    "/troubleshoot/authentication-issues/troubleshoot-authorization-extension": "/troubleshoot/troubleshoot-authentication/troubleshoot-authorization-extension",
-    "/troubleshoot/authentication-issues/troubleshoot-mfa-issues": "/troubleshoot/troubleshoot-authentication/troubleshoot-mfa-issues",
-    "/troubleshoot/authentication-issues/troubleshoot-rbac-authorization": "/troubleshoot/troubleshoot-authentication/troubleshoot-rbac-authorization",
-    "/troubleshoot/authentication-issues/troubleshoot-saml-configurations": "/troubleshoot/troubleshoot-authentication/troubleshoot-saml-configurations",
-    "/troubleshoot/basic-issues": "/troubleshoot/troubleshoot-basic",
-    "/troubleshoot/basic-issues/check-deprecation-errors": "/troubleshoot/troubleshoot-basic/check-deprecation-errors",
-    "/troubleshoot/basic-issues/check-error-messages": "/troubleshoot/troubleshoot-basic/check-error-messages",
-    "/troubleshoot/basic-issues/invalid-token-errors": "/troubleshoot/troubleshoot-basic/invalid-token-errors",
-    "/troubleshoot/basic-issues/password-change-redirects": "/troubleshoot/troubleshoot-basic/password-change-redirects",
-    "/troubleshoot/basic-issues/recover-administrative-access-to-a-tenant": "/recover-administrative-access-to-tenant",
-    "/troubleshoot/basic-issues/search-logs-for-deprecation-errors": "/troubleshoot/troubleshoot-basic/search-logs-for-deprecation-errors",
-    "/troubleshoot/basic-issues/verify-connections": "/troubleshoot/troubleshoot-basic/verify-connections",
-    "/troubleshoot/basic-issues/verify-domain": "/troubleshoot/troubleshoot-basic/verify-domain",
-    "/troubleshoot/basic-issues/verify-platform": "/troubleshoot/troubleshoot-basic/verify-platform",
-    "/troubleshoot/basic-issues/verify-rules": "/troubleshoot/troubleshoot-basic/verify-rules",
-    "/troubleshoot/customer-support": "/support",
-    "/troubleshoot/customer-support/auth0-enterprise-and-premier-support": "/auth0-enterprise-and-premier-support",
-    "/troubleshoot/customer-support/manage-subscriptions": "/support/manage-subscriptions",
-    "/troubleshoot/customer-support/manage-subscriptions/delete-or-reset-tenant": "/support/manage-subscriptions/delete-or-reset-tenant",
-    "/troubleshoot/customer-support/manage-subscriptions/downgrade-or-cancel-subscriptions": "/support/manage-subscriptions/downgrade-or-cancel-subscriptions",
-    "/troubleshoot/customer-support/manage-subscriptions/export-data": "/support/manage-subscriptions/export-data",
-    "/troubleshoot/customer-support/manage-subscriptions/monitor-subscription-usage": "/monitor-subscription-usage",
-    "/troubleshoot/customer-support/open-and-manage-support-tickets": "/support/open-and-manage-support-tickets",
-    "/troubleshoot/customer-support/operational-policies": "/support/policies",
-    "/troubleshoot/customer-support/operational-policies/billing-policy": "/support/policies/billing-policy",
-    "/troubleshoot/customer-support/operational-policies/change-freeze-policy": "/change-freeze-policy",
-    "/troubleshoot/customer-support/operational-policies/data-export-and-transfer-policy": "/support/policies/data-export-and-transfer-policy",
-    "/troubleshoot/customer-support/operational-policies/entity-limit-policy": "/support/policies/entity-limit-policy",
-    "/troubleshoot/customer-support/operational-policies/load-testing-policy": "/support/policies/load-testing-policy",
-    "/troubleshoot/customer-support/operational-policies/penetration-testing-policy": "/support/policies/penetration-testing-policy",
-    "/troubleshoot/customer-support/operational-policies/public-cloud-service-endpoints": "/support/policies/public-cloud-service-endpoints",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy": "/support/policies/rate-limit-policy",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/authentication-api-endpoint-rate-limits": "/support/policies/rate-limit-policy",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/database-connections-rate-limits": "/support/policies/rate-limit-policy",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/management-api-endpoint-rate-limits": "/support/policies/rate-limit-policy",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations": "/rate-limit-configurations",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/enterprise-public": "/enterprise-public",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/free-public": "/free-public",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/self-service-public": "/self-service-public",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-100-rps-private-cloud": "/tier-100-rps-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-10000-rps-private-cloud": "/rate-limit-configurations/tier-10000-rps-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-1500-rps-private-cloud": "/tier-1500-rps-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-20-development-private-cloud": "/tier-20-development-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-3000-rps-private-cloud": "/tier-3000-rps-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-500-rps-private-cloud": "/tier-500-rps-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-6000-rps-private-cloud": "/tier-6000-rps-private-cloud",
-    "/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-use-cases": "/rate-limit-use-cases",
-    "/troubleshoot/customer-support/product-support-matrix": "/support/product-support-matrix",
-    "/troubleshoot/customer-support/reset-account-passwords": "/support/reset-account-passwords",
-    "/troubleshoot/customer-support/responsible-disclosure-program-security-support-tickets": "/support/responsible-disclosure-program-security-support-tickets",
-    "/troubleshoot/customer-support/self-service-support": "/self-service-support",
-    "/troubleshoot/customer-support/services-level-descriptions": "/support/services-level-descriptions",
-    "/troubleshoot/customer-support/software-updates": "/support/software-updates",
-    "/troubleshoot/customer-support/support-channels": "/support/support-channels",
-    "/troubleshoot/customer-support/support-plans": "/support/support-plans",
-    "/troubleshoot/customer-support/update-billing-information": "/support/update-billing-information",
-    "/troubleshoot/customer-support/versioning-strategy": "/support/versioning-strategy",
-    "/troubleshoot/debugging-best-practices": "/not-found/70zpztJMDHy4q0bwO4Xzgn/debugging-best-practices",
-    "/troubleshoot/deploy-monitor-issues": "/deploy-and-monitor-issues",
-    "/troubleshoot/deploy-monitor-issues/troubleshoot-log-event-codes": "/troubleshoot-log-event-codes",
-    "/troubleshoot/error-handling-best-practices": "/not-found/70zpztJMDHy4q0bwO4Xzgn/error-handling-best-practices",
-    "/troubleshoot/general-usage-and-operations-best-practices": "/general-usage-and-operations-best-practices",
-    "/troubleshoot/integration-extensibility-issues": "/troubleshoot/troubleshoot-integration-and-extensibility",
-    "/troubleshoot/integration-extensibility-issues/troubleshoot-ad-ldap-connector": "/troubleshoot/troubleshoot-integration-and-extensibility/troubleshoot-ad-ldap-connector",
-    "/troubleshoot/integration-extensibility-issues/troubleshoot-custom-domains": "/troubleshoot/troubleshoot-integration-and-extensibility/troubleshoot-custom-domains",
-    "/troubleshoot/integration-extensibility-issues/troubleshoot-extensions": "/troubleshoot/troubleshoot-integration-and-extensibility/troubleshoot-extensions",
-    "/troubleshoot/integration-extensibility-issues/troubleshoot-the-deploy-cli-tool": "/troubleshoot/troubleshoot-integration-and-extensibility/troubleshoot-the-deploy-cli-tool",
-    "/troubleshoot/performance-best-practices": "/not-found/70zpztJMDHy4q0bwO4Xzgn/performance-best-practices",
-    "/troubleshoot/product-lifecycle": "/product-lifecycle",
-    "/troubleshoot/product-lifecycle/deprecations-and-migrations": "/product-lifecycle/deprecations-and-migrations",
-    "/troubleshoot/product-lifecycle/deprecations-and-migrations/logout-return-to": "/product-lifecycle/deprecations-and-migrations/logout-return-to",
-    "/troubleshoot/product-lifecycle/deprecations-and-migrations/migrate-nodejs-22": "/migrate-nodejs-22",
-    "/troubleshoot/product-lifecycle/migration-process": "/product-lifecycle/migration-process",
-    "/troubleshoot/product-lifecycle/past-migrations": "/product-lifecycle/deprecations-and-migrations/past-migrations",
-    "/troubleshoot/product-lifecycle/past-migrations/clickjacking-protection-for-universal-login": "/product-lifecycle/deprecations-and-migrations/past-migrations/clickjacking-protection-for-universal-login",
-    "/troubleshoot/product-lifecycle/past-migrations/custom-claims-migration": "/product-lifecycle/deprecations-and-migrations/custom-claims-migration",
-    "/troubleshoot/product-lifecycle/past-migrations/facebook-graph-api-changes": "/product-lifecycle/deprecations-and-migrations/past-migrations/facebook-graph-api-changes",
-    "/troubleshoot/product-lifecycle/past-migrations/google-firebase-migration": "/product-lifecycle/deprecations-and-migrations/past-migrations/google-firebase-migration",
-    "/troubleshoot/product-lifecycle/past-migrations/instagram-connection-deprecation": "/product-lifecycle/deprecations-and-migrations/past-migrations/instagram-connection-deprecation",
-    "/troubleshoot/product-lifecycle/past-migrations/link-user-accounts-with-access-tokens-migration": "/product-lifecycle/deprecations-and-migrations/past-migrations/link-user-accounts-with-access-tokens-migration",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-from-edge-js-extensibility-features": "/migrate-from-edge-js-extensibility-features",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-from-legacy-auth-flows": "/product-lifecycle/deprecations-and-migrations/past-migrations/migrate-from-legacy-auth-flows",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-from-log-extensions": "/product-lifecycle/deprecations-and-migrations/migrate-from-log-extensions",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-from-oracledb-extensibility-features": "/migrate-from-oracledb-extensibility-features",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-nodejs-16-to-nodejs-18": "/migrate-nodejs-16-to-nodejs-18",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-tenant-member-roles": "/product-lifecycle/deprecations-and-migrations/migrate-tenant-member-roles",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-1-hour-expiration": "/migrate-to-1-hour-expiration",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-calling-api-with-access-tokens": "/product-lifecycle/deprecations-and-migrations/past-migrations/migrate-to-calling-api-with-access-tokens",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-nodejs-12": "/product-lifecycle/deprecations-and-migrations/migrate-to-nodejs-12",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-nodejs-16": "/product-lifecycle/deprecations-and-migrations/migrate-to-nodejs-16",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-paginated-queries": "/product-lifecycle/deprecations-and-migrations/migrate-to-paginated-queries",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-passwordless": "/product-lifecycle/deprecations-and-migrations/past-migrations/migrate-to-passwordless",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-to-tenant-log-search-v3": "/product-lifecycle/deprecations-and-migrations/past-migrations/migrate-to-tenant-log-search-v3",
-    "/troubleshoot/product-lifecycle/past-migrations/migrate-v2-v3": "/product-lifecycle/deprecations-and-migrations/migrate-v2-v3",
-    "/troubleshoot/product-lifecycle/past-migrations/migration-oauthro-oauthtoken": "/product-lifecycle/deprecations-and-migrations/past-migrations/migration-oauthro-oauthtoken",
-    "/troubleshoot/product-lifecycle/past-migrations/resource-owner-passwordless-credentials-exchange": "/product-lifecycle/deprecations-and-migrations/past-migrations/resource-owner-passwordless-credentials-exchange",
-    "/troubleshoot/product-lifecycle/past-migrations/tenant-hostname-migration": "/product-lifecycle/deprecations-and-migrations/tenant-hostname-migration",
-    "/troubleshoot/product-lifecycle/past-migrations/yahoo-api-changes": "/product-lifecycle/deprecations-and-migrations/past-migrations/yahoo-api-changes",
-    "/troubleshoot/product-lifecycle/product-release-stages": "/product-lifecycle/product-release-stages",
-    "/troubleshoot/troubleshooting-tools": "/troubleshoot/tools",
-    "/troubleshoot/troubleshooting-tools/generate-and-analyze-har-files": "/troubleshoot/tools/generate-and-analyze-har-files",
-    "/troubleshoot/troubleshooting-tools/sanitize-http-traces": "/troubleshoot/tools/generate-and-analyze-har-files",
-}
+# --- CLASSES AUXILIARES (Completas) ---
+
 class PathResolver:
     """Constrói e armazena em cache os caminhos de URL das entradas."""
     def __init__(self, all_entries):
@@ -1333,104 +47,7 @@ class PathResolver:
         self.cache[entry_id] = path
         return path
 
-class RichTextConverter:
-    """Converte o JSON do Rich Text do Contentful para Markdown."""
-    def __init__(self, all_entries_map, path_resolver, mode='markdown'):
-        self.all_entries_map = all_entries_map
-        self.path_resolver = path_resolver
-        self.mode = mode
-
-    def convert_node_list(self, nodes):
-        if not nodes: return ""
-        return "".join(self.convert_node(node) for node in nodes)
-
-    def convert_node(self, node):
-        if not isinstance(node, dict): return ""
-        node_type = node.get('nodeType', '')
-        
-        handlers = {
-            'document': lambda n: self.convert_node_list(n.get('content')),
-            'paragraph': lambda n: f"{self.convert_node_list(n.get('content'))}\n\n",
-            'heading-1': lambda n: self.handle_heading(n, 1),
-            'heading-2': lambda n: self.handle_heading(n, 2),
-            'heading-3': lambda n: self.handle_heading(n, 3),
-            'heading-4': lambda n: self.handle_heading(n, 4),
-            'heading-5': lambda n: self.handle_heading(n, 5),
-            'heading-6': lambda n: self.handle_heading(n, 6),
-            'unordered-list': lambda n: self.handle_list(n, '*'),
-            'ordered-list': lambda n: self.handle_list(n, '1.'),
-            'hr': lambda n: '---\n\n',
-            'text': self.handle_text,
-            'hyperlink': self.handle_hyperlink,
-            'entry-hyperlink': self.handle_entry_hyperlink,
-            'embedded-entry-block': self.handle_embedded_entry,
-        }
-        
-        handler = handlers.get(node_type)
-        return handler(node) if handler else ""
-
-    def handle_heading(self, node, level):
-        content = self.convert_node_list(node.get('content'))
-        return f"{'#' * level} {content}\n\n" if self.mode == 'markdown' else f"{content}\n\n"
-
-    def handle_list(self, node, prefix_char):
-        items = node.get('content', [])
-        output = ""
-        for i, item in enumerate(items):
-            prefix = f"{i + 1}." if prefix_char == '1.' else prefix_char
-            item_content_nodes = item.get('content', [])
-            item_text = self.convert_node_list(item_content_nodes).strip()
-            output += f"{prefix} {item_text}\n"
-        return output + "\n"
-
-    def handle_text(self, node):
-        text = node.get('value', '')
-        if self.mode == 'markdown':
-            for mark in node.get('marks', []):
-                mark_type = mark.get('type')
-                if mark_type == 'bold': text = f"**{text}**"
-                elif mark_type == 'italic': text = f"_{text}_"
-                elif mark_type == 'code': text = f"`{text}`"
-        return text
-
-    def handle_hyperlink(self, node):
-        uri = node.get('data', {}).get('uri', '')
-        text = self.convert_node_list(node.get('content'))
-        return f"[{text}]({uri})" if self.mode == 'markdown' else text
-
-    def handle_entry_hyperlink(self, node):
-        entry_id = node.get('data', {}).get('target', {}).get('sys', {}).get('id')
-        text = self.convert_node_list(node.get('content'))
-        if entry_id and self.mode == 'markdown':
-            url = self.path_resolver.get_path(entry_id)
-            return f"[{text}]({url})"
-        return text
-
-    def handle_embedded_entry(self, node):
-        entry_id = node.get('data', {}).get('target', {}).get('sys', {}).get('id')
-        if not entry_id or entry_id not in self.all_entries_map: return ""
-        
-        entry = self.all_entries_map[entry_id]
-        content_type = entry.get('sys', {}).get('contentType', {}).get('sys', {}).get('id')
-        fields = entry.get('fields', {})
-
-        if content_type == 'code':
-            source = fields.get('source', {}).get(CANONICAL_LOCALE, '')
-            lang_list = fields.get('language', {}).get(CANONICAL_LOCALE, [''])
-            lang = lang_list[0] if lang_list else ''
-            return f"\n```{(lang or '')}\n{source}\n```\n\n"
-        
-        if content_type in ['note', 'warning', 'aside']:
-            title = fields.get('title', {}).get(CANONICAL_LOCALE, content_type.capitalize())
-            content_doc = fields.get('content', {}).get(CANONICAL_LOCALE)
-            if content_doc:
-                inner_content = self.convert_node(content_doc).strip()
-                return f"> **{title}**\n>\n> {inner_content.replace('\\n', '\\n> ')}\n\n"
-        
-        if content_type in ['table', 'rawMarkup']:
-            return fields.get('content', {}).get(CANONICAL_LOCALE, '') + "\n\n"
-
-        return f"\n\n"
+# --- LÓGICA PRINCIPAL ---
 
 def get_url_key_from_path(filepath, source_dir):
     """Converte um caminho de arquivo em uma chave de URL formatada."""
@@ -1440,79 +57,167 @@ def get_url_key_from_path(filepath, source_dir):
         url_key = url_key[:-5] or '/'
     return url_key
 
-def main(debug_file=None):
-    print("Iniciando processo de tradução...")
+def translate_article_page(post, page_translations, lang_code):
+    """Trata páginas 'article' com substituição de conteúdo simples."""
+    translated_content = page_translations.get('content', {}).get(lang_code)
+    if translated_content:
+        post.content = translated_content
+    return post
 
+def translate_navigation_item_page(post, nav_item_entry, lang_code, all_entries, path_resolver):
+    """
+    Usa o MDX original como template e traduz as peças internas, como
+    o parágrafo de introdução e o conteúdo da tabela.
+    """
+    working_content = post.content
+    
+    lang_full_code_map = {'fr': 'fr-CA', 'ja': 'ja-JP', 'en': 'en-US'}
+    lang_full_code = lang_full_code_map.get(lang_code, CANONICAL_LOCALE)
+    
+    translated_intro = nav_item_entry.get('fields', {}).get('description', {}).get(lang_full_code)
+    if not translated_intro:
+        translated_intro = nav_item_entry.get('fields', {}).get('description', {}).get(CANONICAL_LOCALE, '')
+    
+    if translated_intro:
+        first_paragraph_match = re.search(r"^(?!<|#|\*|-|\s>|---)(.*)", working_content, re.MULTILINE)
+        if first_paragraph_match:
+            original_intro = first_paragraph_match.group(1).strip()
+            if original_intro: # Evita substituir linhas vazias
+                working_content = working_content.replace(original_intro, translated_intro.strip())
+
+    soup = BeautifulSoup(working_content, 'lxml')
+    table = soup.find('table')
+    if not table:
+        post.content = working_content
+        return post
+
+    topic_list = nav_item_entry.get('fields', {}).get('topicList', {}).get(CANONICAL_LOCALE, [])
+    table_rows = table.find_all('tr')
+    
+    for i, row in enumerate(table_rows[1:]):
+        if i >= len(topic_list): break
+            
+        linked_entry_id = topic_list[i].get('sys', {}).get('id')
+        if not linked_entry_id or linked_entry_id not in all_entries: continue
+            
+        linked_entry = all_entries[linked_entry_id]
+        
+        linked_title_obj = linked_entry.get('fields', {}).get('title', {})
+        linked_desc_obj = linked_entry.get('fields', {}).get('description', {})
+        
+        translated_link_title = linked_title_obj.get(lang_full_code, linked_title_obj.get(CANONICAL_LOCALE, ''))
+        translated_link_desc = linked_desc_obj.get(lang_full_code, linked_desc_obj.get(CANONICAL_LOCALE, ''))
+        translated_link_url = path_resolver.get_path(linked_entry_id)
+
+        cells = row.find_all('td')
+        if len(cells) == 2:
+            link_tag = cells[0].find('a')
+            if link_tag and translated_link_title:
+                link_tag.string = translated_link_title
+                link_tag['href'] = translated_link_url
+            
+            if translated_link_desc:
+                cells[1].string = translated_link_desc
+
+    if soup.body:
+        post.content = soup.body.decode_contents(formatter=None)
+    else:
+        post.content = str(soup)
+        
+    return post
+
+def main(debug_file=None):
+    print("Iniciando tradução avançada...")
+    
     try:
         with open(TRANSLATIONS_FILE, 'r', encoding='utf-8') as f:
             translations_data = json.load(f)
         print(f"'{TRANSLATIONS_FILE}' carregado com sucesso.")
     except FileNotFoundError:
-        print(f"ERRO: '{TRANSLATIONS_FILE}' não encontrado! Gere o arquivo corrigido primeiro.")
+        print(f"ERRO: '{TRANSLATIONS_FILE}' não encontrado!")
         return
 
+    all_entries_map = {}
+    print("Mapeando todas as entradas do export.json...")
+    try:
+        with open('export.json', 'rb') as f:
+            for entry in ijson.items(f, 'entries.item'):
+                if entry.get('sys', {}).get('id'):
+                    all_entries_map[entry['sys']['id']] = entry
+        print("Mapeamento de entradas concluído.")
+    except FileNotFoundError:
+        print("\nERRO CRÍTICO: O arquivo 'export.json' não foi encontrado na raiz do projeto.")
+        print("Por favor, coloque o export gigante do Contentful nesta pasta e tente novamente.")
+        return
+
+    path_resolver = PathResolver(all_entries_map)
     source_path = Path(SOURCE_DIR)
     
+    files_to_process = [Path(debug_file)] if debug_file else list(source_path.rglob('*.mdx'))
+    
     if debug_file:
-        files_to_process = [Path(debug_file)]
-        print(f"\n--- MODO DE DEPURAÇÃO ATIVADO PARA: {debug_file} ---")
+         print(f"\n--- MODO DE DEPURAÇÃO ATIVADO PARA: {debug_file} ---")
     else:
-        files_to_process = list(source_path.rglob('*.mdx'))
         print(f"\nEncontrados {len(files_to_process)} arquivos .mdx para processar.")
 
     processed_count = 0
     skipped_count = 0
 
     for english_path in files_to_process:
+        if any(part in TARGET_LANGUAGES.values() for part in english_path.parts):
+            continue
+            
         url_key = get_url_key_from_path(english_path, source_path)
         corrected_url_key = URL_CORRECTION_MAP.get(url_key, url_key)
+        
         page_translations = translations_data.get(corrected_url_key)
-
-        if not page_translations:
-            if debug_file:
-                print(f"\n[DEBUG] URL gerada: '{url_key}' (corrigida para: '{corrected_url_key}')")
-                print("[DEBUG] Nenhuma tradução encontrada para esta URL.")
+        
+        entry_id_from_url = next((eid for eid, data in all_entries_map.items() if path_resolver.get_path(eid) == corrected_url_key), None)
+        
+        if not page_translations or not entry_id_from_url:
             skipped_count += 1
             continue
+            
+        entry_data = all_entries_map[entry_id_from_url]
+        content_type = entry_data.get('sys',{}).get('contentType',{}).get('sys',{}).get('id')
 
+        print(f"\n🔄 Processando '{english_path}' (URL: {corrected_url_key}, Tipo: {content_type})")
         processed_count += 1
-        print(f"\n🔄 Processando '{english_path}' (URL: {corrected_url_key})")
-
+        
         try:
-            with open(english_path, 'r', encoding='utf-8') as f:
-                post = frontmatter.load(f)
+            post = frontmatter.load(english_path)
+            original_content = post.content
+            original_metadata = post.metadata.copy()
         except Exception as e:
-            print(f"❌ Erro ao ler '{english_path}': {e}")
+            print(f"   - ❌ Erro ao ler o arquivo: {e}")
             skipped_count += 1
             continue
-            
+
         for lang_code, target_dir in TARGET_LANGUAGES.items():
-            translated_content = page_translations.get('content', {}).get(lang_code)
-            translated_title = page_translations.get('title', {}).get(lang_code)
+            post.content = original_content
+            post.metadata = original_metadata.copy()
 
-            if not translated_content and not translated_title:
-                print(f"   - ⏭️  Ignorando idioma '{lang_code}' (sem dados).")
-                continue
-
-            post.content = translated_content or post.content
+            if content_type == 'navigationItem':
+                final_post = translate_navigation_item_page(post, entry_data, lang_code, all_entries_map, path_resolver)
+            else:
+                final_post = translate_article_page(post, page_translations, lang_code)
             
+            translated_title = page_translations.get('title', {}).get(lang_code)
             if translated_title:
-                post.metadata['title'] = translated_title
-                if 'sidebarTitle' in post.metadata: post.metadata['sidebarTitle'] = translated_title
-                if 'og:title' in post.metadata: post.metadata['og:title'] = translated_title
-                if 'twitter:title' in post.metadata: post.metadata['twitter:title'] = translated_title
+                final_post.metadata['title'] = translated_title
+                if 'sidebarTitle' in final_post.metadata: final_post.metadata['sidebarTitle'] = translated_title
+                if 'og:title' in final_post.metadata: final_post.metadata['og:title'] = translated_title
+                if 'twitter:title' in final_post.metadata: final_post.metadata['twitter:title'] = translated_title
 
             try:
-                # CORREÇÃO: Chamando o handler explicitamente a partir do módulo principal
-                final_mdx_output = frontmatter.dumps(post, handler=frontmatter.YAMLHandler())
+                final_mdx_output = frontmatter.dumps(final_post, handler=frontmatter.YAMLHandler())
             except Exception as e:
-                print(f"   - ❌ Erro ao formatar conteúdo para '{lang_code}': {e}")
+                print(f"   - ❌ Erro ao formatar o conteúdo para '{lang_code}': {e}")
                 continue
-            
+
             if debug_file:
                 print("\n" + "-"*15 + f" [DEBUG] OUTPUT PARA '{lang_code}' " + "-"*15)
                 print(final_mdx_output)
-                print("-" * (32 + len(lang_code)))
             else:
                 translated_path = source_path / target_dir / english_path.relative_to(source_path)
                 translated_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1523,11 +228,11 @@ def main(debug_file=None):
     if not debug_file:
         print("\n--- Processo Concluído ---")
         print(f"📄 Arquivos Processados: {processed_count}")
-        print(f"⏭️ Arquivos Ignorados (URL não encontrada): {skipped_count}")
+        print(f"⏭️ Arquivos Ignorados (URL não encontrada): {len(files_to_process) - processed_count}")
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Traduz arquivos MDX usando um JSON de mapeamento.")
     parser.add_argument('--debug', help="Caminho para um único arquivo .mdx para depurar.", type=str)
     args = parser.parse_args()
-    
     main(debug_file=args.debug)
