@@ -1,4 +1,4 @@
-import type { Preview } from '@storybook/react';
+import type { Preview } from '@storybook/react-vite';
 import '../src/index.css';
 
 const preview: Preview = {
@@ -29,7 +29,7 @@ const preview: Preview = {
 
       return (
         <div className={darkMode === 'dark' ? 'dark' : ''}>
-          <div className="min-h-screen bg-adu-background p-4">
+          <div className="bg-adu-background min-h-screen p-4">
             <Story />
           </div>
         </div>
