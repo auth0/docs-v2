@@ -79,7 +79,7 @@ export const integrations = [
     status: "Available",
     type: "Enterprise",
     description:
-      "Allow your AI Agents to access your Google Workspace services including Gmail, Google Calendar, Drive, and more.",
+      "Allow your AI agents to access your Google Workspace services including Gmail, Google Calendar, Drive, and more.",
   },
   {
     id: "youtube",
@@ -107,7 +107,7 @@ export const integrations = [
     href: "/integrations/microsoft-azure",
     status: "Available",
     type: "Enterprise",
-    description: "Allow your AI Agents to Microsoft Azure AD services including Outlook, Teams, OneDrive, and more.",
+    description: "Allow your AI agents to Microsoft Azure AD services including Outlook, Teams, OneDrive, and more.",
   },
   {
     id: "github",
