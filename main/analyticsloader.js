@@ -1,65 +1,77 @@
-import React, { useEffect, useState } from "react";
-import { State, injectConsentScript, getCookie, handleOptanonConsent } from "./utils";
-import { getCookie } from "./utils";
-
+const canUseDOM = () =>
+  !!(typeof window !== 'undefined' && window.document && (window.env ? window.env.NODE_ENV !== 'test' : true));
 /**
  * Consent-based analytics script loader
  */
+
+const OneTrustStatus = { 
+  WaitingForConsent: "WAITING_FOR_CONSENT",
+  ExpressedConsent: "EXPRESSED_CONSENT",
+}; 
+
+
 export function AnalyticsConsentLoader() {
-  //create state
-  const [consents, setConsents] = useState([]);
-
-  // Initialize analytics scripts state
-  useEffect(() => {
-    window.analyticsScripts = {
-      heap: State.NotLoaded,
-      optimizely: State.NotLoaded,
-      pendo: State.NotLoaded,
-      qualtrics: State.NotLoaded,
-      usabilla: State.NotLoaded,
-      ...window.analyticsScripts,
-    };
-  }, []);
-
+  //create state 
+  const [consent, setConsent] = React.useState(window.OnetrustActiveGroups);
   
-  // Effect to load scripts when consents change
   useEffect(() => {
-    if (consents.length > 0) {
-      injectConsentScript(consents);
+    const handleConsentChange = (e) => {
+    if (e.data === OneTrustStatus.WaitingForConsent) {
+      // eslint-disable-next-line new-cap
+      window.OneTrust.OnConsentChanged(() =>
+        setConsentLevel(window.OnetrustActiveGroups),
+      );
+    }  else if (
+      e.data === OneTrustStatus.ExpressedConsent, &&
+      window.OnetrustActiveGroups !== consentLevel
+    ) {
+      setConsentLevel(window.OnetrustActiveGroups);
     }
-  }, [consents]);
-
-  // useEffect to parse initial consent and set up OneTrust callback
-  useEffect(() => {
-    function updateConsentsFromCookie() {
-      const optanonConsent = getCookie("OptanonConsent");
-      const groups = optanonConsent
-        ?.replace("OptanonConsent=", "")
-        .split("&")
-        .find((s) => s.includes("groups="));
-      if (groups) {
-        const parsedConsents = decodeURIComponent(groups.replace("groups=", ""))
-          .split(",")
-          .map((s) => {
-            const [group, value] = s.split(":");
-            return value === "1" ? group : null;
-          })
-          .filter(Boolean);
-        setConsents(parsedConsents);
-      }
-    }
-
-    // Initial load
-    updateConsentsFromCookie();
-
-    // OneTrust callback for consent changes
-    window.handleOptanonConsent = function () {
-      if (window.OnetrustActiveGroups) {
-        const parsedConsents = window.OnetrustActiveGroups.split(",").slice(1, -1);
-        setConsents(parsedConsents);
-      }
-    };
-  }, []);
-
-  return null; // This component does not render anything
+  };
+    window.addEventListener('message', handleConsentChange, false);
+    return () => window.removeEventListener('message', handleConsentChange);
+  });
 }
+  // useEffect to parse initial consent and set up OneTrust callback
+//   useEffect(() => {
+//     function updateConsentsFromCookie() {
+//       const optanonConsent = getCookie("OptanonConsent");
+//       const groups = optanonConsent
+//         ?.replace("OptanonConsent=", "")
+//         .split("&")
+//         .find((s) => s.includes("groups="));
+//       if (groups) {
+//         const parsedConsents = decodeURIComponent(groups.replace("groups=", ""))
+//           .split(",")
+//           .map((s) => {
+//             const [group, value] = s.split(":");
+//             return value === "1" ? group : null;
+//           })
+//           .filter(Boolean);
+//         setConsents(parsedConsents);
+//       }
+//     }
+
+//     // Initial load
+//     updateConsentsFromCookie();
+
+//     // OneTrust callback for consent changes
+//     window.handleOptanonConsent = function () {
+//       if (window.OnetrustActiveGroups) {
+//         const parsedConsents = window.OnetrustActiveGroups.split(",").slice(1, -1);
+//         setConsents(parsedConsents);
+//       }
+//     };
+//   }, []);
+
+//   return null; // This component does not render anything
+// }
+
+//Why doesn't OneTrust need "consent-required"?
+
+// The OneTrust script is always loaded so it can display the consent banner and manage user choices.
+// It is not subject to consent; it is the mechanism by which consent is managed.
+// If OneTrust itself required consent, there would be no way for users to express their preferences, creating a paradox.
+// Summary:
+// All other analytics scripts require consent and use the "consent-required" class so OneTrust can control their loading. 
+// The OneTrust banner script itself must always be loaded and is exempt from consent gating, so it does not include the "consent-required" class.
