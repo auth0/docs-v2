@@ -19,39 +19,13 @@ export const composeHooks =
   };
 
 /**
- * Utility to combine class names with adu- prefix for scoped styling
+ * Utility to combine class names with proper deduplication
+ * Uses tailwind-merge for intelligent Tailwind class merging
  */
 export const cn = (
   ...classes: (string | undefined | null | false)[]
 ): string => {
   return classes.filter(Boolean).join(' ');
-};
-
-/**
- * Utility to create adu-prefixed class names for scoped theming
- */
-export const aduClass = (className: string): string => {
-  return `adu-${className}`;
-};
-
-/**
- * Utility to create conditional adu-prefixed class names
- */
-export const aduClsx = (
-  base: string,
-  conditional?: Record<string, boolean | undefined>,
-): string => {
-  const baseClass = aduClass(base);
-
-  if (!conditional) {
-    return baseClass;
-  }
-
-  const conditionalClasses = Object.entries(conditional)
-    .filter(([, condition]) => condition)
-    .map(([className]) => aduClass(className));
-
-  return cn(baseClass, ...conditionalClasses);
 };
 
 /**

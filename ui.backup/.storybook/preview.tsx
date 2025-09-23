@@ -28,8 +28,12 @@ const preview: Preview = {
       const darkMode = context.globals.darkMode;
 
       return (
-        <div className={darkMode === 'dark' ? 'dark' : ''}>
-          <div className="bg-adu-background min-h-screen p-4">
+        <div 
+          key={darkMode} 
+          className={`adu ${darkMode === 'dark' ? 'dark' : ''}`} 
+          style={{ colorScheme: darkMode }}
+        >
+          <div className="bg-background text-foreground p-4 transition-colors duration-200">
             <Story />
           </div>
         </div>
