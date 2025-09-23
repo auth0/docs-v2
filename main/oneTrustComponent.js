@@ -15,7 +15,6 @@ function attachOneTrustBanner() {
             window.OneTrust.OnConsentChanged(function() {
               const banner = document.getElementById("custom-onetrust-banner");
               // if (banner) banner.remove();
-              console.log("Consent changed, banner can be removed if desired");
             });
           }
         }
