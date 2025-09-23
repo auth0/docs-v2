@@ -27,21 +27,20 @@ interface UserCurrentResponse {
   };
 }
 
-interface TenantsResponse {
-  tenants: Array<{
-    name: string;
-    login_url: string;
-    override_subdomain?: string;
-    access_token?: string;
-    environment: {
-      id: string;
-      apex: string;
-      short_name: string;
-      tag: 'development' | 'staging' | 'production';
-      enabled: boolean;
-      aliases: string[];
-    };
-  }>;
+// Response interfaces based on OpenAPI spec
+interface TenantApiResponse {
+  name: string;
+  login_url: string;
+  override_subdomain?: string;
+  access_token?: string;
+  environment: {
+    id: string;
+    apex: string;
+    short_name: string;
+    tag: 'development' | 'staging' | 'production';
+    enabled: boolean;
+    aliases: string[];
+  };
 }
 
 export interface AuthServiceConfig {
@@ -133,22 +132,29 @@ class AuthService {
         throw new Error(`Failed to get tenants: ${response.statusText}`);
       }
 
-      const data: TenantsResponse = await response.json();
+      // According to the OpenAPI spec, the API returns directly an array of tenants
+      const tenants: TenantApiResponse[] = await response.json();
 
-      return data.tenants.map((tenant) => ({
-        name: tenant.name,
-        loginUrl: tenant.login_url,
+      // Validate that we received an array
+      if (!Array.isArray(tenants)) {
+        console.warn('Expected array of tenants, but received:', tenants);
+        return [];
+      }
+
+      return tenants.map((tenant) => ({
+        name: tenant.name || 'Unknown Tenant',
+        loginUrl: tenant.login_url || '#',
         overrideSubdomain: tenant.override_subdomain,
         accessToken: tenant.access_token,
         environment: {
-          id: tenant.environment.id,
-          apex: tenant.environment.apex,
-          shortName: tenant.environment.short_name,
-          tag: tenant.environment.tag,
-          enabled: tenant.environment.enabled,
-          aliases: tenant.environment.aliases,
+          id: tenant.environment?.id || '0',
+          apex: tenant.environment?.apex || 'auth0.com',
+          shortName: tenant.environment?.short_name || 'US',
+          tag: tenant.environment?.tag || 'development',
+          enabled: tenant.environment?.enabled !== false,
+          aliases: tenant.environment?.aliases || [],
         },
-      }));
+      })).filter(tenant => tenant.name !== 'Unknown Tenant'); // Filter out malformed tenants
     } catch (error) {
       console.error('Error getting tenants:', error);
       throw error;
