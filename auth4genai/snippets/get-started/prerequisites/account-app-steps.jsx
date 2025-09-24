@@ -10,7 +10,7 @@ export const AccountAndAppSteps = ({
     <Step title="Create an Auth0 Account">
       To continue with this quickstart, you need to have an{" "}
       <a
-        href="https://auth0.com/signup?onboard_app=auth_for_aa&ocid=7014z000001NyoxAAC-aPA4z0000008OZeGAM"
+        href="https://manage.emt-a4aa-stage.auth0c.com/login?onboard_app=auth_for_aa&ocid=7014z000001NyoxAAC-aPA4z0000008OZeGAM"
         target="_blank"
       >
         Auth0 account.
@@ -21,7 +21,7 @@ export const AccountAndAppSteps = ({
     steps.push(
       <Step title="Create an Auth0 Application">
         Go to your{" "}
-        <a href="https://manage.auth0.com/dashboard" target="_blank">
+        <a href="https://manage.emt-a4aa-stage.auth0c.com" target="_blank">
           Auth0 Dashboard
         </a>{" "}
         to create a new Auth0 Application.
