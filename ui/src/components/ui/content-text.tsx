@@ -21,8 +21,7 @@ const contentTextVariants = cva('font-inter text-foreground', {
       'text-bold':
         'text-foreground-bold tracking-p-lg text-base leading-1.5 font-semibold',
       'text-sm': 'tracking-n-xs leading-1.45 text-sm font-normal',
-      'text-sm-bold':
-        'text-foreground-bold tracking-n-xs leading-1.45 text-sm font-medium',
+      'text-sm-bold': 'tracking-n-xs leading-1.45 text-sm font-medium',
       'text-xs': 'leading-1.30 text-xs font-normal',
       'caption-lg': 'leading-1.30 tracking-n-3xl text-lg font-medium',
       'caption-sm': 'leading-1.30 text-xs font-medium',
