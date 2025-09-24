@@ -47,12 +47,12 @@ function SvgIcon(props: SvgProps) {
       {loading ? (
         <span
           className={cn(
-            'bg-muted-foreground inline-block h-4 w-4 animate-pulse rounded',
+            'bg-surface-muted inline-block h-4 w-4 animate-pulse rounded',
             className,
           )}
         />
       ) : SvgIcon ? (
-        <span className={cn('inline-block', className)}>
+        <span className={cn('text-foreground-icon inline-block', className)}>
           <SvgIcon {...svgProp} />
         </span>
       ) : null}

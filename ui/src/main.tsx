@@ -4,6 +4,7 @@ import './index.css';
 
 import {
   Button,
+  Card,
   ContentText,
   DisplayText,
   FlagIcon,
@@ -14,8 +15,21 @@ import {
 function main() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <div className="bg-background flex flex-col items-start gap-8 p-4">
-        <Button>Test Button</Button>
+      <div className="bg-page flex flex-col items-start gap-8 p-4">
+        <Button
+          onClick={() => {
+            document.body.classList.toggle('dark');
+          }}
+        >
+          Toggle Theme
+        </Button>
+
+        <div className="flex gap-2">
+          <Button variant="link">Log In</Button>
+          <Button variant="default">Sign Up</Button>
+          <Button variant="outline">Contact Us</Button>
+        </div>
+
         <div className="flex gap-2">
           <SvgIcon iconName="check" />
           <FlagIcon country="australia" />
@@ -26,31 +40,33 @@ function main() {
           <FlagIcon country="us" />
         </div>
 
-        <div className="flex w-73 flex-col gap-2">
+        <div className="flex flex-col gap-2">
           <DisplayText variant="heading-sm">Tenant List</DisplayText>
-          <TenantList
-            tenants={[
-              {
-                name: 'dev-o4cdyn0v3v74dgx2',
-                flag: 'us',
-                locality: 'US-4',
-              },
-              {
-                name: 'product-design-test',
-                flag: 'uk',
-                locality: 'UK-1',
-              },
-              {
-                name: 'test-canada-tenant',
-                flag: 'canada',
-                locality: 'CA-1',
-              },
-            ]}
-            selectedTenant="dev-o4cdyn0v3v74dgx2"
-            onSelectTenant={(tenantName) => {
-              console.log('Selected tenant:', tenantName);
-            }}
-          />
+          <Card className="w-73 py-2">
+            <TenantList
+              tenants={[
+                {
+                  name: 'dev-o4cdyn0v3v74dgx2',
+                  flag: 'us',
+                  locality: 'US-4',
+                },
+                {
+                  name: 'product-design-test',
+                  flag: 'uk',
+                  locality: 'UK-1',
+                },
+                {
+                  name: 'test-canada-tenant',
+                  flag: 'canada',
+                  locality: 'CA-1',
+                },
+              ]}
+              selectedTenant="dev-o4cdyn0v3v74dgx2"
+              onSelectTenant={(tenantName) => {
+                console.log('Selected tenant:', tenantName);
+              }}
+            />
+          </Card>
         </div>
 
         <div className="flex flex-col gap-2">
