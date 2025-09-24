@@ -1,14 +1,26 @@
-// import { StrictMode } from "react";
-// import { createRoot } from "react-dom/client";
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import './index.css';
 
+import { Button, FlagIcon, SvgIcon } from './components';
+
 function main() {
-  // TODO: Implement main application logic here
-  // createRoot(document.getElementById("root")!).render(
-  //   <StrictMode>
-  //     <App />
-  //   </StrictMode>
-  // );
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <div className="flex flex-col items-start gap-4 p-4">
+        <Button>Test Button</Button>
+        <div className="flex gap-2">
+          <SvgIcon iconName="check" />
+          <FlagIcon country="australia" />
+          <FlagIcon country="canada" />
+          <FlagIcon country="india" />
+          <FlagIcon country="japan" />
+          <FlagIcon country="uk" />
+          <FlagIcon country="us" />
+        </div>
+      </div>
+    </StrictMode>,
+  );
 }
 
 main();
