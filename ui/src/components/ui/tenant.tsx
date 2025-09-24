@@ -46,7 +46,9 @@ function Tenant({
         </ContentText>
         <div className="flex items-start gap-1">
           <FlagIcon country={flag} />
-          <ContentText variant="text-xs">{locality}</ContentText>
+          <ContentText variant="text-sm-bold" className="text-foreground">
+            {locality}
+          </ContentText>
         </div>
       </div>
       {isSelected ? <SvgIcon iconName="check" /> : null}
@@ -73,17 +75,14 @@ function TenantList({
 }: TenantListProps) {
   return (
     <div
-      className={cn(
-        'flex flex-col items-start gap-1 self-stretch px-1 py-0',
-        className,
-      )}
+      className={cn('flex flex-col items-start gap-1 self-stretch', className)}
     >
       {tenants.map((tenant) => (
         <Button
           asChild={true}
           key={tenant.name}
           variant="ghost"
-          className='h-auto'
+          className="h-auto"
           onClick={() => onSelectTenant?.(tenant.name)}
         >
           <Tenant
