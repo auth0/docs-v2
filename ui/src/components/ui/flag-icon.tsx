@@ -17,4 +17,4 @@ function FlagIcon(props: FlagIconProps) {
   );
 }
 
-export { FlagIcon };
+export { FlagIcon, type FlagIconProps };

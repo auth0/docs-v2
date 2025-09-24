@@ -8,12 +8,13 @@ import {
   DisplayText,
   FlagIcon,
   SvgIcon,
+  TenantList,
 } from './components';
 
 function main() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <div className="bg-background flex flex-col items-start gap-4 p-4">
+      <div className="bg-background flex flex-col items-start gap-8 p-4">
         <Button>Test Button</Button>
         <div className="flex gap-2">
           <SvgIcon iconName="check" />
@@ -23,6 +24,33 @@ function main() {
           <FlagIcon country="japan" />
           <FlagIcon country="uk" />
           <FlagIcon country="us" />
+        </div>
+
+        <div className="flex w-73 flex-col gap-2">
+          <DisplayText variant="heading-sm">Tenant List</DisplayText>
+          <TenantList
+            tenants={[
+              {
+                name: 'dev-o4cdyn0v3v74dgx2',
+                flag: 'us',
+                locality: 'US-4',
+              },
+              {
+                name: 'product-design-test',
+                flag: 'uk',
+                locality: 'UK-1',
+              },
+              {
+                name: 'test-canada-tenant',
+                flag: 'canada',
+                locality: 'CA-1',
+              },
+            ]}
+            selectedTenant="dev-o4cdyn0v3v74dgx2"
+            onSelectTenant={(tenantName) => {
+              console.log('Selected tenant:', tenantName);
+            }}
+          />
         </div>
 
         <div className="flex flex-col gap-2">
