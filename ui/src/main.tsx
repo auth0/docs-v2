@@ -4,12 +4,14 @@ import './index.css';
 
 import {
   Button,
-  Card,
   ContentText,
   DisplayText,
+  DropdownMenu,
+  DropdownMenuTrigger,
   FlagIcon,
   SvgIcon,
-  TenantList,
+  SelectTenantMenuContent,
+  ProfileMenuContent,
 } from './components';
 
 function main() {
@@ -41,32 +43,57 @@ function main() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <DisplayText variant="heading-sm">Tenant List</DisplayText>
-          <Card className="w-73 py-2">
-            <TenantList
+          <DisplayText variant="heading-sm">Switch Tenant Menu</DisplayText>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>Open Select Tenant Menu</Button>
+            </DropdownMenuTrigger>
+            <SelectTenantMenuContent
               tenants={[
                 {
+                  isSelected: true,
                   name: 'dev-o4cdyn0v3v74dgx2',
                   flag: 'us',
                   locality: 'US-4',
                 },
                 {
+                  isSelected: false,
                   name: 'product-design-test',
                   flag: 'uk',
                   locality: 'UK-1',
                 },
                 {
+                  isSelected: false,
                   name: 'test-canada-tenant',
                   flag: 'canada',
                   locality: 'CA-1',
                 },
               ]}
-              selectedTenant="dev-o4cdyn0v3v74dgx2"
-              onSelectTenant={(tenantName) => {
-                console.log('Selected tenant:', tenantName);
+              onSelectTenant={(tenant) => {
+                console.log('Selected tenant:', tenant);
               }}
             />
-          </Card>
+          </DropdownMenu>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <DisplayText variant="heading-sm">Profile Menu</DisplayText>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>Open Profile Menu</Button>
+            </DropdownMenuTrigger>
+            <ProfileMenuContent
+              tenant={{
+                name: 'dev-o4cdyn0v3v74dgx2',
+                flag: 'us',
+                locality: 'US-4',
+              }}
+              user={{
+                name: 'Vishnu Singh',
+                profileUrl: 'https://auth0.com',
+              }}
+            />
+          </DropdownMenu>
         </div>
 
         <div className="flex flex-col gap-2">

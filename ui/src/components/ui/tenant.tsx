@@ -6,14 +6,23 @@ import { ContentText } from './content-text';
 import { SvgIcon } from './svg-icon';
 import { FlagIcon, type FlagIconProps } from './flag-icon';
 import { Button } from './button';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from './dropdown-menu';
 
-interface TenantProp {
-  asChild?: boolean;
-  className?: string;
+interface TenantData {
   name: string;
   flag: FlagIconProps['country'];
   locality: string;
   isSelected?: boolean;
+  highlightName?: boolean;
+}
+
+interface TenantProp extends TenantData {
+  asChild?: boolean;
+  className?: string;
 }
 
 function Tenant({
@@ -23,6 +32,7 @@ function Tenant({
   flag,
   locality,
   isSelected,
+  highlightName,
   ...props
 }: React.ComponentProps<'div'> & TenantProp) {
   const Comp = asChild ? Slot : 'div';
@@ -31,7 +41,7 @@ function Tenant({
     <Comp
       data-slot="tenant"
       className={cn(
-        'flex items-center gap-3 self-stretch px-3 py-2',
+        'flex w-full items-center gap-3 self-stretch px-3 py-2',
         className,
       )}
       {...props}
@@ -39,12 +49,12 @@ function Tenant({
       <div className="flex flex-1 flex-col items-start justify-center gap-1">
         <ContentText
           asChild={true}
-          className={isSelected ? 'text-foreground-bold' : ''}
-          variant={isSelected ? 'button' : 'text-sm-bold'}
+          className={isSelected || highlightName ? 'text-foreground-bold' : ''}
+          variant={isSelected || highlightName ? 'button' : 'text-sm-bold'}
         >
           <span>{name}</span>
         </ContentText>
-        <div className="flex items-start gap-1">
+        <div className="flex items-center gap-1">
           <FlagIcon country={flag} />
           <ContentText variant="text-sm-bold" className="text-foreground">
             {locality}
@@ -56,45 +66,54 @@ function Tenant({
   );
 }
 
-interface TenantListProps {
+interface SwitchTenantProps {
   className?: string;
-  tenants: Array<{
-    name: string;
-    flag: FlagIconProps['country'];
-    locality: string;
-  }>;
-  selectedTenant: string;
-  onSelectTenant?: (tenantName: string) => void;
+  tenants: TenantData[];
+  onBack?: React.MouseEventHandler<HTMLButtonElement>;
+  onSelectTenant?: (tenant: TenantData) => void;
 }
 
-function TenantList({
+function SelectTenantMenuContent({
   className,
   tenants,
-  selectedTenant,
+  onBack,
   onSelectTenant,
-}: TenantListProps) {
+}: SwitchTenantProps) {
   return (
-    <div
-      className={cn('flex flex-col items-start gap-1 self-stretch', className)}
+    <DropdownMenuContent
+      className={cn('flex max-h-75 w-73 flex-col gap-1 py-2', className)}
     >
+      <div className="flex items-center gap-0 self-stretch px-1">
+        <Button className="h-8 w-8" variant="ghost" onClick={onBack}>
+          <SvgIcon iconName="arrow-left" />
+        </Button>
+        <div className="-ml-8 flex flex-1 items-center justify-center gap-1 py-2">
+          <ContentText
+            asChild={true}
+            className="text-foreground-bold"
+            variant="button"
+          >
+            <span>Switch Tenant</span>
+          </ContentText>
+        </div>
+      </div>
+      <DropdownMenuSeparator />
       {tenants.map((tenant) => (
-        <Button
-          asChild={true}
+        <DropdownMenuItem
+          className="p-0"
           key={tenant.name}
-          variant="ghost"
-          className="h-auto"
-          onClick={() => onSelectTenant?.(tenant.name)}
+          onClick={() => onSelectTenant?.(tenant)}
         >
           <Tenant
             name={tenant.name}
             flag={tenant.flag}
             locality={tenant.locality}
-            isSelected={tenant.name === selectedTenant}
+            isSelected={tenant.isSelected}
           />
-        </Button>
+        </DropdownMenuItem>
       ))}
-    </div>
+    </DropdownMenuContent>
   );
 }
 
-export { Tenant, TenantList };
+export { Tenant, type TenantData, SelectTenantMenuContent };

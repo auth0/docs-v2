@@ -1,10 +1,13 @@
-import { cn } from '@/lib/utils';
 import { useRef, useState, useEffect } from 'react';
+import { Slot } from '@radix-ui/react-slot';
+
+import { cn } from '@/lib/utils';
 
 interface SvgProps {
   iconName: string;
   className?: string;
   svgProp?: React.SVGProps<SVGSVGElement>;
+  asChild?: boolean;
 }
 
 export function useDynamicSvgImport(iconName: string) {
@@ -38,23 +41,35 @@ export function useDynamicSvgImport(iconName: string) {
   return { error, loading, SvgIcon: importedIconRef.current };
 }
 
-function SvgIcon(props: SvgProps) {
-  const { iconName, className, svgProp } = props;
-  const { loading, SvgIcon } = useDynamicSvgImport(iconName);
+function SvgIcon({
+  iconName,
+  className,
+  svgProp,
+  asChild = false,
+  ...props
+}: React.ComponentProps<'span'> & SvgProps) {
+  const { loading, SvgIcon: DynamicSvgIcon } = useDynamicSvgImport(iconName);
+  const Comp = asChild ? Slot : 'span';
 
   return (
     <>
       {loading ? (
-        <span
+        <Comp
+          data-slot="svg-icon"
           className={cn(
             'bg-surface-muted inline-block h-4 w-4 animate-pulse rounded',
             className,
           )}
+          {...props}
         />
-      ) : SvgIcon ? (
-        <span className={cn('text-foreground-icon inline-block', className)}>
-          <SvgIcon {...svgProp} />
-        </span>
+      ) : DynamicSvgIcon ? (
+        <Comp
+          data-slot="svg-icon"
+          className={cn('text-foreground-icon inline-block', className)}
+          {...props}
+        >
+          <DynamicSvgIcon {...svgProp} />
+        </Comp>
       ) : null}
     </>
   );
