@@ -21,12 +21,15 @@ export const Content = ({ title, children }) => {
 
 export const Section = ({ id, title, stepNumber, children, isSingleColumn = false }) => {
   return (
+    <div id={id} className={`recipe-section flex flex-col transition-opacity duration-200`}>
+      {/*
+    OPTION WITH OPACITY
     <div
       id={id}
       className={`recipe-section flex flex-col transition-opacity duration-200 ${
         isSingleColumn ? "opacity-100 dark:opacity-100" : "opacity-60 dark:opacity-60"
       }`}
-    >
+    > */}
       <Step title={title} stepNumber={stepNumber} titleSize="h3">
         {children}
       </Step>
@@ -153,7 +156,7 @@ export const SignUpForm = () => {
       </span>
       <button
         onClick={() => console.log("sign up")}
-        className="bg-primary dark:bg-primary-light text-white px-4 py-2 rounded-md mt-4 font-medium"
+        className="bg-primary dark:bg-primary-light text-white dark:text-black px-4 py-2 rounded-md mt-4 font-medium"
         style={{
           width: "140px",
         }}

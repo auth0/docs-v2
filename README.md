@@ -7,4 +7,4 @@ We use [Mintlify](https://mintlify.com/) for our documentation needs.
 ## Directories
 
 - `main`: Main Documentation for Auth0: https://auth0.com/docs
-- `auth4genai`: Documentation for Auth for GenAI features in Auth0: https://auth0.com/ai/docs
+- `auth4genai`: Documentation for Auth0 for AI Agents features in Auth0: https://auth0.com/ai/docs
