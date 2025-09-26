@@ -8,6 +8,9 @@ function loadOneTrustScript(domainId) {
   script.async = true;
   document.body.append(script);
 }
+if (!optanonConsent) {
+  loadOneTrustScript("96e22fd8-d619-4cdd-a3c6-d51529d21faf-test");
+}
 
 document.addEventListener("readystatechange", () => {
    loadOneTrustScript("96e22fd8-d619-4cdd-a3c6-d51529d21faf-test");
