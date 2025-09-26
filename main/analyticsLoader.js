@@ -7,6 +7,8 @@ const State = {
   Timeout: "timeout",
 };
 
+
+
 const ANALYTICS_EVENTS = "ANALYTICS_EVENTS";
 // Give 15s for scripts to load after consent is given
 const TIMEOUT_DELAY = 15000;
@@ -17,12 +19,42 @@ const getCookies = (name) => {
     console.log("Searching for cookie:", name);
     const cookieParts = document.cookie.split("; ");
   //return matching cookie if found
-  //mighh be expected
+  //might be expected
   //if the coookie doesn't exist, it doens't load the scirpts because there aren't any cookies yet
   //so if the optanonconsent cookie doesn't exist, it won't load any scripts
   console.log("Current cookies:", document.cookie);
   return cookieParts.find((s) => s.includes(`${name}=`));
 };
+
+
+// Consent check and Heap script loader
+const optanonConsent = getCookies("OptanonConsent");
+let hasConsent = false;
+let hasDeniedConsent = false;
+
+if (optanonConsent) {
+    console.log("OptanonConsent cookie found on preload:", optanonConsent);
+  const groups = optanonConsent
+    .replace("OptanonConsent=", "")
+    .split("&")
+    .find((s) => s.includes("groups="));
+  if (groups) {
+    console.log("Consent groups found on preload:", groups);
+    const consents = decodeURIComponent(groups.replace("groups=", ""))
+      .split(",")
+      .map((s) => {
+        const [group, value] = s.split(":");
+        return value === "1" ? group : value === "0" ? "denied" : null;
+      })
+      .filter(Boolean);
+    hasConsent = consents.some((c) => c !== "denied");
+    hasDeniedConsent = consents.every((c) => c === "denied");
+    console.log("Parsed consents on preload:", consents);
+    console.log("Has consent:", hasConsent, "Has denied consent:", hasDeniedConsent);
+  } else {
+    console.log("No consent groups found in OptanonConsent cookie on preload");
+  }
+}
 
 const loadConsentScripts = (consents) => {
   // Necessary consents will always be present, no need to load any scripts.
@@ -108,8 +140,6 @@ const analyticsLoader = () => {
     };
 
     // Try to get consents from the OptanonConsent cookie
-    const optanonConsent = getCookies("OptanonConsent");
-    console.log("OptanonConsent cookie:", optanonConsent);
     const groups = optanonConsent
       ?.replace("OptanonConsent=", "")
       .split("&")
