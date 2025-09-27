@@ -1,13 +1,14 @@
 import { cn, getInitials } from '@/lib/utils';
 import { Tenant, type TenantData } from './tenant';
 import {
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from './dropdown-menu';
 import { SvgIcon } from './svg-icon';
 import { Avatar, AvatarFallback, AvatarImage } from './avatar';
 import { ContentText } from './content-text';
+import type { MouseEventHandler } from 'react';
 
 interface UserData {
   name: string;
@@ -50,65 +51,107 @@ function UserDetails({
   );
 }
 
-interface ProfileMenuContentProps {
+interface ProfileMenuTriggerProps {
   className?: string;
   tenant: TenantData;
   user: UserData;
+}
+
+function ProfileMenuTrigger({
+  className,
+  tenant,
+  user,
+}: ProfileMenuTriggerProps) {
+  const { profilePicture } = user;
+  const initials = getInitials(user.name);
+  return (
+    <DropdownMenuTrigger
+      className={cn('flex w-8 items-center gap-2 md:w-auto', className)}
+    >
+      <ContentText
+        variant="button"
+        className="text-foreground-bold hidden md:block"
+        asChild
+      >
+        <span>{tenant.name}</span>
+      </ContentText>
+      <Avatar className="h-8 w-8">
+        <AvatarImage src={profilePicture} />
+        <AvatarFallback>{initials}</AvatarFallback>
+      </Avatar>
+      <SvgIcon
+        iconName="caret-down"
+        className="text-foreground hidden md:block"
+      />
+    </DropdownMenuTrigger>
+  );
+}
+
+interface ProfileMenuContentProps extends React.ComponentProps<'div'> {
+  tenant: TenantData;
+  user: UserData;
+  onSwitchTenant?: MouseEventHandler<HTMLDivElement>;
 }
 
 function ProfileMenuContent({
   className,
   tenant,
   user,
+  onSwitchTenant,
+  ...props
 }: ProfileMenuContentProps) {
   return (
-    <DropdownMenuContent
-      className={cn('flex max-h-75 w-73 flex-col gap-1 py-2', className)}
-    >
-      <DropdownMenuItem className="p-0">
-        <Tenant
-          highlightName={true}
-          name={tenant.name}
-          flag={tenant.flag}
-          locality={tenant.locality}
-        />
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem asChild>
-        <ContentText
-          className="text-foreground-bold"
-          variant="text-sm-bold"
-          asChild
-        >
-          <a href="https://manage.auth0.com/" target="_blank" rel="noreferrer">
-            <SvgIcon iconName="grid" className="mr-2" />
-            Open Dashboard
-          </a>
-        </ContentText>
-      </DropdownMenuItem>
-      <DropdownMenuItem>
-        <SvgIcon iconName="refresh" className="mr-2" />
-        <ContentText className="text-foreground-bold" variant="text-sm-bold">
-          Switch Tenant
-        </ContentText>
-        <SvgIcon iconName="caret-right" className="ml-auto" />
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem className="p-0">
-        <UserDetails
-          name={user.name}
-          profilePicture={user.profilePicture}
-          profileUrl={user.profileUrl}
-        />
-      </DropdownMenuItem>
-      <DropdownMenuItem className="bg-surface-selected -mx-2 -mb-2 h-14 items-center justify-center">
+    <div className={cn(className)} {...props}>
+      <div className="flex flex-1 flex-col gap-1 py-2">
+        <DropdownMenuItem className="p-0">
+          <Tenant
+            highlightName={true}
+            name={tenant.name}
+            flag={tenant.flag}
+            locality={tenant.locality}
+          />
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <ContentText
+            className="text-foreground-bold"
+            variant="text-sm-bold"
+            asChild
+          >
+            <a
+              href="https://manage.auth0.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <SvgIcon iconName="grid" className="mr-2" />
+              Open Dashboard
+            </a>
+          </ContentText>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onSwitchTenant}>
+          <SvgIcon iconName="refresh" className="mr-2" />
+          <ContentText className="text-foreground-bold" variant="text-sm-bold">
+            Switch Tenant
+          </ContentText>
+          <SvgIcon iconName="caret-right" className="ml-auto" />
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="p-0">
+          <UserDetails
+            name={user.name}
+            profilePicture={user.profilePicture}
+            profileUrl={user.profileUrl}
+          />
+        </DropdownMenuItem>
+      </div>
+      <DropdownMenuItem className="bg-surface-selected h-14 items-center justify-center">
         <ContentText variant="button" className="text-foreground" asChild>
           <span>Log Out</span>
         </ContentText>
         <SvgIcon iconName="logout" className="text-foreground ml-2" />
       </DropdownMenuItem>
-    </DropdownMenuContent>
+    </div>
   );
 }
 
-export { ProfileMenuContent };
+export { ProfileMenuContent, ProfileMenuTrigger, type UserData };

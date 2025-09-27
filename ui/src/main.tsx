@@ -6,12 +6,9 @@ import {
   Button,
   ContentText,
   DisplayText,
-  DropdownMenu,
-  DropdownMenuTrigger,
   FlagIcon,
   SvgIcon,
-  SelectTenantMenuContent,
-  ProfileMenuContent,
+  AuthMenu,
 } from './components';
 
 function main() {
@@ -43,57 +40,37 @@ function main() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <DisplayText variant="heading-sm">Switch Tenant Menu</DisplayText>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button>Open Select Tenant Menu</Button>
-            </DropdownMenuTrigger>
-            <SelectTenantMenuContent
-              tenants={[
-                {
-                  isSelected: true,
-                  name: 'dev-o4cdyn0v3v74dgx2',
-                  flag: 'us',
-                  locality: 'US-4',
-                },
-                {
-                  isSelected: false,
-                  name: 'product-design-test',
-                  flag: 'uk',
-                  locality: 'UK-1',
-                },
-                {
-                  isSelected: false,
-                  name: 'test-canada-tenant',
-                  flag: 'canada',
-                  locality: 'CA-1',
-                },
-              ]}
-              onSelectTenant={(tenant) => {
-                console.log('Selected tenant:', tenant);
-              }}
-            />
-          </DropdownMenu>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <DisplayText variant="heading-sm">Profile Menu</DisplayText>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button>Open Profile Menu</Button>
-            </DropdownMenuTrigger>
-            <ProfileMenuContent
-              tenant={{
+          <AuthMenu
+            tenant={{
+              name: 'dev-o4cdyn0v3v74dgx2',
+              flag: 'us',
+              locality: 'US-4',
+            }}
+            tenants={[
+              {
+                isSelected: true,
                 name: 'dev-o4cdyn0v3v74dgx2',
                 flag: 'us',
                 locality: 'US-4',
-              }}
-              user={{
-                name: 'Vishnu Singh',
-                profileUrl: 'https://auth0.com',
-              }}
-            />
-          </DropdownMenu>
+              },
+              {
+                isSelected: false,
+                name: 'product-design-test',
+                flag: 'uk',
+                locality: 'UK-1',
+              },
+              {
+                isSelected: false,
+                name: 'test-canada-tenant',
+                flag: 'canada',
+                locality: 'CA-1',
+              },
+            ]}
+            user={{
+              name: 'Vishnu Singh',
+              profileUrl: 'https://auth0.com',
+            }}
+          />
         </div>
 
         <div className="flex flex-col gap-2">

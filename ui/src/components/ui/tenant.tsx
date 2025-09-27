@@ -6,11 +6,7 @@ import { ContentText } from './content-text';
 import { SvgIcon } from './svg-icon';
 import { FlagIcon, type FlagIconProps } from './flag-icon';
 import { Button } from './button';
-import {
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from './dropdown-menu';
+import { DropdownMenuItem, DropdownMenuSeparator } from './dropdown-menu';
 
 interface TenantData {
   name: string;
@@ -66,25 +62,22 @@ function Tenant({
   );
 }
 
-interface SwitchTenantProps {
-  className?: string;
+interface TenantMenuContentProps extends React.ComponentProps<'div'> {
   tenants: TenantData[];
   onBack?: React.MouseEventHandler<HTMLButtonElement>;
   onSelectTenant?: (tenant: TenantData) => void;
 }
 
-function SelectTenantMenuContent({
-  className,
+function TenantMenuContent({
   tenants,
   onBack,
   onSelectTenant,
-}: SwitchTenantProps) {
+  ...props
+}: TenantMenuContentProps) {
   return (
-    <DropdownMenuContent
-      className={cn('flex max-h-75 w-73 flex-col gap-1 py-2', className)}
-    >
+    <div {...props}>
       <div className="flex items-center gap-0 self-stretch px-1">
-        <Button className="h-8 w-8" variant="ghost" onClick={onBack}>
+        <Button className="z-0" size="icon" variant="ghost" onClick={onBack}>
           <SvgIcon iconName="arrow-left" />
         </Button>
         <div className="-ml-8 flex flex-1 items-center justify-center gap-1 py-2">
@@ -112,8 +105,8 @@ function SelectTenantMenuContent({
           />
         </DropdownMenuItem>
       ))}
-    </DropdownMenuContent>
+    </div>
   );
 }
 
-export { Tenant, type TenantData, SelectTenantMenuContent };
+export { Tenant, type TenantData, TenantMenuContent };
