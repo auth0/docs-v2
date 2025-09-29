@@ -162,38 +162,48 @@ export function useMenuAnimation(): [
 }
 
 interface AuthMenuProps {
-  tenant: TenantData;
+  selectedTenant: TenantData;
+  onSelectTenant?: (tenant: TenantData) => void;
   tenants: TenantData[];
   user: UserData;
 }
 
-function AuthMenu({ tenant, user, tenants }: AuthMenuProps) {
+function AuthMenu({
+  selectedTenant,
+  onSelectTenant,
+  tenants,
+  user,
+}: AuthMenuProps) {
   const [menuState, menuActions, animationClasses, refs] = useMenuAnimation();
+
+  const handleSelectTenant = (tenant: TenantData) => {
+    onSelectTenant?.(tenant);
+    menuActions.closeMenu();
+  };
 
   return (
     <DropdownMenu open={menuState.isOpen} onOpenChange={menuActions.openMenu}>
-      <ProfileMenuTrigger tenant={tenant} user={user} />
+      <ProfileMenuTrigger selectedTenant={selectedTenant} user={user} />
       <DropdownMenuContent
         className="relative max-h-74 w-73 overflow-hidden p-0 transition-[height] ease-in-out"
         style={{ height: menuState.height }}
+        align="end"
         onInteractOutside={menuActions.closeMenu}
       >
         <ProfileMenuContent
           ref={refs.profileMenuRef}
           onSwitchTenant={menuActions.openTenantMenu}
           className={animationClasses.profileMenuClasses}
-          tenant={tenant}
+          selectedTenant={selectedTenant}
           user={user}
         />
         <TenantMenuContent
           ref={refs.tenantMenuRef}
           className={animationClasses.tenantMenuClasses}
+          selectedTenant={selectedTenant}
           tenants={tenants}
           onBack={menuActions.openProfileMenu}
-          onSelectTenant={(tenant) => {
-            console.log('Selected tenant:', tenant);
-            menuActions.closeMenu();
-          }}
+          onSelectTenant={handleSelectTenant}
         />
       </DropdownMenuContent>
     </DropdownMenu>

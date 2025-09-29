@@ -53,13 +53,13 @@ function UserDetails({
 
 interface ProfileMenuTriggerProps {
   className?: string;
-  tenant: TenantData;
+  selectedTenant: TenantData;
   user: UserData;
 }
 
 function ProfileMenuTrigger({
   className,
-  tenant,
+  selectedTenant,
   user,
 }: ProfileMenuTriggerProps) {
   const { profilePicture } = user;
@@ -73,7 +73,7 @@ function ProfileMenuTrigger({
         className="text-foreground-bold hidden md:block"
         asChild
       >
-        <span>{tenant.name}</span>
+        <span>{selectedTenant.name}</span>
       </ContentText>
       <Avatar className="h-8 w-8">
         <AvatarImage src={profilePicture} />
@@ -88,14 +88,14 @@ function ProfileMenuTrigger({
 }
 
 interface ProfileMenuContentProps extends React.ComponentProps<'div'> {
-  tenant: TenantData;
+  selectedTenant: TenantData;
   user: UserData;
   onSwitchTenant?: MouseEventHandler<HTMLDivElement>;
 }
 
 function ProfileMenuContent({
   className,
-  tenant,
+  selectedTenant,
   user,
   onSwitchTenant,
   ...props
@@ -106,9 +106,9 @@ function ProfileMenuContent({
         <DropdownMenuItem className="p-0">
           <Tenant
             highlightName={true}
-            name={tenant.name}
-            flag={tenant.flag}
-            locality={tenant.locality}
+            name={selectedTenant.name}
+            flag={selectedTenant.flag}
+            locality={selectedTenant.locality}
           />
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -144,7 +144,7 @@ function ProfileMenuContent({
           />
         </DropdownMenuItem>
       </div>
-      <DropdownMenuItem className="bg-surface-selected h-14 shrink-0 items-center justify-center">
+      <DropdownMenuItem className="bg-surface-selected h-14 shrink-0 items-center justify-center rounded-none">
         <ContentText variant="button" className="text-foreground" asChild>
           <span>Log Out</span>
         </ContentText>

@@ -12,13 +12,13 @@ interface TenantData {
   name: string;
   flag: FlagIconProps['country'];
   locality: string;
-  isSelected?: boolean;
   highlightName?: boolean;
 }
 
 interface TenantProp extends TenantData {
   asChild?: boolean;
   className?: string;
+  isSelected?: boolean;
 }
 
 function Tenant({
@@ -63,12 +63,14 @@ function Tenant({
 }
 
 interface TenantMenuContentProps extends React.ComponentProps<'div'> {
+  selectedTenant: TenantData;
   tenants: TenantData[];
   onBack?: React.MouseEventHandler<HTMLButtonElement>;
   onSelectTenant?: (tenant: TenantData) => void;
 }
 
 function TenantMenuContent({
+  selectedTenant,
   tenants,
   onBack,
   onSelectTenant,
@@ -102,7 +104,7 @@ function TenantMenuContent({
               name={tenant.name}
               flag={tenant.flag}
               locality={tenant.locality}
-              isSelected={tenant.isSelected}
+              isSelected={tenant.name === selectedTenant.name}
             />
           </DropdownMenuItem>
         ))}

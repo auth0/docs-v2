@@ -3,90 +3,83 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 
 import {
+  AuthMenu,
   Button,
   ContentText,
   DisplayText,
   FlagIcon,
+  NavActions,
   SvgIcon,
-  AuthMenu,
   type TenantData,
 } from './components';
 
+const mockUser = {
+  name: 'Vishnu Singh',
+  profileUrl: 'https://auth0.com',
+};
+
 const mockTenants: TenantData[] = [
   {
-    isSelected: true,
     name: 'dev-o4cdyn0v3v74dgx2',
     flag: 'us',
     locality: 'US-4',
   },
   {
-    isSelected: false,
     name: 'product-design-test-1',
     flag: 'uk',
     locality: 'UK-1',
   },
   {
-    isSelected: false,
     name: 'test-canada-tenant-2',
     flag: 'canada',
     locality: 'CA-1',
   },
   {
-    isSelected: false,
     name: 'product-design-test-3',
     flag: 'uk',
     locality: 'UK-1',
   },
   {
-    isSelected: false,
     name: 'test-canada-tenant-4',
     flag: 'canada',
     locality: 'CA-1',
   },
   {
-    isSelected: false,
     name: 'product-design-test-5',
     flag: 'uk',
     locality: 'UK-1',
   },
   {
-    isSelected: false,
     name: 'test-canada-tenant-6',
     flag: 'canada',
     locality: 'CA-1',
   },
   {
-    isSelected: false,
     name: 'product-design-test-7',
     flag: 'uk',
     locality: 'UK-1',
   },
   {
-    isSelected: false,
     name: 'test-canada-tenant-8',
     flag: 'canada',
     locality: 'CA-1',
   },
   {
-    isSelected: false,
     name: 'product-design-test-9',
     flag: 'uk',
     locality: 'UK-1',
   },
   {
-    isSelected: false,
     name: 'test-canada-tenant-10',
     flag: 'canada',
     locality: 'CA-1',
   },
   {
-    isSelected: false,
     name: 'product-design-test-11',
     flag: 'uk',
     locality: 'UK-1',
   },
   {
-    isSelected: false,
     name: 'test-canada-tenant-12',
     flag: 'canada',
     locality: 'CA-1',
@@ -129,16 +122,9 @@ function main() {
                 With tenants menu's height smaller
               </ContentText>
               <AuthMenu
-                tenant={{
-                  name: 'dev-o4cdyn0v3v74dgx2',
-                  flag: 'us',
-                  locality: 'US-4',
-                }}
+                selectedTenant={mockTenants[0]}
                 tenants={mockTenants.slice(0, 2)}
-                user={{
-                  name: 'Vishnu Singh',
-                  profileUrl: 'https://auth0.com',
-                }}
+                user={mockUser}
               />
             </div>
             <div className="flex flex-col gap-2">
@@ -146,16 +132,33 @@ function main() {
                 With tenants menu's height larger
               </ContentText>
               <AuthMenu
-                tenant={{
-                  name: 'dev-o4cdyn0v3v74dgx2',
-                  flag: 'us',
-                  locality: 'US-4',
-                }}
+                selectedTenant={mockTenants[0]}
                 tenants={mockTenants}
-                user={{
-                  name: 'Vishnu Singh',
-                  profileUrl: 'https://auth0.com',
-                }}
+                user={mockUser}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <DisplayText variant="heading-sm">Nav Actions</DisplayText>
+          <div className="flex gap-4">
+            <div className="flex flex-col gap-2">
+              <ContentText variant="caption-sm">Without login</ContentText>
+              <NavActions
+                className="static"
+                user={null}
+                tenants={mockTenants}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <ContentText variant="caption-sm">
+                With tenants menu's height larger
+              </ContentText>
+              <NavActions
+                className="static"
+                user={mockUser}
+                tenants={mockTenants}
               />
             </div>
           </div>
