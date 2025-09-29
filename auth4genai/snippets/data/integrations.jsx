@@ -72,6 +72,16 @@ export const integrations = [
       "Allow your AI Agents to search, create, and modify tasks in Google Tasks.",
   },
   {
+    id: "google-workspace",
+    title: "Google Workspace",
+    icon: "/ai/docs/img/integrations/google-avatar.png",
+    href: "/integrations/google-workspace",
+    status: "Available",
+    type: "Enterprise",
+    description:
+      "Allow your AI agents to access your Google Workspace services including Gmail, Google Calendar, Drive, and more.",
+  },
+  {
     id: "youtube",
     title: "Youtube",
     icon: "/ai/docs/img/integrations/youtube-avatar.png",
@@ -89,6 +99,15 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description: "Connect to your users via their Microsoft Account.",
+  },
+  {
+    id: "microsoft-azure",
+    title: "Microsoft Azure AD",
+    icon: "/ai/docs/img/integrations/microsoft-avatar.png",
+    href: "/integrations/microsoft-azure",
+    status: "Available",
+    type: "Enterprise",
+    description: "Allow your AI agents to Microsoft Azure AD services including Outlook, Teams, OneDrive, and more.",
   },
   {
     id: "github",
@@ -211,5 +230,116 @@ export const integrations = [
     type: "Social",
     description:
       "Allow your AI Agent to create and schedule new posts (text, photo, video), reblog content, and manage a user's blog theme and settings.",
+  },
+  {
+    id: "amazon",
+    title: "Amazon",
+    icon: "/ai/docs/img/integrations/amazon-avatar.png",
+    href: "/integrations/amazon",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as an Amazon seller to manage inventory, update product listings, and track sales performance. Or, as a consumer, a shopping agent that tracks product prices and availability.",
+  },
+  {
+    id: "basecamp",
+    title: "Basecamp",
+    icon: "/ai/docs/img/integrations/basecamp-avatar.png",
+    href: "/integrations/basecamp",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent to manage projects, to-do lists, messages, schedules, and team collaboration in Basecamp.",
+  },
+  {
+    id: "digitalocean",
+    title: "DigitalOcean",
+    icon: "/ai/docs/img/integrations/digitalocean-avatar.png",
+    href: "/integrations/digitalocean",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent to provision and manage cloud infrastructure, Droplets, Kubernetes clusters, and automate deployment workflows.",
+  },
+  {
+    id: "salesforce",
+    title: "Salesforce",
+    icon: "/ai/docs/img/integrations/salesforce-avatar.png",
+    href: "/integrations/salesforce",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent to access customer records, manage sales opportunities, and automate CRM workflows in Salesforce.",
+  },
+  {
+    id: "twitch",
+    title: "Twitch",
+    icon: "/ai/docs/img/integrations/twitch-avatar.png",
+    href: "/integrations/twitch",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Twitch user to access streaming data, manage broadcasts, and integrate with gaming workflows.",
+  },
+  {
+    id: "twitter",
+    title: "Twitter",
+    icon: "/ai/docs/img/integrations/x-avatar.png",
+    href: "/integrations/twitter",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Twitter user to post tweets, manage followers, and integrate with social media workflows.",
+  },
+  {
+   
+    id: "bitbucket",
+    title: "Bitbucket",
+    icon: "/ai/docs/img/integrations/bitbucket-avatar.png",
+    href: "/integrations/bitbucket",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Bitbucket user to manage repositories, track issues, and automate work with code repositories.",
+  },
+  {
+    id: "dropbox",
+    title: "Dropbox",
+    icon: "/ai/docs/img/integrations/dropbox-avatar.png",
+    href: "/integrations/dropbox",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Dropbox user to manage files, share Dropbox content for analysis, and automate document processing.",
+  },
+  {
+    id: "fitbit",
+    title: "Fitbit",
+    icon: "/ai/docs/img/integrations/fitbit-avatar.png",
+    href: "/integrations/fitbit",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Fitbit user to access health data, track fitness goals, and manage user profiles.",
+  },
+  {
+    id: "hugging-face",
+    title: "Hugging Face",
+    icon: "/ai/docs/img/integrations/hugging-face-avatar.png",
+    href: "/integrations/hugging-face",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Hugging Face user to access model information, manage datasets, and integrate with machine learning workflows.",
+  },
+  {
+    id: "paypal",
+    title: "Paypal",
+    icon: "/ai/docs/img/integrations/paypal-avatar.png",
+    href: "/integrations/paypal",
+    status: "Available",
+    type: "Social",
+    description:
+      "Allow your AI Agent as a Paypal user to access transaction information, manage payments, and integrate with financial workflows.",
   },
 ];

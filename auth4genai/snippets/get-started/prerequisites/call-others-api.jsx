@@ -18,8 +18,8 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
  *
  * @param {Object|undefined} [props.createResourceServerClientStep] - Configuration for resource server client creation step
  *
- * @param {Object|undefined} [props.tokenExchangeGrantStep] - Configuration for token exchange grant step
- * @param {string} [props.tokenExchangeGrantStep.applicationName] - Name of the application for token exchange grant
+ * @param {Object|undefined} [props.tokenVaultGrantStep] - Configuration for token vault grant step
+ * @param {string} [props.tokenVaultGrantStep.applicationName] - Name of the application for token vault grant
  *
  * @returns {JSX.Element} A React component containing prerequisite steps
  */
@@ -34,7 +34,7 @@ export const Prerequisites = ({
   refreshTokenGrantStep = undefined,
   createAuth0ApiStep = undefined,
   createResourceServerClientStep = undefined,
-  tokenExchangeGrantStep = {
+  tokenVaultGrantStep = {
     applicationName: "Auth0 Application",
   },
 }) => {
@@ -51,16 +51,16 @@ export const Prerequisites = ({
     })
   );
 
-  if (tokenExchangeGrantStep) {
+  if (tokenVaultGrantStep) {
     steps.push(
-      <Step key="token-exchange" title="Enable Token Exchange Grant">
-        Enable the Token Exchange Grant for your{" "}
-        {tokenExchangeGrantStep.applicationName}. Go to{" "}
+      <Step key="token-exchange" title="Enable Token Vault Grant">
+        Enable the Token Vault Grant for your{" "}
+        {tokenVaultGrantStep.applicationName}. Go to{" "}
         <strong>
           Applications &gt; [Your Application] &gt; Settings &gt; Advanced &gt;
           Grant Types
         </strong>{" "}
-        and enable the <strong>Token Exchange</strong> grant type.
+        and enable the <strong>Token Vault</strong> grant type.
       </Step>
     );
   }
