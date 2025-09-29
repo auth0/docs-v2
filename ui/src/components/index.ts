@@ -6,3 +6,4 @@ export { DisplayText } from './ui/display-text';
 export { DropdownMenu, DropdownMenuTrigger } from './ui/dropdown-menu';
 export { FlagIcon } from './ui/flag-icon';
 export { SvgIcon } from './ui/svg-icon';
+export { type TenantData } from './ui/tenant';

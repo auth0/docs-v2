@@ -9,7 +9,89 @@ import {
   FlagIcon,
   SvgIcon,
   AuthMenu,
+  type TenantData,
 } from './components';
+
+const mockTenants: TenantData[] = [
+  {
+    isSelected: true,
+    name: 'dev-o4cdyn0v3v74dgx2',
+    flag: 'us',
+    locality: 'US-4',
+  },
+  {
+    isSelected: false,
+    name: 'product-design-test-1',
+    flag: 'uk',
+    locality: 'UK-1',
+  },
+  {
+    isSelected: false,
+    name: 'test-canada-tenant-2',
+    flag: 'canada',
+    locality: 'CA-1',
+  },
+  {
+    isSelected: false,
+    name: 'product-design-test-3',
+    flag: 'uk',
+    locality: 'UK-1',
+  },
+  {
+    isSelected: false,
+    name: 'test-canada-tenant-4',
+    flag: 'canada',
+    locality: 'CA-1',
+  },
+  {
+    isSelected: false,
+    name: 'product-design-test-5',
+    flag: 'uk',
+    locality: 'UK-1',
+  },
+  {
+    isSelected: false,
+    name: 'test-canada-tenant-6',
+    flag: 'canada',
+    locality: 'CA-1',
+  },
+  {
+    isSelected: false,
+    name: 'product-design-test-7',
+    flag: 'uk',
+    locality: 'UK-1',
+  },
+  {
+    isSelected: false,
+    name: 'test-canada-tenant-8',
+    flag: 'canada',
+    locality: 'CA-1',
+  },
+  {
+    isSelected: false,
+    name: 'product-design-test-9',
+    flag: 'uk',
+    locality: 'UK-1',
+  },
+  {
+    isSelected: false,
+    name: 'test-canada-tenant-10',
+    flag: 'canada',
+    locality: 'CA-1',
+  },
+  {
+    isSelected: false,
+    name: 'product-design-test-11',
+    flag: 'uk',
+    locality: 'UK-1',
+  },
+  {
+    isSelected: false,
+    name: 'test-canada-tenant-12',
+    flag: 'canada',
+    locality: 'CA-1',
+  },
+];
 
 function main() {
   createRoot(document.getElementById('root')!).render(
@@ -40,37 +122,43 @@ function main() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <AuthMenu
-            tenant={{
-              name: 'dev-o4cdyn0v3v74dgx2',
-              flag: 'us',
-              locality: 'US-4',
-            }}
-            tenants={[
-              {
-                isSelected: true,
-                name: 'dev-o4cdyn0v3v74dgx2',
-                flag: 'us',
-                locality: 'US-4',
-              },
-              {
-                isSelected: false,
-                name: 'product-design-test',
-                flag: 'uk',
-                locality: 'UK-1',
-              },
-              {
-                isSelected: false,
-                name: 'test-canada-tenant',
-                flag: 'canada',
-                locality: 'CA-1',
-              },
-            ]}
-            user={{
-              name: 'Vishnu Singh',
-              profileUrl: 'https://auth0.com',
-            }}
-          />
+          <DisplayText variant="heading-sm">Profile Menu</DisplayText>
+          <div className="flex gap-4">
+            <div className="flex flex-col gap-2">
+              <ContentText variant="caption-sm">
+                With tenants menu's height smaller
+              </ContentText>
+              <AuthMenu
+                tenant={{
+                  name: 'dev-o4cdyn0v3v74dgx2',
+                  flag: 'us',
+                  locality: 'US-4',
+                }}
+                tenants={mockTenants.slice(0, 2)}
+                user={{
+                  name: 'Vishnu Singh',
+                  profileUrl: 'https://auth0.com',
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <ContentText variant="caption-sm">
+                With tenants menu's height larger
+              </ContentText>
+              <AuthMenu
+                tenant={{
+                  name: 'dev-o4cdyn0v3v74dgx2',
+                  flag: 'us',
+                  locality: 'US-4',
+                }}
+                tenants={mockTenants}
+                user={{
+                  name: 'Vishnu Singh',
+                  profileUrl: 'https://auth0.com',
+                }}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-col gap-2">

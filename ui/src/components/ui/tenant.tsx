@@ -91,20 +91,22 @@ function TenantMenuContent({
         </div>
       </div>
       <DropdownMenuSeparator />
-      {tenants.map((tenant) => (
-        <DropdownMenuItem
-          className="p-0"
-          key={tenant.name}
-          onClick={() => onSelectTenant?.(tenant)}
-        >
-          <Tenant
-            name={tenant.name}
-            flag={tenant.flag}
-            locality={tenant.locality}
-            isSelected={tenant.isSelected}
-          />
-        </DropdownMenuItem>
-      ))}
+      <div className="flex-1 overflow-auto">
+        {tenants.map((tenant) => (
+          <DropdownMenuItem
+            className="p-0"
+            key={tenant.name}
+            onClick={() => onSelectTenant?.(tenant)}
+          >
+            <Tenant
+              name={tenant.name}
+              flag={tenant.flag}
+              locality={tenant.locality}
+              isSelected={tenant.isSelected}
+            />
+          </DropdownMenuItem>
+        ))}
+      </div>
     </div>
   );
 }

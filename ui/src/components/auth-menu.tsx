@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -8,7 +8,6 @@ import {
   ProfileMenuTrigger,
   type UserData,
 } from './ui/profile-menu';
-import { DisplayText } from './ui/display-text';
 import { DropdownMenu, DropdownMenuContent } from './ui/dropdown-menu';
 
 const SelectedMenu = {
@@ -39,7 +38,7 @@ interface AnimationClasses {
 }
 
 export function useMenuAnimation(): [
-  MenuState & { isOpen: boolean },
+  MenuState & { isOpen: boolean; height: number },
   {
     openMenu: (open: boolean) => void;
     closeMenu: () => void;
@@ -47,7 +46,16 @@ export function useMenuAnimation(): [
     openProfileMenu: () => void;
   },
   AnimationClasses,
+  {
+    profileMenuRef: React.RefObject<HTMLDivElement | null>;
+    tenantMenuRef: React.RefObject<HTMLDivElement | null>;
+  },
 ] {
+  const [menuHeight, setMenuHeight] = useState<number>(296);
+
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const tenantMenuRef = useRef<HTMLDivElement>(null);
+
   const [selectedMenu, setSelectedMenu] = useState<SelectedMenu>(
     SelectedMenu.NONE,
   );
@@ -83,7 +91,7 @@ export function useMenuAnimation(): [
 
   const profileMenuClasses = useMemo(() => {
     const className =
-      'fill-mode-both absolute top-0 bottom-0 left-0 flex w-full flex-col';
+      'fill-mode-both absolute top-0 left-0 flex w-full flex-col';
 
     if (
       lastMenuAction === MenuAction.SWITCH_TENANT ||
@@ -104,8 +112,9 @@ export function useMenuAnimation(): [
   }, [selectedMenu, lastMenuAction]);
 
   const tenantMenuClasses = useMemo(() => {
+    // had to add 2px to max height to avoid unnecessary scrollbar issue for smaller content
     const className =
-      'fill-mode-both absolute top-0 bottom-0 flex w-full flex-col py-2';
+      'fill-mode-both absolute top-0 flex w-full flex-col py-2 max-h-[calc(100%+2px)]';
 
     if (
       selectedMenu === SelectedMenu.TENANT &&
@@ -131,10 +140,24 @@ export function useMenuAnimation(): [
     return cn(className, 'left-73');
   }, [selectedMenu, lastMenuAction]);
 
+  // dynamically set height based on current menu content
+  useEffect(() => {
+    if (selectedMenu === SelectedMenu.PROFILE) {
+      const height =
+        profileMenuRef.current?.getBoundingClientRect().height ?? 296;
+      setMenuHeight(height);
+    } else if (selectedMenu === SelectedMenu.TENANT) {
+      const height =
+        tenantMenuRef.current?.getBoundingClientRect().height ?? 296;
+      setMenuHeight(height);
+    }
+  }, [selectedMenu]);
+
   return [
-    { selectedMenu, lastMenuAction, isOpen },
+    { selectedMenu, lastMenuAction, isOpen, height: menuHeight },
     { openMenu, closeMenu, openTenantMenu, openProfileMenu },
     { profileMenuClasses, tenantMenuClasses },
+    { profileMenuRef, tenantMenuRef },
   ];
 }
 
@@ -145,35 +168,35 @@ interface AuthMenuProps {
 }
 
 function AuthMenu({ tenant, user, tenants }: AuthMenuProps) {
-  const [menuState, menuActions, animationClasses] = useMenuAnimation();
+  const [menuState, menuActions, animationClasses, refs] = useMenuAnimation();
 
   return (
-    <>
-      <DisplayText variant="heading-sm">Profile Menu</DisplayText>
-      <DropdownMenu open={menuState.isOpen} onOpenChange={menuActions.openMenu}>
-        <ProfileMenuTrigger tenant={tenant} user={user} />
-        <DropdownMenuContent
-          className="relative h-74 w-73 p-0"
-          onInteractOutside={menuActions.closeMenu}
-        >
-          <ProfileMenuContent
-            onSwitchTenant={menuActions.openTenantMenu}
-            className={animationClasses.profileMenuClasses}
-            tenant={tenant}
-            user={user}
-          />
-          <TenantMenuContent
-            className={animationClasses.tenantMenuClasses}
-            tenants={tenants}
-            onBack={menuActions.openProfileMenu}
-            onSelectTenant={(tenant) => {
-              console.log('Selected tenant:', tenant);
-              menuActions.closeMenu();
-            }}
-          />
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
+    <DropdownMenu open={menuState.isOpen} onOpenChange={menuActions.openMenu}>
+      <ProfileMenuTrigger tenant={tenant} user={user} />
+      <DropdownMenuContent
+        className="relative max-h-74 w-73 overflow-hidden p-0 transition-[height] ease-in-out"
+        style={{ height: menuState.height }}
+        onInteractOutside={menuActions.closeMenu}
+      >
+        <ProfileMenuContent
+          ref={refs.profileMenuRef}
+          onSwitchTenant={menuActions.openTenantMenu}
+          className={animationClasses.profileMenuClasses}
+          tenant={tenant}
+          user={user}
+        />
+        <TenantMenuContent
+          ref={refs.tenantMenuRef}
+          className={animationClasses.tenantMenuClasses}
+          tenants={tenants}
+          onBack={menuActions.openProfileMenu}
+          onSelectTenant={(tenant) => {
+            console.log('Selected tenant:', tenant);
+            menuActions.closeMenu();
+          }}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

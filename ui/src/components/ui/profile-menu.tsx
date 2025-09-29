@@ -102,7 +102,7 @@ function ProfileMenuContent({
 }: ProfileMenuContentProps) {
   return (
     <div className={cn(className)} {...props}>
-      <div className="flex flex-1 flex-col gap-1 py-2">
+      <div className="flex shrink-0 flex-col gap-1 py-2">
         <DropdownMenuItem className="p-0">
           <Tenant
             highlightName={true}
@@ -144,7 +144,7 @@ function ProfileMenuContent({
           />
         </DropdownMenuItem>
       </div>
-      <DropdownMenuItem className="bg-surface-selected h-14 items-center justify-center">
+      <DropdownMenuItem className="bg-surface-selected h-14 shrink-0 items-center justify-center">
         <ContentText variant="button" className="text-foreground" asChild>
           <span>Log Out</span>
         </ContentText>
