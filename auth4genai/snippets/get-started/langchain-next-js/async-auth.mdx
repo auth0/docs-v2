@@ -24,7 +24,7 @@ In the root directory of your project, install the following dependencies:
 - `langgraph-nextjs-api-passthrough`: API passthrough for LangGraph.
 
 ```bash wrap lines
-npm install @auth0/ai-langchain@3 @langchain/core@0.3 @langchain/langgraph@0.3 @langchain/openai@0.6 langchain@0.3 langgraph-nextjs-api-passthrough@0.1
+npm install @auth0/ai-langchain@3.5.0 @langchain/core@0.3.77 @langchain/langgraph@0.4.4 @langchain/openai@0.6.13 langchain@0.3.12 langgraph-nextjs-api-passthrough@0.1.4
 ```
 ### Update the environment file
 
@@ -49,7 +49,7 @@ const auth0AI = new Auth0AI();
 // CIBA flow for user confirmation
 export const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
   userID: async (_params, config) => {
-    return config?.configurable?._credentials?.user?.sub;
+    return config.configurable?.langgraph_auth_user?.sub;
   },
   bindingMessage: async ({ product, qty }) =>
     `Do you want to buy ${qty} ${product}`,
@@ -95,43 +95,142 @@ Next, add the following code to `src/lib/auth0.ts`:
 
 ```tsx src/lib/auth0.ts wrap lines highlight={2-5}
 //... existing code
-export const getUser = async () => {
-  const session = await auth0.getSession();
-  return session?.user;
+export const auth0 = new Auth0Client({
+  authorizationParameters: {
+    // In v4, the AUTH0_SCOPE and AUTH0_AUDIENCE environment variables are no longer automatically picked up by the SDK.
+    // Instead, we need to provide the values explicitly.
+    scope: process.env.AUTH0_SCOPE,
+    audience: process.env.AUTH0_AUDIENCE,
+  },
+});
+
+// Get the Access token from Auth0 session
+export const getAccessToken = async () => {
+  const tokenResult = await auth0.getAccessToken();
+
+  if(!tokenResult || !tokenResult.token) {
+    throw new Error("No access token found in Auth0 session");
+  }
+
+  return tokenResult.token;
 };
 ```
 
-Update the `/src/app/api/chat/[..._path]/route.ts` file with the following code. The `user` will be passed to your LangGraph agent so we can use it from the Auth0 AI SDK to get the current user.
+Update the `/src/app/api/chat/[..._path]/route.ts` file with the following code. AccessToken will be passed to your LangGraph agent so we can use it from the Auth0 AI SDK to get the current user.
 
-```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,19}
+```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,10}
 import { initApiPassthrough } from "langgraph-nextjs-api-passthrough";
 
-import { getUser } from "@/lib/auth0";
+import { getAccessToken } from "@/lib/auth0";
 
 export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
   initApiPassthrough({
     apiUrl: process.env.LANGGRAPH_API_URL,
     baseRoute: "chat/",
-    bodyParameters: async (req, body) => {
-      if (
-        req.nextUrl.pathname.endsWith("/runs/stream") &&
-        req.method === "POST"
-      ) {
-        return {
-          ...body,
-          config: {
-            configurable: {
-              _credentials: {
-                user: await getUser(),
-              },
-            },
-          },
-        };
-      }
-
-      return body;
-    },
+    headers: async () => {
+      const accessToken = await getAccessToken();
+      return {
+        Authorization: `Bearer ${accessToken}`,
+      };
   });
+```
+
+### Add Custom Authentication
+<Info>
+For more information on how to add custom authentication for your LangGraph Platform application, see the [Custom Auth](https://langchain-ai.github.io/langgraphjs/how-tos/auth/custom_auth/) guide.
+</Info>
+In your langgraph.json, add the path to your auth file:
+```typescript langgraph.json wrap lines highlight={8}
+{
+  "node_version": "20",
+  "graphs": {
+    "agent": "./agent.mts:graph"
+  },
+  "env": ".env",
+  "auth": {
+    "path": "./auth.mts:authHandler"
+  }
+}
+```
+Then, in your auth.mts file, add your auth logic:
+```typescript ./auth.mts wrap lines
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const { Auth, HTTPException } = require("@langchain/langgraph-sdk/auth");
+
+const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;
+
+// JWKS endpoint for Auth0
+const JWKS = createRemoteJWKSet(
+  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+);
+
+// Create the Auth instance
+const auth = new Auth();
+// Register the authentication handler
+auth.authenticate(async (request: Request) => {
+  const authHeader = request.headers.get("Authorization");
+  const xApiKeyHeader = request.headers.get("x-api-key");
+    /**
+     * LangGraph Platform will convert the `Authorization` header from the client to an `x-api-key` header automatically
+     * as of now: https://docs.langchain.com/langgraph-platform/custom-auth
+     *
+     * We can still leverage the `Authorization` header when served in other infrastructure w/ langgraph-cli
+     * or when running locally.
+     */
+    // This header is required in Langgraph Cloud.
+    if (!authHeader && !xApiKeyHeader) {
+      throw new HTTPException(401, {
+        message: "Invalid auth header provided.",
+      });
+    }
+
+    // prefer the xApiKeyHeader first
+    let token = xApiKeyHeader || authHeader;
+
+    // Remove "Bearer " prefix if present
+    if (token && token.startsWith("Bearer ")) {
+      token = token.substring(7);
+    }
+
+    // Validate Auth0 Access Token using common JWKS endpoint
+    if (!token) {
+      throw new HTTPException(401, {
+        message:
+          "Authorization header format must be of the form: Bearer <token>",
+      });
+    }
+
+    if (token) {
+      try {
+        // Verify the JWT using Auth0 JWKS
+        const { payload } = await jwtVerify(token, JWKS, {
+          issuer: `https://${AUTH0_DOMAIN}/`,
+          audience: AUTH0_AUDIENCE,
+        });
+
+        console.log("✅ Auth0 JWT payload resolved!", payload);
+
+        // Return the verified payload - this becomes available in graph nodes
+        return {
+          identity: payload.sub!,
+          email: payload.email as string,
+          permissions:
+            typeof payload.scope === "string" ? payload.scope.split(" ") : [],
+          auth_type: "auth0",
+          // include the access token for use with Auth0 Token Vault exchanges by tools
+          getRawAccessToken: () => token,
+          // Add any other claims you need
+          ...payload,
+        };
+      } catch (jwtError) {
+        ...
+      }
+    }
+});
+
+export { auth as authHandler };
 ```
 
 #### Create a tool to call your API

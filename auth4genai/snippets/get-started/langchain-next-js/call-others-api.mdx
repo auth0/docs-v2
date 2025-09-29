@@ -7,7 +7,7 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
   <Tab
     title="Use sample app (recommended)"
   >
-  
+
 ### Clone sample app
 Clone this sample app from the [Auth0 AI samples](https://github.com/auth0-samples/auth0-ai-samples) repository:
 
@@ -27,8 +27,13 @@ AUTH0_DOMAIN='<your-auth0-domain>'
 AUTH0_CLIENT_ID='<your-auth0-application-client-id>'
 AUTH0_CLIENT_SECRET='<your-auth0-application-client-secret>'
 
+AUTH0_AUDIENCE="https://your.domain.us.langgraph.app"
+AUTH0_SCOPE="openid profile email"
+AUTH0_CUSTOM_API_CLIENT_ID="{yourCustomApiClientId}"
+AUTH0_CUSTOM_API_CLIENT_SECRET="{yourCustomApiClientSecret}"
+
 # OpenAI API Key or any provider supported by the Vercel AI SDK
-OPENAI_API_KEY="YOUR_API_KEY"  
+OPENAI_API_KEY="YOUR_API_KEY"
 
 # LANGGRAPH
 LANGGRAPH_API_URL=http://localhost:54367
@@ -85,7 +90,7 @@ In the root directory of your project, install the following packages:
 - `langgraph-nextjs-api-passthrough`: API passthrough for LangGraph.
 
 ```bash wrap lines
-npm install @auth0/ai-langchain@3 @langchain/community@0.3 @langchain/core@0.3 @langchain/langgraph@0.3 @langchain/openai@0.6 langchain@0.3 langgraph-nextjs-api-passthrough@0.1
+npm install @auth0/ai-langchain@3.5.0 @langchain/community@0.3.53 @langchain/core@0.3.77 @langchain/langgraph@0.4.4 @langchain/openai@0.6.13 langchain@0.3.12 langgraph-nextjs-api-passthrough@0.1.4
 ```
 
 ### Update your environment file
@@ -98,6 +103,11 @@ AUTH0_SECRET='random 32 byte value'
 AUTH0_DOMAIN='<your-auth0-domain>'
 AUTH0_CLIENT_ID='<your-auth0-application-client-id>'
 AUTH0_CLIENT_SECRET='<your-auth0-application-client-secret>'
+
+AUTH0_AUDIENCE="https://your.domain.us.langgraph.app"
+AUTH0_SCOPE="openid profile email"
+AUTH0_CUSTOM_API_CLIENT_ID="{yourCustomApiClientId}"
+AUTH0_CUSTOM_API_CLIENT_SECRET="{yourCustomApiClientSecret}"
 
 # OpenAI API Key or any provider supported by the Vercel AI SDK
 OPENAI_API_KEY="YOUR_API_KEY"
@@ -126,19 +136,33 @@ Use the [Auth0 AI SDK for LangChain](https://github.com/auth0-lab/auth0-ai-js/tr
 
 Create a file `src/lib/auth0-ai.ts` to instantiate the Auth0 AI SDK client:
 
-```tsx src/lib/auth0-ai.ts wrap lines
-import { Auth0AI, getAccessTokenForConnection } from "@auth0/ai-langchain";
+```tsx src/lib/auth0-ai.ts wrap lines highlight={17}
+import { Auth0AI } from '@auth0/ai-langchain';
+import { SUBJECT_TOKEN_TYPES } from "@auth0/ai";
 
-// Get the access token for a connection via Auth0
-export const getAccessToken = async () => getAccessTokenForConnection();
+const auth0AI = new Auth0AI({
+  auth0: {
+    domain: process.env.AUTH0_DOMAIN!,
+    clientId: process.env.AUTH0_CUSTOM_API_CLIENT_ID!,
+    clientSecret: process.env.AUTH0_CUSTOM_API_CLIENT_SECRET!,
+  },
+});
 
-const auth0AI = new Auth0AI();
+const withAccessTokenForConnection = (connection: string, scopes: string[]) =>
+  auth0AI.withTokenForConnection({
+    connection,
+    scopes,
+    accessToken: async (_, config) => {
+      return config.configurable?.langgraph_auth_user?.getRawAccessToken();
+    },
+    subjectTokenType: SUBJECT_TOKEN_TYPES.SUBJECT_TYPE_ACCESS_TOKEN,
+  });
 
 // Connection for Google services
-export const withGoogleConnection = auth0AI.withTokenForConnection({
-  connection: "google-oauth2",
-  scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
-});
+export const withGmailSearch = withAccessTokenForConnection(
+  'google-oauth2',
+  ['https://www.googleapis.com/auth/gmail.readonly'],
+);
 ```
 
 ### Pass credentials to the tools
@@ -148,46 +172,139 @@ Create a file `/src/lib/auth0.ts` file with the following code:
 ```tsx src/lib/auth0.ts wrap lines
 import { Auth0Client } from '@auth0/nextjs-auth0/server';
 
-export const auth0 = new Auth0Client();
+export const auth0 = new Auth0Client({
+  authorizationParameters: {
+    scope: process.env.AUTH0_SCOPE,
+    audience: process.env.AUTH0_AUDIENCE,
+  },
+});
 
-// Get the refresh token from Auth0 session
-export const getRefreshToken = async () => {
-  const session = await auth0.getSession();
-  return session?.tokenSet?.refreshToken;
+export const getAccessToken = async () => {
+  const tokenResult = await auth0.getAccessToken();
+
+  if(!tokenResult || !tokenResult.token) {
+    throw new Error("No access token found in Auth0 session");
+  }
+
+  return tokenResult.token;
 };
 ```
 
-Update your chat route, typically at `/src/app/api/chat/[..._path]/route.ts` to pass the `refreshToken` to your LangGraph agent to use the Auth0 AI SDK to get the Google access token from the server.
+Update your chat route, typically at `/src/app/api/chat/[..._path]/route.ts` to pass the `accessToken` to your LangGraph agent to use the Auth0 AI SDK to get the Google access token from the server.
 
-```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,19}
+```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,10}
 import { initApiPassthrough } from "langgraph-nextjs-api-passthrough";
 
-import { getRefreshToken } from "@/lib/auth0";
+import { getAccessToken } from "@/lib/auth0";
 
 export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
   initApiPassthrough({
     apiUrl: process.env.LANGGRAPH_API_URL,
     baseRoute: "chat/",
-    bodyParameters: async (req, body) => {
-      if (
-        req.nextUrl.pathname.endsWith("/runs/stream") &&
-        req.method === "POST"
-      ) {
-        return {
-          ...body,
-          config: {
-            configurable: {
-              _credentials: {
-                refreshToken: await getRefreshToken(),
-              },
-            },
-          },
-        };
-      }
-
-      return body;
-    },
+    headers: async () => {
+      const accessToken = await getAccessToken();
+      return {
+        Authorization: `Bearer ${accessToken}`,
+      };
   });
+```
+
+### Add Custom Authentication
+<Info>
+For more information on how to add custom authentication for your LangGraph Platform application, see the [Custom Auth](https://langchain-ai.github.io/langgraphjs/how-tos/auth/custom_auth/) guide.
+</Info>
+In your langgraph.json, add the path to your auth file:
+```typescript langgraph.json wrap lines highlight={8}
+{
+  "node_version": "20",
+  "graphs": {
+    "agent": "./agent.mts:graph"
+  },
+  "env": ".env",
+  "auth": {
+    "path": "./auth.mts:authHandler"
+  }
+}
+```
+Then, in your auth.mts file, add your auth logic:
+```typescript ./auth.mts wrap lines
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const { Auth, HTTPException } = require("@langchain/langgraph-sdk/auth");
+
+const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;
+
+// JWKS endpoint for Auth0
+const JWKS = createRemoteJWKSet(
+  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+);
+
+// Create the Auth instance
+const auth = new Auth();
+// Register the authentication handler
+auth.authenticate(async (request: Request) => {
+  const authHeader = request.headers.get("Authorization");
+  const xApiKeyHeader = request.headers.get("x-api-key");
+    /**
+     * LangGraph Platform will convert the `Authorization` header from the client to an `x-api-key` header automatically
+     * as of now: https://docs.langchain.com/langgraph-platform/custom-auth
+     *
+     * We can still leverage the `Authorization` header when served in other infrastructure w/ langgraph-cli
+     * or when running locally.
+     */
+    // This header is required in Langgraph Cloud.
+    if (!authHeader && !xApiKeyHeader) {
+      throw new HTTPException(401, {
+        message: "Invalid auth header provided.",
+      });
+    }
+
+    // prefer the xApiKeyHeader first
+    let token = xApiKeyHeader || authHeader;
+
+    // Remove "Bearer " prefix if present
+    if (token && token.startsWith("Bearer ")) {
+      token = token.substring(7);
+    }
+
+    // Validate Auth0 Access Token using common JWKS endpoint
+    if (!token) {
+      throw new HTTPException(401, {
+        message:
+          "Authorization header format must be of the form: Bearer <token>",
+      });
+    }
+
+    if (token) {
+      try {
+        // Verify the JWT using Auth0 JWKS
+        const { payload } = await jwtVerify(token, JWKS, {
+          issuer: `https://${AUTH0_DOMAIN}/`,
+          audience: AUTH0_AUDIENCE,
+        });
+
+        console.log("✅ Auth0 JWT payload resolved!", payload);
+
+        // Return the verified payload - this becomes available in graph nodes
+        return {
+          identity: payload.sub!,
+          email: payload.email as string,
+          permissions:
+            typeof payload.scope === "string" ? payload.scope.split(" ") : [],
+          auth_type: "auth0",
+          // include the access token for use with Auth0 Token Vault exchanges by tools
+          getRawAccessToken: () => token,
+          // Add any other claims you need
+          ...payload,
+        };
+      } catch (jwtError) {
+        ...
+      }
+    }
+});
+
+export { auth as authHandler };
 ```
 
 ### Use access token to call APIs from a tool
@@ -196,26 +313,31 @@ Once the user is authenticated, you can fetch an access token from Token Vault u
 Once you've obtained the access token for a connection, you can use it with an AI agent to fetch data during a tool call and provide contextual data in its response.
 This example uses `GmailSearch` from the `@langchain/community` tools. This tool will use the access token provided by Token Vault to query for emails.
 
-Update your tool call to request an access token, as shown in the following example: 
-
-```ts src/lib/agent.ts wrap lines highlight={2-3,8-12,16,23}
+```ts src/lib/tools/gmail-seatch.ts wrap lines highlight={10}
 //...
+import { getAccessTokenForConnection } from "@auth0/ai-langchain";
 import { GmailSearch } from "@langchain/community/tools/gmail";
-import { getAccessToken, withGoogleConnection } from "./auth0-ai";
+
+import { withGmailSearch } from "../../lib/auth0-ai";
+
+export const gmailSearchTool = withGmailSearch(
+  new GmailSearch({
+    credentials: {
+      accessToken: async () => getAccessTokenForConnection(),
+    },
+  })
+);
+```
+
+Update your tool call to request an access token, as shown in the following example:
+
+```ts src/lib/agent.ts wrap lines highlight={2,10-13}
+//...
+import { gmailSearchTool } from './tools/gmail-search';
 
 //... existing code
 
-// Provide the access token to the Gmail tools
-const gmailParams = {
-  credentials: {
-    accessToken: getAccessToken,
-  },
-};
-
-const tools = [
-  //... existing tools
-  withGoogleConnection(new GmailSearch(gmailParams)),
-];
+const tools = [gmailSearchTool];
 //... existing code
 export const agent = createReactAgent({
   llm,
