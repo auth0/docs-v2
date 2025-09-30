@@ -3,8 +3,37 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
 export const Prerequisites = ({
   callbackUrl = "http://localhost:3000/auth/callback",
   logoutUrl = "http://localhost:3000",
+  createAuth0ApiStep = undefined,
 }) => {
   const steps = AccountAndAppSteps({ callbackUrl, logoutUrl });
+
+  if (createAuth0ApiStep) {
+    steps.push(
+      <Step key="auth0-api" title="Create an Auth0 API">
+        <ul>
+          <li>
+            In your Auth0 Dashboard, go to{" "}
+            <strong>Applications &gt; APIs</strong>.
+          </li>
+          <li>Create a new API with an identifier (audience).</li>
+          <li>
+            Once API is created, go to the APIs{" "}
+            <strong>Settings &gt; Access Settings</strong> and enable{" "}
+            <strong>Allow Offline Access</strong>.
+          </li>
+          <li>Note down the API identifier for your environment variables.</li>
+        </ul>
+        To learn more about Auth0 APIs, read{" "}
+        <a
+          href="https://auth0.com/docs/get-started/auth0-overview/set-up-apis"
+          target="_blank"
+        >
+          APIs
+        </a>
+        .
+      </Step>
+    );
+  }
 
   steps.push(
     <Step title="OpenAI Platform">
@@ -18,6 +47,7 @@ export const Prerequisites = ({
       .
     </Step>
   );
+
   return (
     <>
       <Heading level={3} id="prerequisites">
