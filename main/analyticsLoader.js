@@ -9,17 +9,17 @@ const State = {
 
 const HEAP_CONFIGS = {
   sus: {
-    ID: "",
+    ID: "2269341915",
     release: "docs-v2-sus",
     environment: "sus",
   },
   prod: {
-    ID: "",
+    ID: "1279799279",
     release: "docs-v2",
     environment: "prod",
   },
     };
-    //windows in binding here
+//windows is binding here
 const AUTH0_DOCS_ENV = window.AUTH0_DOCS_ENV || "prod"; 
 const config = HEAP_CONFIGS[AUTH0_DOCS_ENV];
 
@@ -112,8 +112,6 @@ const loadConsentScripts = (consents) => {
     console.log(`Loading script ${s.id} with consents:`, consentsGiven);
     document.head.appendChild(s);
   });
-  heap("2269341915");
-  // Start timeout for scripts loading
   startTimeout();
 };
 
@@ -132,12 +130,15 @@ const startTimeout = () => {
   }
 };
 
+heap(config.ID);
+
 const optanonWrapper = () => {
   try {
     if (window.OnetrustActiveGroups) {
       const consents = window.OnetrustActiveGroups.split(",").slice(1, -1);
       loadConsentScripts(consents);
-      heap("2269341915");
+      
+      console.log("CONSENTS FROM OnetrustActiveGroups:", consents);
     }
   } catch (e) {
     console.warn("Error loading analytics scripts from wrapper", e);
