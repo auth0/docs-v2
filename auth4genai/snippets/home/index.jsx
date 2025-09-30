@@ -2,8 +2,8 @@ export const GenAIBanner = () => {
   return (
     <div className="gap-5 flex justify-center p-6 bg-[radial-gradient(1200px_600px_at_50%_-10%,rgba(103,66,213,.45)_0%,rgba(179,167,255,.35)_40%,rgba(103,66,213,.6)_100%)]">
       <div className="text-center px-6">
-        <h1 className="mt-[30px] mb-4 font-heading text-[40px] font-medium leading-[120%] tracking-[-0.8px] text-center text-[#232220] dark:text-white">Auth for AI Agents</h1>
-        <p className="mb-[40px] text-[20px] font-medium leading-[130%] tracking-[-0.34px] text-center text-[#767676] max-w-2xl mx-auto dark:text-white" style={{ fontFamily: 'Inter' }}>
+        <h1 className="mt-[30px] mb-4 font-heading text-[40px] font-medium leading-[120%] tracking-[-0.8px] text-center text-[#232220] dark:text-[#EFEDE9]">Auth for AI Agents</h1>
+        <p className="mb-[40px] text-[20px] font-medium leading-[130%] tracking-[-0.34px] text-center text-[#767676] max-w-2xl mx-auto dark:text-[#7B7B7B]" style={{ fontFamily: 'Inter' }}>
           Secure your AI Agents and GenAI applications
         </p>
       </div>
@@ -47,7 +47,7 @@ export const UseCasesGrid = () => {
 
   return (
     <section className="max-w-[960px] mx-auto">
-      <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-white mb-6">
+      <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-[#EFEDE9] mb-6">
         Use Cases
       </h2>
 
@@ -55,32 +55,29 @@ export const UseCasesGrid = () => {
         {useCases.map((useCase, idx) => (
           <div
             key={idx}
-            className="flex w-[312px] px-6 pt-6 pb-3 flex-col items-start flex-shrink-0 rounded-xl border border-[#C5C5C5]"
+            className="flex w-[312px] px-6 pt-6 pb-3 flex-col items-start flex-shrink-0 rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A]"
           >
             <div className="w-[58px] h-[58px] aspect-square rounded-lg flex items-center justify-center text-white text-2xl mb-3">
               <img src={useCase.icon} />
             </div>
 
-            <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-white mb-1" style={{ fontFamily: 'Inter' }}>
+            <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1" style={{ fontFamily: 'Inter' }}>
               {useCase.title}
             </h3>
 
-            <p className="text-xs font-medium leading-[130%] text-left text-[#767676] dark:text-gray-400 mb-[10.5px] flex-grow" style={{ fontFamily: 'Inter' }}>
+            <p className="text-xs font-medium leading-[130%] text-left text-[#767676] dark:text-[#7B7B7B] mb-[10.5px] flex-grow" style={{ fontFamily: 'Inter' }}>
               {useCase.description}
             </p>
 
-            <div className="w-full h-px bg-[#ECEBE8] mb-[13px]"></div>
+            <div className="w-full h-px bg-[#ECEBE8] dark:bg-[#3F3D3A] mb-[13px]"></div>
 
             <div className="w-full flex justify-end">
               <a
                 href={useCase.href}
-                className="flex h-7 px-3 py-2 items-center rounded-3xl bg-white text-inherit no-underline"
-                style={{
-                  boxShadow: '0 -1px 1px 0.5px rgba(0, 0, 0, 0.04) inset, 0 0 0 1px rgba(0, 0, 0, 0.05), 0 2px 2px -1px rgba(0, 0, 0, 0.08)'
-                }}
+                className="flex h-8 px-4 py-1 items-center rounded-3xl bg-white dark:bg-[#0000000D] dark:border dark:border-[#3F3D3A] text-inherit no-underline [box-shadow:0_-1px_1px_0.5px_rgba(0,0,0,0.04)_inset,0_0_0_1px_rgba(0,0,0,0.05),0_2px_2px_-1px_rgba(0,0,0,0.08)] dark:[box-shadow:0_0_0_1px_rgba(255,255,255,0.08)_inset,0_2px_4px_-12px_rgba(255,255,255,0.04),0_3px_4px_-6px_rgba(255,255,255,0.04),0_0_6px_-3px_rgba(255,255,255,0.04),0_1px_3px_-1.5px_rgba(255,255,255,0.04),0_1px_1px_-0.5px_rgba(255,255,255,0.04)]"
               >
-                <span className="mr-2 text-xs font-medium leading-[130%] text-center text-[#191919]" style={{ fontFamily: 'Inter' }}>Learn more</span>
-                <img src="/img/arrow-right.svg" alt="arrow" className="w-4 h-4" />
+                <span className="mr-2 text-[14px] font-medium leading-[130%] text-center text-[#191919] dark:text-[#EFEDE9]" style={{ fontFamily: 'Inter' }}>Learn more</span>
+                <img src="/img/arrow-right.svg" alt="arrow" className="dark:invert dark:brightness-90" style={{ width: '9.4px', height: '11.375px' }} />
               </a>
             </div>
           </div>
@@ -120,7 +117,7 @@ export const AvailableSDKs = () => {
 
   return (
     <section className="max-w-[960px] mx-auto">
-      <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-white mb-6">
+      <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-[#EFEDE9] mb-6">
         Available SDKs
       </h2>
 
@@ -129,19 +126,20 @@ export const AvailableSDKs = () => {
           <a
             key={idx}
             href={sdk.href}
-            className="flex p-4 items-center gap-3 flex-1 self-stretch rounded-xl border border-[#CECDCA] bg-white transition"
+            className="flex p-4 items-center gap-3 flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition"
             style={{
-              boxShadow: '-0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, 0 2px 12px -4px rgba(0, 0, 0, 0.08)'
+              boxShadow: '0 2px 12px -4px rgba(0, 0, 0, 0.08), 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset'
             }}
           >
             <div className="w-10 h-10 flex items-center justify-center">
               <img
                 src={sdk.logo}
                 alt={sdk.name}
+                className="dark:invert"
                 style={{ padding: sdk.padding }}
               />
             </div>
-            <span className="text-gray-900 dark:text-white" style={{ fontFamily: 'Inter' }}>{sdk.name}</span>
+            <span className="text-gray-900 dark:text-white text-base font-semibold" style={{ fontFamily: 'Inter', lineHeight: '115%', letterSpacing: '-0.176px' }}>{sdk.name}</span>
           </a>
         ))}
       </div>
@@ -149,11 +147,11 @@ export const AvailableSDKs = () => {
       <div className="text-right">
         <a
           href="/sdks/overview"
-          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] hover:text-[#5A3CAF] transition" style={{ fontFamily: 'Inter' }}
+          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5A3CAF] transition" style={{ fontFamily: 'Inter' }}
         >
           View more
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path fillRule="evenodd" clipRule="evenodd" d="M8.46967 3.46967C8.76256 3.17678 9.23744 3.17678 9.53033 3.46967L13.5303 7.46967C13.8232 7.76256 13.8232 8.23744 13.5303 8.53033L9.53033 12.5303C9.23744 12.8232 8.76256 12.8232 8.46967 12.5303C8.17678 12.2374 8.17678 11.7626 8.46967 11.4697L11.1893 8.75H3C2.58579 8.75 2.25 8.41421 2.25 8C2.25 7.58579 2.58579 7.25 3 7.25H11.1893L8.46967 4.53033C8.17678 4.23744 8.17678 3.76256 8.46967 3.46967Z" fill="#6742D5"/>
+            <path fillRule="evenodd" clipRule="evenodd" d="M8.46967 3.46967C8.76256 3.17678 9.23744 3.17678 9.53033 3.46967L13.5303 7.46967C13.8232 7.76256 13.8232 8.23744 13.5303 8.53033L9.53033 12.5303C9.23744 12.8232 8.76256 12.8232 8.46967 12.5303C8.17678 12.2374 8.17678 11.7626 8.46967 11.4697L11.1893 8.75H3C2.58579 8.75 2.25 8.41421 2.25 8C2.25 7.58579 2.58579 7.25 3 7.25H11.1893L8.46967 4.53033C8.17678 4.23744 8.17678 3.76256 8.46967 3.46967Z" fill="currentColor"/>
           </svg>
         </a>
       </div>
@@ -165,27 +163,26 @@ export const GetStartedCTA = () => {
   return (
     <section className="max-w-[960px] mx-auto">
       <div
-        className="rounded-xl flex p-8 items-center justify-between self-stretch"
+        className="rounded-xl flex p-8 items-center justify-between self-stretch bg-[rgba(170,141,255,0.14)] dark:bg-[#7B4CFFF1]"
         style={{
-          background: 'rgba(170, 141, 255, 0.14)',
           boxShadow: '0 2px 2px 0 rgba(255, 255, 255, 0.25) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, 0 2px 12px -4px rgba(0, 0, 0, 0.08), 0 2px 1px -1px rgba(0, 0, 0, 0.04), 0 2px 4px 0 rgba(0, 0, 0, 0.05)'
         }}
       >
         <div className="flex flex-col">
-          <h2 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
+          <h2 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#FFFFFF] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
             Get started quickly with Auth for AI Agents
           </h2>
           <p
-            className="text-xs font-medium leading-[130%] text-[#767676] mt-0 mb-0"
+            className="text-xs font-medium leading-[130%] text-[#767676] dark:text-[#CECDCA] mt-0 mb-0"
             style={{ fontFamily: 'Inter' }}
           >
             Use it for explanations, workflows, or direct integration into your app.
           </p>
         </div>
         <button
-          className="flex px-[14px] py-2 items-center rounded-2xl text-white font-medium cursor-not-allowed"
-          style={{ background: 'rgba(0, 0, 0, 0.00)' }}
-          disabled
+          className="flex px-[14px] py-2 items-center rounded-2xl text-[#232220] dark:text-[#EFEDE9] font-semibold text-[14px] cursor-default"
+          style={{ background: 'rgba(0, 0, 0, 0.00)', fontFamily: 'Inter', lineHeight: '140%', letterSpacing: '0' }}
+          onClick={(e) => e.preventDefault()}
         >
           Coming Soon
         </button>
@@ -215,7 +212,7 @@ export const StarterKits = () => {
 
   return (
     <section className="max-w-[960px] mx-auto">
-      <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-white mb-6">
+      <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-[#EFEDE9] mb-6">
         Starter Kits
       </h2>
 
@@ -223,27 +220,27 @@ export const StarterKits = () => {
         {kits.map((kit, idx) => (
           <div
             key={idx}
-            className="flex px-4 pt-4 pb-[14px] flex-col flex-1 self-stretch rounded-xl border border-[#CECDCA] bg-white transition"
+            className="flex px-4 pt-4 pb-[14px] flex-col flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-transparent transition"
             style={{
               boxShadow: '-0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, 0 2px 12px -4px rgba(0, 0, 0, 0.08)'
             }}
           >
-            <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
+            <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
               {kit.title}
             </h3>
-            <p className="text-xs font-medium leading-[130%] text-[#767676] mt-0 mb-[17.5px] flex-grow" style={{ fontFamily: 'Inter' }}>
+            <p className="text-xs font-medium leading-[130%] text-[#767676] dark:text-[#7B7B7B] mt-0 mb-[17.5px] flex-grow" style={{ fontFamily: 'Inter' }}>
               {kit.description}
             </p>
 
             <div className="mt-auto">
-              <div className="w-full h-px bg-[#ECEBE8] mb-2"></div>
+              <div className="w-full h-px bg-[#ECEBE8] dark:bg-[#3F3D3A] mb-[14px]"></div>
 
-              <div className="w-full flex justify-start">
+              <div className="w-full flex justify-start pl-3 pb-1.5">
                 <a
                   href={kit.githubUrl}
-                  className="flex items-center gap-2 text-xs font-medium leading-[130%] text-[#191919] no-underline" style={{ fontFamily: 'Inter' }}
+                  className="flex items-center gap-2 text-xs font-medium leading-[130%] text-[#191919] dark:text-[#F4F4F4] no-underline" style={{ fontFamily: 'Inter' }}
                 >
-                  <img src="/img/github-logo-light.svg" alt="GitHub" className="w-4 h-4" />
+                  <img src="/img/github-logo-light.svg" alt="GitHub" className="w-4 h-4 dark:invert dark:brightness-90" />
                   Github
                 </a>
               </div>
@@ -255,11 +252,11 @@ export const StarterKits = () => {
       <div className="text-right">
         <a
           href="/sample-apps"
-          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] hover:text-[#5A3CAF] transition" style={{ fontFamily: 'Inter' }}
+          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5A3CAF] transition" style={{ fontFamily: 'Inter' }}
         >
           View more
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path fillRule="evenodd" clipRule="evenodd" d="M8.46967 3.46967C8.76256 3.17678 9.23744 3.17678 9.53033 3.46967L13.5303 7.46967C13.8232 7.76256 13.8232 8.23744 13.5303 8.53033L9.53033 12.5303C9.23744 12.8232 8.76256 12.8232 8.46967 12.5303C8.17678 12.2374 8.17678 11.7626 8.46967 11.4697L11.1893 8.75H3C2.58579 8.75 2.25 8.41421 2.25 8C2.25 7.58579 2.58579 7.25 3 7.25H11.1893L8.46967 4.53033C8.17678 4.23744 8.17678 3.76256 8.46967 3.46967Z" fill="#6742D5"/>
+            <path fillRule="evenodd" clipRule="evenodd" d="M8.46967 3.46967C8.76256 3.17678 9.23744 3.17678 9.53033 3.46967L13.5303 7.46967C13.8232 7.76256 13.8232 8.23744 13.5303 8.53033L9.53033 12.5303C9.23744 12.8232 8.76256 12.8232 8.46967 12.5303C8.17678 12.2374 8.17678 11.7626 8.46967 11.4697L11.1893 8.75H3C2.58579 8.75 2.25 8.41421 2.25 8C2.25 7.58579 2.58579 7.25 3 7.25H11.1893L8.46967 4.53033C8.17678 4.23744 8.17678 3.76256 8.46967 3.46967Z" fill="currentColor"/>
           </svg>
         </a>
       </div>
@@ -271,7 +268,7 @@ export const DeveloperProgram = () => {
   return (
     <section className="max-w-[960px] mx-auto">
       <div
-        className="rounded-2xl border border-[#ECEBE8] bg-[#FEFEFD] overflow-hidden pt-1 pb-1 pl-1 pr-0"
+        className="rounded-2xl border border-[#ECEBE8] dark:border-[#3F3D3A] bg-[#FEFEFD] dark:bg-[#1F1F1F] overflow-hidden pt-1 pb-1 pl-1 pr-0"
         style={{
           boxShadow: '0 4px 4px -2px rgba(0, 0, 0, 0.04), 0 2px 2px -1px rgba(0, 0, 0, 0.04), 0 1px 1px -0.5px rgba(0, 0, 0, 0.04), 0 -1.5px 1.5px -1.5px rgba(0, 0, 0, 0.04) inset, 0 3px 3px -1.5px #FFF inset'
         }}
@@ -279,26 +276,26 @@ export const DeveloperProgram = () => {
         <div className="flex flex-col lg:flex-row items-center">
           <div className="flex-1 flex flex-col p-10 gap-6">
             <div>
-              <h2 className="font-heading text-[40px] font-medium leading-[120%] tracking-[-0.8px] text-[#191919] mb-2">
+              <h2 className="font-heading text-[40px] font-medium leading-[120%] tracking-[-0.8px] text-[#191919] dark:text-[#F4F4F4] mb-2">
                 Developer Program
               </h2>
-              <p className="text-base font-normal leading-[150%] tracking-[-0.176px] text-[#282622] mb-0" style={{ fontFamily: 'Inter' }}>
+              <p className="text-base font-normal leading-[150%] tracking-[-0.176px] text-[#282622] dark:text-[#767676] mb-0" style={{ fontFamily: 'Inter' }}>
                 Join today to start building secure GenAI applications and provide feedback to shape the platform's future.
               </p>
             </div>
             <a
               href="https://auth0.com/signup?onboard_app=genai"
-              className="inline-flex items-center gap-2 rounded-2xl bg-[#191919] px-[14px] py-1 text-[#FEFEFD] text-sm font-medium leading-6 transition self-start"
+              className="inline-flex items-center gap-2 rounded-2xl bg-[#191919] dark:bg-[#F4F4F4] px-[14px] py-1 text-[#FEFEFD] dark:text-[#232220] text-sm font-medium leading-6 transition self-start"
               style={{ fontFamily: 'Inter' }}
             >
               Join Dev Program
-              <img src="/img/cta-arrow-right.svg" alt="arrow" className="w-4 h-4" />
+              <img src="/img/cta-arrow-right.svg" alt="arrow" className="w-4 h-4 dark:invert" />
             </a>
           </div>
           <div className="flex-1">
             <div className="flex items-center justify-center">
               <div
-                className="w-[526px] min-h-[200px] border overflow-hidden"
+                className="w-[526px] min-h-[200px] overflow-hidden"
                 style={{
                   borderRadius: '120px 4px 4px 4px',
                   border: '1px solid rgba(0, 0, 0, 0.04)',
@@ -309,9 +306,10 @@ export const DeveloperProgram = () => {
                 <img
                   src="/img/developer-program-auth0-secure.png"
                   alt="Developer Program"
-                  className="pt-[45px] pl-[45px]"
+                  className="pt-[45px] pl-[45px] pointer-events-none"
                 />
               </div>
+
             </div>
           </div>
         </div>
