@@ -90,7 +90,7 @@ function parseConsentCookie() {
   return allowedGroups;
 }
 
-function loadAllowedScripts(consentsMap: Set<string>) {
+function loadAllowedScripts(consents: Set<string>) {
   // Only query scripts with type "text/plain" to avoid reinjecting the same script twice
   const scripts = document.querySelectorAll(
     'script[class^="consent-required"][type="text/plain"]',
@@ -107,7 +107,7 @@ function loadAllowedScripts(consentsMap: Set<string>) {
     const consentsRequired = s.className
       .replace('consent-required:', '')
       .split('-');
-    const hasConsented = consentsRequired.every((cr) => consentsMap.has(cr));
+    const hasConsented = consentsRequired.every((cr) => consents.has(cr));
 
     if (!hasConsented) {
       console.log(
