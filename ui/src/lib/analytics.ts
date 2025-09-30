@@ -1,7 +1,7 @@
 import { config } from './config';
 
 export function heap(heapId: string): void {
-  // load one-trust-script
+  // load heap analytics script
   const script = document.createElement('script');
   script.innerHTML = `window.heapReadyCb=window.heapReadyCb||[],window.heap=window.heap||[],
   heap.load=function(e,t){window.heap.envId=e,window.heap.clientConfig=t=t||{},
