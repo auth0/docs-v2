@@ -1,4 +1,4 @@
-export const TokenVaultConfigBlock = ({ 
+export const TokenVaultConfigBlock = ({
   connectionName = "connection-name",
   providerName = "Provider",
   scopes = ["scope1", "scope2"],
@@ -28,7 +28,7 @@ export const ${jsVariableName} = auth0AI.withTokenForConnection({
           <CodeBlock language="python" wrap="true" lines="true">
 {`auth0_ai = Auth0AI()
 
-${pythonVariableName} = auth0_ai.with_federated_connection(
+${pythonVariableName} = auth0_ai.with_token_vault(
     connection="${connectionName}",
     scopes=[${formatScopes(scopes)}, ...],
     refresh_token=get_auth0_refresh_token,
