@@ -46,16 +46,16 @@ export const UseCasesGrid = () => {
   ];
 
   return (
-    <section className="max-w-[960px] mx-auto">
+    <section className="max-w-[960px] mx-auto px-5 md:px-0">
       <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-[#EFEDE9] mb-6">
         Use Cases
       </h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-6">
         {useCases.map((useCase, idx) => (
           <div
             key={idx}
-            className="flex w-[312px] px-6 pt-6 pb-3 flex-col items-start flex-shrink-0 rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A]"
+            className="flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A]"
           >
             <div className="w-[58px] h-[58px] aspect-square rounded-lg flex items-center justify-center text-white text-2xl mb-3">
               <img src={useCase.icon} />
@@ -116,17 +116,17 @@ export const AvailableSDKs = () => {
   ];
 
   return (
-    <section className="max-w-[960px] mx-auto">
+    <section className="max-w-[960px] mx-auto px-5 md:px-0">
       <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-[#EFEDE9] mb-6">
         Available SDKs
       </h2>
 
-      <div className="flex flex-wrap gap-4 mb-6">
+      <div className="flex flex-col md:flex-row md:flex-wrap gap-2 md:gap-4 mb-6">
         {sdks.map((sdk, idx) => (
           <a
             key={idx}
             href={sdk.href}
-            className="flex p-4 items-center gap-3 flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition"
+            className="flex p-4 items-center gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition"
             style={{
               boxShadow: '0 2px 12px -4px rgba(0, 0, 0, 0.08), 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset'
             }}
@@ -161,11 +161,11 @@ export const AvailableSDKs = () => {
 
 export const GetStartedCTA = () => {
   return (
-    <section className="max-w-[960px] mx-auto">
+    <section className="max-w-[960px] mx-auto px-5 md:px-0">
       <div
-        className="rounded-xl flex p-8 items-center justify-between self-stretch bg-[rgba(170,141,255,0.14)] dark:bg-[#7B4CFFF1]"
+        className="rounded-xl flex flex-col md:flex-row p-8 items-center justify-between gap-4 self-stretch bg-[#AA8DFF24] dark:bg-[#7B4CFFF1]"
         style={{
-          boxShadow: '0 2px 2px 0 rgba(255, 255, 255, 0.25) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, 0 2px 12px -4px rgba(0, 0, 0, 0.08), 0 2px 1px -1px rgba(0, 0, 0, 0.04), 0 2px 4px 0 rgba(0, 0, 0, 0.05)'
+          boxShadow: '0 2px 4px 0 rgba(0, 0, 0, 0.05), 0 2px 1px -1px rgba(0, 0, 0, 0.04), 0 2px 12px -4px rgba(0, 0, 0, 0.08), 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0 2px 2px 0 rgba(255, 255, 255, 0.25) inset'
         }}
       >
         <div className="flex flex-col">
@@ -211,16 +211,16 @@ export const StarterKits = () => {
   ];
 
   return (
-    <section className="max-w-[960px] mx-auto">
+    <section className="max-w-[960px] mx-auto px-5 md:px-0">
       <h2 className="font-heading text-[32px] font-medium leading-[120%] tracking-[-0.32px] text-[#232220] dark:text-[#EFEDE9] mb-6">
         Starter Kits
       </h2>
 
-      <div className="flex flex-wrap gap-4 mb-6">
+      <div className="flex flex-col md:flex-row md:flex-wrap gap-2 md:gap-4 mb-6">
         {kits.map((kit, idx) => (
           <div
             key={idx}
-            className="flex px-4 pt-4 pb-[14px] flex-col flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-transparent transition"
+            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-transparent transition"
             style={{
               boxShadow: '-0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, 0 2px 12px -4px rgba(0, 0, 0, 0.08)'
             }}
@@ -292,7 +292,7 @@ export const DeveloperProgram = () => {
               <img src="/img/cta-arrow-right.svg" alt="arrow" className="w-4 h-4 dark:invert" />
             </a>
           </div>
-          <div className="flex-1">
+          <div className="hidden lg:flex flex-1">
             <div className="flex items-center justify-center">
               <div
                 className="w-[526px] min-h-[200px] overflow-hidden"
