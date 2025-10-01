@@ -17,7 +17,7 @@ export const TokenVaultConfigBlock = ({
           <CodeBlock language="javascript" wrap="true" lines="true">
 {`const auth0AI = new Auth0AI();
 
-export const ${jsVariableName} = auth0AI.withTokenForConnection({
+export const ${jsVariableName} = auth0AI.withTokenVault({
   connection: "${connectionName}",
   scopes: [${formatScopes(scopes)}, ...],
   refreshToken: getAuth0RefreshToken(),
