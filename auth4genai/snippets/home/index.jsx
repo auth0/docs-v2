@@ -53,9 +53,10 @@ export const UseCasesGrid = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-6">
         {useCases.map((useCase, idx) => (
-          <div
+          <a
             key={idx}
-            className="flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A]"
+            href={useCase.href}
+            className="flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:-m-px hover:cursor-pointer no-underline"
           >
             <div className="w-[58px] h-[58px] aspect-square rounded-lg flex items-center justify-center text-white text-2xl mb-3">
               <img src={useCase.icon} />
@@ -72,15 +73,12 @@ export const UseCasesGrid = () => {
             <div className="w-full h-px bg-[#ECEBE8] dark:bg-[#3F3D3A] mb-[13px]"></div>
 
             <div className="w-full flex justify-end">
-              <a
-                href={useCase.href}
-                className="flex h-8 px-4 py-1 items-center rounded-3xl bg-white dark:bg-[#0000000D] dark:border dark:border-[#3F3D3A] text-inherit no-underline [box-shadow:0_-1px_1px_0.5px_rgba(0,0,0,0.04)_inset,0_0_0_1px_rgba(0,0,0,0.05),0_2px_2px_-1px_rgba(0,0,0,0.08)] dark:[box-shadow:0_0_0_1px_rgba(255,255,255,0.08)_inset,0_2px_4px_-12px_rgba(255,255,255,0.04),0_3px_4px_-6px_rgba(255,255,255,0.04),0_0_6px_-3px_rgba(255,255,255,0.04),0_1px_3px_-1.5px_rgba(255,255,255,0.04),0_1px_1px_-0.5px_rgba(255,255,255,0.04)]"
-              >
+              <div className="flex h-8 px-4 py-1 items-center">
                 <span className="mr-2 text-[14px] font-medium leading-[130%] text-center text-[#191919] dark:text-[#EFEDE9]" style={{ fontFamily: 'Inter' }}>Learn more</span>
                 <img src="/img/arrow-right.svg" alt="arrow" className="dark:invert dark:brightness-90" style={{ width: '9.4px', height: '11.375px' }} />
-              </a>
+              </div>
             </div>
-          </div>
+          </a>
         ))}
       </div>
     </section>
