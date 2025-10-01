@@ -12,7 +12,7 @@ function FlagIcon(props: FlagIconProps) {
   return (
     <SvgIcon
       iconName={`flag-${country}`}
-      className={cn('h-[18px] w-[24px]', className)}
+      className={cn('adu:h-[18px] adu:w-[24px]', className)}
     />
   );
 }

@@ -5,27 +5,27 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 items-center justify-center gap-2 rounded-full text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "adu:focus-visible:border-ring adu:focus-visible:ring-ring/50 adu:aria-invalid:ring-destructive/20 adu:dark:aria-invalid:ring-destructive/40 adu:aria-invalid:border-destructive adu:inline-flex adu:shrink-0 adu:items-center adu:justify-center adu:gap-2 adu:rounded-full adu:text-sm adu:font-medium adu:whitespace-nowrap adu:transition-all adu:outline-none adu:focus-visible:ring-[3px] adu:disabled:pointer-events-none adu:disabled:opacity-50 adu:[&_svg]:pointer-events-none adu:[&_svg]:shrink-0 adu:[&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
         default:
-          'bg-button-primary text-foreground-inverse hover:bg-button-primary/90',
+          'adu:bg-button-primary adu:text-foreground-inverse adu:hover:bg-button-primary/90',
         destructive:
-          'bg-destructive hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 text-white',
+          'adu:bg-destructive adu:hover:bg-destructive/90 adu:focus-visible:ring-destructive/20 adu:dark:focus-visible:ring-destructive/40 adu:dark:bg-destructive/60 adu:text-white',
         outline:
-          'bg-input text-foreground-bold hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:hover:bg-input/50 border-border-muted border shadow-sm',
+          'adu:bg-input adu:text-foreground-bold adu:hover:bg-accent adu:hover:text-accent-foreground adu:dark:bg-input/30 adu:dark:hover:bg-input/50 adu:border-border-muted adu:border adu:shadow-sm',
         secondary:
-          'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+          'adu:bg-secondary adu:text-secondary-foreground adu:hover:bg-secondary/80',
         ghost:
-          'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
-        link: 'text-primary underline-offset-4 hover:underline',
+          'adu:text-foreground adu:hover:bg-accent adu:hover:text-accent-foreground adu:dark:hover:bg-accent/50',
+        link: 'adu:text-primary adu:text-foreground adu:underline-offset-4 adu:hover:underline',
       },
       size: {
-        default: 'h-9 px-4 py-2 has-[>svg]:px-3',
-        sm: 'h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5',
-        lg: 'h-10 rounded-md px-6 has-[>svg]:px-4',
-        icon: 'size-9',
+        default: 'adu:h-9 adu:px-4 adu:py-2 adu:has-[>svg]:px-3',
+        sm: 'adu:h-8 adu:gap-1.5 adu:rounded-md adu:px-3 adu:has-[>svg]:px-2.5',
+        lg: 'adu:h-10 adu:rounded-md adu:px-6 adu:has-[>svg]:px-4',
+        icon: 'adu:size-9',
       },
     },
     defaultVariants: {

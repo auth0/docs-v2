@@ -89,7 +89,7 @@ const mockTenants: TenantData[] = [
 function main() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <div className="bg-page flex flex-col items-start gap-8 p-4">
+      <div className="adu:bg-page adu:flex adu:flex-col adu:items-start adu:gap-8 adu:p-4">
         <Button
           onClick={() => {
             document.body.classList.toggle('dark');
@@ -98,13 +98,13 @@ function main() {
           Toggle Theme
         </Button>
 
-        <div className="flex gap-2">
+        <div className="adu:flex adu:gap-2">
           <Button variant="link">Log In</Button>
           <Button variant="default">Sign Up</Button>
           <Button variant="outline">Contact Us</Button>
         </div>
 
-        <div className="flex gap-2">
+        <div className="adu:flex adu:gap-2">
           <SvgIcon iconName="check" />
           <FlagIcon country="australia" />
           <FlagIcon country="canada" />
@@ -114,10 +114,10 @@ function main() {
           <FlagIcon country="us" />
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="adu:flex adu:flex-col adu:gap-2">
           <DisplayText variant="heading-sm">Profile Menu</DisplayText>
-          <div className="flex gap-4">
-            <div className="flex flex-col gap-2">
+          <div className="adu:flex adu:gap-4">
+            <div className="adu:flex adu:flex-col adu:gap-2">
               <ContentText variant="caption-sm">
                 With tenants menu's height smaller
               </ContentText>
@@ -127,7 +127,7 @@ function main() {
                 user={mockUser}
               />
             </div>
-            <div className="flex flex-col gap-2">
+            <div className="adu:flex adu:flex-col adu:gap-2">
               <ContentText variant="caption-sm">
                 With tenants menu's height larger
               </ContentText>
@@ -140,23 +140,23 @@ function main() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="adu:flex adu:flex-col adu:gap-2">
           <DisplayText variant="heading-sm">Nav Actions</DisplayText>
-          <div className="flex gap-4">
-            <div className="flex flex-col gap-2">
+          <div className="adu:flex adu:gap-4">
+            <div className="adu:flex adu:flex-col adu:gap-2">
               <ContentText variant="caption-sm">Without login</ContentText>
               <NavActions
-                className="static"
+                className="adu:static"
                 user={null}
                 tenants={mockTenants}
               />
             </div>
-            <div className="flex flex-col gap-2">
+            <div className="adu:flex adu:flex-col adu:gap-2">
               <ContentText variant="caption-sm">
                 With tenants menu's height larger
               </ContentText>
               <NavActions
-                className="static"
+                className="adu:static"
                 user={mockUser}
                 tenants={mockTenants}
               />
@@ -164,7 +164,7 @@ function main() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="adu:flex adu:flex-col adu:gap-2">
           <DisplayText variant="heading-lg">Display Heading Large</DisplayText>
           <DisplayText variant="heading-regular">
             Display Heading Regular
@@ -183,7 +183,7 @@ function main() {
           </DisplayText>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="adu:flex adu:flex-col adu:gap-2">
           <ContentText variant="heading-lg">Content Heading Large</ContentText>
           <ContentText variant="heading-regular">
             Content Heading Regular

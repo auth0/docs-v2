@@ -4,33 +4,41 @@ import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
 
-const contentTextVariants = cva('font-inter text-foreground', {
+const contentTextVariants = cva('adu:font-inter adu:text-foreground', {
   variants: {
     variant: {
       'heading-lg':
-        'text-foreground-bold tracking-n-5xl text-2xl leading-1.25 font-medium',
+        'adu:text-foreground-bold adu:tracking-n-5xl adu:text-2xl adu:leading-1.25 adu:font-medium',
       'heading-regular':
-        'text-foreground-bold tracking-n-3xl leading-1.20 text-lg font-semibold',
+        'adu:text-foreground-bold adu:tracking-n-3xl adu:leading-1.20 adu:text-lg adu:font-semibold',
       'heading-sm':
-        'text-foreground-bold tracking-n-sm text-base leading-1.25 font-semibold',
+        'adu:text-foreground-bold adu:tracking-n-sm adu:text-base adu:leading-1.25 adu:font-semibold',
       'heading-overline':
-        'text-foreground-bold leading-1.33 tracking-p-2xl text-xs font-semibold uppercase',
-      'subtitle-regular': 'leading-1.30 tracking-n-3xl text-lg font-medium',
-      'subtitle-sm': 'leading-1.15 tracking-n-lg text-base font-semibold',
-      'text-regular': 'tracking-n-lg text-base leading-1.5 font-normal',
+        'adu:text-foreground-bold adu:leading-1.33 adu:tracking-p-2xl adu:text-xs adu:font-semibold adu:uppercase',
+      'subtitle-regular':
+        'adu:leading-1.30 adu:tracking-n-3xl adu:text-lg adu:font-medium',
+      'subtitle-sm':
+        'adu:leading-1.15 adu:tracking-n-lg adu:text-base adu:font-semibold',
+      'text-regular':
+        'adu:tracking-n-lg adu:text-base adu:leading-1.5 adu:font-normal',
       'text-bold':
-        'text-foreground-bold tracking-p-lg text-base leading-1.5 font-semibold',
-      'text-sm': 'tracking-n-xs leading-1.45 text-sm font-normal',
-      'text-sm-bold': 'tracking-n-xs leading-1.45 text-sm font-medium',
-      'text-xs': 'leading-1.30 text-xs font-normal',
-      'caption-lg': 'leading-1.30 tracking-n-3xl text-lg font-medium',
-      'caption-sm': 'leading-1.30 text-xs font-medium',
-      list: 'leading-1.65 tracking-n-lg text-base font-normal',
-      button: 'leading-1.40 text-sm font-semibold',
-      'link-regular': 'tracking-n-sm text-base leading-1.25 font-medium',
-      'link-sm': 'leading-1.15 text-sm font-medium',
-      code: 'font-roboto-mono leading-1.65 tracking-p-sm text-base font-normal',
-      'code-sm': 'font-roboto-mono leading-1.40 text-sm font-normal',
+        'adu:text-foreground-bold adu:tracking-p-lg adu:text-base adu:leading-1.5 adu:font-semibold',
+      'text-sm':
+        'adu:tracking-n-xs adu:leading-1.45 adu:text-sm adu:font-normal',
+      'text-sm-bold':
+        'adu:tracking-n-xs adu:leading-1.45 adu:text-sm adu:font-medium',
+      'text-xs': 'adu:leading-1.30 adu:text-xs adu:font-normal',
+      'caption-lg':
+        'adu:leading-1.30 adu:tracking-n-3xl adu:text-lg adu:font-medium',
+      'caption-sm': 'adu:leading-1.30 adu:text-xs adu:font-medium',
+      list: 'adu:leading-1.65 adu:tracking-n-lg adu:text-base adu:font-normal',
+      button: 'adu:leading-1.40 adu:text-sm adu:font-semibold',
+      'link-regular':
+        'adu:tracking-n-sm adu:text-base adu:leading-1.25 adu:font-medium',
+      'link-sm': 'adu:leading-1.15 adu:text-sm adu:font-medium',
+      code: 'adu:font-roboto-mono adu:leading-1.65 adu:tracking-p-sm adu:text-base adu:font-normal',
+      'code-sm':
+        'adu:font-roboto-mono adu:leading-1.40 adu:text-sm adu:font-normal',
     },
   },
 });

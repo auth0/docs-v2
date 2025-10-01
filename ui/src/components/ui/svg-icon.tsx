@@ -57,7 +57,7 @@ function SvgIcon({
         <Comp
           data-slot="svg-icon"
           className={cn(
-            'bg-surface-muted inline-block h-4 w-4 animate-pulse rounded',
+            'adu:bg-surface-muted adu:inline-block adu:h-4 adu:w-4 adu:animate-pulse adu:rounded',
             className,
           )}
           {...props}
@@ -65,7 +65,7 @@ function SvgIcon({
       ) : DynamicSvgIcon ? (
         <Comp
           data-slot="svg-icon"
-          className={cn('text-foreground-icon inline-block', className)}
+          className={cn('adu:text-foreground-icon adu:inline-block', className)}
           {...props}
         >
           <DynamicSvgIcon {...svgProp} />

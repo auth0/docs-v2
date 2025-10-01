@@ -46,7 +46,10 @@ function NavActions({ className, user, tenants }: NavActionsProps) {
   return (
     <div
       ref={wrapperRef}
-      className={cn('fixed top-0 z-50 flex h-14 items-center gap-2', className)}
+      className={cn(
+        'adu:fixed adu:top-0 adu:z-50 adu:flex adu:h-14 adu:items-center adu:gap-2',
+        className,
+      )}
     >
       {user && currentTenant ? (
         <AuthMenu

@@ -82,8 +82,6 @@ const mockUser = {
 function main() {
   const root = document.createElement('div');
   root.id = 'adu-root';
-
-  document.documentElement.classList.add('adu'); // needed to scope tailwind styles
   document.body.appendChild(root);
 
   createRoot(root).render(

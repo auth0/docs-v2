@@ -28,18 +28,26 @@ function UserDetails({
 }: UserDetailsProps) {
   const initials = getInitials(name);
   return (
-    <div className={cn('flex w-full items-center gap-3 px-3 py-2', className)}>
-      <Avatar className="h-9 w-9">
+    <div
+      className={cn(
+        'adu:flex adu:w-full adu:items-center adu:gap-3 adu:px-3 adu:py-2',
+        className,
+      )}
+    >
+      <Avatar className="adu:h-9 adu:w-9">
         <AvatarImage src={profilePicture} />
         <AvatarFallback>{initials}</AvatarFallback>
       </Avatar>
-      <div className="flex flex-1 flex-col gap-1">
-        <ContentText variant="text-sm-bold" className="text-foreground-bold">
+      <div className="adu:flex adu:flex-1 adu:flex-col adu:gap-1">
+        <ContentText
+          variant="text-sm-bold"
+          className="adu:text-foreground-bold"
+        >
           {name}
         </ContentText>
         <ContentText
           variant="link-sm"
-          className="text-foreground-bold underline"
+          className="adu:text-foreground-bold adu:underline"
           asChild
         >
           <a href={profileUrl} target="_blank" rel="noreferrer">
@@ -66,22 +74,25 @@ function ProfileMenuTrigger({
   const initials = getInitials(user.name);
   return (
     <DropdownMenuTrigger
-      className={cn('flex w-8 items-center gap-2 md:w-auto', className)}
+      className={cn(
+        'adu:flex adu:w-8 adu:items-center adu:gap-2 adu:md:w-auto adu:focus-visible:outline-hidden',
+        className,
+      )}
     >
       <ContentText
         variant="button"
-        className="text-foreground-bold hidden md:block"
+        className="adu:text-foreground-bold adu:hidden adu:md:block"
         asChild
       >
         <span>{selectedTenant.name}</span>
       </ContentText>
-      <Avatar className="h-8 w-8">
+      <Avatar className="adu:h-8 adu:w-8">
         <AvatarImage src={profilePicture} />
         <AvatarFallback>{initials}</AvatarFallback>
       </Avatar>
       <SvgIcon
         iconName="caret-down"
-        className="text-foreground hidden md:block"
+        className="adu:text-foreground adu:hidden adu:md:block"
       />
     </DropdownMenuTrigger>
   );
@@ -102,8 +113,8 @@ function ProfileMenuContent({
 }: ProfileMenuContentProps) {
   return (
     <div className={cn(className)} {...props}>
-      <div className="flex shrink-0 flex-col gap-1 py-2">
-        <DropdownMenuItem className="p-0">
+      <div className="adu:flex adu:shrink-0 adu:flex-col adu:gap-1 adu:py-2">
+        <DropdownMenuItem className="adu:p-0">
           <Tenant
             highlightName={true}
             name={selectedTenant.name}
@@ -114,7 +125,7 @@ function ProfileMenuContent({
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <ContentText
-            className="text-foreground-bold"
+            className="adu:text-foreground-bold"
             variant="text-sm-bold"
             asChild
           >
@@ -123,20 +134,23 @@ function ProfileMenuContent({
               target="_blank"
               rel="noreferrer"
             >
-              <SvgIcon iconName="grid" className="mr-2" />
+              <SvgIcon iconName="grid" className="adu:mr-2" />
               Open Dashboard
             </a>
           </ContentText>
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onSwitchTenant}>
-          <SvgIcon iconName="refresh" className="mr-2" />
-          <ContentText className="text-foreground-bold" variant="text-sm-bold">
+          <SvgIcon iconName="refresh" className="adu:mr-2" />
+          <ContentText
+            className="adu:text-foreground-bold"
+            variant="text-sm-bold"
+          >
             Switch Tenant
           </ContentText>
-          <SvgIcon iconName="caret-right" className="ml-auto" />
+          <SvgIcon iconName="caret-right" className="adu:ml-auto" />
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="p-0">
+        <DropdownMenuItem className="adu:p-0">
           <UserDetails
             name={user.name}
             profilePicture={user.profilePicture}
@@ -144,11 +158,11 @@ function ProfileMenuContent({
           />
         </DropdownMenuItem>
       </div>
-      <DropdownMenuItem className="bg-surface-selected h-14 shrink-0 items-center justify-center rounded-none">
-        <ContentText variant="button" className="text-foreground" asChild>
+      <DropdownMenuItem className="adu:bg-surface-selected adu:h-14 adu:shrink-0 adu:items-center adu:justify-center adu:rounded-none">
+        <ContentText variant="button" className="adu:text-foreground" asChild>
           <span>Log Out</span>
         </ContentText>
-        <SvgIcon iconName="logout" className="text-foreground ml-2" />
+        <SvgIcon iconName="logout" className="adu:text-foreground adu:ml-2" />
       </DropdownMenuItem>
     </div>
   );

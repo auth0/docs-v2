@@ -37,20 +37,22 @@ function Tenant({
     <Comp
       data-slot="tenant"
       className={cn(
-        'flex w-full items-center gap-3 self-stretch px-3 py-2',
+        'adu:flex adu:w-full adu:items-center adu:gap-3 adu:self-stretch adu:px-3 adu:py-2',
         className,
       )}
       {...props}
     >
-      <div className="flex flex-1 flex-col items-start justify-center gap-1">
+      <div className="adu:flex adu:flex-1 adu:flex-col adu:items-start adu:justify-center adu:gap-1">
         <ContentText
           asChild={true}
-          className={isSelected || highlightName ? 'text-foreground-bold' : ''}
+          className={
+            isSelected || highlightName ? 'adu:text-foreground-bold' : ''
+          }
           variant={isSelected || highlightName ? 'button' : 'text-sm-bold'}
         >
           <span>{name}</span>
         </ContentText>
-        <div className="flex items-center gap-1">
+        <div className="adu:flex adu:items-center adu:gap-1">
           <FlagIcon country={flag} />
           <ContentText variant="text-sm-bold" className="text-foreground">
             {locality}
@@ -78,11 +80,16 @@ function TenantMenuContent({
 }: TenantMenuContentProps) {
   return (
     <div {...props}>
-      <div className="flex items-center gap-0 self-stretch px-1">
-        <Button className="z-0" size="icon" variant="ghost" onClick={onBack}>
+      <div className="adu:flex adu:items-center adu:gap-0 adu:self-stretch adu:px-1">
+        <Button
+          className="adu:z-0"
+          size="icon"
+          variant="ghost"
+          onClick={onBack}
+        >
           <SvgIcon iconName="arrow-left" />
         </Button>
-        <div className="-ml-8 flex flex-1 items-center justify-center gap-1 py-2">
+        <div className="adu:-ml-8 adu:flex adu:flex-1 adu:items-center adu:justify-center adu:gap-1 adu:py-2">
           <ContentText
             asChild={true}
             className="text-foreground-bold"
@@ -93,10 +100,10 @@ function TenantMenuContent({
         </div>
       </div>
       <DropdownMenuSeparator />
-      <div className="flex-1 overflow-auto">
+      <div className="adu:flex-1 adu:overflow-auto">
         {tenants.map((tenant) => (
           <DropdownMenuItem
-            className="p-0"
+            className="adu:p-0"
             key={tenant.name}
             onClick={() => onSelectTenant?.(tenant)}
           >

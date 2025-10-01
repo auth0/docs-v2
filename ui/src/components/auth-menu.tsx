@@ -91,21 +91,24 @@ export function useMenuAnimation(): [
 
   const profileMenuClasses = useMemo(() => {
     const className =
-      'fill-mode-both absolute top-0 left-0 flex w-full flex-col';
+      'adu:fill-mode-both adu:absolute adu:top-0 adu:left-0 adu:flex adu:w-full adu:flex-col';
 
     if (
       lastMenuAction === MenuAction.SWITCH_TENANT ||
       (selectedMenu === SelectedMenu.TENANT &&
         lastMenuAction === MenuAction.CLOSE)
     ) {
-      return cn(className, 'animate-out fade-out slide-out-to-left');
+      return cn(
+        className,
+        'adu:animate-out adu:fade-out adu:slide-out-to-left',
+      );
     }
 
     if (
       selectedMenu === SelectedMenu.PROFILE &&
       lastMenuAction === MenuAction.BACK
     ) {
-      return cn(className, 'animate-in fade-in slide-in-from-left');
+      return cn(className, 'adu:animate-in adu:fade-in adu:slide-in-from-left');
     }
 
     return className;
@@ -114,30 +117,36 @@ export function useMenuAnimation(): [
   const tenantMenuClasses = useMemo(() => {
     // had to add 2px to max height to avoid unnecessary scrollbar issue for smaller content
     const className =
-      'fill-mode-both absolute top-0 flex w-full flex-col py-2 max-h-[calc(100%+2px)]';
+      'adu:fill-mode-both adu:absolute adu:top-0 adu:flex adu:w-full adu:flex-col adu:py-2 adu:max-h-[calc(100%+2px)]';
 
     if (
       selectedMenu === SelectedMenu.TENANT &&
       lastMenuAction === MenuAction.SWITCH_TENANT
     ) {
-      return cn(className, 'animate-in fade-in slide-in-from-right left-0');
+      return cn(
+        className,
+        'adu:animate-in adu:fade-in adu:slide-in-from-right adu:left-0',
+      );
     }
 
     if (
       selectedMenu === SelectedMenu.PROFILE &&
       lastMenuAction === MenuAction.BACK
     ) {
-      return cn(className, 'animate-out fade-out slide-out-to-right left-73');
+      return cn(
+        className,
+        'adu:animate-out adu:fade-out adu:slide-out-to-right adu:left-73',
+      );
     }
 
     if (
       selectedMenu === SelectedMenu.TENANT &&
       lastMenuAction === MenuAction.CLOSE
     ) {
-      return cn(className, 'left-0');
+      return cn(className, 'adu:left-0');
     }
 
-    return cn(className, 'left-73');
+    return cn(className, 'adu:left-73');
   }, [selectedMenu, lastMenuAction]);
 
   // dynamically set height based on current menu content
@@ -185,7 +194,7 @@ function AuthMenu({
     <DropdownMenu open={menuState.isOpen} onOpenChange={menuActions.openMenu}>
       <ProfileMenuTrigger selectedTenant={selectedTenant} user={user} />
       <DropdownMenuContent
-        className="relative max-h-74 w-73 overflow-hidden p-0 transition-[height] ease-in-out"
+        className="adu:relative adu:max-h-74 adu:w-73 adu:overflow-hidden adu:p-0 adu:transition-[height] adu:ease-in-out"
         style={{ height: menuState.height }}
         align="end"
         onInteractOutside={menuActions.closeMenu}
