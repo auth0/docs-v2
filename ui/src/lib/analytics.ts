@@ -1,5 +1,25 @@
 import { config } from './config';
 
+interface Heap {
+  track: (event: string, properties?: object) => void;
+  identify: (identity: string) => void;
+  resetIdentity: () => void;
+  addUserProperties: (properties: object) => void;
+  addEventProperties: (properties: object) => void;
+  removeEventProperty: (property: string) => void;
+  clearEventProperties: () => void;
+  appid: string;
+  userId: string;
+  identity: string | null;
+  config: unknown;
+}
+
+declare global {
+  interface Window {
+    heap: Heap;
+  }
+}
+
 export function heap(heapId: string): void {
   // load heap analytics script
   const script = document.createElement('script');
@@ -29,7 +49,7 @@ export function heap(heapId: string): void {
   i=function(e){return function(){var t=Array.prototype.slice.call(arguments,0);
   window.heapReadyCb.push({name:e,fn:function(){heap[e]&&heap[e].apply(heap,t)}})}};
   for(var p=0;p<n.length;p++)heap[n[p]]=i(n[p])};
-  heap.load(${heapId});`;
+  heap.load("${heapId}");`;
 
   script.id = 'heap-script';
   // Important: Set type to 'text/plain' to prevent immediate execution

@@ -95,6 +95,11 @@ function main() {
         <Button
           onClick={() => {
             document.body.classList.toggle('dark');
+            window.heap.track('theme:toggle', {
+              theme: document.body.classList.contains('dark')
+                ? 'dark'
+                : 'light',
+            });
           }}
         >
           Toggle Theme
