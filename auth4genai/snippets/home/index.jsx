@@ -126,9 +126,9 @@ export const AvailableSDKs = () => {
           <a
             key={idx}
             href={sdk.href}
-            className="flex p-4 items-center gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition"
+            className="flex p-4 items-center gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px"
             style={{
-              boxShadow: '0 2px 12px -4px rgba(0, 0, 0, 0.08), 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset'
+              boxShadow: '0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset'
             }}
           >
             <div className="w-10 h-10 flex items-center justify-center">
@@ -220,9 +220,9 @@ export const StarterKits = () => {
         {kits.map((kit, idx) => (
           <div
             key={idx}
-            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-transparent transition"
+            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px"
             style={{
-              boxShadow: '-0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, 0 2px 12px -4px rgba(0, 0, 0, 0.08)'
+              boxShadow: '0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset'
             }}
           >
             <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
