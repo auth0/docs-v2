@@ -220,7 +220,7 @@ export const StarterKits = () => {
         {kits.map((kit, idx) => (
           <div
             key={idx}
-            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px"
+            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer"
             style={{
               boxShadow: '0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset'
             }}
