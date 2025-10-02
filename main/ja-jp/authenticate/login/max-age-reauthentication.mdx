@@ -1,0 +1,205 @@
+---
+title: "OIDCで再認証を強制する"
+permalink: "max-age-reauthentication"
+'description': "指定の間隔内に再認証が行われたことを証明書利用者が確実に確認できる方法として、max_age認証パラメーターを使用する方法について説明します。"
+'og:title': "OIDCで再認証を強制する"
+'og:description': "指定の間隔内に再認証が行われたことを証明書利用者が確実に確認できる方法として、max_age認証パラメーターを使用する方法について説明します。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "OIDCで再認証を強制する"
+'twitter:description': "指定の間隔内に再認証が行われたことを証明書利用者が確実に確認できる方法として、max_age認証パラメーターを使用する方法について説明します。"
+---
+
+`prompt=login`の仕組みは、ユーザーのエージェント（ブラウザー）から渡されるパラメーターを取り除くだけで動作不能にできます。これは証明書利用者（RP）が以下のようなものを表示したい場合に、UXヒントを<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/ja-jp/glossary?term=openid" tip="OpenID: アプリケーションがログイン情報を収集および保存することなくにユーザーのIDを検証できるようにする認証用のオープン標準。" cta="用語集の表示">OpenID</Tooltip>プロバイダー（OP）に提供するためだけに使用されるべきです：
+
+**「Joshさん、こんにちは。お客様ではありませんか？こちらをクリックしてください。」**
+
+ただし、これは新たに行われた認証の確認に利用するべきではありません。それを避けるために、再認証を理由に`max_age`が要求された場合には、クライアントは`auth_time`クレームを使用して、再認証が行われたことを確認する必要があります。このクレームは、認証要求で`prompt-login`または`max_age=0`が渡されると、自動的にIDトークンに含められます。
+
+`max_age`パラメーターをAuthorization APIの[`/authorize`エンドポイント](/ja-jp/api/authentication)に渡す必要があります。[Auth0.js](/ja-jp/libraries/auth0js)または[Lock](/ja-jp/libraries/lock/lock-authentication-parameters)を使用している場合には、ライブラリーの適切なオプションでパラメーターを設定することができます。
+
+再認証の実装方法は特定のユースケースに依存します。機密性の高い操作に対して、再認証と[ステップアップ](/ja-jp/secure/multi-factor-authentication/step-up-authentication)（多要素認証）は区別しなければなりません。それらは両方とも有効なセキュリティ対策です。前者ではエンドユーザーにパスワードの再入力を要求するの対し、後者ではあらかじめ構成済みの多要素認証も併せて要求します。
+
+## prompt=loginパラメーターの制限事項
+
+[OIDCの仕様](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)では、再認証UI（通常はログインプロンプト）をトリガーするのに`prompt=login`パラメーターが使用できると定義されています。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+**prompt**
+
+任意：スペースで区切った、大文字・小文字の区別があるASCII文字列値のリストで、認証サーバーがエンドユーザーに対して再認証と同意を要求するかどうかを指定します。定義された値は：
+
+**login**
+
+認可サーバーがエンドユーザーに対して再認証を要求します。エンドユーザーを再認証できなかった場合はエラー（通常は`login_required`）を返さなければなりません。
+
+</Callout>
+
+ただし、このパラメーターで再認証を確実にするには問題があります。 **RPには、再認証の操作が行われたことを確認する方法がありません** 。なぜそうなのかを理解するために、トラフィックを調べてみましょう。RPからの認証要求のフローは以下のようになります。
+
+```http lines
+https://mydomain.auth0.com/authorize?
+client_id=abcd1234
+&redirect_uri= https://mydomain.com/callback
+&scope=openid profile
+&response_type=id_token
+&prompt=login
+```
+
+ASで認証が成功すると、RPは以下のIDトークンを受け取ります。
+
+```json JSON lines
+{
+  "nickname": "user",
+  "name": "user@mydomain.auth0.com",
+  "updated_at": "2019-04-01T14:43:03.445Z",
+  "iss": "https://jcain0.auth0.com/",
+  "sub": "auth0|l33t",
+  "aud": "abcd1234",
+  "iat": 1554129793,
+  "exp": 1554165793
+}
+```
+
+ASが返す信頼されたIDドキュメントには、 **最終ログインの時期を確認するクレームがありません** 。これは、当初の認可要求がエンドユーザーのブラウザーから302のリダイレクトとして送信された場合に問題となります。RPが要求した再認証の手順を悪意のある行為者が迂回したい場合、`prompt=login`パラメーターを削除するだけで済むため、IDトークンに含まれるフィールドではRPがその違いを判別できません。
+
+下の図は、`prompt=login`パラメーターを用いた暗黙フローを簡単に説明したものです。
+
+<Frame>![Force Re-Authentication OIDC Implicit Flow](/images/ja-jp/cdy7uua7fh8z/7lhntbIKJ25JqQ1M9uB6rJ/12880bac6d2e52faa0f131e1dc15552c/simplified-implicit-flow-with-prompt-login.png)</Frame>
+
+エンドユーザーが`prompt=login`パラメーターを削除するたけで、再認証がスキップできることに注意してください。
+
+<Frame>![Simplified Implicit Flow Remove prompt=login](/images/ja-jp/cdy7uua7fh8z/3hye4mnbcsny7oT0L2kxeq/dbdd243bcfa71db31d6a826787ebf58c/simplified-implicit-flow-remove-prompt.png)</Frame>
+
+上の最初のフローで返されたトークンは、下のフローで返されたトークンと同じです。再認証が行われたことを確認するのに、RPには仕様で定義された方法がないため、`prompt=login`が実際に再認証を生じさせたと信頼することはできません。
+
+## max_age認証要求パラメーター
+
+`prompt=login`と違って、`max_age`認証要求パラメーターには、指定の間隔内に再認証が行われたことをRPが確実に確認できる方法があります。[OIDCの仕様](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest)には以下が定義されています。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+**max_age**
+
+任意：最大認証時間。OpenIDプロバイダーが最後に有効なエンドユーザー認証を行ってからの、許可される経過時間を秒単位で指定します。経過時間がこの値より大きい場合、OpenIDプロバイダーは、エンドユーザーを有効に再認証しようとしなければなりません（`max_age`要求パラメーターは、OpenID 2.0 PAPEの`max_auth_age`要求パラメーターに対応します）。 `max_age`が使用された場合、返されるIDトークンには`auth_time`クレーム値が含まれなければなりません。
+
+</Callout>
+
+定義にある最後の文章が最も重要な部分です。RPが`max_age`を要求した場合、RPに`auth_time`クレームを渡す必要があります。つまり、`max_age`の用途には以下の2つがあります。
+
+* **セッションのフレッシュネスを指定する** ：アプリがユーザーに1日1回の再認証を要求する場合には、`max_age`に値を指定すると、<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/ja-jp/glossary?term=single-sign-on" tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインした後、そのユーザーを他のアプリケーションに自動的にログインさせるサービス。" cta="用語集の表示">SSO</Tooltip>セッションの有効期間を長くすることができます。これは秒単位で定義します。
+* **即座の再認証を強制する** ：アプリがユーザーにアクセス前の再認証を要求する場合には、`max_age`パラメーターの値を0に設定すると、ASが新たにログインを強制します。
+
+下の図はこの要件を説明したものです。
+
+<Frame>![OIDC re-authentication max_age flow](/images/ja-jp/cdy7uua7fh8z/2IHX6TjuCEcMrPZxoHkC41/2c4ff87c159cb23761b4fc4442c29ed3/max-age-flow.png)</Frame>
+
+再認証が行われたかを確認するために、適切な情報量のあるトークンをRPが受け取っていることに注意してください。RPはIDトークンの`auth_time`クレームを確認し、`max_age`パラメーターでの要求が満たされたかを判断できます。こうすることで、`max_age=0`パラメーターには、`prompt=login`パラメーターの動作を妨げるのと同じようなクライアントの改ざんが通用しなくなります。
+
+<Warning>
+
+適切な`auth_time`を含むIDトークンを受信していることを検証するのはRPのみであることに注意してください。この検証は、アプリケーション作成者と、`max_age`パラメーターを使用しているフレームワークが行います。
+
+</Warning>
+
+## auth_timeクレームを使用する
+
+OIDCの仕様により、再認証の実行を確実に確認する方法として、`max_age`パラメーターは使用できても、`prompt=login`が使用できないことを説明しました。これは、再認証を強制したい場合に安全なオプションを提供しません。
+
+* **imprompt=login** ：`prompt`のみを含み、ASが実際に再認証したことは確認しません。
+* **prompt=login & max_age=999999** ：`auth_time`クレームが使用されるように、任意の`max_age`を含めます。再認証が行われたことは確認できますが、パラメーターが乱雑になります。
+* **max_age=0** ：`max_age`パラメーターのみを使用して、ログインプロンプトを強制的に表示します。最近更新された仕様ではこのパラメーターをさらに明確化し、実質的には`prompt=login`と同等だとしています。これは、UXパラメーターであるべきものをセッション維持パラメーターと混合させるため、適切ではありません。
+
+そうではなく、Auth0は`prompt=login`要求パラメーターへの応答で、IDトークンに`auth_time`クレームを含めて送信するようにしています。つまり、`prompt=login`を使用すると同時に、再認証が行われたことを確認することができます。
+
+### auth_time確認の例
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+再認証が行われたことを確認する検証を必ず実装してください。適切な`auth_time`が返されたことを検証しなければなりません。
+
+</Callout>
+
+以下の例では、[passport-auth0-openidconnect](https://github.com/auth0/passport-auth0-openidconnect)モジュールを使用して、再認証の確認方法を説明します。最初の（最も簡単な）例としては、`max_age=0`オプションを`Auth0OidcStrategy`に追加して確認する方法です。
+
+```javascript JavaScript lines
+var strategy = new Auth0OidcStrategy(
+  {
+    domain: process.env.AUTH0_DOMAIN,
+    clientID: process.env.AUTH0_CLIENT_ID,
+    clientSecret: process.env.AUTH0_CLIENT_SECRET,
+    callbackURL: process.env.AUTH0_CALLBACK_URL || 'http://localhost:5000/callback',
+    max_age: 0
+  },
+  function(req, issuer, audience, profile, accessToken, refreshToken, params, cb) {
+    // No extra validation required!
+    return cb(null, profile);
+  });
+```
+
+ストラテジーがすでに`max_age`パラメーターの確認を処理しているため、確認の手順がこれ以上必要にならないことに注意してください。
+
+```javascript JavaScript lines
+// https://openid.net/specs/openid-connect-basic-1_0.html#IDTokenValidation - check 8.
+if (meta.params.max_age && (!jwtClaims.auth_time || ((meta.timestamp - meta.params.max_age) > jwtClaims.auth_time))) {
+  return self.error(new Error('auth_time in id_token not included or too old'));
+}
+```
+
+同じコンテキストで`prompt=login`を使うこともできますが、規格として`auth_time`はIDトークン応答の付随的な発生を要求しないため、手動で確認を処理しなければなりません。このストラテジーコンストラクターは以下のようになります。
+
+```javascript JavaScript lines
+var strategy = new Auth0OidcStrategy(
+  {
+    domain: process.env.AUTH0_DOMAIN,
+    clientID: process.env.AUTH0_CLIENT_ID,
+    clientSecret: process.env.AUTH0_CLIENT_SECRET,
+    callbackURL: process.env.AUTH0_CALLBACK_URL || 'http://localhost:5000/callback',
+    prompt: 'login'
+  },
+  function(req, issuer, audience, profile, accessToken, refreshToken, params, cb) {
+    const tenSecondsAgo = (Date.now() / 1000) - 10;
+    if (isNaN(profile.auth_time) || profile.auth_time < tenSecondsAgo) {
+      return cb('prompt=login requested, but auth_time is greater than 10 seconds old', null);
+    }
+
+    return cb(null, profile);
+  });
+```
+
+`max_age=0`とは違って、クライアントは手動で`auth_time`パラメーターの確認を処理する必要があります。詳細については、「[auth_timeクレームを使用する](/ja-jp/authenticate/login/max-age-reauthentication#use-auth_time-claims)」をお読みください。
+
+<Warning>
+
+上の例は、簡略化された概念実証です（最後の10秒以内に認証されていなければなりません）。再認証が行われたことを検証したい場合は、理想的には、次のような作業が必要になります。
+
+1. 最初の認証要求が行われた時刻を記録する
+2. 認証応答時に、要求の送信時刻を取得する
+3. 最初の認証要求の時刻を`auth_time`クレームと比較して、`auth_time`のタイムスタンプの方が後であることを確認する
+
+**この例で使用している方法を運用システムで実行することは推奨されません。**
+
+</Warning>
+
+## 既知の問題
+
+Auth0が保証できるのは、アップストリームのIDプロバイダーと交換が行われることだけです。これは、ユーザーが実際にサードパーティーのIDプロバイダーにサインインしたり、ユーザーに既存のセッションがあるため再サインインの必要がなかったりすることによって行われます。いずれにしても、Auth0がアップストリームのIDプロバイダーと交換し、結果的に`auth_time`が更新されます。
+
+アップストリームのIDプロバイダーで再認証を強制することは、すべてのプロバイダーがこれに対応しているわけではないため、Auth0の対応外になります。
+
+下の図は、フェデレーション接続で再認証するユーザーのフローの例を説明したものです。
+
+<Frame>![Federated connections do not force re-authentication diagram](/images/ja-jp/cdy7uua7fh8z/8o7GZWQo6LKRTwuYC6dDS/43149ef5e50acd41a6b05e22305199ca/federated-connection-flow.png)</Frame>
+
+この方法では[データベース接続](/ja-jp/authenticate/database-connections)の使用を想定しています。外部のIDプロバイダーは再認証の強制に対応していても、していなくても構いません。`prompt=login`または`prompt=consent`の使用は、一般的に外部の（ソーシャル）IDプロバイダーにユーザーの再認証を指示するもので、Auth0はそれを強制できません。
+
+<Warning>
+
+機密性の高い操作を防ぐため、クライアント側（ブラウザー）で行われるIDトークンまたは`auth_time`の検証には頼らないでください。
+
+</Warning>
+
+## もっと詳しく
+
+* [フォームPOSTを使った暗黙フロー](/ja-jp/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post)
+* [OpenID Connectのプロトコル](/ja-jp/authenticate/protocols/openid-connect-protocol)

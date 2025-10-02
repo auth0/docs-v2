@@ -1,0 +1,301 @@
+---
+title: "Office 365のカスタムプロビジョニング"
+permalink: "office-365-custom-provisioning"
+'description': "Microsoft Office 365のカスタムプロビジョニングをセットアップする方法を説明します。"
+'og:title': "Office 365のカスタムプロビジョニング"
+'og:description': "Microsoft Office 365のカスタムプロビジョニングをセットアップする方法を説明します。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Office 365のカスタムプロビジョニング"
+'twitter:description': "Microsoft Office 365のカスタムプロビジョニングをセットアップする方法を説明します。"
+---
+
+Office 365のデフォルトのセットアップには、Active DirectoryとDirSync/Microsoft Entra ID同期サービスが含まれており、Entra ID（旧称Azure AD）にいるEntra IDユーザーを<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/ja-jp/glossary?term=single-sign-on" tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインした後、そのユーザーを他のアプリケーションに自動的にログインさせるサービス。" cta="用語集の表示">SSO</Tooltip>用に同期してプロビジョニングします。この構成では、Auth0がIDプロバイダーで、これらのユーザーにシングルサインオン（SSO）を提供します。
+
+それでは、請負業者やパートナー、あるいは顧客に、自身のOffice 365環境（SharePointなど）へのアクセスを許可したい場合はどうすればよいでしょう？この場合、デフォルトの方法だとこれらのユーザーをEntra ID環境で作成する必要があるため、最適とは言えません。代わりに、[Auth0 Rules](/ja-jp/customize/rules)を使用してEntra　IDユーザーのカスタムプロビジョニングを行う必要があります。
+
+カスタムプロビジョニングをすると、Auth0で利用可能な任意の接続からログインするのと同様に、Entra ID（および事実上Office 365）でユーザーを作成できるようになります（この場合、ルールは、DirSyncが機能しないあらゆるタイプの接続にDirSyncのタスクを引き継ぎます）。この構成によって、Office 365環境で（Facebook、LinkedIn、Google、Workspaceを含む）さまざまなログインオプションを提供できるようになります。
+
+## 前提条件
+
+カスタムプロビジョニングを構成する前に、以下を行う必要があります。
+
+* [Office 365の構成](https://marketplace.auth0.com/integrations/office-365-sso)：Auth0でカスタムドメインを登録して、Office 365をサードパーティーアプリケーションとして構成します。
+
+## Microsoft Entra IDを構成する
+
+カスタムプロビジョニングでは、Entra IDの新しいユーザーをプロビジョニングするためにMicrosoft Graph APIを使用します。Microsoft Graph APIにアクセスするには、Office 365のサブスクリプションにリンクされたMicrosoft Entra ID内にアプリケーションを作成する必要があります。
+
+1. [Azureポータル](https://portal.azure.com)にログインします。
+2. [左のナビゲーションにあるMicrosoft Entra ID](https://portal.azure.com/#blade/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/Overview)を選択します。
+3. 新しいメニューで **［App registrations（アプリの登録）］** を選択します。
+4. **［New application registration（アプリケーションの新規登録）］** をクリックします。
+5. フォームに記入します。
+
+   1. アプリケーションの名前（`Auth0 Provisioning`など）を入力します。
+   2. **［Application type（アプリケーションの種類）］** に **［Web app / API（Webアプリ/API）］** を選択します。
+   3. サインオンURLを挿入します。任意の有効なURLを入力できますが、実際にはあまり使用されません。
+6. **［App registrations（アプリの登録）］** リストに最近作成されたアプリが表示されます。これを選択します。
+7. **［Settings（設定）］** ブレード（これらのセクションをMicrosoftでは「ブレード」と呼びます）で、 **［Keys（キー）］** を選択します。
+8. **［Description（説明）］** （`Auth0 Provision`など）を入力し、新しいキーの **［Duration（期間）］** を選択します。非永続キーを発行する場合は、有効期限を書き留め、期限切れになる前に新しいキーと置き換えるためのリマインダーを作成します。
+9. クリックしてキーを保存し、 **［App Key（アプリのキー）］** をコピーします。このキーは一度しか表示されず、Auth0のルールに必要です。
+10. **［Required permissions（必要なアクセス許可）］** を選択して、新しいブレードの **［Add（追加）］** をクリックします。
+11. **［Microsoft Graph］** APIを選択してから、 **［Application Permissions（アプリケーションのアクセス許可）］** の`［Read and write directory data（ディレクトリデータの読み取りと書き込み）］`を有効にします。
+12. **［Required permissions（必要なアクセス許可）］** に戻り、 **［Grant Permissions（アクセス許可の付与）］** ボタンをクリックしてから、 **［Yes（はい）］** をクリックすることで、要求されたアクセス許可を付与します。
+
+## Microsoft Entra IDのプロビジョニングルールを作成する
+
+以下のルールはプロビジョニングのプロセスを示しています。
+
+1. ユーザーがEntra ID接続からの場合は、（DirSyncによって処理されるため）プロビジョニングプロセスをスキップする。
+2. ユーザーがすでにMicrosoft Entra IDでプロビジョニングされている場合は、ログイントランザクションを続ける。
+3. Microsoft Entra IDのクライアントIDとキーを使ってGraph APIのアクセストークンを取得する。
+4. Entra IDでユーザーを作成する。
+5. ユーザーにライセンスを割り当てる。
+6. ログイントランザクションを続ける。
+
+ユーザー名は`createAzureADUser`関数を使って、デフォルトで`auth0-c3fb6eec-3afd-4d52-8e0a-d9f357dd19ab@fabrikamcorp.be`の形式で生成されます。この値は自由に変更できますが、すべてのユーザーで一意でなければなりません。
+
+ルールコードで使えるように、構成オブジェクトの`AUTH0_OFFICE365_CLIENT_ID`、`AAD_CUSTOM_DOMAIN`、`AAD_DOMAIN`、`AAD_APPLICATION_ID`、および`AAD_APPLICATION_API_KEY`の値が正しく設定されていることを確認します。詳細については、「[ルールの構成を保管する](/ja-jp/customize/rules/configuration)」をお読みください。
+
+コードでは、ユーザーがプロビジョニングされた後にルールが約15秒待つこともわかります。これは、プロビジョニングされたユーザーがOffice 365で利用可能になるのに数秒かかるためです。
+
+```javascript lines expandable
+function (user, context, callback) {
+  // Require the Node.js packages that we are going to use.
+  // Check this website for a complete list of the packages available:
+  // https://auth0-extensions.github.io/canirequire/
+  var rp = require('request-promise');
+  var uuidv4 = require('uuid');
+
+  // The name of your Active Directory connection (if using one)
+  var AUTH0_AD_CONNECTION = 'Travel0AD';
+  // The client_id of your Office 365 SSO integration
+  // You can get it from the URL when editing the SSO integration,
+  // it will look like
+  // https://manage.auth0.com/#/externalapps/{the_client_id}/settings
+  var AUTH0_OFFICE365_CLIENT_ID = configuration.AUTH0_OFFICE365_CLIENT_ID;
+  // The main domain of our company.
+  var YOUR_COMPANY_DOMAIN = 'mycompanyurl.com';
+  // Your Azure AD domain.
+  var AAD_DOMAIN = configuration.AAD_DOMAIN;
+  // The Application ID generated while creating the Azure AD app.
+  var AAD_APPLICATION_ID = configuration.AAD_APPLICATION_ID;
+  // The generated API key for the Azure AD app.
+  var AAD_APPLICATION_API_KEY = configuration.AAD_APPLICATION_API_KEY;
+  // The location of the users that are going to access Microsoft products.
+  var AAD_USAGE_LOCATION = 'US';
+  // Azure AD doesn't recognize the user instantly, it needs a few seconds
+  var AAD_USER_CREATE_DELAY = 15000;
+  // The key that represents the license that we want to give the new user.
+  // Take a look in the following URL for a list of the existing licenses:
+  // https://gist.github.com/Lillecarl/3c4727e6dcd1334467e0
+  var OFFICE365_KEY = 'O365_BUSINESS';
+
+  // Only execute this rule for the Office 365 SSO integration.
+  if (context.clientID !== AUTH0_OFFICE365_CLIENT_ID) {
+    return callback(null, user, context);
+  }
+
+  // Skip custom provisioning for AD users.
+  if (context.connection === AUTH0_AD_CONNECTION) {
+    return callback(null, user, context);
+  }
+
+  // If the user is already provisioned on Microsoft AD, we skip
+  // the rest of this rule
+  user.app_metadata = user.app_metadata || {};
+  if (user.app_metadata.office365Provisioned) {
+    return connectWithUser();
+  }
+
+  // Global variables that we will use in the different steps while
+  // provisioning a new user.
+  var token;
+  var userPrincipalName;
+  var mailNickname = user.email.split('@')[0];
+  var uuid = uuidv4.v4();
+  var immutableId = new Buffer(uuid).toString('base64');
+  var userId;
+
+  // All the steps performed to provision new Microsoft AD users.
+  // The definition of each function are below.
+  getAzureADToken()
+    .then(createAzureADUser)
+    .then(getAvailableLicenses)
+    .then(assignOffice365License)
+    .then(saveUserMetadata)
+    .then(waitCreateDelay)
+    .then(connectWithUser)
+    .catch(callback);
+
+  // Requests an Access Token to interact with Windows Graph API.
+  function getAzureADToken() {
+    var options = {
+      method: 'POST',
+      url: 'https://login.windows.net/' + AAD_DOMAIN + '/oauth2/token?api-version=1.5',
+      headers: {
+        'Content-type': 'application/json',
+        },
+      json: true,
+      form: {
+        client_id: AAD_APPLICATION_ID,
+        client_secret: AAD_APPLICATION_API_KEY,
+        grant_type: 'client_credentials',
+        resource: 'https://graph.windows.net'
+      },
+    };
+
+    return rp(options);
+  }
+
+  // Gets the Access Token requested above and assembles a new request
+  // to provision the new Microsoft AD user.
+  function createAzureADUser(response) {
+    token = response.access_token;
+    userPrincipalName = 'auth0-' + uuid + '@' + YOUR_COMPANY_DOMAIN;
+
+    var options = {
+      url: 'https://graph.windows.net/' + AAD_DOMAIN + '/users?api-version=1.6',
+      headers: {
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      json: true,
+      body: {
+        accountEnabled: true,
+        displayName: user.nickname,
+        mailNickname: mailNickname,
+        userPrincipalName: userPrincipalName,
+        passwordProfile: {
+          password: immutableId,
+          forceChangePasswordNextLogin: false
+        },
+        immutableId: immutableId,
+        usageLocation: AAD_USAGE_LOCATION
+      },
+    };
+
+    return rp(options);
+  }
+
+  // After provisioning the user, we issue a request to get the list
+  // of available Microsoft products licenses.
+  function getAvailableLicenses(response) {
+    userId = response.objectId;
+    var options = {
+      url: 'https://graph.windows.net/' + AAD_DOMAIN + '/subscribedSkus?api-version=1.6',
+      json: true,
+      headers: {
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    };
+    return rp(options);
+  }
+
+  // With the licenses list, we iterate over it to get the id (skuId) of the
+  // license that we want to give to the new user (office 365 in this case).
+  // We also issue a new request to the Graph API to tie the user and the
+  // license together.
+  function assignOffice365License(response) {
+    var office365License;
+
+    for (var i = 0; i < response.value.length; i++) {
+      if (response.value[i].skuPartNumber === OFFICE365_KEY) {
+        office365License = response.value[i].skuId;
+        break;
+      }
+    }
+
+    var options = {
+      url: ' https://graph.windows.net/' + AAD_DOMAIN + '/users/' + userId + '/assignLicense?api-version=1.6',
+      headers: {
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      json: true,
+      body: {
+        'addLicenses': [
+          {
+            'disabledPlans': [],
+            'skuId': office365License
+          }
+        ],
+        'removeLicenses': []
+      }
+    };
+    return rp(options);
+  }
+
+  // After provisioning the user and giving a license to them, we record
+  // (on Auth) that this Google Workspace user has already been provisioned. We
+  // also record the user's principal username and immutableId to properly
+  // redirect them on future logins.
+  function saveUserMetadata() {
+    user.app_metadata = user.app_metadata || {};
+
+    user.app_metadata.office365Provisioned = true;
+    user.app_metadata.office365UPN = userPrincipalName;
+    user.app_metadata.office365ImmutableId = immutableId;
+
+    return auth0.users.updateAppMetadata(user.user_id, user.app_metadata);
+  }
+
+  // As mentioned, Windows Graph API needs around 10 seconds to finish
+  // provisioning new users (even though it returns ok straight away)
+  function waitCreateDelay() {
+    return new Promise(function (resolve) {
+      setTimeout(function() {
+        resolve();
+      }, AAD_USER_CREATE_DELAY);
+    });
+  }
+
+  // Adds the principal username and immutableId to the user object and ends
+  // the rule.
+  function connectWithUser() {
+    user.upn = user.app_metadata.office365UPN;
+    user.inmutableid = user.app_metadata.office365ImmutableId;
+      return callback(null, user, context);
+  }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+このコードは新規ユーザーのプロビジョニングプロセスを示すものですが、手を加えて既存ユーザーのメタデータの同期に使用することもできます。
+
+</Callout>
+
+## ユーザーエクスペリエンス
+
+外部ユーザーを認証する最も簡単な方法が、IDプロバイダー起点のログインです。
+
+ユーザーを（たとえば`https://office.travel0.com`などの「スマートリンク」を使用して）以下のURLにリダイレクトする必要があります。
+
+```http wrap lines
+https://{yourDomain}/login?client=AUTH0_OFFICE365_CLIENT_ID&protocol=wsfed&state=&redirect_uri=&
+```
+
+これによって、ユーザーにAuth0のログインページが表示され、その後、Office 365にリダイレクトされます。外部ユーザーには、Office 365のログインページがこれらの外部ユーザーのホーム領域検出をサポートしていないため、この方法でしか認証できないことを説明することが重要です。これは、ユーザーがリンクを開こうとすると、開こうとしたリンクにアクセスする前に、スマートリンクに移動する必要があることも意味します。
+
+この例では、Travel0がAuth0でサードパーティーアプリケーションのOffice 365にいくつかのソーシャルアカウントデータベース接続を有効にしています。
+
+## ディープリンキング
+
+実装に（たとえば、SharePoint Onlineへの）ディープリンキングが必要になることがあります。その場合は、Office 365のログインページで開始するスマートリンクを構築してください。
+
+```http wrap lines
+https://login.microsoftonline.com/login.srf?wa=wsignin1.0&whr={yourCustomDomain}&wreply={deepLink}
+```
+
+最初のパラメーター、`{yourCustomDomain}`は、<dfn data-key="single-sign-on">シングルサインオン（SSO）</dfn>用にMicrosoft Entra IDで構成したドメイン（`travel0.com`など）にします。これを`whr`として指定することにより、Microsoft Entra IDが、ログインページを表示する代わりにAuth0へのリダイレクトが必要だということを理解します。
+
+`DEEP_LINK`パラメーターは、Office 365内でエンコードされたURL（SharePoint OnlineやExchangeのページなど）にします。
+
+URLの例：
+
+```http wrap lines
+https://login.microsoftonline.com/login.srf?wa=wsignin1.0&whr=travel0.com&wreply=https%3A%2F%2Ftravel0%2Esharepoint%2Ecom
+```
+
