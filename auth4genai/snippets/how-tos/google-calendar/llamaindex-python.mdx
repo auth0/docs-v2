@@ -14,7 +14,7 @@ from flask import session
 
 auth0_ai = Auth0AI()
 
-with_google = auth0_ai.with_federated_connection(
+with_google = auth0_ai.with_token_vault(
     connection="google-oauth2",
     scopes=["https://www.googleapis.com/auth/calendar.freebusy"],
     refresh_token=lambda *_args, **_kwargs:session["user"]["refresh_token"],
@@ -35,14 +35,14 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from typing import Annotated
 from llama_index.core.tools import FunctionTool
-from auth0_ai_llamaindex.federated_connections import get_access_token_for_connection, FederatedConnectionError
+from auth0_ai_llamaindex.token_vault import get_access_token_from_token_vault, TokenVaultError
 from src.lib.auth0_ai import with_google
 
 def check_user_calendar_tool_function(
     date: Annotated[str, "Date and time in ISO 8601 format."]
 ):
     # Get the access token from Auth0 AI
-    access_token = get_access_token_for_connection()
+    access_token = get_access_token_from_token_vault()
 
     # Google SDK
     try:
@@ -61,7 +61,7 @@ def check_user_calendar_tool_function(
         return {"available": len(busy_times) == 0}
     except HttpError as e:
         if e.resp.status == 401:
-            raise FederatedConnectionError("Authorization required to access the Federated Connection API")
+            raise TokenVaultError("Authorization required to access the Token Vault Connection API")
 
         raise ValueError(f"Invalid response from Google Calendar API: {response.status_code} - {response.text}")
 
@@ -86,7 +86,7 @@ system_prompt = f"""You are an assistant designed to answer random user's questi
 
 agent = OpenAIAgent.from_tools(
     tools=[
-        # a tool with federated connection access
+        # a tool with Token Vault access
         check_user_calendar_tool
         # ... other tools
     ],
@@ -104,14 +104,14 @@ Interrupts are a way for the system to pause execution and prompt the user to ta
 
 On the server side of your Flask application you will need to set up a route to handle the Chat API requests. This route will be responsible for forwarding the requests to the OpenAI API utilizing LlamaIndex's SDK, that has been initialized with Auth0 AI's protection enhancements for tools.
 
-When `FederatedConnectionInterrupt` error ocurrs, the server side will signal the front-end about the level access restrictions, and the front-end should prompt the user to trigger a new authorization (or login) request with the necessary permissions.
+When `TokenVaultInterrupt` error ocurrs, the server side will signal the front-end about the level access restrictions, and the front-end should prompt the user to trigger a new authorization (or login) request with the necessary permissions.
 
 
 ```python ./src/app.py wrap lines highlight={3-5,19-20}
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, session
 from auth0_ai_llamaindex.auth0_ai import Auth0AI
-from auth0_ai_llamaindex.federated_connections import FederatedConnectionInterrupt
+from auth0_ai_llamaindex.token_vault import TokenVaultInterrupt
 from src.lib.agent import agent
 
 load_dotenv()
@@ -126,7 +126,7 @@ async def chat():
         message = request.json.get("message")
         response = agent.achat(message)
         return jsonify({"response": str(response)})
-    except FederatedConnectionInterrupt as e:
+    except TokenVaultInterrupt as e:
         return jsonify({"error": str(e.to_json())}), 403
     except Exception as e:
         return jsonify({"error": str(e)}), 500
