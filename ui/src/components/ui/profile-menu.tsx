@@ -1,0 +1,171 @@
+import { cn, getInitials } from '@/lib/utils';
+import { Tenant, type TenantData } from './tenant';
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './dropdown-menu';
+import { SvgIcon } from './svg-icon';
+import { Avatar, AvatarFallback, AvatarImage } from './avatar';
+import { ContentText } from './content-text';
+import type { MouseEventHandler } from 'react';
+
+interface UserData {
+  name: string;
+  profilePicture?: string;
+  profileUrl: string;
+}
+
+interface UserDetailsProps extends UserData {
+  className?: string;
+}
+
+function UserDetails({
+  className,
+  name,
+  profilePicture,
+  profileUrl,
+}: UserDetailsProps) {
+  const initials = getInitials(name);
+  return (
+    <div
+      className={cn(
+        'adu:flex adu:w-full adu:items-center adu:gap-3 adu:px-3 adu:py-2',
+        className,
+      )}
+    >
+      <Avatar className="adu:h-9 adu:w-9">
+        <AvatarImage src={profilePicture} />
+        <AvatarFallback>{initials}</AvatarFallback>
+      </Avatar>
+      <div className="adu:flex adu:flex-1 adu:flex-col adu:gap-1">
+        <ContentText
+          variant="text-sm-bold"
+          className="adu:text-foreground-bold"
+        >
+          {name}
+        </ContentText>
+        <ContentText
+          variant="link-sm"
+          className="adu:text-foreground-bold adu:underline"
+          asChild
+        >
+          <a href={profileUrl} target="_blank" rel="noreferrer">
+            View Profile
+          </a>
+        </ContentText>
+      </div>
+    </div>
+  );
+}
+
+interface ProfileMenuTriggerProps {
+  className?: string;
+  selectedTenant: TenantData;
+  user: UserData;
+}
+
+function ProfileMenuTrigger({
+  className,
+  selectedTenant,
+  user,
+}: ProfileMenuTriggerProps) {
+  const { profilePicture } = user;
+  const initials = getInitials(user.name);
+  return (
+    <DropdownMenuTrigger
+      className={cn(
+        'adu:flex adu:w-8 adu:items-center adu:gap-2 adu:md:w-auto adu:focus-visible:outline-hidden',
+        className,
+      )}
+    >
+      <ContentText
+        variant="button"
+        className="adu:text-foreground-bold adu:hidden adu:md:block"
+        asChild
+      >
+        <span>{selectedTenant.name}</span>
+      </ContentText>
+      <Avatar className="adu:h-8 adu:w-8">
+        <AvatarImage src={profilePicture} />
+        <AvatarFallback>{initials}</AvatarFallback>
+      </Avatar>
+      <SvgIcon
+        iconName="caret-down"
+        className="adu:text-foreground adu:hidden adu:md:block"
+      />
+    </DropdownMenuTrigger>
+  );
+}
+
+interface ProfileMenuContentProps extends React.ComponentProps<'div'> {
+  selectedTenant: TenantData;
+  user: UserData;
+  onSwitchTenant?: MouseEventHandler<HTMLDivElement>;
+}
+
+function ProfileMenuContent({
+  className,
+  selectedTenant,
+  user,
+  onSwitchTenant,
+  ...props
+}: ProfileMenuContentProps) {
+  return (
+    <div className={cn(className)} {...props}>
+      <div className="adu:flex adu:shrink-0 adu:flex-col adu:gap-1 adu:py-2">
+        <DropdownMenuItem className="adu:p-0">
+          <Tenant
+            highlightName={true}
+            name={selectedTenant.name}
+            flag={selectedTenant.flag}
+            locality={selectedTenant.locality}
+          />
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <ContentText
+            className="adu:text-foreground-bold"
+            variant="text-sm-bold"
+            asChild
+          >
+            <a
+              href="https://manage.auth0.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <SvgIcon iconName="grid" className="adu:mr-2" />
+              Open Dashboard
+            </a>
+          </ContentText>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onSwitchTenant}>
+          <SvgIcon iconName="refresh" className="adu:mr-2" />
+          <ContentText
+            className="adu:text-foreground-bold"
+            variant="text-sm-bold"
+          >
+            Switch Tenant
+          </ContentText>
+          <SvgIcon iconName="caret-right" className="adu:ml-auto" />
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="adu:p-0">
+          <UserDetails
+            name={user.name}
+            profilePicture={user.profilePicture}
+            profileUrl={user.profileUrl}
+          />
+        </DropdownMenuItem>
+      </div>
+      <DropdownMenuItem className="adu:bg-surface-selected adu:h-14 adu:shrink-0 adu:items-center adu:justify-center adu:rounded-none">
+        <ContentText variant="button" className="adu:text-foreground" asChild>
+          <span>Log Out</span>
+        </ContentText>
+        <SvgIcon iconName="logout" className="adu:text-foreground adu:ml-2" />
+      </DropdownMenuItem>
+    </div>
+  );
+}
+
+export { ProfileMenuContent, ProfileMenuTrigger, type UserData };
