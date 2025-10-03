@@ -1,0 +1,239 @@
+---
+title: "Associer des comptes d’utilisateurs"
+permalink: "link-user-accounts"
+'description': "Découvrez comment associer des comptes d’utilisateurs à partir de différents fournisseurs d’identité, afin que vos utilisateurs puissent s’authentifier à partir de n’importe quel compte et être reconnus par votre application."
+'og:title': "Associer des comptes d’utilisateurs"
+'og:description': "Découvrez comment associer des comptes d’utilisateurs à partir de différents fournisseurs d’identité, afin que vos utilisateurs puissent s’authentifier à partir de n’importe quel compte et être reconnus par votre application."
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Associer des comptes d’utilisateurs"
+'twitter:description': "Découvrez comment associer des comptes d’utilisateurs à partir de différents fournisseurs d’identité, afin que vos utilisateurs puissent s’authentifier à partir de n’importe quel compte et être reconnus par votre application."
+---
+
+Associer des comptes d’utilisateurs en formant une relation primaire et secondaire. Si l’association est réussie, le point de terminaison renvoie le nouveau tableau des identités du compte primaire.
+
+Auth0 permet d’associer des comptes d’utilisateurs provenant de différents fournisseurs d’identité. Cela permet à un utilisateur de s’authentifier à partir de n’importe lequel de ses comptes tout en étant toujours reconnu par votre application et associé au même profil utilisateur.
+
+<Card title="La disponibilité varie selon le plan Auth0">
+
+L’implémentation propre à votre connexion et votre plan Auth0 ou accord personnalisé que vous utilisez déterminent si cette fonctionnalité est disponible. Pour en savoir plus, lisez [Tarification](https://auth0.com/pricing).
+
+</Card>
+
+Par défaut, Auth0 considère chaque identité comme indépendante. Par exemple, si un utilisateur se connecte d’abord via la base de données Auth0, puis via Google ou Facebook, ces deux tentatives de connexion seront perçues par Auth0 comme deux utilisateurs distincts.
+
+Il existe trois façons d’associer des comptes :
+
+* Utilisez l’extension Account Link
+* Utiliser <Tooltip href="/docs/fr-ca/glossary?term=management-api" tip="Management API
+Un produit permettant aux clients d’effectuer des tâches administratives." cta="Voir le glossaire">Management API</Tooltip>
+* Utilisez Auth0.js
+
+Accédez aux onglets ci-dessous pour voir les détails de chaque option.
+
+* [Extension de lien de compte](#extension)
+* [Gestion d’API](#mgmt-api)
+* [Auth0 js](#auth0js)
+
+## Extension de lien de compte
+
+Installez et configurez l’extension [Account Link Extension](/docs/fr-ca/extensions/account-link) dans le tableau de bord pour inviter les utilisateurs qui peuvent avoir créé un deuxième compte à lier le nouveau compte à leur ancien lors de leur première connexion. L’utilisateur peut choisir de lier les deux comptes ou de les garder séparés si cela était intentionnel.
+
+
+## Ajoutez les informations manquantes avec les règles
+
+Lorsqu’un utilisateur se connecte, les applications reçoivent des informations de l’utilisateur à partir de la **primary identity (identité principale)**. Auth0 ne tente pas de renseigner automatiquement les champs de profil manquants avec les informations des identités secondaires. Par exemple, si l’identité principale provient d’une connexion à une base de données et qu’il lui manque les propriétés `given_name` et `family_name`, et si l’identité secondaire provient d’une connexion avec Google qui inclut le prénom et le nom de l’utilisateur, alors l’application ne recevra **pas** les données contenues dans la seconde identité.
+
+Pour ajouter des informations manquantes aux identités principales avec des informations provenant d’identités secondaires, vous pouvez élaborer une règle comme dans l’exemple suivant :
+
+```javascript lines
+function(user, context, callback) {
+  
+  const propertiesToComplete = ["given_name", "family_name", "name"];
+
+  // go over each property and try to get missing
+  // information from secondary identities
+  for(var property of propertiesToComplete) {
+    if (!user[property]) {
+      for(var identity of user.identities) {
+        if (identity.profileData && identity.profileData[property]) {
+          user[property] = identity.profileData[property];
+          break;
+        }
+      }
+    }
+  }
+  
+  callback(null, user, context);
+}
+```
+
+## Association d’un compte à des Actions
+
+Auth0 Actions peut être utilisé pour appeler le Management API afin d’associer des comptes d’utilisateurs. Auth0 ne met pas automatiquement à jour l’utilisateur principal après l’association de comptes. Cette modification doit donc être effectuée dans le code des Actions une fois l’association réussie.
+
+<Card title="Association d’un compte à des Actions">
+
+Les Actions permettent d’étendre de manière flexible les capacités d’Auth0, et il convient d’être prudent lors de l’établissement d’associations entre comptes d’utilisateurs.
+
+L’association non sécurisée de comptes peut permettre à des acteurs malveillants d’accéder à des comptes d’utilisateurs légitimes.
+
+Veuillez tenir compte des éléments suivants :
+
+**Chaque** association manuelle vers un compte doit inviter l’utilisateur à saisir ses données d’identification. Votre locataire doit demander l’authentification des **deux** comptes avant que l’association ne soit établie.
+
+</Card>
+
+### Exemple d’association de compte avec Actions
+
+Voici une implémentation de base d’une association de compte :
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+L’utilisateur principal doit lancer le flux de connexion afin d’associer avec succès les comptes aux Actions.
+
+</Callout>
+
+1. Identifiez les comptes utilisateurs potentiels à lier à l’aide d’une Action.
+2. Redirigez vers une application de liaison externe à l’aide de la [fonctionnalité et du jeton de redirection des actions](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/redirect-with-actions).
+3. L’utilisateur doit s’authentifier à l’aide de ses identifiants pour tous les comptes qu’il souhaite associer.
+4. Redirigez vers l’Action avec le résultat de l’authentification codé dans un JWT signé et validez l’authenticité et le contenu de ce jeton.
+5. Effectuez l’association de compte avec un appel de Management API en fonction des résultats.
+6. Passez à l’utilisateur principal pour le reste de la transaction à l’aide des Actions.
+
+Pour effectuer ces étapes, un exemple d’Action post-connexion peut contenir les éléments suivants :
+
+```javascript lines
+// @ts-check
+const { ManagementClient } = require("auth0");
+
+// High-level Workflow for Performing Account Linking in Actions
+// --------------------------------------------------------------------------------------------
+//
+// The goal of this workflow is to systematically process all users for potential account
+// linking. We want to detect situations where an end-user
+// may have other identities in Auth0. These other identities would be discovered through
+// matching verified email addresses. The Auth0 Action will ensure that all users are processed
+// for account linking.
+//
+// A redirect app will be hosted by the customer to which we will redirect the user's browser
+// when account linking might be available. The customer's account linking app is responsible
+// authenticating that the current user owns the candidate linking identities. It will actually
+// perform the account linking via Management API before redirecting back to the login flow's
+// `/continue?state` endpoint.
+//
+// The Action will pick up here and update the primary user for the login if necessary and mark
+// the user as having been successfully processed.
+//
+// Here are the details of the workflow:
+//
+// 1. Check if the user has been processed for account linking. The state for this is encoded in
+//    the user's `app_metadata`. If the user has already been processed, exit this flow.
+// 2. Discover other user identities that are candidates for account linking. If candidates are
+//    found:
+//   1. Encode the current user and any candidate identities into a signed session token to be
+//      passed to the account linking app.
+//   2. Redirect the user's browser to the account linking app with the signed session token.
+//   3. The account linking app should challenge the user to authenticate using the candidate
+//      identities.
+//   4. If the user choses to proceed with account linking and successfully authenticates with
+//      candidate identities, determine the primary user under which to consolidate identities.
+//   5. Use the management API to perform account linking and to map any user or app metadata
+//      from the other user accounts into the new primary user account.
+//   6. Redirect back to `/continue?state` with a new signed token encoding the primary user
+//      that is the outcome of the account linking app.
+//   7. Validate the returned session token in the `onContinuePostLogin` entrypoint of the
+//      Action. If a change of primary user is required, change the primary user via
+//      `api.authentication.setPrimaryUser(newPrimaryUserId)`.
+// 3. Mark the user as having been processed for account linking by storing a flag in the
+//    user's `app_metadata`.
+
+const LINKING_STATE_KEY = 'account_linking_state';
+
+/**
+ * Handler that will be called during the execution of a PostLogin flow.
+ *
+ * @param {Event} event - Details about the user and the context in which they are logging in.
+ * @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.user.email_verified) {
+    // We won't process users for account linking until they have verified their email address.
+    // We might consider rejecting logins here or redirecting users to an external tool to
+    // remind the user to confirm their email address before proceeding.
+    //
+    // In this example, we simply won't process users unless their email is verified.
+    return;
+  }
+
+  const accountLinkingState = event.user.app_metadata[LINKING_STATE_KEY];
+
+  if (accountLinkingState) {
+    // Account linking has already been processed and completed for this user. No further work
+    // to be done in this Action.
+    return;
+  }
+
+  const token = await getManagementApiToken(event, api);
+  const domain = event.secrets.TENANT_DOMAIN;
+  const management = new ManagementClient({ domain, token });
+
+  // Search for other candidate users
+  const { data: candidateUsers } = await management.usersByEmail.getByEmail({
+    email: event.user.email,
+  });
+
+  if (!Array.isArray(candidateUsers)) {
+    return;
+  }
+
+  const candidateIdentities = candidateUsers.flatMap((user) => user.identities);
+
+  if (!candidateIdentities.length) {
+    // No candidate users for linking so mark the user as processed.
+    api.user.setAppMetadata(LINKING_STATE_KEY, Date.now());
+  }
+
+  // Encode the current user and an array of their 
+  const sessionToken = api.redirect.encodeToken({
+    payload: {
+      current_user: event.user,
+      candidate_identities: candidateIdentities,
+    },
+    secret: event.secrets.REDIRECT_SECRET,
+    expiresInSeconds: 20,
+  });
+
+  api.redirect.sendUserTo('https://url.for/account/linking/service', {
+    query: { session_token: sessionToken },
+  });
+};
+
+/**
+ * Handler that will be invoked when this action is resuming after an external redirect. If your
+ * onExecutePostLogin function does not perform a redirect, this function can be safely ignored.
+ *
+ * @param {Event} event - Details about the user and the context in which they are logging in.
+ * @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  // Validate the session token passed to `/continue?state` and extract the `user_id` claim. 
+  const { user_id } = api.redirect.validateToken({
+    secret: event.secrets.REDIRECT_SECRET,
+    tokenParameterName: 'session_token',
+  });
+
+  if (user_id !== event.user.user_id) {
+    // The account linking service indicated that the primary user changed.
+    api.authentication.setPrimaryUser(user_id);
+  }
+
+  // Mark the user as having been processed for account linking
+  api.user.setAppMetadata(LINKING_STATE_KEY, Date.now());
+};
+```
+
+## En savoir plus
+
+* [Association de comptes d’utilisateur : mise en œuvre côté serveur](/docs/fr-ca/manage-users/user-accounts/user-account-linking/suggested-account-linking-server-side-implementation)
+* [Liaison de compte initiée par l’utilisateur : Mise en œuvre côté client](/docs/fr-ca/manage-users/user-accounts/user-account-linking/user-initiated-account-linking-client-side-implementation)
+* [Désassocier des comptes d’utilisateurs](/docs/fr-ca/manage-users/user-accounts/user-account-linking/unlink-user-accounts)

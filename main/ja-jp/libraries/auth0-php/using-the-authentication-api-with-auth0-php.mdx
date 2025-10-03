@@ -1,0 +1,195 @@
+---
+title: "PHP：Auth0-PHPでAuthentication APIを使用する"
+permalink: "using-the-authentication-api-with-auth0-php"
+'description': "Auth0のAuthentication APIエンドポイントをPHPアプリケーションに使用します。"
+'og:title': "PHP：Auth0-PHPでAuthentication APIを使用する"
+'og:description': "Auth0のAuthentication APIエンドポイントをPHPアプリケーションに使用します。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "PHP：Auth0-PHPでAuthentication APIを使用する"
+'twitter:description': "Auth0のAuthentication APIエンドポイントをPHPアプリケーションに使用します。"
+---
+
+Auth0 PHP SDKには`Auth0\SDK\API\Authentication`クラスが用意されています。このクラスには、[Authentication API](https://auth0.com/docs/api/authentication)に直接アクセスするのに使用できるメソッドが提供kされています。このインターフェイスはより高度なアプリケーションを対象としており、一般的にユーザーセッションを追跡する手段を提供するものではないことにご注意ください。ほとんどのユースケースでは、[Auth0の基本クラス](/ja-jp/libraries/auth0-php/auth0-php-basic-use)の使用をお勧めします。
+
+以下では、一般的な認証についての例を説明します。
+
+## 前提条件
+
+以下の説明では、[インストールと使用の開始](/ja-jp/libraries/auth0-php)にある手順が完了していることを前提に、手順で提供されたコードを使用します。
+
+## 認可コードフロー
+
+[認可コードフロー](/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow)は、ユーザーにアプリケーションへのアクセスを付与する基本的な方法です。このフローは、[Auth0-PHP Basic Use（Auth0-PHPの基本使用）](/ja-jp/libraries/auth0-php/auth0-php-basic-use)ページで使用されているものと同じです。ログインやコールバックのプロセスにより細かい制御が必要な場合は、このセクションにAuthentication APIを直接使用する方法が記載されています。
+
+ユーザーはAuth0で認証を行い、認可コードを生成する必要があります。これは、テナントドメインの/authorizeエンドポイントにリダイレクトすることで行われます。認証が必要なページには、以下のコードが表示されます。
+
+```php lines
+// 👆 We're continuing from the "getting started" guide linked in "Prerequisites" above. Append this to the index.php file you created there.
+
+// Setup a PHP session, which we'll use as a custom session store for the authenticated user.
+session_start();
+
+// $user will be null if no session is available; otherwise it will contain user data.
+$user = $_SESSION['user'] ?? null;
+
+// Has the user authenticated with us yet?
+if ($user === null) {
+    // Generates cryptographically secure pseudo-random bytes to use as a CSRF mitigating value.
+    // Store this for retrieval after authentication.
+    $_SESSION['state'] = bin2hex(random_bytes(16));
+
+    // Generate the authorize URL, and redirect the user to it.
+    header('Location: ' . $auth0->authentication()->getLoginLink($_SESSION['state']));
+    exit;
+}
+
+echo '<h1>Sensitive data!</h1>';
+```
+
+上記のプロセスでは、以下を行います。
+
+1. 認証されたユーザーの状態がカスタムセッションハンドラーに保管されているかを確認します。使用しているアプリケーションによっては、ユーザーセッションの扱いが異なるかもしれません。
+2. セッションがない場合は、ユーザーをユニバーサルログインページにリダイレクトして、ユーザーをログインさせる必要があります。
+3. ログイン要求に状態値を設定し、Callback URLでコードが返されたときにその値を検証します。これをPHPセッションのstateキーに保管します。
+4. `getLoginLink()`の呼び出しは、`/authorize`リンクを構築します。このリンクには、正しい応答タイプ（この場合は`code`）、リダイレクトURI（下記で説明するように、応答を処理するアプリケーションの場所）、状態（上記）が含まれます。
+5. その後、このURLにリダイレクトし、ユーザーがリダイレクトで戻されるのを待機します。
+
+認証後、ユーザーがCallback URLでアプリケーションにリダイレクトされ、以下の処理を行います。
+
+```php lines
+// 👆 We're continuing from the "getting started" guide linked in "Prerequisites" above. Append this to the index.php file you created there.
+
+// Ensure we have our PHP session open so we can retrieve our stored state for comparison.
+session_start();
+
+// Extract `code` and `state` parameters from the request query, if present.
+$code = filter_var($_GET['code'] ?? null, FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+$state = filter_var($_GET['state'] ?? null, FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+
+// Check if a code is present in the request query.
+if ($code === null) {
+    die('No authorization code found.');
+}
+
+// Check if a state is present, and compare it with the one we generated and stored before redirecting the user.
+if ($state === null || $state !== $_SESSION['state']) {
+    die('Invalid state.');
+}
+
+// We have compared states, we should discard this stored value now.
+unset($_SESSION['state']);
+
+// Attempt to get an access_token with the code returned and original redirect URI. (This returns a PSR-7 ResponseInterface.)
+$response = $auth0->authentication()->codeExchange($code);
+
+// Does the status code of the response indicate failure?
+if ($response->getStatusCode() !== 200) {
+    die("Code exchange failed.");
+}
+
+// Decode the JSON response into a PHP array:
+$response = json_decode(response->getBody()->__toString(), true, 512, JSON_THROW_ON_ERROR);
+
+// Create an array to store our session information in.
+$session = [
+    'id_token' => $response['id_token'] ?? null,
+    'access_token' => $response['access_token'] ?? null,
+    'scope' => $response['scope'] ?? null,
+    'refresh_token' => $response['refresh_token'] ?? null,
+    'expires_in' => $response['expires_in'] ?? null,
+    'user' => null
+];
+
+// We retrieved an ID token; let's process it!
+if ($session['id_token'] !== null) {
+    // The Auth0 SDK includes a helpful token processing utility we'll leverage for this:
+    $token = new \Auth0\SDK\Token($auth0->configuration(), $session['id_token'], \Auth0\SDK\Token::TYPE_ID_TOKEN);
+
+    // Verify the token, and validate it's claims. These will throw an \Auth0\SDK\Exception\InvalidTokenException if a check fails.
+    $token->verify();
+    $token->validate();
+
+    $session['user'] => $token->toArray();
+}
+
+// Store our authenticated session state.
+$_SESSION['user'] = $session;
+
+// Let's echo the user claims/identity as a demo of a successful authentication flow:
+print_r($session['user']);
+```
+
+このプロセスを詳しく説明します。
+
+1. 要求クエリ内で`code`パラメーターを探します。見つからない場合には、認証を中止します。
+2. `state`値の存在を確認し、生成した値と一致しているかを確認します。[これはCSRF攻撃を回避するために重要です。](/ja-jp/secure/attack-protection)
+3. コードの交換を試みます。Auth0から認証中のユーザーが戻されたときに、アプリケーションに提供された`code`を`codeExchange()`に渡して呼び出します。
+4. これが成功すれば、交換が成功したことがわかり、IDトークンやアクセストークンを含めて、他にも潜在的な値を取得しています。
+5. IDトークンを検証し、クレームをユーザーのIDとして使用します。
+6. この最後の手順が成功したら、ユーザーを保管し、機密データにリダイレクトで戻します。
+
+## クライアントの資格情報フロー
+
+[クライアントの資格情報フロー](/ja-jp/get-started/authentication-and-authorization-flow/client-credentials-flow)は、ダッシュボードで設定されたスコープに基づいて、アプリケーションが特定のAPIにアクセスできるようにします。これにより、アプリケーションは<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/ja-jp/glossary?term=management-api" tip="Management API: 顧客が管理タスクを実行できるようにするための製品。" cta="用語集の表示">Management API</Tooltip>の呼び出しなどを行うことができます。認証が成功すると、要求されたAPIにアクセストークンが発行されます。
+
+まず、 **［Client Credentials（クライアントの資格情報）］** の付与を有効にします。これの設定は、アプリケーションの設定ページの **［Advanced settings（高度な設定）］>［Grant Types（付与タイプ）］** タブにあります。
+
+次に、APIの **［Settings（設定）］** ページにある **［Machine to Machine Applications（マシンツーマシンアプリケーション）］** タブで、使用しているAPIにアプリケーションを認可します。必要な（ただし必要以上ではない）すべてのスコープが選択されていることを確認してから、**更新** します。**［Settings（設定）］** タブに戻って、**［Identifier（識別子）］** の値をコピーします。これを、`.env`ファイルで`AUTH0_MANAGEMENT_AUDIENCE`キーに追加する必要があります。
+
+以下の例を参考に、APIのアクセストークンを要求します。
+
+```php lines
+// 👆 We're continuing from the "getting started" guide linked in "Prerequisites" above.
+
+// Begin a client credentials exchange:
+$response = $auth0->authentication()->clientCredentials([
+    'audience' => $_ENV['AUTH0_MANAGEMENT_AUDIENCE']
+]);
+
+// Does the status code of the response indicate failure?
+if ($response->getStatusCode() !== 200) {
+    die("Code exchange failed.");
+}
+
+// Decode the JSON response into a PHP array:
+$response = json_decode(response->$getBody()->__toString(), true, 512, JSON_THROW_ON_ERROR);
+
+// Echo the response to the browser
+print_r($response, true);
+```
+
+付与が成功すると、以下が表示されるはずです。
+
+``` lines
+Array
+(
+    [access_token] => eyJ0eXAi...eyJpc3Mi...QoB2c24w
+    [scope] => read:users read:clients ...
+    [expires_in] => 86400
+    [token_type] => Bearer
+)
+```
+
+このアクセストークンの使い方については、「[Auth0-PHPでManagement APIを使用する](/ja-jp/libraries/auth0-php/using-the-management-api-with-auth0-php)」を参照してください。
+
+## シングルサインオンからのログアウト
+
+`session_destroy()`を使ってローカルセッションを破棄するだけでも、アプリケーションからユーザーを認証解除するには十分ですが、Auth0でもエンドユーザーのセッションを閉じるべきです。こうすることで、次回にAuth0のログインフォームが表示されたときに、ユーザーがログインするには、必ず資格情報の提供が必要になります。まず、ログアウトの完了後、ユーザーがどこに行くのかを決定します。これをAuth0のアプリケーション設定のAllowed Logout URLs（許可されているログアウトURL）フィールドに保存します。また、このURLを値とした`AUTH0_LOGOUT_RETURN_URL`キーを`.env`ファイルに追加します。アプリケーションのログアウトコードに、以下を追加します。
+
+```php lines
+// 👆 We're continuing from the "getting started" guide linked in "Prerequisites" above.
+
+// Deauthenticate the user's local session in your application.
+session_destroy();
+
+// Redirect to Auth0's logout URL to end their Auth0 session:
+header("Location: " . $auth0->authentication()->getLogoutLink($_ENV['AUTH0_LOGOUT_RETURN_URL']);
+```
+
+## もっと詳しく
+
+* [PHP：Auth0-PHPを使用して始める](/ja-jp/libraries/auth0-php)
+* [PHP：Auth0-PHPを使用したログイン、ログアウト、ユーザープロファイルの返送](/ja-jp/libraries/auth0-php/auth0-php-basic-use)
+* [PHP：Auth0-PHPでManagement APIを使用する](/ja-jp/libraries/auth0-php/using-the-management-api-with-auth0-php)
+* [PHP：Auth0-PHPを使用したJWT（JSON Web Token）の検証](/ja-jp/libraries/auth0-php/validating-jwts-with-auth0-php)
+* [PHPAuth0-PHP統合のトラブルシューティング](/ja-jp/libraries/auth0-php/troubleshoot-auth0-php-library)

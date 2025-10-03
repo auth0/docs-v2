@@ -1,0 +1,141 @@
+---
+title: "Auth0.Androidでトークンを保存および更新する"
+permalink: "auth0-android-save-and-renew-tokens"
+'description': "Auth0.Androidでユーザーをログインした状態にする"
+'og:title': "Auth0.Androidでトークンを保存および更新する"
+'og:description': "Auth0.Androidでユーザーをログインした状態にする"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Auth0.Androidでトークンを保存および更新する"
+'twitter:description': "Auth0.Androidでユーザーをログインした状態にする"
+---
+
+`offline_access`スコープを含んだまま認証を行う場合、新しいユーザートークンの要求に使用するリフレッシュトークンが返され、ユーザーに再認証を強制する必要はありません。
+
+## 資格情報マネージャー
+
+[Auth0.Android](https://github.com/auth0/Auth0.Android)には、資格情報の保存と更新プロセスを合理化するためのユーティリティクラスが用意されています。`accessToken`または`idToken`プロパティには、[［Credentials（資格情報）］](https://github.com/auth0/Auth0.Android/blob/master/auth0/src/main/java/com/auth0/android/result/Credentials.java)インスタンスからアクセスすることができます。これは、ユーザー資格情報を管理する上で推奨される方法です。
+
+Credential Managers（資格情報マネージャー）は、Auth0.Android SDKの一部として含まれています。これがまだ、ユーザーの依存関係の一部でない場合は、[Auth0.Android](/ja-jp/libraries/auth0-android)の指示に従ってください。
+
+資格情報の管理に使用できるクラスは2つあります。
+
+* `CredentialsManager`はプレーンテキスト形式でデータを保存します。
+* `SecureCredentialsManager`はデータを保存する前に暗号化し、[Android KeyStore](https://developer.android.com/reference/java/security/KeyStore.html)と共にRSAとAESアルゴリズムの組み合わせを使用します。
+
+## CredentialsManagerクラスの使用
+
+### CredentialsManagerをセットアップする
+
+`AuthenticationAPIClient`および`Storage`実装を渡して、新しいインスタンスを作成します。
+
+```kotlin lines
+val auth0 = Auth0(this)
+val apiClient = AuthenticationAPIClient(auth0)
+val manager = CredentialsManager(apiClient, SharedPreferencesStorage(this))
+```
+
+### 認証の現在の状態
+
+保存された資格情報は、期限切れになっていないか更新可能である場合は有効であるとみなされます。ユーザーが既にログインしているか確認します。
+
+```kotlin lines
+val loggedIn = manager.hasValidCredentials()
+```
+
+ユーザーをアプリケーションからログアウトするには、保存された資格情報を削除し、ユーザーをログイン画面に誘導します。
+
+```kotlin lines
+manager.clearCredentials()
+```
+
+### 資格情報の取得
+
+資格情報はAuth0 Serversに対して更新される必要があるため、この方法は非同期です。資格情報を受信したいコールバック実装を渡します。正常に実行された後、この方法で返される資格情報は常に有効です。
+
+```kotlin lines
+manager.getCredentials(object: Callback<Credentials, CredentialsManagerException>() {
+    override fun onSuccess(credentials: Credentials) {
+        // Use credentials
+    }
+
+    override fun onFailure(error: CredentialsManagerException) {
+        // No credentials were previously saved or they couldn't be refreshed
+    }
+})
+```
+
+`accessToken`の有効期限が切れた場合、マネージャーは`refreshToken`を自動的に使用し、資格情報を更新します。新しい資格情報は将来のアクセスのために保存されます。
+
+### 新しい資格情報を保存する
+
+マネージャーで認証中に取得した資格情報を保存することができます。
+
+```text lines
+manager.saveCredentials(credentials)
+```
+
+## SecureCredentialsManagerクラスの使用
+
+### SecureCredentialsManagerをセットアップする
+
+有効なAndroid `Context`、`AuthenticationAPIClient`、および`Storage`実装を渡して、新しいインスタンスを作成します。
+
+```kotlin lines
+val auth0 = Auth0(this)
+val apiClient = AuthenticationAPIClient(auth0)
+val manager = SecureCredentialsManager(this, apiClient, SharedPreferencesStorage(this))
+```
+
+資格情報を取得、保存、有無を確認、および消去する方法は、上のセクションで説明したのと同じです。
+
+### ユーザーを事前認証する
+
+このクラスは、デバイスで構成されたロック画面を使って、さらなる認証のためのオプション機能を備えています。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+ロック画面のセキュリティが、PIN、パターン、指紋、パスワード以外に設定されている場合、この機能は使用できません。
+
+</Callout>
+
+以下のメソッドを呼び出して認証を有効にします。有効な`Activity`コンテント、要求コード、および2つの任意の文字列を渡し、ロック画面のタイトルと説明に使用します。
+
+また、アクティビティの結果からの要求コードが一致するように、要求コード定数を定義します。
+
+```kotlin lines
+companion object {
+  const val RC_UNLOCK_AUTHENTICATION = 123
+}
+
+// Called from an Activity
+val available = manager.requireAuthentication(this, RC_UNLOCK_AUTHENTICATION, getString(R.string.unlock_authentication_title), getString(R.string.unlock_authentication_description))
+```
+
+機能が有効な場合、マネージャーは構成されたロック画面を使ってユーザーに認証を行うよう促します。この呼び出しの結果は、最初のパラメーターとして以前に渡されたアクティビティの`onActivityResult`メソッドで取得されます。機能が有効でなかった場合、ロック画面の認証はスキップされます。
+
+受け取った要求コードが構成手順で使用されたものに一致することを確認したら、受信したパラメーターをマネージャーにリダイレクトし、認証を終了します。資格情報が元のコールバックに渡ります。
+
+```kotlin lines
+override fun onActivityResult(int requestCode, int resultCode, Intent data) {
+    if (requestCode == RC_UNLOCK_AUTHENTICATION && manager.checkAuthenticationResult(requestCode, resultCode)) {
+        return
+    }
+
+    super.onActivityResult(requestCode, resultCode, data)
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+`onActivityResult`メソッドは2021年に廃止され、新たに[Activity Result API](https://developer.android.com/training/basics/intents/result)が導入されました。ただし、Auth0.Android SDKはこれらのコントラクトと互換性がありません。廃止されたメソッドは今後も安全に使用できます。
+
+</Callout>
+
+### 使用状況の例外処理
+
+Credentials（資格情報）を保存または取得中に予期しないイベントが起きた場合は、`CredentialsManagerException`が発生します。想定できる失敗したシナリオには以下のようなものがあります。
+
+* 保存される資格情報が無効である（`access_token`、`id_token`、または`expires_at`といった一部のフィールドが定義されていないなど）。
+* 保存された資格情報の有効期限が切れているが、自動更新するために利用できるリフレッシュトークンがない。
+* デバイスのロック画面のセキュリティ設定が変更されている（セキュリティPINコードが変更されているなど）。`hasCredentials`がTrueを返しても、暗号化キーは無効とみなされます。`saveCredentials`が再び呼び出されても、前の既存のコンテンツを復号化することはできません。これは、前に使用したキーが新しいものと同じではないためです。
+* デバイスが`SecureCredentialsManager`クラスで必要な一部の暗号化アルゴリズに対応していない。これは壊滅的なイベントとしてみなされ、ユーザーが実装を使用するのを阻止する唯一の例外です。このシナリオは、OEMがデバイスのAndroid ROMを変更し、各Androidディストリビューションに正式に含まれている一部のアルゴリズムを削除するときに発生します。しかしながら、`isDeviceIncompatible`メソッドを呼び出して、これが例外インスタンス自体で本当かどうかを確認することができます。そうすることで、ユーザーは資格情報を保存するためのフォールバックの実装（通常の`CredentialsManager`クラスを使用するなど）を決定することができます。

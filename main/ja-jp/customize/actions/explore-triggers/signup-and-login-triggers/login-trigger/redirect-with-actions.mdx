@@ -1,0 +1,383 @@
+---
+title: "アクションを使用してダイレクトする"
+permalink: "redirect-with-actions"
+'description': "認証トランザクションの前に、ログイン後のアクションを使ってユーザーをリダイレクトする方法について説明します。"
+'og:title': "アクションを使用してダイレクトする"
+'og:description': "認証トランザクションの前に、ログイン後のアクションを使ってユーザーをリダイレクトする方法について説明します。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "アクションを使用してダイレクトする"
+'twitter:description': "認証トランザクションの前に、ログイン後のアクションを使ってユーザーをリダイレクトする方法について説明します。"
+---
+
+認証トランザクションの前に、ログイン後のアクションを使ってユーザーをリダイレクトすることができます。カスタム認証フローを実装して、標準のログインフォームにはない追加のユーザー操作に対応できるようになります。
+
+リダイレクトは、Auth0でカスタムの[多要素認証（MFA）](/ja-jp/secure/multi-factor-authentication)を実行するためによく使用されますが、以下の目的にも使用できます。
+
+* カスタムのプライバシーポリシーへの同意、利用規約、データ開示のフォームを使用できるようにする
+* 追加で必要なプロファイルデータを安全に一度だけ収集する
+* Microsoft Entra IDのリモートユーザーがパスワードを変更できるようにする
+* ユーザーが未知の場所からログインする際に、追加で検証を求める
+* サインアップ時にユーザーが提供したよりも多くのユーザー情報を集める
+
+## 概要
+
+リダイレクトのアクションは通常、以下のように動作します。
+
+1. アクションがURLへリダイレクトを送信します。
+2. そのアクションの実行が完了すると、Actionsパイプラインが中断されます。
+3. ユーザーが`state`パラメーターとURLともににリダイレクトされます。
+4. 外部フローが終了すると、外部サイトが`state`パラメーターとともにユーザーを`/continue`エンドポイントにリダイレクトします。
+5. リダイレクトを行った同じアクションからActionsパイプラインが再開します。
+
+## リダイレクトを開始する
+
+以下のように`api.redirect.sendUserTo()`機能を呼び出します。
+
+```javascript lines
+/**
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  api.redirect.sendUserTo("https://my-app.exampleco.com");
+};
+```
+
+Actionsがこのアクションの実行を終了し、Actionsパイプラインを一時停止してユーザーを`https://my-app.exampleco.com`に送信します。つまり、このリダイレクトを行ったアクションの後にログイン後トリガーが実行される場合、そのログイン後トリガーにバインドされているアクションはすべて、認証フローが再開するまで実行されないことになります。リダイレクトのルールに慣れているのであれば、リダイレクトのアクションとリダイレクトのルールがこの点で大きく違うことに注意してください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+リダイレクトアクションは、リダイレクトルールとは異なり、リダイレクトが発行された時点でActionsパイプラインを中断します。認証フローが続行された場合は、リダイレクトを発行したアクションでパイプラインを再開します。
+
+</Callout>
+
+アクションの実行が完了すると、Auth0がユーザーを`api.redirect.sendUserTo()`関数でURL指定された場所にリダイレクトします。Auth0はそのURLに`state`パラメーターも渡します。例：
+
+`https://my-app.exampleco.com/?state=abc123`
+
+リダイレクトURLは`state`パラメーターを抽出し、それをAuth0に送り返して認証トランザクションを再開する必要があります。状態は不透明な値で、[クロスサイトリクエストフォージェリ(CSRF)攻撃](/ja-jp/secure/security-guidance/prevent-threats)を防ぐために使用されます。
+
+## 認証フローを再開する
+
+リダイレクト後にユーザーを`/continue`エンドポイントにリダイレクトし、URLで受信した`state`パラメーターを含めることで認証を再開します。元の状態を`/continue`エンドポイントに送り返さないと、Auth0はログイントランザクションのコンテキストを失い、`invalid_request`エラーのためにユーザーがログインできなくなります。
+
+例：
+
+`https://{yourAuth0Domain}/continue?state=THE_ORIGINAL_STATE`
+
+この例では、`THE_ORIGINAL_STATE`はAuth0が生成し、リダイレクトURLに送信した値です。たとえば、アクションが`https://my-app.exampleco.com/`にリダイレクトすると、Auth0は`https://my-app.exampleco.com/?state=abc123`と同様にリダイレクトURLを使用し、`abc123`を`THE_ORIGINAL_STATE`にします。認証トランザクションを再開するには、以下にリダイレクトします。
+
+`https://{yourAuth0Domain}/continue?state=abc123`
+
+ユーザーが`/continue`エンドポイントにリダイレクトされると、Actionsパイプラインが`onContinuePostLogin`関数を呼び出して、リダイレクトの呼び出しと同じアクションで再開します。リダイレクトが正しく動作するには、リダイレクトを行った同じアクションに以下の署名を含む関数が必要です。
+
+```javascript lines
+/**
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  api.redirect.sendUserTo("https://my-app.exampleco.com");
+};
+
+/**
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+
+exports.onContinuePostLogin = async (event, api) => {
+}
+```
+
+## データを外部のサイトへ渡す
+
+データを外部サイトに渡す場合は、そのデータを署名済みの[JWT](/ja-jp/secure/tokens/json-web-tokens)でエンコードすることをお勧めします。そうすれば、アプリケーションは送信中にデータが改ざんされていないことを確信できます。Actionsでは`api.redirect.encodeToken`および`api.redirect.sendUserTo`関数を使用してこれを実行できます。
+
+```javascript lines expandable
+/**
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  const YOUR_AUTH0_DOMAIN = event.secrets.YOUR_AUTH0_DOMAIN || event.request.hostname
+
+  // Craft a signed session token
+  const token = api.redirect.encodeToken({
+    secret: event.secrets.MY_REDIRECT_SECRET,
+    expiresInSeconds: 60, 
+    payload: {
+      // Custom claims to be added to the token
+      email: event.user.email,
+      externalUserId: 1234,
+      continue_uri: `https://${YOUR_AUTH0_DOMAIN}/continue`
+    },
+  });
+
+  // Send the user to https://my-app.exampleco.com along
+  // with a `session_token` query string param including
+  // the email.
+  api.redirect.sendUserTo("https://my-app.exampleco.com", {
+    query: { session_token: token }
+  });
+}
+```
+
+上のコードは、リダイレクトで使用されるURLに`session_token`クエリ文字列パラメーターを（Auth0が自動的に追加する`state`パラメーターに加えて）追加します。このトークンには以下が含まれます。
+
+<table class="table"><thead>
+<tr>
+<th>トークンの要素</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`sub`</td>
+<td>ユーザーのAuth0の`user_id`です。</td>
+</tr>
+<tr>
+<td>`iss`</td>
+<td>Auth0テナントドメインのホスト名（`example.auth0.com`など）です。</td>
+</tr>
+<tr>
+<td>`exp`</td>
+<td>`expiresInSeconds`パラメーターで指定される秒単位の有効期限です。トークンが再利用されないように、できるだけ短くします。デフォルトは900秒（15分）です。</td>
+</tr>
+<tr>
+<td>`ip`</td>
+<td>認証要求元のIPアドレスです。</td>
+</tr>
+<tr>
+<td>`email`</td>
+<td>`payload.email`パラメーターで値が指定されているカスタムクレームです。</td>
+</tr>
+<tr>
+<td>`externalUserId`</td>
+<td>`payload.externalUserId`パラメーターで値が指定されているカスタムクレームです。</td>
+</tr>
+<tr>
+<td>`signature`</td>
+<td>トークンは、上記で指定のシークレットを使用して、HS256アルゴリズムで署名されます。</td>
+</tr>
+</tbody>
+</table>
+
+### トークンが改ざんされていないことを確認する
+
+外部のシステムは、このトークンが送信中に改ざんされていないことを検証しなければなりません。これを実現するために、リモートシステムはトークンの署名が有効であることを確認し、該当する場合は、外部システム内のセッションがトークンの`sub`クレームで渡される同じAuth0ユーザーに属していることを確認しなければなりません。
+
+## データをAuth0へ戻す
+
+ユーザーが外部サイトでカスタムフローを完了すると、`/continue`エンドポイントにリダイレクトされます。状況によっては、データをAuth0に戻して、そのユーザーの認証フローや認可フロー（たとえば、CAPTCHA認証やカスタム<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/ja-jp/glossary?term=multifactor-authentication" tip="多要素認証（MFA）: ユーザー名とパスワードに加えて、SMS経由のコードなどの要素を使用するユーザー認証プロセス。" cta="用語集の表示">MFA</Tooltip>など）に影響を与える必要があるかもしれません。
+
+### できるだけアプリのメタデータを使用する
+
+可能であれば、リモートシステムは[Auth0 Management API](https://auth0.com/docs/api/management/v2/)を使用して、カスタム情報をAuth0ユーザープロファイルのアプリケーションメタデータとして保管する必要があります。Auth0アクションフローが再開されると、この情報は`event.user.app_metadata`オブジェクトで利用できるようになります。この方法では、機密情報をフロントチャネルでAuth0に渡す必要がなくなります。
+
+### Auth0のユーザープロファイルにはデータを選択して保管する
+
+Auth0のプロファイルに保管するデータは多すぎないようにします。このデータは認証および認可の目的で使用されるものです。Auth0のメタデータや検索機能は、マーケティング調査などのように、頻繁に検索や更新されることを想定して設計されたものではありません。Auth0をそのような目的で使用すると、ほぼ確実にシステムの拡張性や性能に問題が生じます。
+
+アプリケーションにかなりの量のユーザーデータが必要な場合には、データを外部システムに保管して、Auth0に外部キー（ユーザーID）を保管すると、バックエンドシステムが必要に応じてデータを取得できるようになります。
+
+## データをフロントチャネルに送信する
+
+情報をフロントチャネルでやり取りすると、悪意のある行為者の攻撃対象になる領域を広げることになります。情報をフロントチャネルに送信しなければならない場合には、以下のガイダンスを考慮してください。
+
+### 情報をアクションへ戻す
+
+機密情報をAuth0に送信して戻すには、必ず署名済みのセッショントークンを使用します。このトークンは、アクション内で以下のコードを使って手軽に検証することができます。
+
+```javascript lines
+/**
+ * @param {Event} event - Details about the user and the context in which they are logging in.
+ * @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  const payload = api.redirect.validateToken({
+    secret: event.secrets.PRECONFIGURED_SECRET,
+    tokenParameterName: 'my_token',
+  });
+
+  // use the data encoded in the token, such as: 
+  api.idToken.setCustomClaim('color', payload.favorite_color);
+}
+```
+
+トークンは以下を確実にするために検証されます。
+
+* 署名が有効である
+* トークンの有効期限が切れていない
+* トークン内の`state`クレームは、リダイレクトの一部として使用される`state`パラメーターと一致します。
+
+<table class="table"><thead>
+<tr>
+<th>トークンの要素</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`sub`</td>
+<td>ユーザーのAuth0の`user_id`です。</td>
+</tr>
+<tr>
+<td>`iss`</td>
+<td>リダイレクト対象のアプリケーションです。</td>
+</tr>
+<tr>
+<td>`exp`</td>
+<td>トークンが再利用されないように、できるだけ短くします。</td>
+</tr>
+<tr>
+<td>`state`</td>
+<td>リダイレクトの一部としてリモートサイトに送信される状態パラメーターです。リプレイ攻撃を防ぐために、トークンに含まれる必要があります。</td>
+</tr>
+<tr>
+<td>`other`</td>
+<td>上のコードで`payload`として公開されるその他すべてのカスタムクレームです。</td>
+</tr>
+<tr>
+<td>`signature`</td>
+<td>トークンはHS256アルゴリズムで署名されなければなりません。</td>
+</tr>
+</tbody>
+</table>
+
+リプレイ攻撃を回避するには、`/continue`エンドポイントにPOST要求を行って、トークンをAuth0に送り返す必要があります。コード内の`tokenParameterName`オプションを使用すると、トークンを含むフィールドの名前を指定できます。
+
+## カスタム認証方式
+
+ログインパイプラインでリダイレクトに成功したら、アクションはカスタム認証方法のイベントをユーザーセッションに記録することができます。`event.authentication.methods`配列には、ユーザーのブラウザーセッションが継続する間、カスタム認証方法のエントリが含まれます。この配列の各エントリーには、認証方法が記録された日時を示すタイムスタンプがあります。
+
+必要なカスタム認証方法が`event.authentication.methods`配列にない場合、またはエントリが古すぎる場合には、カスタムアクションによってリダイレクトがトリガーされることがあります。
+
+`api.redirect.sendUserTo()`を使用して、カスタム認証方法を実装するページにユーザーを送信できます。`exports.onContinuePostLogin`ハンドラーで`api.authentication.recordMethod()`を使用して、完了した認証方法の記録をユーザーのセッションに保管できます。
+
+`event.authentication.methods`配列に保管されるレコードには、`api.authentication.recordMethod()`で選択されたURLと一致する`name`プロパティが含まれます。ここでキャプチャされたURLによって、現在のトランザクションで完了された認証方法を検索し、カスタム認証方法がすでに完了されているかを判断できます。
+
+ワークフローで、ユーザーセッションの有効期間中にカスタム認証方法の定期的な再実行が必要になるかもしれません。たとえば、カスタムMFAの使用では、指定された時間が経過すると、ユーザーの再検証が必要になることがあります。
+
+以下の例では、カスタム認証方法を返す契機を決めるために、既存のレコードのタイムスタンプを照合します。
+
+```javascript lines expandable
+const CUSTOM_METHOD_URL = "https://path.to.prompt";
+const PROMPT_TTL = 1000 * 60 * 60 * 24; // 24h
+
+/**
+ * Handler that will be called during the execution of a PostLogin flow.
+ *
+ * @param {Event} event - Details about the user and the context in which
+ * they are logging in.
+ * @param {PostLoginAPI} api - Interface whose methods can be used to
+ * change the behavior of the login.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Search authentication method records for an entry representing our
+  // custom method.
+  const methodRecord = event.authentication?.methods.find((record) =>
+    validateCustomRecord(record, CUSTOM_METHOD_URL, PROMPT_TTL)
+  );
+
+  if (!methodRecord) {
+    const sessionToken = api.redirect.encodeToken({
+      payload: {
+        user_id: event.user.user_id,
+      },
+      secret: event.secrets.SESSION_TOKEN_SECRET,
+    });
+
+    // We didn't find a valid record, so we send the user to the
+    // URL that implements the custom method with the signed
+    // data we encoded in `sessionToken`.
+    api.redirect.sendUserTo(CUSTOM_METHOD_URL, {
+      query: { session_token: sessionToken },
+    });
+  }
+};
+
+/**
+ * Handler that will be invoked when this action is resuming after an
+ * external redirect. If your onExecutePostLogin function does not perform
+ * a redirect, this function can be safely ignored.
+ *
+ * @param {Event} event - Details about the user and the context in which
+ * they are logging in.
+ * @param {PostLoginAPI} api - Interface whose methods can be used to
+ * change the behavior of the login.
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  const payload = api.redirect.validateToken({
+    secret: event.secrets.SESSION_TOKEN_SECRET,
+    tokenParameterName: "session_token",
+  });
+
+  if (!validateSessionToken(payload)) {
+    return api.access.deny("Unauthorized");
+  }
+
+  // Record the completion of our custom authentication method.
+  // THIS NEW API IS ONLY AVAILABLE IN `onContinuePostLogin`.
+  api.authentication.recordMethod(CUSTOM_METHOD_URL);
+};
+
+function validateCustomRecord(record, url, ttl) {
+  if (!record) {
+    // No record means it isn't valid.
+    return false;
+  }
+
+  if (record.url !== url) {
+    // This isn't a record of our custom method.
+    return false;
+  }
+
+  // Timestamps are rendered as ISO8601 strings.
+  const timestamp = new Date(record.timestamp);
+
+  // The record is valid if it was recorded recently enough.
+  return timestamp.valueOf() >= Date.now() - ttl;
+}
+
+function validateSessionToken(payload) {
+  // Custom validation logic for the data returned by the
+  // custom method goes here.
+  return true;
+}
+```
+
+`api.authentication.recordMethod()` APIは、`exports.onContinuePostLogin`ハンドラーでのみ使用できます。リダイレクトの完了後にカスタム認証方法が記録されるため、ログインが悪用される可能性が軽減されます。
+
+## 制約と制限
+
+リダイレクトのアクションは以下では動作しません。
+
+* [リソース所有者のエンドポイント](https://auth0.com/docs/api/authentication/reference#resource-owner)
+* [パスワードの交換](/ja-jp/get-started/authentication-and-authorization-flow/resource-owner-password-flow)
+* [リフレッシュトークンの交換](/ja-jp/secure/tokens/refresh-tokens)
+
+### リソース所有者のエンドポイント
+
+リソース所有者パスワードフローでAuthentication APIの[トークン取得](https://auth0.com/docs/api/authentication#resource-owner-password)エンドポイントを呼び出す場合、リダイレクトアクションは使用できません。そもそもユーザーがリダイレクトフローにいないため、アクションでリダイレクトできるユーザーもいません。
+
+### prompt=noneのフロー
+
+`prompt=none`の目的は、ユーザーに入力を求めるシナリオを回避することであるため、リダイレクトすると`error=interaction_required`が発生します。
+
+アクションは認証セッションの作成後に実行されるため、特定の条件下でトークンへのアクセスをブロックしようとするリダイレクトルールがある場合（カスタムMFA、ログイン時のCAPTCHAなど）、`prompt=none`は使用できません。
+
+`prompt=none`の場合、トークンアクセスをブロックしてリダイレクトアクションをバイパスするリダイレクトフローを作成することはできません。これは、アクションが最初に失敗した場合でも認証セッションが作成されているため、試行が失敗した後、ユーザーが`prompt=none`で再度呼び出してトークンを取得できるためです。
+
+### リフレッシュトークン
+
+リフレッシュトークンを使用するには、Authentication APIの[トークン取得](https://auth0.com/docs/api/authentication#refresh-token)エンドポイントへのバックチャネル呼び出しが必要であるため、リダイレクトしようとするとこれも失敗します。
+
+ログインに関するどのような制約も、適用されたかを安全に検証することは困難です。MFAチャレンジに成功したユーザーなど、セッションに関する情報を集めるのに使用可能なコンテキストでは、恒常的なセッションIDはありません。したがって、`prompt=none`を使用できません。
+
+アクションで`api.redirect.sendUserTo()`が呼び出されるときに、`prompt=none`が渡された場合、`error=interaction_required`で認可が失敗しますが、アクションが失敗してもユーザーのセッションが作成されるため、ユーザーがリダイレクトチャレンジに合格したことを信頼できず、トークンを取得する方法として`prompt=none`を使用することはできません。
+
+この特有なケースには、リフレッシュトークンの排他的な使用をお勧めします。リフレッシュトークンの生成にチャレンジが必要な場合に、ユーザーがチャレンジに成功したことを確認できるからです。
+
+## もっと詳しく
+
+* [ログイン後のアクショントリガーでユーザーメタデータを管理する](/ja-jp/manage-users/user-accounts/metadata/manage-user-metadata)

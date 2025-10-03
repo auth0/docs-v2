@@ -1,0 +1,1653 @@
+---
+title: "Accès anticipé à l’échange de jetons personnalisé"
+permalink: "custom-token-exchange"
+'description': "Découvrez les fonctionnalités d’accès anticipé à l’échange de jetons personnalisé."
+'og:title': "Accès anticipé à l’échange de jetons personnalisé"
+'og:description': "Découvrez les fonctionnalités d’accès anticipé à l’échange de jetons personnalisé."
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Accès anticipé à l’échange de jetons personnalisé"
+'twitter:description': "Découvrez les fonctionnalités d’accès anticipé à l’échange de jetons personnalisé."
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+L’échange de jetons personnalisés est actuellement en accès anticipé. Pour en savoir plus sur les étapes de publication d’Auth0, consultez [Étapes de publication des produits)](/docs/fr-ca/troubleshoot/product-lifecycle/product-release-stages).
+
+</Callout>
+
+Comme défini dans [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693), l’échange de jetons personnalisé permet aux applications d’échanger leurs jetons existants contre des jetons Auth0 lors de l’appel du point de terminaison `/oauth/token`. Cela est utile pour des cas d’intégration avancés tels que :
+
+* Obtenir des jetons Auth0 pour une autre <Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" tip="">audience</Tooltip>
+* Intégrer un fournisseur d’identité externe
+* Migration vers Auth0
+
+Pour en savoir plus, consultez [Exemples de cas d’utilisation et exemples de code](#example-use-cases-and-code-samples).
+
+Pour gérer l’échange de jetons et l’adapter aux besoins particuliers de votre cas d’utilisation, vous pouvez définir un ou plusieurs [profils d’échange de jetons personnalisé](#custom-token-exchange-profile). Chaque profil établit une correspondance directe entre un `subject_token_type`, qui fournit des informations sur l’utilisateur pour la transaction, et une [action](/docs/fr-ca/customize/actions/actions-overview). Dans cette action, vous pouvez écrire du code personnalisé pour décoder et valider les jetons de sujet transmis au point de terminaison `/oauth/token`.
+
+Vous pouvez utiliser l’échange de jetons personnalisé pour authentifier les utilisateurs. Par exemple, dans une action, vous pouvez appliquer la logique d’autorisation adaptée à votre cas d’utilisation et définir l’utilisateur pour la transaction. Auth0 émettra alors des jetons d’accès, d’ID et d’actualisation pour l’utilisateur.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+L’échange de jeton personnalisé vous permet de désigner l’utilisateur d’une transaction, tout en prenant en charge la validation du jeton correspondant, ce qui identifie l’utilisateur de la transaction.
+
+Sachez que les jetons sujets soumis à l’échange de jetons personnalisé peuvent être de n’importe quel format ou type de jeton que vous souhaitez, tant que votre code d’action peut les interpréter.**Assurez-vous d’effectuer une vérification rigoureuse des jetons que vous recevez et acceptez.** Sinon, vous vous exposez à diverses menaces, telles que l’usurpation d’identité ou les attaques par réinsertion, qui permettent à des acteurs menaçants de se connecter avec l’identifiant de quelqu’un d’autre.
+
+Pour connaître les différentes options de mise en œuvre de la validation sécurisée de vos jetons sujets, consultez et appliquez les recommandations incluses dans [Exemples de cas d’utilisation et de code](#example-use-cases-and-code-samples). Veillez également à prendre en considération et à appliquer les fonctionnalités de [Protection contre les attaques](#attack-protection).
+
+</Callout>
+
+## Configuration
+
+### Application
+
+Pour utiliser l’échange de jetons personnalisé, vous devez [créer une application](/docs/fr-ca/get-started/auth0-overview/create-applications) avec Auth0 Dashboard ou Management API. Vous pouvez créer plusieurs applications pour utiliser l’échange de jetons personnalisé.
+
+Lorsque vous créez une nouvelle application :
+
+1. Par défaut, l’échange de jetons personnalisé est désactivé. Pour l’activer, utilisez Management API pour effectuer un appel POST à [Create a Client](https://auth0.com/docs/api/management/v2/clients/post-clients) ou un appel PATCH à [Update a Client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id). Définissez l’attribut `allow_any_profile_of_type` sous `token_exchange` sur `["custom_authentication"]` :
+
+```json lines
+{
+  "token_exchange": {
+    "allow_any_profile_of_type": ["custom_authentication"]
+  }
+}
+```
+
+2. Activez la [connexion de base de données](/docs/fr-ca/authenticate/database-connections) ou la [connexion d’entreprise](/docs/fr-ca/authenticate/enterprise-connections) que vous souhaitez utiliser avec l’échange de jeton personnalisé.
+
+3. Assurez-vous que votre application est marquée comme étant de[première partie](/docs/fr-ca/get-started/applications/confidential-and-public-applications/first-party-and-third-party-applications) et qu’elle est configurée comme étant [conforme à l'OIDC dans le tableau de bord > Applications > Paramètres avancés > OAuth](/docs/fr-ca/get-started/applications/application-settings#oauth).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Les bases de données personnalisées ne sont prises en charge que pour les opérations `setUserById`. La prise en charge sera étendue à `setUserByConnection` dans les prochaines itérations de l’accès anticipés de l’échange de jetons personnalisés.
+
+</Callout>
+
+Une fois l’application créée, notez le `client_id` et le `client_secret` pour une utilisation ultérieure lors de l’appel du point de terminaison `/oauth/token`.
+
+### Profil de l’échange de jeton personnalisé
+
+Chaque profil d’échange de jetons personnalisé est mappé à un `subject_token_type` et est associé à une action qui contient la logique du code pour ce cas d’utilisation.
+
+Les demandes d’échange de jetons personnalisé envoyées au point de terminaison `/oauth/token` avec une valeur spécifique `subject_token_type` sont mappées au profil de jeton personnalisé correspondant et acheminées vers l’action associée pour traitement.
+
+Pour créer un profil d’échange de jetons personnalisé, créez d’abord une Action pour le profil.
+
+#### Créer une Action
+
+Dans Auth0 Dashboard :
+
+1. Accédez à **Actions** > **Library (Bibliothèque)**.
+
+2. Sélectionnez **Create Action (Créer une Action)** >  **Build from Scratch (Créer de toutes pièces)**.
+
+3. Dans la boîte de dialogue **Create Action (Créer une action)**, saisissez un nom et sélectionnez le déclencheur **Custom Token Exchange (Échange de jetons personnalisé)** dans la liste déroulante.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/22vz9dsCFj5Ruot7U0HIVx/1c3dc4b562334dab9d6ac415028ea76e/Screenshot_2025-02-05_at_8.48.34_AM.png)</Frame>
+
+4. Sélectionnez **Create (Créer)**.
+
+5. **Déployez** l’action.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/56NZA69Gmzha167xfgRD0W/302e59276815d2e2644ab2da3b9b5f1f/Screenshot_2025-02-03_at_10.29.17_AM.png)</Frame>
+
+Lors du déploiement de l’action, Auth0 lui attribue un identifiant. Vous devez encore ajouter votre logique personnalisée à l’action, mais commencez par obtenir l’identifiant de l’action pour créer le profil d’échange de jetons personnalisé.
+
+6. Pour obtenir l’identifiant d’action dans Auth0 Dashboard, accédez à l’URL du navigateur. L’identifiant d’action doit être la dernière partie de l’URL, comme illustré ci-dessous :
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/1Xx4UbgZR0FIuLC1KVvhKG/bde4469d770c2ff8d37c19895a0c8e66/Screenshot_2025-02-03_at_10.31.18_AM.png)</Frame>
+
+Vous pouvez également obtenir l’identifant de l’action via Management API. Commencez par [obtenir un jeton Management API](/docs/fr-ca/secure/tokens/access-tokens/management-api-access-tokens#get-management-api-tokens) pour utiliser l’API. Ensuite, envoyez la requête GET suivante au point de terminaison `/actions` :
+
+```bash lines
+curl --location 'https://{{YOUR _TENANT}}/api/v2/actions/actions?actionName={{ACTION_NAME}}' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+```
+
+Vous devriez recevoir l’identifiant de l’action dans le corps de la réponse, dans `actions[0].id`. Vous avez besoin de l’identifiant de l’action pour créer le profil d’échange de jetons personnalisé.
+
+#### Créer le profil d’échange de jetons personnalisé
+
+Pour créer le profil d’échange de jetons personnalisé, utilisez Management API pour effectuer une requête POST avec les paramètres suivants sur le point de terminaison `/token-exchange-profiles` :
+
+```bash lines
+curl --location 'https://{{YOUR _TENANT}}/api/v2/token-exchange-profiles' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+--data '{
+    "name": "{{PROFILE_NAME}}",
+    "subject_token_type": "{{UNIQUE_PROFILE_TOKEN_TYPE_URI}}",
+    "action_id": "{{ACTION_ID}}",
+    "type": "custom_authentication"
+}'
+```
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`subject_token_type`</td>
+<td>URI unique du type de profil du jeton commençant par `https://` or `urn`<br/><br/>Les espaces de noms suivants sont réservés et vous ne pouvez pas les utiliser :<br/><br/><ul><li>`http://auth0.com`</li><li>`https://auth0.com`</li><li>`http://okta.com`</li><li>`https://okta.com`</li><li>`urn:ietf`</li><li>`urn:auth0`</li><li>`urn:okta`</li></ul></td>
+</tr>
+<tr>
+<td>`action_id`</td>
+<td>Identifiant d’action de l’action associée au profil du jeton personnalisé.</td>
+</tr>
+<tr>
+<td>`type`</td>
+<td>Doit être défini sur `custom_authentication`.</td>
+</tr>
+</tbody>
+</table>
+
+Si vous avez créé avec succès un profil d’échange de jetons personnalisé, vous devriez recevoir une réponse similaire à celle-ci :
+
+```json lines
+{
+  "id":"tep_9xqewuejpa2RTltf",
+  "name":"{{PROFILE_NAME}}",
+  "type":"custom_authentication",
+  "subject_token_type":"{{UNIQUE_PROFILE_TOKEN_TYPE_URI}}",
+  "action_id":"{{ACTION_ID}}",
+  "created_at":"2025-01-30T13:19:00.616Z",
+  "updated_at":"2025-01-30T13:19:00.616Z"
+}
+```
+
+Vous êtes prêt à commencer à coder et à tester votre échange de jetons personnalisé pour mettre en œuvre votre cas d’utilisation.
+
+### Gérer le profil d’échange de jetons personnalisé
+
+Pour gérer votre profil d’échange de jetons personnalisé, utilisez Management API pour effectuer des requêtes au point de terminaison `/token-exchange-profiles`.
+
+Pour obtenir tous vos profils d’échange de jetons personnalisé, effectuez la requête suivante. Ce point de terminaison prend en charge la [pagination des points de contrôle](/docs/fr-ca/api/management/v2/introduction#checkpoint-based-pagination) si vous possédez plusieurs profils.
+
+```bash lines
+curl --location 'https://{{YOUR _TENANT}}/api/v2/token-exchange-profiles' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+```
+
+Pour mettre à jour le `name` ou le `subject_token_type` d’un profil d’échange de jetons personnalisé, utilisez la requête PATCH suivante. Vous ne pouvez pas modifier l’identifiant de l’action, mais vous pouvez modifier le code personnalisé qu’il exécute avec l’éditeur d’actions :
+
+```bash lines
+curl --location --request PATCH 'https://{{YOUR _TENANT}}/api/v2/token-exchange-profiles/{{PROFILE_ID}}' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+--data '{
+    "name": "external-idp-migration",
+    "subject_token_type": "urn:partner0:external-idp-migration"
+}'
+```
+
+Pour supprimer un profil d’échange de jetons personnalisé, effectuez la demande DELETE suivante :
+
+```bash lines
+curl --location --request DELETE 'https://{{YOUR _TENANT}}/api/v2/token-exchange-profiles/{{PROFILE_ID}}' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+--data ''
+```
+
+## Actions API
+
+### Échange de jetons personnalisé par rapport à Action post-connexion
+
+L’action d’échange de jetons personnalisé, accessible dans le cadre de l’accès anticipé à l’échange de jetons personnalisé, peut utiliser les nouvelles méthodes API répertoriées dans [Utiliser Actions API](#use-the-actions-api).
+
+Pour d’autres besoins, tels que l’ajout de demandes personnalisées aux jetons d’accès, votre [déclencheur d'actions post-connexion](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) s’exécute après l’exécution de l’action d’échange de jetons personnalisé pour l’utilisateur que vous avez défini pour la transaction, vous offrant ainsi les mêmes fonctionnalités que les autres flux de connexion.
+
+Pour identifier une transaction qui utilise le type d’autorisation d’échange de jetons, recherchez une valeur `event.transaction.protocol` égale à `oauth2-token-exchange` dans votre [Action post-connexion](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger). Étant donné que le type d’autorisation d’échange de jetons est utilisé à la fois par les transactions d’échange de jetons personnalisé et de connexion native via réseau social, vous pouvez utiliser la valeur de `subject_token_type` pour faire la distinction entre les deux, où `subject_token_type` correspond à l’un de vos profils d’échange de jetons personnalisés.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+L’accès anticipé à l’échange de jeton personnalisé ne prend pas en charge [authentification multifacteur (MFA)](/docs/fr-ca/secure/multi-factor-authentication). L’activation de la MFA en tant que politique de locataire ou en utilisant `api.multifactor.enable()`, `api.authentication.challengeWith(),` ou `api.authentication.enrollWith()` n’est pas encore pris en charge pour l’échange de jeton personnalisé et, dans votre déclencheur d’action post-connexion, entraînera l’échec de la transaction avec une erreur non récupérable. Assurez-vous d’ignorer l’activation de la MFA lorsque `event.transaction.protocol==oauth2-token-exchange` selon la valeur `subject_token_type`.
+
+La prise en charge de laºMFA sera ajoutée dans les prochaines itérations de l’accès anticipé de l’échange de jeton personnalisé.
+
+</Callout>
+
+### Utiliser Actions API
+
+Auth0 fournit plusieurs méthodes API à utiliser avec votre action d’échange de jetons. Vous devez implémenter une action qui décode et valide le jeton du sujet en fonction du `subject_token_type`. Cela vous fournira des informations sur l’utilisateur de la transaction. Grâce à ces informations, votre code devra également appliquer la politique d’autorisation requise pour la transaction. Une fois que vous êtes certain que la transaction peut se poursuivre, vous pouvez la confirmer en définissant l’utilisateur correspondant. Auth0 émettra alors des jetons d’accès, d’ID et d’actualisation pour cet utilisateur. Vous pouvez considérer cela comme un moyen d’authentifier les utilisateurs.
+
+Chaque transaction d’échange de jetons personnalisé génère un journal des événements de locataire. Les transactions réussies génèrent des journaux d’événements de type `secte`, tandis que les transactions échouées génèrent des journaux d’événements de type `fecte`. Utilisez ces types de journaux pour mieux comprendre les erreurs que vous pourriez rencontrer. Les erreurs provenant du point de terminaison `/oauth/token` révèlent moins de détails.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+L’échange de jeton personnalisé vous permet de désigner l’utilisateur d’une transaction, tout en prenant en charge la validation du jeton correspondant, ce qui identifie l’utilisateur de la transaction.
+
+Sachez que les jetons sujets soumis à l’échange de jetons personnalisé peuvent être de n’importe quel format ou type de jeton que vous souhaitez, tant que votre code d’action peut les interpréter.**Assurez-vous d’effectuer une vérification rigoureuse des jetons que vous recevez et acceptez.** Sinon, vous vous exposez à diverses menaces, telles que l’usurpation d’identité ou les attaques par réinsertion, qui permettent à des acteurs menaçants de se connecter avec l’identifiant de quelqu’un d’autre.
+
+Pour connaître les différentes options de mise en œuvre de la validation sécurisée de vos jetons sujets, consultez et appliquez les recommandations incluses dans [Exemples de cas d’utilisation et de code](#example-use-cases-and-code-samples). Veillez également à prendre en considération et à appliquer les fonctionnalités de [Protection contre les attaques](#attack-protection).
+
+</Callout>
+
+#### api.authentication.setUserById(user_id)
+
+Définit les attributs utilisateur en fonction d’un identifiant utilisateur déterminé pour tout type de connexion. Cela vous permet d’indiquer un utilisateur existant sans mettre à jour le profil. Cette méthode échoue si l’utilisateur n’existe pas ou est bloqué.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`user_id`</td>
+<td>L’identifiant de l’utilisateur, tel que `auth0&amp;#124;55562040asf0aef`.</td>
+</tr>
+</tbody>
+</table>
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. Validate subject_token
+  const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+
+  // 2.  Apply your authorization policy on the user
+  const isAuthorized = await authorizeAccess(subject_token.sub);
+  if (!isAuthorized) {
+    api.access.deny('Unauthorized_login', 'User cannot login due to reason: X');
+  }
+
+  // 3. Set the user for the transaction
+  api.authentication.setUserById(subject_token.sub);
+
+  return;
+};
+```
+
+#### api.authentication.setUserByConnection(connection_name, user_profile, options)
+
+Définit un utilisateur et ses attributs de profil associés dans une connexion déterminée. Cela équivaut à la connexion d’un utilisateur et au retour du profil utilisateur indiqué par le fournisseur d’identité fédéré. Vous pouvez configurer si cette opération doit créer l’utilisateur s’il n’existe pas et si elle doit mettre à jour le profil à l’aide des attributs de profil utilisateur fournis.
+
+Le nombre de connexions sera incrémenté pour chaque utilisateur connecté via `setUserByConnection()`. Cette méthode échoue systématiquement pour les utilisateurs bloqués.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+L’accès anticipé à l’échange de jetons personnalisés prend actuellement en charge les connexions à la base de données Auth0 ainsi que les connexions d’entreprise et de réseaux sociaux. Les futures itérations de l’accès anticipé à l’échange de jetons personnalisés ajouteront la prise en charge des bases de données personnalisées avec le mode d’importation sur `OFF`.
+
+</Callout>
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`connection_name`</td>
+<td>Le nom de la connexion où le profil utilisateur sera défini. Limité à 512 caractères.</td>
+</tr>
+<tr>
+<td>`user_profile`</td>
+<td>Un objet contenant les attributs du profil utilisateur à définir. Limité à 24 propriétés.</td>
+</tr>
+<tr>
+<td>`options`</td>
+<td>Un objet spécifiant le comportement de mise à jour et de création.<br/><br/>`{updateBehavior: 'replace' | 'none',creationBehavior: 'create_if_not_exists' | 'none',}`<br/><br/>Si l’utilisateur existe, `updateBahaviour` exécute les opérations suivantes :<br/><ul><li> `replace` : les attributs de l’utilisateur et le `user_id` pour la connexion fournie sont remplacés (les attributs utilisateur existants qui ne sont pas fournis seront supprimés de l’utilisateur. Les mises à jour partielles ne sont pas prises en charge).</li><li>`none` : si l’utilisateur existe, le profil n’est pas mis à jour. Si l’utilisateur n’existe pas, il sera créé avec les attributs de profil fournis en fonction de la configuration de `creationBehavior`.</li><li>Si l’utilisateur n’existe pas, `creationBehavior` exécute les opérations suivantes :</li><ul><li>`create_if_not_exists` : crée l’utilisateur</li><li>`none` : ne crée pas d’utilisateur et renvoie un message d’erreur</li></ul></ul></td>
+</tr>
+</tbody>
+</table>
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. Validate subject_token
+  const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+
+  // 2.  Apply your authorization policy on the user
+  const isAuthorized = await authorizeAccess(subject_token.sub);
+  if (!isAuthorized) {
+    api.access.deny('Unauthorized_login', 'User cannot login due to reason: X');
+  }
+
+  // 3. Set the user for the transaction
+  api.authentication.setUserByConnection(
+    'My Connection',
+    {
+      user_id: subject_token.sub,
+      email: subject_token.email,
+      email_verified: subject_token.email_verified,
+      phone_number: subject_token.phone_number,
+      phone_verified: subject_token.phone_number_verified,
+      username: subject_token.preferred_username,
+      name: subject_token.name,
+      given_name: subject_token.given_name,
+      family_name: subject_token.family_name,
+      nickname: subject_token.nickname,
+      verify_email: false
+    },
+    {
+      creationBehavior: 'create_if_not_exists',
+      updateBehavior: 'none'
+    }
+  );
+
+  return;
+};
+```
+
+##### Attributs de profil utilisateur pris en charge
+
+La méthode `setUserByConnection()` vous permet de définir les attributs de profil pris en charge par le point de terminaison [Update a User (Mise à jour d'un utilisateur)](https://auth0.com/docs/api/management/v2/users/patch-users-by-id) :
+
+* `user_id` (obligatoire) : identifiant unique de l’utilisateur pour cette connexion/ce fournisseur. Il s’agit généralement de l’identifiant utilisateur fourni par le fournisseur d’identité externe pour la connexion. Il s’agit du seul paramètre requis lorsque `creationBehaviour` et `updateBehaviour` sont définis sur `none`.
+* `email`
+* `email_verified`. La valeur par défaut est `false`.
+* `username`
+* `phone_number`
+* `phone_verified`. La valeur par défaut est `false`.
+* `name`
+* `given_name`
+* `family_name`
+* `nickname`
+* `picture`
+
+Utilisez des champs de métadonnées si vous devez définir des attributs non pris en compte dans la liste ci-dessus.
+
+##### Stratégies de connexion prises en charge
+
+La version actuelle prend en charge les stratégies de connexion suivantes. La méthode `setUserByConnection()` échoue pour les autres stratégies. Veuillez contacter le support Auth0 pour demander la prise en charge d’autres stratégies.
+
+Connexions d’entreprise :
+
+* [Active Directory](/docs/fr-ca/authenticate/identity-providers/enterprise-identity-providers/active-directory-ldap)
+* [IdP SAML](/docs/fr-ca/authenticate/identity-providers/enterprise-identity-providers/saml)
+* [IdP OIDC](/docs/fr-ca/authenticate/identity-providers/enterprise-identity-providers/oidc)
+* [Okta](/docs/fr-ca/authenticate/identity-providers/enterprise-identity-providers/okta)
+* [ADFS](/docs/fr-ca/authenticate/identity-providers/enterprise-identity-providers/adfs)
+
+Connexions par réseau social :
+
+* Connexions par réseau social personnalisées
+* Google
+* Apple
+* Facebook
+* Github
+* Windowslive
+
+##### Comportement de création
+
+Les utilisateurs sont créés dynamiquement uniquement lorsque `creationBehavior` est défini sur `create_if_not_exists`.
+
+Lors de la création d’utilisateurs :
+
+* Vous devez fournir un identifiant configuré par votre connexion. Par défaut, une adresse courriel est requise.
+* Pour les connexions qui utilisent des [identifiants et attributs flexibles](/docs/fr-ca/authenticate/database-connections/flexible-identifiers-and-attributes), vous pouvez fournir un nom d’utilisateur et un numéro de téléphone si l’attribut correspondant est activé pour la connexion.
+* Pour les connexions qui n’utilisent pas d’identifiants et d’attributs flexibles :
+
+  + Vous pouvez fournir un nom d’utilisateur lorsque la valeur de la connexion **Nom d’utilisateur requis** est `true`. Pour en savoir plus, consultez [Ajout d’un nom d’utilisateur pour les connexions de base de données](/docs/fr-ca/authenticate/database-connections/require-username).
+  + Vous ne pouvez pas fournir `phone_number`.
+* Vous pouvez préciser `email_verified` et `phone_verified`.
+
+Un mot de passe aléatoire est généré pour les utilisateurs créés dynamiquement dans les connexions de base de données Auth0. Différentes options permettent de déclencher un [flux de réinitialisation de mot de passe](/docs/fr-ca/authenticate/database-connections/password-change) si nécessaire après la création de l’utilisateur.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Configurez `creationBehavior` sur `none` lorsque vous souhaitez connecter l’utilisateur, mais que vous ne souhaitez pas créer l’utilisateur s’il n’existe pas déjà dans la connexion.
+
+Les futures itérations de Custom Token Exchange rendront l’attribut courriel facultatif en fonction de la configuration de la connexion.
+
+</Callout>
+
+##### Mise à jour de comportement
+
+Le profil utilisateur est mis à jour uniquement lorsque `updateBehavior` est défini sur `replace`.
+
+Les attributs suivants ne peuvent pas être modifiés et Auth0 renvoie une erreur lors de la tentative de modification de sa valeur :
+
+* `email`
+* `username`
+* `phone_number`
+* `email_verified`
+* `phone_verified`
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Si vous souhaitez utiliser `setUserByConnection()` pour mettre à jour un profil utilisateur qui contient déjà les attributs `email`, `username` ou `phone_number`, vous devez transmettre ces attributs avec la même valeur que celle qu’ils ont déjà. Dans le cas contraire, la méthode renvoie une erreur.
+
+</Callout>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Définissez `updateBehavior` sur `none` lorsque vous souhaitez connecter l’utilisateur, sans toutefois vouloir modifier ses attributs de profil s’ils existent déjà.
+
+</Callout>
+
+##### Vérification de l’adresse de courriel
+
+Auth0 envoie automatiquement des courriels de vérification lorsque vous créez un utilisateur avec `email_verified=false`. Vous pouvez contourner ce comportement en indiquant `verify_email=false` comme attribut de profil utilisateur. Cet attribut ne sera pas enregistré dans le profil utilisateur.
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // Validate subject_token
+  const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+
+  // Create a user but don't verify email
+  api.authentication.setUserByConnection(
+    'My Connection',
+    {
+      user_id: subject_token.sub,
+      email: subject_token.email,
+      email_verified: false,
+      verify_email: false
+    },
+    {
+      creationBehavior: 'create_if_not_exists',
+      updateBehavior: 'none'
+    }
+  );
+
+  return;
+};
+```
+
+Si vous avez [configuré et activé un modèle de courriel de bienvenue](/docs/fr-ca/customize/email/email-templates), Auth0 envoie automatiquement un courriel de bienvenue aux utilisateurs nouvellement créés lorsqu’aucune vérification par courriel n’est envoyée.
+
+##### Définir les métadonnées
+
+Contrairement au point de terminaison [Update a User](https://auth0.com/docs/api/management/v2/users/patch-users-by-id), la méthode `setUserByConnection()` ne permet pas de définir les métadonnées de l’utilisateur ou de l’application. Vous pouvez plutôt utiliser `api.user.setAppMetadata`. Pour savoir comment utiliser correctement les métadonnées, consultez [Fonctionnement des métadonnées dans les profils utilisateurs](/docs/fr-ca/manage-users/user-accounts/metadata). Pour connaître les bonnes pratiques en matière de métadonnées, consultez [Comment gérer les métadonnées utilisateur avec le déclencheur post-connexion](/docs/fr-ca/manage-users/user-accounts/metadata/manage-user-metadata#best-practices).
+
+#### api.user.setAppMetadata(name, value)
+
+Définit les métadonnées de l’application pour l’utilisateur qui se connecte.
+
+Cette méthode suit un comportement de fusion; vous pouvez donc indiquer les nouveaux attributs à ajouter ou à mettre à jour sans affecter les attributs existants. Pour supprimer un attribut, définissez sa valeur sur `null`.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètres</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`name`</td>
+<td>Chaîne. La valeur de la propriété metadata (métadonnées).</td>
+</tr>
+<tr>
+<td>`value`</td>
+<td>Chaîne, objet ou tableau. La valeur de la propriété metadata (métadonnées).</td>
+</tr>
+</tbody>
+</table>
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // Validate subject_token
+  const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+
+  // set the user for the transaction
+  api.authentication.setUserById(subject_token.id);
+
+  // set user group based on info contaiened in subject_token
+  api.user.setAppMetadata('group', subject_token.group);
+
+  return;
+};
+```
+
+#### api.user.setUserMetadata(name, value)
+
+Définit les métadonnées générales pour l’utilisateur qui se connecte.
+
+Cette méthode suit un comportement de fusion; vous pouvez donc indiquer les nouveaux attributs à ajouter ou à mettre à jour sans affecter les attributs existants. Pour supprimer un attribut, définissez sa valeur sur `null`.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètres</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`name`</td>
+<td>Chaîne. La valeur de la propriété metadata (métadonnées).</td>
+</tr>
+<tr>
+<td>`value`</td>
+<td>Chaîne, objet ou tableau. La valeur de la propriété metadata (métadonnées).</td>
+</tr>
+</tbody>
+</table>
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // Validate subject_token
+  const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+
+  // set the user for the transaction
+  api.authentication.setUserById(subject_token.id);
+
+  // set user preferred_locale based on info contaiened in subject_token
+  api.user.setUserMetadata('preferred_locale', subject_token.locale);
+
+  return;
+};
+```
+
+#### api.access.deny(code, reason)
+
+Refuse la transaction de connexion et renvoie une erreur à l’appelant.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`code`</td>
+<td>Une chaîne retournée dans la propriété d’erreur de la réponse.<br/><br/>Deux codes d’erreur standard peuvent être utilisés:<ul><li>`invalid_request`: Renvoie un code d’état `400`</li><li>`server_error`: Renvoie un code d’état `500`</li></ul><br/>Si vous utilisez votre propre code d’erreur, il renvoie un code d’état `400`.</td>
+</tr>
+<tr>
+<td>`reason`</td>
+<td>Une chaîne de caractères qui est renvoyée dans la propriété `error_description` de la réponse.</td>
+</tr>
+</tbody>
+</table>
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. Validate subject_token
+  const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+
+  // 2.  Apply your authorization policy on the user
+  const isAuthorized = await authorizeAccess(subject_token.sub);
+  if (!isAuthorized) {
+    api.access.deny('Unauthorized_login', 'User cannot login due to reason: X');
+  }
+
+  // if user is authorized, go on as indicated here
+
+};
+```
+
+#### api.access.rejectInvalidSubjectToken(reason)
+
+Refuse la transaction et augmente le compteur de tentatives infructueuses pour l’adresse IP externe d’où provient la demande. La demande d’échange de jetons personnalisé est rejetée avec une réponse d’erreur `400 Bad Request` avec le code d’erreur `invalid_request`.
+
+Lorsque le nombre maximum de tentatives infructueuses est atteint, Auth0 bloque le trafic pendant un certain temps pour toutes les demandes d’échange de jetons personnalisé provenant de cette adresse IP avec une réponse d’erreur `429 Too Many Requests` avec le code d’erreur `too_many_attempts`. Pour en savoir plus, consultez [Protection contre les attaques](#attack-protection).
+
+Utilisez cette méthode chaque fois que vous recevez une demande d’échange de jetons personnalisés dont le jeton n’est pas correctement signé/chiffré ou expiré, ou dans toute circonstance indiquant une utilisation frauduleuse, comme une usurpation d’identité ou une attaque par réinsertion. Cela permet à Auth0 d’activer la protection contre la limitation des adresses IP suspectes selon votre configuration.
+
+Par défaut, la limitation des adresses IP suspectes autorise un maximum de 10 tentatives, à raison de 6 tentatives par heure. Pour en savoir plus, consultez la section [Protection contre les attaques](#attack-protection).
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`reason`</td>
+<td>Une chaîne de caractères renvoyée dans la propriété `error_description` de la réponse.</td>
+</tr>
+</tbody>
+</table>
+
+```javascript lines
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  try {
+    // Validate subject_token
+    const subject_token = await validateToken(event.transaction.subject_token, jwksUri);
+    // set the user for the transaction
+    api.authentication.setUserById(subject_token.id);
+
+  } catch (error) {
+    if (error.message === 'Invalid Token') {
+      // If specifically the problem is the subject_token is invalid
+      console.error('Invalid Token error');
+      api.access.rejectInvalidSubjectToken('Invalid subject_token');
+    } else {
+      // if there is any other unexpected error, throw a server error
+      throw error;
+    }
+  }
+
+};
+```
+
+#### api.cache
+
+Stockez et récupérez les données qui persistent entre les exécutions.
+
+Ces méthodes sont utiles pour la mise en cache des données utilisées pour la validation des jetons de sujet, telles que les clés publiques pour la validation des signatures. Cela peut améliorer les performances lors de la récupération des clés depuis un `jwks-uri`.
+
+##### api.cache.delete(key)
+
+Supprimez un enregistrement décrivant une valeur mise en cache à la `key (clé)` fournie, si elle existe.
+
+Renvoie un objet `CacheWriteResult` de type `success` si une valeur a été supprimée du cache. Une opération ayant échoué renvoie un objet de type `error`. Pour les erreurs, l’objet renvoyé aura une propriété `code` qui indique la nature de l’échec.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`key`</td>
+<td>Chaîne. La clé de l’enregistrement est stockée dans le cache.</td>
+</tr>
+</tbody>
+</table>
+
+##### api.cache.get(key)
+
+Récupérez un enregistrement décrivant une valeur mise en cache dans la `clé` fournie, si elle existe. Si un enregistrement est trouvé, la valeur mise en cache se trouve dans la propriété `value` de l’objet renvoyé.
+
+Renvoie un enregistrement de cache si un élément est trouvé dans le cache pour la `clé` fournie. Les enregistrements de cache sont des objets avec une propriété `value` contenant la valeur mise en cache, ainsi qu’une propriété `expires_at` indiquant l’expiration maximale de l’enregistrement en millisecondes depuis l’heure Unix.
+
+Important : ce cache est conçu pour des données éphémères et de courte durée. Certains éléments peuvent ne pas être disponibles lors de transactions ultérieures, même s’ils se trouvent à l’lintérieur de leur durée de vie prévue.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`key`</td>
+<td>Chaîne. La clé de l’enregistrement est stockée dans le cache.</td>
+</tr>
+</tbody>
+</table>
+
+##### api.cache.set(key, value, [options])
+
+Stockez ou mettez à jour une valeur de chaîne dans le cache à la clé indiquée.
+
+Les valeurs stockées dans ce cache sont limitées au déclencheur dans lequel elles sont définies. Elles sont soumises aux [Limites du cache Actions](/docs/fr-ca/customize/actions/limitations).
+
+Les valeurs stockées de cette manière auront une durée de vie allant jusqu’aux valeurs indiquées `ttl` ou `expires_at`. Si aucune durée de vie n’est indiquée, une durée de vie par défaut de 15 minutes sera utilisée. Les durées de vie ne peuvent pas dépasser la durée maximale indiquée dans les [Limites du cache Actions](/docs/fr-ca/customize/actions/limitations).
+
+Renvoie `CacheWriteSuccess` si les valeurs sont correctement stockées. Sinon, vous recevrez `CacheWriteError`.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`key`</td>
+<td>Chaîne. La clé de l’enregistrement est stockée dans le cache.</td>
+</tr>
+<tr>
+<td>`value`</td>
+<td>Chaîne. La valeur de l’enregistrement à stocker.</td>
+</tr>
+<tr>
+<td>`options`</td>
+<td>Objet facultatif. Options permettant de régler le comportement du cache.</td>
+</tr>
+<tr>
+<td>`options.expires_at`</td>
+<td>Nombre facultatif. Le temps d’expiration absolu en millisecondes depuis le unix epoch. Bien que les enregistrements mis en cache puissent être expulsés plus tôt, ils ne resteront jamais au-delà du `expires_at`.<br/>&lt;br&amp;gt fourni;<strong>Remarque :</strong> Cette valeur ne doit pas être donnée si on a aussi fourni une valeur pour `ttl`. La première des deux échéances sera retenue si les deux options sont fournies.</td>
+</tr>
+<tr>
+<td>`options.ttl`</td>
+<td>Nombre facultatif. Valeur de la durée de vie de cette entrée de cache en millisecondes. Bien que les enregistrements mis en cache puissent être expulsés plus tôt, ils ne resteront jamais au-delà du `ttl`.<br/>&lt;br&amp;gt fourni;<strong>Remarque :</strong> Cette valeur ne doit pas être donnée si on a aussi fourni une valeur pour expires_at. La première des deux échéances sera retenue si les deux options sont fournies.</td>
+</tr>
+</tbody>
+</table>
+
+## Événement d’actions
+
+Outre les nouvelles méthodes Actions API, vous pouvez utiliser les données de l’événement Actions pour en savoir plus sur le contexte de la demande d’échange de jetons, comme le jeton d’objet, l’adresse IP, le client, etc.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Propriété</strong></th>
+<th><strong>Type</strong></th>
+<th><strong>Exemple</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>client</em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>`client_id`</td>
+<td>chaîne</td>
+<td>`HOVc2PDFTH7eahimN4yNCo8mOtjfNjLV`</td>
+</tr>
+<tr>
+<td>`name`</td>
+<td>chaîne</td>
+<td>`My Web App`</td>
+</tr>
+<tr>
+<td>`metadata`</td>
+<td>objet</td>
+<td>`{“foo”: “bar” }`</td>
+</tr>
+<tr>
+<td><em>locataire</em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>`id`</td>
+<td>chaîne</td>
+<td>`dev_1234`</td>
+</tr>
+<tr>
+<td>requête</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>`geoip`</td>
+<td>objet</td>
+<td>`{ … geoip object}`</td>
+</tr>
+<tr>
+<td>`hostname`</td>
+<td>chaîne</td>
+<td>`dev_1234.us.auth0.com`</td>
+</tr>
+<tr>
+<td>`ip`</td>
+<td>chaîne</td>
+<td>`123.42.42.34`</td>
+</tr>
+<tr>
+<td>`user_agent`</td>
+<td>chaîne</td>
+<td>`Mozilla/5.0`</td>
+</tr>
+<tr>
+<td>`language`</td>
+<td>chaîne</td>
+<td>`en`</td>
+</tr>
+<tr>
+<td>`body`</td>
+<td>objet</td>
+<td>`{ // raw req.body }`</td>
+</tr>
+<tr>
+<td>`method`</td>
+<td>chaîne</td>
+<td>`POST`</td>
+</tr>
+<tr>
+<td><em>transaction</em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>`subject_token_type`</td>
+<td>chaîne</td>
+<td>`urn://cic-migration-token`</td>
+</tr>
+<tr>
+<td>`subject_token`</td>
+<td>chaîne</td>
+<td>`41598922a1745f7af70`</td>
+</tr>
+<tr>
+<td>`requested_scopes`</td>
+<td>chaîne[]</td>
+<td>`[“openid”, “email”]`</td>
+</tr>
+<tr>
+<td><em>resource_server</em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>`id`</td>
+<td>chaîne</td>
+<td>`http://acme-api/v1/profile`</td>
+</tr>
+</tbody>
+</table>
+
+## Déployer l’action
+
+Après avoir créé votre action d’échange de jetons à l’aide des objets API et Event ci-dessus, déployez les modifications en cliquant sur **Déployer** en haut de la page.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/61fgdh8VJEmfiYn0l7Tem0/3ceac5de5413373662e8b800d8f80210/Screenshot_2025-02-03_at_9.30.50_PM.png)</Frame>
+
+## Échange de jeton personnalisé
+
+Pour utiliser l’échange de jetons personnalisé, envoyez une demande `POST` au point de terminaison `/oauth/token` avec les paramètres suivants. N’oubliez pas :
+
+* Les `subject_tokens` utilisés avec l'échange de jetons personnalisés peuvent être de n’importe quel format ou type de jeton, à condition que votre code d'action puisse les interpréter.
+* Chaque `subject_token_type` correspond à un profil d’échange de jetons personnalisé donné et est associé à une action donnée qui sera exécutée pour contrôler cette transaction.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Paramètre</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`grant_type`</td>
+<td>Pour l’échange de jetons personnalisés, utilisez `urn:ietf:params:oauth:grant-type:token-exchange`.</td>
+</tr>
+<tr>
+<td>`subject_token_type`</td>
+<td>Le type de jeton sujet. Pour l’échange de jetons personnalisés, cela peut être n’importe quelle URI relevant de votre propre propriété, telle que `http://acme.com/legacy-token` or `urn:acme:legacy-token`.<br/><br/>Les espaces de noms suivants sont réservés et ne peuvent pas être utilisés :<ul><li>`http://auth0.com`</li><li>`https://auth0.com`</li><li>`http://okta.com`</li><li>`https://okta.com`</li><li>`urn:ietf`</li><li>`urn:auth0`</li><li>`urn:okta`</li></ul></td>
+</tr>
+<tr>
+<td>`subject_token`</td>
+<td>Le jeton de sujet, que votre action doit valider et utiliser pour identifier l’utilisateur.</td>
+</tr>
+<tr>
+<td>`client_id`</td>
+<td>L’identifiant client de l’application que vous utilisez pour l’échange de jetons. Comme pour les autres types d’autorisation, vous pouvez également transmettre l’ID client dans l’en-tête Authorization à l’aide de l’authentification HTTP de base</td>
+</tr>
+<tr>
+<td>`client_secret`</td>
+<td>Le secret client de l’application que vous utilisez pour l’échange de jetons. Comme pour les autres types d’autorisation, vous pouvez également transmettre le secret client dans l’en-tête Authorization à l’aide de l’authentification HTTP de base.<br/><br/>D’autres alternatives sont également possibles comme expliqué dans les <a href="https://auth0.com/docs/api/authentication#authentication-methods">documents de référence d’Authentication API Auth0</a>.<br/><br/>Remarque : L’échange de jetons personnalisés peut être utilisé par les applications publiques. Bien vouloir lire [Protection contre les attaques(#attack-protection) dans ce cas.</td>
+</tr>
+<tr>
+<td>`scope`</td>
+<td>Le paramètre permission OAuth2.</td>
+</tr>
+</tbody>
+</table>
+
+Les autres paramètres d’extension sont ignorés, bien qu’ils soient inclus dans `event.request.body` dans l’action correspondante.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Les Organizations ne sont pas encore prises en charge dans Custom Token Exchange EA. L’ajout d’un paramètre organization entraîne le rejet de la demande. La prise en charge des Organizations sera ajoutée dans les prochaines itérations de Custom Token Exchange.
+
+</Callout>
+
+### Exemple de requête
+
+```bash lines
+curl --location 'https://{{YOUR_TENANT}}/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+--data-urlencode 'audience=https://api.acme.com' \
+--data-urlencode 'scope=openid offline_access acme-scope1 acme-scope2' \
+--data-urlencode 'subject_token_type=urn:acme:external-idp-migration' \
+--data-urlencode 'subject_token=t8e7S2D9trQm73e .... iqBR3GjxDtbDVjpfQU' \
+--data-urlencode 'client_id={{CLIENT_ID}}' \
+--data-urlencode 'client_secret={{CLIENT_SECRET}}'
+```
+
+## Protection contre les attaques
+
+Pour se protéger contre les attaques par usurpation d’identité et par réinsertion, où un acteur menaçant tente de deviner ou de réutiliser un jeton d’objet, l’échange de jetons personnalisé intègre la prise en charge de la [limitation des adresses IP suspectes](/docs/fr-ca/secure/attack-protection/suspicious-ip-throttling). Cela vous permet de signaler précisément depuis votre code dans les actions lorsqu’un [jeton d’objet n’est pas valide](#api-access-rejectinvalidsubjecttoken-reason-), afin qu’Auth0 puisse compter les tentatives infructueuses envoyées depuis cette adresse IP externe.
+
+Lorsque le nombre de tentatives infructueuses à partir d’une adresse IP atteint un seuil préconfiguré, Auth0 bloque le trafic pour une demande d’échange de jetons personnalisés provenant de cette adresse IP avec l’erreur suivante :
+
+```json lines
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+{
+    "error": "too_many_attempts",
+    "error_description": "We have detected suspicious login behavior and further attempts will be blocked. Please contact the administrator."
+}
+```
+
+L’adresse IP peut recommencer à envoyer des demandes après une période de temps configurée.
+
+Bien que cela soit recommandé dans tous les cas, **il est particulièrement important d’activer et de configurer correctement la limitation des adresses IP suspectes si vous souhaitez utiliser l’échange de jetons personnalisé avec des applications natives ou monopages**. Étant donné que les applications non confidentielles comme les applications natives et les applications monopages ne peuvent pas stocker de manière sécurisée les secrets nécessaires à leur authentification, il est plus facile pour les attaquants de deviner ou de réutiliser des jetons volés ou divulgués.
+
+Pour utiliser correctement la protection contre la limitation des adresses IP suspectes, n’oubliez pas d’utiliser `api.access.rejectInvalidSubjectToken` dans votre code d'action chaque fois que le jeton d’objet reçu ne passe pas une validation rigoureuse.
+
+La limitation des adresses IP suspectes est activée par défaut pour les locataires Auth0. Pour en savoir plus sur son activation (et sa désactivation) ainsi que sa configuration, consultez [Limitation des adresses IP suspectes](/docs/fr-ca/secure/attack-protection/suspicious-ip-throttling). Une fois activée, les paramètres par défaut de l’échange de jetons personnalisé seront appliqués :
+
+* Seuil : 10. Nombre maximum de tentatives infructueuses pour une adresse IP.
+* Taux de limitation : Six par heure. Une tentative supplémentaire sera possible toutes les 10 minutes jusqu'à ce que le seuil soit rechargé.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/47PB3OAci9fotSHFrCNBVn/1bafbaacbeb22a4d94eb78506ab89bb8/Screenshot_2025-02-03_at_4.44.29_PM.png)</Frame>
+
+Vous pouvez configurer un seuil et un taux de limitation personnalisés pour l’échange de jetons personnalisé avec Management API.
+
+Tout d’abord, [obtenez un jeton Management API](/docs/fr-ca/secure/tokens/access-tokens/management-api-access-tokens#get-management-api-tokens) pour utiliser l’API. Ensuite, envoyez la requête GET suivante au [point de terminaison Get Suspicious IP Throttling (Obtenir les paramètres de limitation d’adresses IP suspectes)](https://auth0.com/docs/api/management/v2/attack-protection/get-suspicious-ip-throttling) :
+
+```bash lines
+curl --location 'https://{{YOUR _TENANT}}/api/v2/attack-protection/suspicious-ip-throttling' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+```
+
+Vous recevrez une réponse comme celle-ci :
+
+```json lines
+{
+  "enabled": true,
+  "shields": [
+    "admin_notification",
+    "block"
+  ],
+  "allowlist": [],
+  "stage": {
+    "pre-login": {
+      "max_attempts": 100,
+      "rate": 864000
+    },
+    "pre-user-registration": {
+      "max_attempts": 50,
+      "rate": 1200
+    },
+    "pre-custom-token-exchange": {
+      "max_attempts": 10,
+      "rate": 600000
+    }
+  }
+}
+```
+
+Utilisez la requête `PATCH` suivante pour mettre à jour l’étape `pre-custom-token-exchange` avec les valeurs nécessaires. Notez que le taux correspond à l’intervalle de temps, en millisecondes, auquel les nouvelles tentatives sont accordées.
+
+```bash lines
+curl --location --request PATCH 'https://{{YOUR _TENANT}}/api/v2//attack-protection/suspicious-ip-throttling' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer {{MANAGEMENT_API_TOKEN}}' \
+--data '{"stage":{"pre-custom-token-exchange":{"max_attempts":10,"rate":600000}}}'
+```
+
+## Exemples de cas d’utilisation et exemples de code
+
+Vous pouvez utiliser l’échange de jetons personnalisé pour résoudre des scénarios d’intégration avancés où les stratégies de connexion fédérée classiques basées sur la redirection de l’utilisateur final ne peuvent pas être appliquées en raison de contraintes techniques ou d’expérience utilisateur. Le code fourni pour les cas d’utilisation est incomplet et vise uniquement à illustrer les étapes logiques à suivre pour résoudre le cas d’utilisation. Consultez les [exemples de code](#code-samples) pour plus de détails.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Auth0 recommande d’utiliser une connexion fédérée normale et prête à l’emploi dans la mesure du possible. En vous permettant de définir l’utilisateur pour la transaction, Custom Token Exchange vous offre plus de flexibilité en assumant la responsabilité supplémentaire de valider et de gérer la transaction en toute sécurité.
+
+</Callout>
+
+Cette section décrit des exemples de cas d’utilisation et des exemples de code particuliers, accompagnés de recommandations pour la mise en œuvre de votre scénario. Pour illustrer ces cas d’utilisation, nous utiliserons GearUp, une société fictive de location de voitures.
+
+### Cas d’utilisation : migration transparente vers Auth0
+
+GearUp possède une application mobile utilisée par des millions de personnes et souhaite moderniser sa solution d’identité. C’est pourquoi l’entreprise a décidé de passer à Auth0. Cependant, elle souhaite éviter de forcer les utilisateurs à se réauthentifier lors de la migration depuis leur ancien fournisseur d’identité (<Tooltip href="/docs/fr-ca/glossary?term=idp" tip="Fournisseur d’identité (IdP)
+Service de stockage et de gestion des identités numériques." cta="Voir le glossaire">IdP</Tooltip>), car cela complique l’expérience utilisateur.
+
+Pour résoudre ce problème et limiter les risques, GearUp procède à une migration progressive. Pour chaque utilisateur, l’entreprise souhaite échanger le jeton d’actualisation de son ancien fournisseur d’identité contre un jeton d’accès Auth0, un jeton d’actualisation et un ensemble de jetons d’ID. Cela permet à l’application d’utiliser Auth0 comme fournisseur d’identité pour cet utilisateur en toute transparence, et d’utiliser les API GearUp avec les jetons émis par Auth0. Une fois l’échange effectué pour tous les utilisateurs, l’application sera entièrement migrée et l’ancien fournisseur d’identité pourra être déconnecté, sans répercussions sur les utilisateurs finaux ni sur l’activité de GearUp.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/2Ke6p3yZl06KT4HHqtaVu9/5d9c5feb98d614d6d793fb01ccc03e92/Screenshot_2025-02-03_at_5.00.32_PM.png)</Frame>
+
+Comme condition préalable, GearUp a effectué une [importation d’utilisateurs en bloc](/docs/fr-ca/manage-users/user-migration/bulk-user-imports) dans son locataire Auth0 et l’application mobile dispose d’un jeton d’actualisation hérité valide pour chaque utilisateur à migrer.
+
+1. L’application mobile envoie une demande à Auth0 pour échanger le jeton d’actualisation hérité, en le définissant comme jeton de sujet.
+2. L’action du profil d’échange de jetons personnalisé correspondant s’exécute. Elle valide le jeton d’actualisation auprès de l’IdP hérité et récupère l’identifiant utilisateur externe à partir du profil utilisateur. Elle applique ensuite la politique d’autorisation requise et définit enfin l’utilisateur.
+3. Auth0 répond avec un jeton d’accès Auth0, un jeton d’ID et un jeton d’actualisation.
+4. L’application mobile peut désormais utiliser les API client à l’aide de jetons Auth0 sans que l’utilisateur ait à se réauthentifier.
+
+L’exemple de code suivant montre comment implémenter cette fonctionnalité dans l’action d’échange de jetons personnalisé. Dans ce cas, les profils utilisateurs étaient déjà importés dans une connexion à la base de données Auth0 :
+
+* Nous ne voulons pas créer l’utilisateur.
+* Nous ne voulons pas mettre à jour le profil utilisateur.
+
+Nous utilisons l’identifiant utilisateur IdP externe pour définir l’utilisateur dans la connexion correspondante.
+
+```javascript lines
+/**
+* Handler to be executed while executing a custom token exchange request
+* @param {Event} event - Details about the incoming token exchange request.
+* @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+*/
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+ // 1. VALIDATE the refresh_token received in the subject_token by using it to get
+ // the UserProfile from the external IdP
+ const { isValid, user } = await getUserProfile(
+   event.transaction.subject_token,
+   event.secrets.CLIENT_SECRET,
+ );
+
+ if (!isValid) {
+   // Mark the subject token as invalid and fail the transaction.
+   api.access.rejectInvalidSubjectToken("Invalid subject_token");
+ } else {
+   // 2. Apply your AUTHORIZATION POLICY as required to determine if the request is valid.
+   // Use api.access.deny() to reject the transaction in those cases.
+
+   // 3. When we have the profile, we SET THE USER in the target connection
+   api.authentication.setUserByConnection(
+     connectionName,
+     {
+       // only the user_id in the connection is needed, as we are not
+       // creating nor updating the user
+       user_id: user.sub,
+     },
+     {
+       creationBehavior: "none",
+       updateBehavior: "none",
+     },
+   );
+ }
+};
+
+/**
+* Exchange the refresh token and load the user profile from the legacy IdP
+* @param {string} refreshToken
+* @param {string} clientSecret
+* @returns {Promise<{ isValid: boolean, user?: object }>} If the refresh token was exchanged successfully, returns the user profile
+*/
+async function getUserProfile(refreshToken, clientSecret) {
+ // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+}
+```
+
+Consultez [Exemples de code](#code-samples)  pour un exemple plus détaillé sur la façon de valider un jeton d’actualisation opaque avec l’IdP hérité.
+
+### Cas d’utilisation : réutiliser un fournisseur d’authentification externe
+
+Un autre cas d’utilisation concerne le partenariat entre GearUp et Air0, un important voyagiste, pour proposer ses services de location de voitures directement dans l’application monopage d’Air0. GearUp propose une bibliothèque JavaScript qui encapsule l’utilisation de ses API. Ainsi, les API de GearUp peuvent facilement être utilisées par le site Web d’Air0 où les services de location de voitures sont proposés.
+
+Là encore, la solution doit être invisible pour les utilisateurs finaux, évitant ainsi une réauthentification auprès de GearUp. Pour résoudre ce problème, la bibliothèque JavaScript de GearUp peut effectuer un échange de jetons en utilisant le jeton d’ID externe Air0 comme entrée. Cela génère un jeton d’accès Auth0, qui est associé à l’utilisateur GearUp correspondant en fonction de son adresse courriel. Une fois le jeton d’accès obtenu, la bibliothèque GearUp peut utiliser les API de GearUp pour proposer des services de location de voitures directement sur le site Web d’Air0.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/34AVzwyYARK6fn2IEnLsQn/409082d736d8495b637626406977fb1f/Screenshot_2025-02-03_at_5.08.47_PM.png)</Frame>
+
+Comme condition préalable, GearUp a configuré Air0 IdP en tant qu’entreprise fédérée ou connexion via réseau social, afin que l’utilisateur puisse s’authentifier à partir d’une connexion fédérée ou via l’échange de jetons personnalisé comme suit :
+
+1. L’application monopage obtient le jeton d’ID de l’IdP externe une fois que l’utilisateur s’est authentifié.
+2. Elle demande ensuite les échanges du jeton d’ID, le définissant comme jeton sujet.
+3. L’action de profil d’échange de jetons personnalisé correspondante s’exécute. Elle valide le jeton d’ID et récupère l’identifiant utilisateur et les autres attributs du profil. Elle applique ensuite la politique d’autorisation requise et définit enfin l’utilisateur.
+4. Auth0 répond avec le jeton d’accès Auth0, le jeton d’ID et le jeton d’actualisation.
+5. Le code JavaScript exécuté dans l’application monopage peut désormais utiliser les API client à l’aide de jetons Auth0 sans que l’utilisateur ait à se réauthentifier.
+
+Le code suivant illustre comment mettre en œuvre cette fonctionnalité dans l’action d’échange de jetons personnalisé. Dans ce cas :
+
+* Nous utilisons l’identifiant utilisateur IdP externe pour définir l’utilisateur dans la connexion correspondante.
+* Nous voulons créer l’utilisateur s’il n’existe pas encore.
+* Nous ne souhaitons pas remplacer le profil utilisateur si un ensemble d’attributs plus complet est obtenu via une connexion fédérée, au cas où l’utilisateur existe déjà.
+* Nous ne voulons pas vérifier les courriels lors de la création des utilisateurs.
+
+```javascript lines
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDATE the id_token received in the subject_token
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. Apply your AUTHORIZATION POLICY as required to determine if the request is valid.
+    // Use api.access.deny() to reject the transaction in those cases.
+
+    // 3. SET THE USER in the target connection.
+    // We don't want to verify emails when users are created
+    // This example assumes subject_token (id_token) contains standard OIDC claims. Other custom mappings
+    // are also possible.
+    api.authentication.setUserByConnection(
+      'Enterprise-OIDC',
+      {
+          user_id: formattedUserId,
+          email: subject_token.email,
+          email_verified: subject_token.email_verified,
+          phone_number: subject_token.phone_number,
+          phone_verified: subject_token.phone_number_verified,
+          username: subject_token.preferred_username,
+          name: subject_token.name,
+          given_name: subject_token.given_name,
+          family_name: subject_token.family_name,
+          nickname: subject_token.nickname,
+          verify_email: false
+      },
+      {
+          creationBehavior: 'create_if_not_exists',
+          updateBehavior: 'none'
+      }
+    );
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+};
+```
+
+Voir [Exemples de code](#code-samples) pour un exemple plus détaillé sur la façon de valider en toute sécurité les <Tooltip href="/docs/fr-ca/glossary?term=json-web-token" tip="Jeton Web JSON (JWT)
+Format standard de jeton d’ID (et souvent de jeton d’accès) utilisé pour représenter en toute sécurité des demandes entre deux parties." cta="Voir le glossaire">JWT</Tooltip>.
+
+### Cas d’utilisation : obtenir des jetons Auth0 pour une autre audience
+
+GearUp souhaite améliorer la façon dont elle autorise les appels entre ses microservices internes pour répondre aux requêtes API. Elle souhaite une politique centralisée contrôlant les ressources que chaque service peut utiliser. Ce problème peut également être résolu grâce à l’échange de jetons.
+
+Lorsque la requête API parvient au service A, celui-ci échange le jeton d’accès reçu contre un nouveau jeton lui permettant d’utiliser le service B comme nouvelle audience. Si la politique d’autorisation régissant l’échange de jetons le permet, le service A récupère le nouveau jeton et peut désormais utiliser le service B. L’identifiant utilisateur reste inchangé dans le nouveau jeton, de sorte que le contexte utilisateur approprié est conservé tout au long du processus.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/5Zw7yaJGct9eHAl4rdf72D/42274a5896851a16bea402ac52037f52/Screenshot_2025-02-03_at_5.17.14_PM.png)</Frame>
+
+L’application GearUp a initialement obtenu un jeton d’accès pour utiliser l’API A au nom d’un utilisateur :
+
+1. L’application envoie la demande avec le jeton d’accès initial à l’API A.
+2. Le service dorsal API A valide le jeton d’accès et demande à l’échanger en le définissant comme jeton sujet pour un nouveau jeton d’accès afin de consommer l’API B.
+3. L’action du profil d’échange de jetons personnalisés correspondant s’exécute. Elle valide le jeton d’accès et récupère l’identifiant utilisateur Auth0 à partir du jeton. Elle applique ensuite la politique d’autorisation requise et définit enfin l’utilisateur.
+4. Auth0 répond avec un jeton d’accès Auth0 pour consommer l'audience de l’API B.
+5. Le service dorsal de l’API A appelle l’API B à l’aide du nouveau jeton d’accès, qui est toujours associé au même utilisateur.
+
+Le code suivant illustre comment mettre en œuvre cette fonctionnalité dans l’action d’échange de jetons personnalisé. Dans ce cas :
+
+* Nous utilisons l’identifiant utilisateur Auth0 pour définir l’utilisateur, il n’est donc pas nécessaire de le définir dans le cadre d’une connexion.
+* Nous ne voulons pas créer ou mettre à jour l’utilisateur.
+
+Consultez [Valider les JWT signés avec des clés asymétriques](#validate-jwts-signed-with-asymmetric-keys) pour des exemples de code développés sur ce cas d’utilisation.
+
+```javascript lines
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // 1. VALIDATE the access_token received in the subject_token
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. Apply your AUTHORIZATION POLICY as required to determine if the request is valid.
+    // Use api.access.deny() to reject the transaction in those cases.
+
+    // 3. SET THE USER
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+};
+```
+
+Voir [Exemples de code](#code-samples) pour un exemple plus détaillé sur la façon de valider en toute sécurité les JWT.
+
+### Exemples de code
+
+Les exemples de code suivants présentent les meilleures pratiques pour les scénarios courants de validation des jetons de sujet entrants de manière sécurisée et performante.
+
+Utilisez des algorithmes et des clés asymétriques autant que possible, car vous n’avez pas besoin de partager de secret avec Auth0. Cela simplifie également la rotation des clés, par exemple lors de l’exposition d’un point de terminaison URI JWKS pour annoncer les clés publiques applicables.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Il est de votre responsabilité de vous assurer que les jetons de sujet sont protégés par un algorithme puissant et des clés/secrets avec suffisamment d’entropie.
+
+</Callout>
+
+#### Valider les JWT signés avec des clés asymétriques
+
+Tenez compte des recommandations suivantes :
+
+* Utilisez les méthodes d’actions [api.cache](#api-cache) pour éviter d’avoir à récupérer les clés de connexion pour chaque transaction.
+* Adhérez aux meilleures pratiques [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt)
+* Utilisez les algorithmes RS\*, PS\*, ES\* ou Ed25519
+* N’utilisez pas et n’acceptez pas l’algorithme « none »
+* Utilisez RSA avec une longueur minimale de 2 048 bits.
+
+```javascript lines
+const { jwtVerify } = require("jose");
+
+const jwksUri = "https://example.com/.well-known/jwks.json";
+const fetchTimeout = 5000; // 5 seconds
+
+const validIssuer = "urn:my-issuer"; // Replace with your issuer
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Set the user in the current request as authenticated, using the user ID from the subject token.
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    try {
+      const { payload, protectedHeader } = await jwtVerify(
+        subjectToken,
+        async (header) => await getPublicKey(header.kid),
+        {
+          issuer: validIssuer,
+        },
+      );
+
+      // Perform additional validation on the token payload as required
+
+      return { isValid: true, payload };
+    } catch (/** @type {any} */ error) {
+      if (error.message === "Error fetching JWKS") {
+        throw new Error("Internal error - retry later");
+      } else {
+        console.log("Token validation failed:", error.message);
+        return { isValid: false };
+      }
+    }
+  }
+
+  /**
+   * Get the public key to use for key verification. Load from the actions cache if available, otherwise
+   * fetch the key from the JWKS endpoint and store in the cache.
+   * @param {string} kid - kid (Key ID) of the key to be used for verification
+   * @returns {Promise<Object>}
+   */
+  async function getPublicKey(kid) {
+    const cachedKey = api.cache.get(kid);
+    if (!cachedKey) {
+      console.log(`Key ${kid} not found in cache`);
+      const key = await fetchKeyFromJWKS(kid);
+      api.cache.set(kid, JSON.stringify(key), { ttl: 600000 });
+      return key;
+    } else {
+      return JSON.parse(cachedKey.value);
+    }
+  }
+
+  /**
+   * Fetch public signing key from the provided JWKS endpoint, to use for token verification
+   * @param {string} kid - kid (Key ID) of the key to be used for verification
+   * @returns {Promise<object>}
+   */
+  async function fetchKeyFromJWKS(kid) {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), fetchTimeout);
+
+    /** @type {any} */
+    const response = await fetch(jwksUri);
+
+    if (!response.ok) {
+      console.log(`Error fetching JWKS. Response status: ${response.status}`);
+      throw new Error("Error fetching JWKS");
+    }
+    const jwks = await response.json();
+    const key = jwks.keys.find((key) => key.kid === kid);
+    if (!key) {
+      throw new Error("Key not found in JWKS");
+    }
+    return key;
+  }
+};
+```
+
+#### Validez les JWT signés avec des clés symétriques
+
+Tenez compte des recommandations suivantes :
+
+* Utilisez des [Secrets d’actions](/docs/fr-ca/customize/actions/write-your-first-action#add-a-secret) pour stocker en toute sécurité vos secrets symétriques.
+* Adhérez aux meilleures pratiques [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt)
+* Utilisez des algorithmes sécurisés tels que HS256, ainsi que des secrets aléatoires à haute entropie (p. ex., d’au moins 256 bits de long)
+
+```javascript lines
+const { jwtVerify } = require("jose");
+
+const validIssuer = "urn:my-issuer"; // Replace with your issuer
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // Initialize the shared symmetric key from Actions Secrets
+  const encoder = new TextEncoder();
+  const symmetricKey = encoder.encode(event.secrets.SHARED_SECRET);
+
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+    symmetricKey,
+  );
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Set the user in the current request as authenticated, using the user ID from the subject token.
+    api.authentication.setUserById(payload.sub);
+  }
+};
+
+/**
+ * Validate the subject token
+ * @param {string} subjectToken
+ * @param {Uint8Array} symmetricKey
+ * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+ */
+async function validateToken(subjectToken, symmetricKey) {
+  try {
+    // Validate token is correctly signed with the shared symmetric key
+    // It also checks it is not expired as long as it includes an 'exp' attribute.
+    const { payload, protectedHeader } = await jwtVerify(
+      subjectToken,
+      symmetricKey,
+      {
+        issuer: validIssuer,
+      },
+    );
+
+    return { isValid: true, payload };
+  } catch (/** @type {any} */ error) {
+    console.log("Token validation failed:", error.message);
+    return { isValid: false };
+  }
+}
+```
+
+#### Validez le jeton opaque avec un service externe
+
+Utilisez les [Secrets d’action](/docs/fr-ca/customize/actions/write-your-first-action#add-a-secret) pour stocker en toute sécurité le secret de votre client IdP externe.
+
+```javascript lines
+const tokenEndpoint = "EXTERNAL_TOKEN_ ENDPOINT";
+const userInfoEndpoint = "EXTERNAL_USER_INFO_ENDPOINT";
+const clientId = "EXTERNAL_CLIENT_ID";
+const connectionName = "YOUR_CONNECTION_NAME";
+const fetchTimeout = 5000; // 5 seconds
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, user } = await getUserProfile(
+    event.transaction.subject_token,
+    event.secrets.CLIENT_SECRET,
+  );
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  // When we have the profile, we set the user in the target connection
+  api.authentication.setUserByConnection(
+    connectionName,
+    {
+      // only the user_id in the connection is needed, as we are not
+      // creating nor updating the user
+      user_id: user.sub,
+    },
+    {
+      creationBehavior: "none",
+      updateBehavior: "none",
+    },
+  );
+};
+
+/**
+ * Exchange the refresh token and load the user profile from the legacy IdP
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, user?: object }>} If the refresh token was exchanged successfully, returns the user profile
+ */
+async function getUserProfile(refreshToken, clientSecret) {
+  const { isValid, accessToken } = await refreshAccessToken(
+    refreshToken,
+    clientSecret,
+  );
+  if (!isValid) {
+    return { isValid: false };
+  }
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  const response = await fetch(userInfoEndpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    console.log(`Failed to fetch user info. Status: ${response.status}`);
+    throw new Error("Error fetching user info");
+  }
+
+  const userProfile = await response.json();
+
+  return { isValid: true, user: userProfile };
+}
+
+/**
+ * Use the Refresh Token with the legacy IdP to validate it and get an access token
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, accessToken?: string }>} If the refresh token was exchanged successfully, returns the access token
+ */
+async function refreshAccessToken(refreshToken, clientSecret) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  let response;
+
+  try {
+    response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+  } catch (error) {
+    console.error("Error refreshing token");
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json();
+    console.error("Error refreshing token:", errorBody.error);
+
+    // If we receive an error indicating the refresh token is invalid (for example, an invalid_grant error),
+    // then we should explicitly indicate an invalid token using api.access.rejectInvalidSubjectToken
+    // to prevent against brute force attacks on the refresh token by activating Suspicious IP Throttling.
+    // For other errors which indicate a generic error making the request to the IdP, we should throw
+    // an error to indicate a transient failure.
+    if (errorBody.error === "invalid_grant") {
+      return { isValid: false };
+    } else {
+      throw new Error("Error refreshing token");
+    }
+  }
+
+  // Parse the response, in the form { access_token: "...", expires_in: ..., }
+  const data = await response.json();
+  console.log("Successfully exchanged refresh token");
+  return { isValid: true, accessToken: data.access_token };
+}
+```
+
+## Limites
+
+Il s’agit d’une fonctionnalité en accès anticipé, qui comporte donc certaines limitations et incompatibilités avec d’autres fonctionnalités Auth0.
+
+Les fonctionnalités suivantes ne sont pas prises en charge (ou ne fonctionneront pas correctement) avec l’échange de jetons personnalisé en accès anticipé :
+
+* Organizations
+* <Tooltip href="/docs/fr-ca/glossary?term=multifactor-authentication" tip="Authentification multifacteur (MFA)&#10;Processus d’authentification de l’utilisateur qui utilise un facteur en plus du nom d’utilisateur et du mot de passe, tel qu’un code par SMS." cta="Voir le glossaire">MFA</Tooltip> : les commandes `api.authentication.challengeWith()` et `api.multifactor.enable()` des actions de post-connexion ne sont pas encore prises en charge par l’échange de jetons personnalisé et entraîneront l’échec de la transaction avec une erreur irrécupérable. De même, les transactions échoueront également lorsque l’authentification multifacteur est configurée comme stratégie de locataire.
+* Connexions de base de données personnalisées
+* Prise en charge donnée de l’usurpation d’identité (p. ex., jeton d’acteur et demande d’acteur)
+* Clients tiers et non conformes à l’OIDC
+
+## Limites anti-attaques
+
+Les demandes d’échange de jetons personnalisé adressées au point de terminaison `/oauth/token` sont limitées à 10 % de la limite anti-attaques globale d’Authentication API pour le niveau de performance applicable.
+
+<table class="table"><thead>
+<tr>
+<th><strong>Niveau Performance</strong></th>
+<th><strong>Limite d’Authentication API globale (RPS)</strong></th>
+<th><strong>Limite d’échange de jetons personnalisés (RPS)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Entreprise</td>
+<td>100</td>
+<td>10</td>
+</tr>
+<tr>
+<td>Nuage privé Basic (1x)</td>
+<td>100</td>
+<td>10</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (5x)</td>
+<td>500</td>
+<td>300</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (15x)</td>
+<td>300</td>
+<td>150</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (30x)</td>
+<td>3000</td>
+<td>300</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (60x)</td>
+<td>6000</td>
+<td>600</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (100x)</td>
+<td>10000</td>
+<td>1000</td>
+</tr>
+</tbody>
+</table>
+
+Les requêtes de lecture sur les points de terminaison `api/v2/token-exchange-profiles` sont également limitées comme suit :
+
+<table class="table"><thead>
+<tr>
+<th>Niveau Performance</th>
+<th>Limite d’échange de jetons personnalisée (RPS)</th>
+<th>Limite d’échange de jetons personnalisée (RPM)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Entreprise</td>
+<td>20</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Nuage privé Basic (1x)</td>
+<td>20</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (5x)</td>
+<td>100</td>
+<td>300</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (15x)</td>
+<td>300</td>
+<td>3000</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (30x)</td>
+<td>600</td>
+<td>6000</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (60x)</td>
+<td>1200</td>
+<td>12000</td>
+</tr>
+<tr>
+<td>Nuage privé Performance (100x)</td>
+<td>2000</td>
+<td>20000</td>
+</tr>
+</tbody>
+</table>
+
+## Limites d’entités
+
+Un maximum de 100 profils d’échange de jetons personnalisé peuvent être créés par locataire.
+
+Le nombre total d’actions est également limité en fonction de votre forfait Auth0. Pour en savoir plus, consultez la [page des tarifs d’Auth0](https://auth0.com/pricing).
+
+## Dépanner
+
+### Réponse "Consent required”
+
+Vous pouvez recevoir une erreur `invalid_request` avec une description d’erreur `consent_required` lors de l’appel du point de terminaison `/oauth/token`.
+
+Pour résoudre ce problème, activez l’option **Autoriser l'absence de consentement de l'utilisateur** pour votre API dans Auth0 Dashboard.
+
+<Frame>![](/images/fr-ca/cdy7uua7fh8z/4eKWTJtCQwSHUZyKU81mWm/33c1966367d2b7c157b414fa1f04c026/Screenshot_2025-02-03_at_5.36.38_PM.png)</Frame>
+

@@ -131,7 +131,7 @@ export const SignUpForm = () => {
     <div className="flex flex-col gap-2 items-center h-full">
       <img
         noZoom
-        src="/docs/img/quickstarts/action_hero_dashboard.svg"
+        src="/img/quickstarts/action_hero_dashboard.svg"
         alt="Sign up for an Auth0 account"
         style={{
           width: "250px",
