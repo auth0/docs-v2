@@ -5,6 +5,7 @@ import './index.css';
 
 import { NavActions } from './components/nav-actions';
 import type { TenantData } from './components';
+import { initOneTrust } from './lib/one-trust';
 
 const mockTenants: TenantData[] = [
   {
@@ -84,6 +85,10 @@ function main() {
   root.id = 'adu-root';
   document.body.appendChild(root);
 
+  // initialize one-trust for cookie-consent management
+  initOneTrust();
+
+  // render custom elements
   createRoot(root).render(
     <StrictMode>
       <NavActions user={mockUser} tenants={mockTenants} />
