@@ -300,7 +300,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI agent to manage Bitbucketrepositories, track issues, and automate work with code repositories.",
+      "Allow your AI agent to manage Bitbucket repositories, track issues, and automate work with code repositories.",
   },
   {
     id: "dropbox",
