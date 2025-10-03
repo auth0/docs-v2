@@ -1,0 +1,246 @@
+---
+title: "Tutoriel Passerelle AWS API – Étape 3"
+permalink: "aws-api-gateway-delegation-3"
+'description': "Étape 3 du tutoriel Passerelle API Amazon"
+'og:title': "Tutoriel Passerelle AWS API – Étape 3"
+'og:description': "Étape 3 du tutoriel Passerelle API Amazon"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Tutoriel Passerelle AWS API – Étape 3"
+'twitter:description': "Étape 3 du tutoriel Passerelle API Amazon"
+---
+
+<Warning>
+
+Cette fonctionnalité utilise la délégation. Par défaut, la délégation est désactivée pour les locataires sans module complémentaire en cours d’utilisation depuis le 8 juin 2017. Les anciens locataires qui utilisent actuellement un module complémentaire nécessitant une délégation peuvent continuer à utiliser cette fonction. Si la fonctionnalité de délégation est modifiée ou supprimée à un moment donné, les clients qui l’utilisent seront informés à l’avance et disposeront d’un délai suffisant pour migrer. Par ailleurs, notez que la délégation ne prend pas en charge l’utilisation de domaines personnalisés, si bien que toutes les fonctionnalités qui en dépendent risquent de ne pas être pleinement fonctionnelles avec un domaine personnalisé.
+
+</Warning>
+
+## Étape 3 – Création de l’application
+
+Au cours de cette étape, vous allez créer une application à page unique sans serveur en utilisant le cadre d’applications AngularJS, que vous déploierez à partir d’un groupe AWS S3 configuré pour fonctionner comme un site Web statique.
+
+### 1. Configurez votre exemple d’application
+
+Pour une application de démarrage simple, [téléchargez un exemple de projet](https://github.com/auth0/auth0-aws/tree/master/examples/api-gateway/client)  propre à ce tutoriel. Connectez-vous pour que vos identifiants Auth0 soient préconfigurés.
+
+Copiez le contenu de ce projet de démarrage dans un dossier local nommé `pets`, que vous utiliserez pour le reste de ce tutoriel. Dans ce dossier, mettez à jour `auth0-variables.js` avec votre application Auth0 `AUTH0_CLIENT_ID` et `AUTH0_CLIENT_ID` (ces informations sont accessibles dans le [Management Dashboard](https://manage.auth0.com/#/applications) pour l’application en question).
+
+#### Groupe AWS S3
+
+Assurez-vous que vous avez [créé le groupe AWS S3 configuré pour agir comme un site Web statique](http://docs.aws.amazon.com/gettingstarted/latest/swh/website-hosting-intro.html). Pendant le processus d’installation, copiez le contenu du dossier `pets` dans votre groupe S3 pour fournir du contenu au site Web.
+
+Si vous utilisez un groupe existant, vous pouvez déplacer les fichiers à l’aide de l'interface de ligne de commande  AWS en exécutant la commande suivante.
+
+```bash lines
+aws s3 cp --recursive --acl "public-read" ./ s3://{yourBucket}/
+```
+
+Avant de poursuivre, assurez-vous de disposer d’au moins un utilisateur associé à votre connexion Nom d’utilisateur-Mot de passe-Authentification (ou à la connexion de la base de données liée à l’application que vous utilisez). Pour tirer pleinement parti des fonctionnalités de votre exemple d’application et de son intégration avec AWS, vous devrez vous assurer que cet utilisateur teste l’authentification et en obtienne l’accès.
+
+Enfin, assurez-vous qu’Auth0 autorise l’authentification depuis votre site Web en fournissant l’URL dans le champ **Origines autorisées** sur la page de paramètres de votre application. L’URL de votre site Web ressemblera à ceci :
+
+`http://your-bucket.s3-website-us-east-1.amazonaws.com`
+
+Si vous ne savez pas quelle est votre URL, vous pouvez la trouver sous l’onglet **Propriétés** de votre groupe S3.
+
+Avant d’aller plus loin, effectuez un test de connexion à votre application. Ouvrez `http://your-bucket-domain/index.html` dans votre navigateur. Après vous être connecté, vous devriez voir une boîte d’alerte indiquant « getPets non implémenté » :
+
+La page qui vous permet de visualiser les animaux de compagnie, s’affiche également.
+
+### Utiliser la délégation pour obtenir un jeton AWS
+
+À ce stade, vous avez configuré l’authentification avec Auth0 et vous disposez d’un <Tooltip href="/docs/fr-ca/glossary?term=json-web-token" tip="Jeton Web JSON (JWT)
+Format standard de jeton d’ID (et souvent de jeton d’accès) utilisé pour représenter en toute sécurité des demandes entre deux parties." cta="Voir le glossaire">JWT</Tooltip> <Tooltip href="/docs/fr-ca/glossary?term=openid" tip="OpenID
+Norme ouverte d’authentification qui permet aux applications de vérifier l’identité des utilisateurs sans avoir à collecter leurs informations de connexion." cta="Voir le glossaire">OpenID</Tooltip>. Voici la structure du répertoire pour le code généré :
+
+<Frame>![AWS API Gateway - project directory](/images/fr-ca/cdy7uua7fh8z/5fYL14NE1L9WuzUyA0xTky/35e78ca14e6d0c5b36582b5b74a6fc55/aws-api-gateway-project.png)</Frame>
+
+Vous pouvez exploiter la fonctionnalité de délégation d’Auth0 pour obtenir un jeton d’accès AWS à partir du jeton d’identité Auth0. En arrière-plan, Auth0 authentifie votre jeton d’identité, puis utilise <Tooltip href="/docs/fr-ca/glossary?term=security-assertion-markup-language" tip="Security Assertion Markup Language (SAML)
+Protocole normalisé permettant à deux parties d’échanger des informations d’authentification sans mot de passe." cta="Voir le glossaire">SAML</Tooltip> en fonction du module complémentaire que vous avez configuré.
+
+Mettez à jour `pets/login/login.js` comme suit afin d’obtenir un jeton de délégation AWS à partir du jeton d’identité après une connexion réussie avec `auth.signin`. Veuillez noter que tout utilisateur non connecté utilisant une connexion sociale est traité comme un administrateur. Plus tard, nous coderons un deuxième rôle et montrerons de meilleures façons d’appliquer la sélection de rôle.
+
+```js lines expandable
+auth.signin(params, function(profile, token) {
+  //Set user as admin if they did not use a social login.
+  profile.isAdmin = !profile.identities[0].isSocial;
+  store.set('profile', profile);
+  store.set('token', token);
+
+  // get delegation token from identity token.
+  var options = getOptionsForRole(profile.isAdmin, token);
+
+  // TODO: Step 3: Enable this section once you setup AWS delegation.
+  /*
+  auth.getToken(options)
+    .then(
+      function(delegation)  {
+        store.set('awstoken', delegation.Credentials);
+        $location.path("/");
+      },
+    function(err) {
+       console.log('failed to acquire delegation token', err);
+  });
+  */
+  // TODO: Step 3: Remove this redirect after you add the get token API.
+  $location.path("/");
+
+}, function(error) {
+  console.log("There was an error logging in", error);
+});
+```
+
+#### Modifier les chaînes role et principal
+
+Pour modifier les chaînes `role` et `principal` (qui sont les deux dernières lignes de la déclaration `if` contenue dans la fonction fournie), spécifiez les valeurs appropriées via [Règles](https://manage.auth0.com/#/rules) :
+
+```javascript lines
+function (user, context, callback) {
+  if (context.clientID === 'CLIENT_ID' &&
+      context.protocol === 'delegation') {
+    // set AWS settings
+    context.addonConfiguration = context.addonConfiguration || {};
+    context.addonConfiguration.aws = context.addonConfiguration.aws || {};
+    context.addonConfiguration.aws.principal = 'arn:aws:iam::[omitted]:saml-provider/auth0-provider';
+    context.addonConfiguration.aws.role = 'arn:aws:iam::[omitted]:role/auth0-role';
+  }
+
+  callback(null, user, context);
+}
+```
+
+Assurez-vous de mettre à jour les valeurs ARN `role` et `[principal]` avec celles de votre intégration.
+
+Copiez les fichiers mis à jour dans votre groupe S3 pour votre site Web.
+
+En option, vous pouvez définir un point d’arrêt dans le navigateur à `store.set(’awstoken’, delegation.Credentials);`. Lorsque vous vous déconnectez et vous vous reconnectez, inspectez `delegation.Credentials` quand vous arrivez au point d’arrêt. Vous constaterez des valeurs familières comme AccessKeyId et SecretAccessKey :
+
+```js lines
+{
+    AccessKeyId: "ASIAJB...BNQ",
+    SecretAccessKey: "vS+b6...2Noav",
+    SessionToken: "AQoDYBqsivOV...DdQW0gsKr8rgU=",
+    Expiration: "2015-08-27T14:48:32.000Z"
+}
+```
+
+Si ces valeurs n’apparaissent pas, vérifiez que le module complémentaire Amazon Web Services est activé dans l’onglet Modules complémentaires de votre application Auth0.
+
+### Afficher les animaux de compagnie avec le service API AWS
+
+La première étape consiste à présenter les animaux de compagnie aux utilisateurs finaux.
+
+#### Ajoutez le code API pour appeler votre API
+
+Pour ajouter le code API permettant d’effectuer un appel à votre service, copiez le contenu de apiGateway-js-sdk.zip, que vous avez précédemment téléchargé, dans le répertoire `pets`. Le contenu doit inclure :
+
+* `apiClient.js`;
+* dossier `lib`;
+* `README.md`.
+
+Pour examiner le téléchargement, veuillez consulter [Tutoriel sur la passerelle API AWS, deuxième partie](/docs/fr-ca/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-2#deploy-the-api).
+
+Il existe déjà un fichier `README.md` dans le répertoire `pets`, vous devrez donc renommer l’un des fichiers afin de conserver les deux dans le même répertoire. Le fichier `README.md` pour la passerelle API explique comment utiliser l’application API à partir de votre application Auth0.
+
+Ouvrez le fichier `index.html` situé à la racine de votre dossier `pets`, pour ajouter tous les scripts répertoriés en haut du fichier readme de l’API à `index.html`:
+
+```html lines
+<!-- scripts for aws api gateway include after you create your package from aws for api gateway. -->
+<script type="text/javascript" src="/docs/lib/axios/dist/axios.standalone.js"></script>
+<script type="text/javascript" src="/docs/lib/CryptoJS/rollups/hmac-sha256.js"></script>
+<script type="text/javascript" src="/docs/lib/CryptoJS/rollups/sha256.js"></script>
+<script type="text/javascript" src="/docs/lib/CryptoJS/components/hmac.js"></script>
+<script type="text/javascript" src="/docs/lib/CryptoJS/components/enc-base64.js"></script>
+<script type="text/javascript" src="/docs/lib/moment/moment.js"></script>
+<script type="text/javascript" src="/docs/lib/url-template/url-template.js"></script>
+<script type="text/javascript" src="/docs/lib/apiGatewayCore/sigV4Client.js"></script>
+<script type="text/javascript" src="/docs/lib/apiGatewayCore/apiGatewayClient.js"></script>
+<script type="text/javascript" src="/docs/lib/apiGatewayCore/simpleHttpClient.js"></script>
+<script type="text/javascript" src="/docs/lib/apiGatewayCore/utils.js"></script>
+<script type="text/javascript" src="/docs/apigClient.js"></script>
+```
+
+Si vous ouvrez le fichier `apigClient.js`, vous pouvez constater que la bibliothèque téléchargée a créé des enveloppeurs comme `petsPost` et `petsGet`, pour vos méthodes API. Vous n’avez pas besoin de modifier ce code généré.
+
+#### Configurer la méthode getPets
+
+Ouvrez le fichier `home.js` dans le dossier `home` et mettez à jour le contenu de `getPets` avec une méthode de récupération des données sur les animaux de compagnie (assurez-vous de mettre à jour la région si l’exécution n’a pas lieu dans `us-east-1`) :
+
+```javascript lines
+function getPets() {
+    // this is unauthenticated
+    var apigClient = apigClientFactory.newClient({
+        region: 'us-east-1' // The region where the API is deployed
+    });
+
+    apigClient.petsGet({},{})
+      .then(function(response) {
+        console.log(response);
+        $scope.pets = response.data;
+        $scope.$apply();
+      }).catch(function (response) {
+        alert('pets get failed');
+        showError(response);
+    });
+}
+```
+
+Copiez le code mis à jour dans votre groupe S3. Rafraîchissez la page pour afficher deux animaux répertoriés, à condition d’avoir effectué le test décrit précédemment sur vos API, ayant créé ces animaux de compagnie.
+
+### Mettre à jour les animaux de compagnie avec le service API AWS
+
+Maintenant que vous disposez d’une application Auth0 fonctionnelle avec la passerelle API, vous pouvez ajouter une méthode pour mettre à jour le tableau `pets`.
+
+Modifier la logique de la méthode `putPets` pour mettre à jour les animaux de compagnie à l’aide de la fonction API. Cette fonction sera utilisée à la fois pour ajouter et supprimer des animaux de compagnie.
+
+```javascript lines
+function putPets(updatedPets) {
+    var body = {pets: updatedPets};
+
+    var apigClient = apigClientFactory.newClient({
+        region: 'us-east-1' // set this to the region you are running in.
+    });
+
+    apigClient.petsPost({},body)
+      .then(function(response) {
+        console.log(response);
+       }).catch(function (response) {
+        alert('pets update failed');
+        showError(response);
+      });
+}
+```
+
+Copiez le code mis à jour dans votre groupe S3. Testez la méthode :
+
+1. Déconnectez-vous et reconnectez-vous.
+2. Saisissez les valeurs pour `Pet Type` et `Pet Price`.
+3. Cliquez sur **Enregistrer** pour publier vos données.
+
+Le message « We have a `<Pet Type>` for sale for `<Pet Price>` », s’affiche avec un bouton rouge **RETIRER** sur la gauche.
+
+Pour ajouter de la sécurité, ajoutez la fonction `getSecureApiClient` au début de la méthode `putPets` :
+
+```javascript lines
+function putPets(updatedPets) {
+     var apigClient = getSecureApiClient();
+}
+```
+
+Copiez le code dans votre groupe S3.
+
+La fonction `getSecureApiClient` fournie pour vous vous permettra de récupérer le jeton AWS à partir du stockage local acquis à l’aide de la délégation à l’API et utilise la clé d’accès, le secret et le jeton de session :
+
+```javascript lines
+function getSecureApiClient() {
+    var awstoken = store.get('awstoken');
+
+    return apigClientFactory.newClient({
+        accessKey: awstoken.AccessKeyId,
+        secretKey: awstoken.SecretAccessKey,
+        sessionToken: awstoken.SessionToken,
+        region: 'us-east-1' // The region you are working out of.
+    });
+  }
+```
+

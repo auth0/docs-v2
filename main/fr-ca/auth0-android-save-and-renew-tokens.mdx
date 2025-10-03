@@ -1,0 +1,141 @@
+---
+title: "Enregistrement Auth0.Android et renouvellement des jetons"
+permalink: "auth0-android-save-and-renew-tokens"
+'description': "Garder votre utilisateur connecté avec Auth0.Android"
+'og:title': "Enregistrement Auth0.Android et renouvellement des jetons"
+'og:description': "Garder votre utilisateur connecté avec Auth0.Android"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Enregistrement Auth0.Android et renouvellement des jetons"
+'twitter:description': "Garder votre utilisateur connecté avec Auth0.Android"
+---
+
+Lorsqu’une authentification est effectuée avec la permission `offline_access` incluse, elle renvoie un jeton d’actualisation qui peut être utilisé pour demander un nouveau jeton d’utilisateur, sans obliger l’utilisateur à s’authentifier à nouveau.
+
+## Gestionnaire des identifiants
+
+[Auth0.Android](https://github.com/auth0/Auth0.Android) fournit une classe utilitaire permettant de simplifier le processus de stockage et de renouvellement des identifiants. Vous pouvez accéder aux propriétés `accessToken` ou `idToken` à partir de l’instance [Identifiants](https://github.com/auth0/Auth0.Android/blob/master/auth0/src/main/java/com/auth0/android/result/Credentials.java). Il s’agit de la méthode privilégiée pour gérer les identifiants des utilisateurs.
+
+Les gestionnaires d’identifiants sont inclus dans la trousse SDK Auth0.Android. Si cela ne fait pas encore partie de vos dépendances, suivez les directives dans [Auth0.Android](/docs/fr-ca/libraries/auth0-android).
+
+Il existe deux classes que vous pouvez utiliser pour gérer les identifiants :
+
+* `CredentialsManager` stocke les données en texte clair.
+* `SecureCredentialsManager` chiffre les données avant de les stocker, en utilisant une combinaison d’algorithmes RSA et AES avec [Android KeyStore](https://developer.android.com/reference/java/security/KeyStore.html).
+
+## Utilisation de la classe CredentialsManager
+
+### Configurer le gestionnaire d’identifiants
+
+Créer une nouvelle instance en fournissant une `AuthenticationAPIClient` et une implémentation `Storage`.
+
+```kotlin lines
+val auth0 = Auth0(this)
+val apiClient = AuthenticationAPIClient(auth0)
+val manager = CredentialsManager(apiClient, SharedPreferencesStorage(this))
+```
+
+### État actuel de l’authentification
+
+Les identifiants stockés sont considérés comme valides s’ils n’ont pas expiré ou s’ils peuvent être actualisés. Vérifier si un utilisateur s’est déjà connecté.
+
+``` lines
+val loggedIn = manager.hasValidCredentials()
+```
+
+Pour déconnecter l’utilisateur de votre application, supprimez les identifiants stockés et renvoyez-le à l’écran de connexion.
+
+``` lines
+manager.clearCredentials()
+```
+
+### Récupération des identifiants
+
+Étant donné que les identifiants peuvent devoir être actualisés par rapport aux serveurs Auth0, cette méthode est asynchrone. Fournissez une implémentation de rappel à l’endroit où vous voulez recevoir les identifiants. Les identifiants renvoyés par cette méthode en cas de succès sont toujours valides.
+
+```kotlin lines
+manager.getCredentials(object: Callback<Credentials, CredentialsManagerException>() {
+    override fun onSuccess(credentials: Credentials) {
+        // Use credentials
+    }
+
+    override fun onFailure(error: CredentialsManagerException) {
+        // No credentials were previously saved or they couldn't be refreshed
+    }
+})
+```
+
+Si l’`accessToken` a expiré, le gestionnaire utilise automatiquement le `refreshToken` et renouvelle les identifiants pour vous. Les nouveaux identifiants seront stockés pour un accès ultérieur.
+
+### Enregistrement des nouveaux identifiants
+
+Vous pouvez enregistrer les identifiants obtenus lors de l’authentification dans le gestionnaire.
+
+``` lines
+manager.saveCredentials(credentials)
+```
+
+## Utilisation de la classe SecureCredentialsManager
+
+### Configurer SecureCredentialsManager
+
+Créer une nouvelle instance en fournissant un `Context` Android valide, une `AuthenticationAPIClient` et une implémentation de `Storage`.
+
+```kotlin lines
+val auth0 = Auth0(this)
+val apiClient = AuthenticationAPIClient(auth0)
+val manager = SecureCredentialsManager(this, apiClient, SharedPreferencesStorage(this))
+```
+
+Les méthodes pour obtenir, enregistrer, vérifier l’existence et effacer les identifiants sont les mêmes que celles décrites dans la section ci-dessus.
+
+### Pré-authentification de l’utilisateur
+
+Cette classe fournit une fonctionnalité optionnelle pour une authentification supplémentaire à l’aide de l’écran de verrouillage configuré de l’appareil.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Si la sécurité du verrouillage de l’écran est réglée sur autre chose que PIN (code NIP), Pattern (modèle), Password (mot de passe) ou Fingerprint (empreinte digitale), cette fonctionnalité n’est pas disponible.
+
+</Callout>
+
+Appelez la méthode ci-dessous pour activer l’authentification. Fournit un contexte d’`Activity` valide, un code de demande et deux chaînes facultatives à utiliser comme titre et description de l’écran de verrouillage.
+
+Définissez également une constante de code de demande afin que le code de demande provenant du résultat de l’activité puisse être mis en correspondance.
+
+```kotlin lines
+companion object {
+  const val RC_UNLOCK_AUTHENTICATION = 123
+}
+
+// Called from an Activity
+val available = manager.requireAuthentication(this, RC_UNLOCK_AUTHENTICATION, getString(R.string.unlock_authentication_title), getString(R.string.unlock_authentication_description))
+```
+
+Si la fonctionnalité est activée, le gestionnaire invitera l’utilisateur à s’authentifier à l’aide de l’écran de verrouillage configuré. Le résultat de cet appel sera obtenu dans la méthode `onActivityResult` de l’activité fournie en premier paramètre. Si la fonctionnalité n’a pas été activée, l’authentification de l’écran de verrouillage sera ignorée.
+
+Après avoir vérifié que le code de demande reçu correspond à celui utilisé dans l’étape de configuration, rediriger les paramètres reçus vers le gestionnaire pour terminer l’authentification. Les identifiants seront envoyés à la fonction de rappel d’origine.
+
+```kotlin lines
+override fun onActivityResult(int requestCode, int resultCode, Intent data) {
+    if (requestCode == RC_UNLOCK_AUTHENTICATION && manager.checkAuthenticationResult(requestCode, resultCode)) {
+        return
+    }
+
+    super.onActivityResult(requestCode, resultCode, data)
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+La méthode `onActivityResult` a été retirée en 2021 et remplacée par les nouvelles [API Résultat d’activité.](https://developer.android.com/training/basics/intents/result). Cependant, la trousse SDK d’Auth0.Android n’est pas compatible avec ces contrats. Vous pouvez continuer à utiliser les méthodes obsolètes en toute sécurité.
+
+</Callout>
+
+### Traitement des exceptions d’utilisation
+
+Si un événement inattendu se produit lors de l’enregistrement ou de la récupération des identifiants, une exception `CredentialsManagerException` est levée. Voici quelques-uns des scénarios d’échec auxquels vous pouvez vous attendre :
+
+* Les identifiants à stocker ne sont pas valides (par ex., certains des champs suivants ne sont pas définis : `access_token`, `id_token` ou `expires_at`).
+* Les identifiants stockés ont expiré mais il n’y a pas de jeton d’actualisation prévu pour les renouveler automatiquement.
+* Les paramètres de sécurité de l’écran de verrouillage de l’appareil ont été modifiés (par ex. le NIP de sécurité a été modifié). Même si `hasCredentials` renvoie un résultat positif, les clés de chiffrement seront considérées comme non valides. Jusqu’à ce que `saveCredentials` soit appelé à nouveau, il ne sera pas possible de décrypter un contenu existant précédemment, car les clés utilisées précédemment ne sont pas les mêmes que les nouvelles.
+* L’appareil n’est pas compatible avec certains algorithmes de cryptographie requis par la classe `SecureCredentialsManager`. Cette situation est considérée comme un événement catastrophique et c’est la seule exception qui vous empêchera d’utiliser cette implémentation. Ce scénario se produit lorsque le fabricant d’équipement d’origine a modifié la mémoire morte Android de l’appareil, en supprimant certains des algorithmes officiellement inclus dans chaque distribution Android. Néanmoins, vous pouvez vérifier si c’est le cas dans l’instance d’exception elle-même en appelant la méthode `isDeviceIncompatible`. Ce faisant, vous pouvez décider de l’implémentation de remplacement pour le stockage des identifiants, par exemple en utilisant la classe `CredentialsManager` habituelle.

@@ -1,0 +1,503 @@
+---
+title: "Implémentation de SPA Angular 2 (SPA + API)"
+permalink: "spa-implementation-angular2"
+'description': "L’implémentation d’Angular 2 de SPA pour le scénario d’architecture SPA + API"
+'og:title': "Implémentation de SPA Angular 2 (SPA + API)"
+'og:description': "L’implémentation d’Angular 2 de SPA pour le scénario d’architecture SPA + API"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Implémentation de SPA Angular 2 (SPA + API)"
+'twitter:description': "L’implémentation d’Angular 2 de SPA pour le scénario d’architecture SPA + API"
+---
+
+Ce document fait partie du scénario d’architecture SPA + API et explique comment mettre en œuvre une SPA dans Angular 2. Veuillez vous référer au scénario pour obtenir des informations sur la solution mise en œuvre.
+
+Le code source complet de la mise en œuvre dans Angular 2 de la SPA se trouve dans[ce dépôt GitHub](https://github.com/auth0-samples/auth0-pnp-exampleco-timesheets/tree/master/timesheets-spa/angular).
+
+## 1. Configuration
+
+Votre application nécessitera certaines informations de configuration. Avant de poursuivre avec le reste de la mise en œuvre, créez une interface `AuthConfig` qui contiendra diverses valeurs de configuration. Placez cette interface dans un fichier appelé `auth0-variables.ts`.
+
+```javascript lines
+interface AuthConfig {
+  clientID: string;
+  domain: string;
+  callbackURL: string;
+  apiUrl: string;
+}
+
+export const AUTH_CONFIG: AuthConfig = {
+  clientID: '',
+  domain: '',
+  callbackURL: 'http://localhost:4200/callback',
+  apiUrl: ''
+};
+```
+
+## 2. Autoriser L’utilisateur
+
+### Créer un service d’autorisation
+
+La meilleure façon de gérer et de coordonner les tâches nécessaires à l’authentification de l’utilisateur est de créer un service réutilisable. Une fois le service en place, vous serez capable d’appeler ses méthodes dans toute votre application. Une instance de l’objet `WebAuth` de [auth0.js](https://auth0.com/docs/libraries/auth0js) peut être créée dans le service.
+
+```javascript lines
+import { Injectable } from '@angular/core';
+import { AUTH_CONFIG } from './auth0-variables';
+import { Router } from '@angular/router';
+import 'rxjs/add/operator/filter';
+import auth0 from 'auth0-js';
+
+@Injectable()
+export class AuthService {
+
+  userProfile: any;
+  requestedScopes: string = 'openid profile read:timesheets create:timesheets';
+
+  auth0 = new auth0.WebAuth({
+    clientID: AUTH_CONFIG.clientID,
+    domain: AUTH_CONFIG.domain,
+    responseType: 'token id_token',
+    audience: AUTH_CONFIG.apiUrl,
+    redirectUri: AUTH_CONFIG.callbackURL,
+    scope: this.requestedScopes
+  });
+
+  constructor(public router: Router) {}
+
+  public login(): void {
+    this.auth0.authorize();
+  }
+
+  public handleAuthentication(): void {
+    this.auth0.parseHash((err, authResult) => {
+      if (authResult && authResult.accessToken && authResult.idToken) {
+        window.location.hash = '';
+        this.setSession(authResult);
+        this.router.navigate(['/home']);
+      } else if (err) {
+        this.router.navigate(['/home']);
+        console.log(err);
+        alert('Error: <%= "${err.error}" %>. Check the console for further details.');
+      }
+    });
+  }
+
+  private setSession(authResult): void {
+    // Set the time that the Access Token will expire at
+    const expiresAt = JSON.stringify((authResult.expiresIn * 1000) + new Date().getTime());
+
+    // If there is a value on the scope param from the authResult,
+    // use it to set scopes in the session for the user. Otherwise
+    // use the scopes as requested. If no scopes were requested,
+    // set it to nothing
+    const scopes = authResult.scope || this.requestedScopes || '';
+
+    localStorage.setItem('access_token', authResult.accessToken);
+    localStorage.setItem('id_token', authResult.idToken);
+    localStorage.setItem('expires_at', expiresAt);
+    localStorage.setItem('scopes', JSON.stringify(scopes));
+  }
+
+  public logout(): void {
+    // Remove tokens and expiry time from localStorage
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('id_token');
+    localStorage.removeItem('expires_at');
+    localStorage.removeItem('scopes');
+    // Go back to the home route
+    this.router.navigate(['/']);
+  }
+
+  public isAuthenticated(): boolean {
+    // Check whether the current time is past the
+    // Access Token's expiry time
+    const expiresAt = JSON.parse(localStorage.getItem('expires_at'));
+    return new Date().getTime() < expiresAt;
+  }
+
+  public userHasScopes(scopes: Array<string>): boolean {
+    const grantedScopes = JSON.parse(localStorage.getItem('scopes')).split(' ');
+    return scopes.every(scope => grantedScopes.includes(scope));
+  }
+}
+```
+
+Le service comprend plusieurs méthodes de gestion de l’authentification.
+
+* **login**: appelle `authorize` de auth0.js, ce qui initie la connexion universelle.
+* **handleAuthentication**: recherche un résultat d’authentification dans le URL hash et le traite avec la méthode `parseHash` de auth0.js
+* **setSession**: définit le jeton d’accès de l’utilisateur, le jeton d’ID et le moment auquel le jeton d’accès expirera
+* **logout**: supprime les jetons de l’utilisateur du stockage du navigateur
+  isAuthenticated : vérifie si l’heure d’expiration du jeton d’accès est dépassée.
+
+### Traiter le résultat de l’authentification
+
+Lorsqu’un utilisateur s’authentifie via la connexion universelle et est ensuite redirigé vers votre application, ses informations d’authentification seront contenues dans un URL fragment de hash. La méthode `handleAuthentication` dans le `AuthService`  est responsable du traitement du hash
+
+Appelez `handleAuthentication` dans le composant de base de votre application afin que le fragment de hash d’authentification puisse être traité lorsque l’application se charge pour la première fois après que l’utilisateur y a été redirigé.
+
+```javascript lines
+// src/app/app.component.ts
+
+import { Component } from '@angular/core';
+import { AuthService } from './auth/auth.service';
+
+@Component({
+  selector: 'app-root',
+  templateUrl: './app.component.html',
+  styleUrls: ['./app.component.css']
+})
+
+export class AppComponent {
+
+  constructor(public auth: AuthService) {
+    auth.handleAuthentication();
+  }
+}
+```
+
+### Ajouter le composant de rappel
+
+L’utilisation de la connexion universelle signifie que les utilisateurs sont redirigés hors de votre application vers une page hébergée par Auth0. Après s’être authentifiés avec succès, ils sont renvoyés vers votre application où une session côté client est créée pour eux.
+
+Vous pouvez choisir de faire revenir les utilisateurs vers n’importe quelle URL de votre application que vous souhaitez; cependant, il est recommandé de créer une route de rappel dédiée pour servir de point central vers lequel l’utilisateur sera redirigé après une authentification réussie. Avoir une seule route de rappel est bénéfique pour deux raisons principales :
+
+* Cela évite la nécessité d’ajouter plusieurs (et parfois inconnues) URL de rappel à la liste blanche
+* Cela sert de lieu pour afficher un indicateur de chargement pendant que votre application crée la session côté client de l’utilisateur
+
+Créez un composant nommé `CallbackComponent` et remplissez-le avec un indicateur de chargement.
+
+```html lines
+<!-- app/callback/callback.html -->
+
+<div class="loading">
+  <Frame><img src="/docs/assets/loading.svg" alt="loading"></Frame>
+
+</div>
+```
+
+Cet exemple stipule qu’un certain type de spinner de chargement est disponible dans un répertoire `assets` . Voir l’exemple téléchargeable pour une démonstration
+
+Après l’authentification, les utilisateurs seront redirigés vers la route  `/callback` pendant un moment bref, où un indicateur de chargement leur sera affiché. Pendant ce temps, leur session côté client sera créée, après quoi ils seront redirigés vers la route  `/home` .
+
+## 3. Obtenez le profil utilisateur
+
+<Card title="Extraire des informations du jeton">
+
+Cette section démontre comment récupérer les informations de l’utilisateur en utilisant le jeton d’accès et le point de terminaison [/userinfo](https://auth0.com/docs/api/authentication#get-user-info). Autre solution : vous pouvez simplement décoder le jeton d’ID  [en utilisant une bibliothèque](https://jwt.io/#libraries-io) (assurez-vous de la valider d’abord). Les données de sortie seront les mêmes. Si vous avez besoin de davantage d’informations utilisateur, envisagez d’utiliser  [notre Management API](https://auth0.com/docs/api/management/v2#!/Users/get_users_by_id).
+
+</Card>
+
+Pour obtenir le profil de l’utilisateur, mettez à jour la classe `AuthService` existante. Ajoutez une fonction `getProfile` qui extraira le jeton d’accès de l’utilisateur du stockage local, puis appellera la fonction `userInfo` pour récupérer les informations de l’utilisateur.
+
+```javascript lines
+// Existing code from the AuthService class is omitted in this code sample for brevity
+@Injectable()
+export class AuthService {
+  public getProfile(cb): void {
+    const accessToken = localStorage.getItem('access_token');
+    if (!accessToken) {
+      throw new Error('Access Token must exist to fetch profile');
+    }
+
+    const self = this;
+    this.auth0.client.userInfo(accessToken, (err, profile) => {
+      if (profile) {
+        self.userProfile = profile;
+      }
+      cb(err, profile);
+    });
+  }
+}
+```
+
+Désormais, vous pouvez simplement appeler cette fonction depuis n’importe quel service où vous souhaitez récupérer et afficher des informations sur l’utilisateur.
+
+Par exemple, vous pouvez choisir de créer un nouveau composant pour afficher les informations de profil de l’utilisateur :
+
+```javascript lines
+import { Component, OnInit } from '@angular/core';
+import { AuthService } from './../auth/auth.service';
+
+@Component({
+  selector: 'app-profile',
+  templateUrl: './profile.component.html',
+  styleUrls: ['./profile.component.css']
+})
+export class ProfileComponent implements OnInit {
+
+  profile: any;
+
+  constructor(public auth: AuthService) { }
+
+  ngOnInit() {
+    if (this.auth.userProfile) {
+      this.profile = this.auth.userProfile;
+    } else {
+      this.auth.getProfile((err, profile) => {
+        this.profile = profile;
+      });
+    }
+  }
+}
+```
+
+Le modèle de ce composant est le suivant :
+
+```html lines
+<div class="panel panel-default profile-area">
+  <div class="panel-heading">
+    <h3>Profile</h3>
+  </div>
+  <div class="panel-body">
+    <Frame><img src="/docs/{{profile?.picture}}" class="avatar" alt="avatar"></Frame>
+
+    <div>
+      <label><i class="glyphicon glyphicon-user"></i> Nickname</label>
+      <h3 class="nickname">{{ profile?.nickname }}</h3>
+    </div>
+    <pre class="full-profile">{{ profile | json }}</pre>
+  </div>
+</div>
+```
+
+## 4. Afficher les éléments de l’interface utilisateur de manière conditionnelle en fonction de la permission
+
+Lors du processus d’autorisation, nous avons déjà enregistré les permissions réelles qui ont été accordées à l’utilisateur dans le stockage local. Si la `scope` retournée dans `authResult` n’est pas vide, cela signifie qu’un ensemble de permissions différentes a été attribué à l’utilisateur par rapport à ce qui a été initialement demandé. Par conséquent, nous devons donc utiliser `authResult.scope` pour déterminer les permissions accordées à l’utilisateur.
+
+Si la `scope` retournée dans `authResult` est vide, cela signifie que l’utilisateur a reçu toutes les permissions qui ont été demandées. Par conséquent, nous pouvons utiliser les permissions demandées pour déterminer les permissions accordées à l’utilisateur.
+
+Voici le code que nous avons écrit en amont pour la fonction `setSession` qui effectue cette vérification :
+
+```javascript lines
+private setSession(authResult): void {
+  // Set the time that the Access Token will expire at
+  const expiresAt = JSON.stringify((authResult.expiresIn * 1000) + new Date().getTime());
+
+  // If there is a value on the `scope` param from the authResult,
+  // use it to set scopes in the session for the user. Otherwise
+  // use the scopes as requested. If no scopes were requested,
+  // set it to nothing
+  const scopes = authResult.scope || this.requestedScopes || '';
+
+  localStorage.setItem('access_token', authResult.accessToken);
+  localStorage.setItem('id_token', authResult.idToken);
+  localStorage.setItem('expires_at', expiresAt);
+  localStorage.setItem('scopes', JSON.stringify(scopes));
+  this.scheduleRenewal();
+}
+```
+
+Ensuite, nous devons ajouter une fonction à la classe `AuthService` que nous pouvons appeler pour déterminer si un utilisateur a reçu une permission particulère :
+
+```javascript lines
+@Injectable()
+export class AuthService {
+  // some code omitted for brevity
+
+  public userHasScopes(scopes: Array<string>): boolean {
+    const grantedScopes = JSON.parse(localStorage.getItem('scopes')).split(' ');
+    return scopes.every(scope => grantedScopes.includes(scope));
+  }
+}
+```
+
+Vous pouvez faire appel à cette méthode pour déterminer si nous devons afficher un élément d’interface utilisateur spécifique ou non. Par exemple, nous ne voulons afficher le lien **Approuver les feuilles de temps** que si l’utilisateur a la permission `approve:timesheets` . Notez dans le code ci-dessous que nous avons ajouté un appel à la fonction `userHasScopes` pour déterminer si ce lien doit être affiché ou non.
+
+```html lines
+<nav class="navbar navbar-default">
+  <div class="container-fluid">
+    <div class="navbar-header">
+      <a class="navbar-brand" href="#">Timesheet System</a>
+    </div>
+    <div class="navbar-collapse collapse">
+      <ul class="nav navbar-nav">
+        <li><a routerLink="/">Home</a></li>
+        <li><a *ngIf="auth.isAuthenticated()" routerLink="/profile">My Profile</a></li>
+        <li><a *ngIf="auth.isAuthenticated()" routerLink="/timesheets">My Timesheets</a></li>
+        <li><a *ngIf="auth.isAuthenticated() && auth.userHasScopes(['approve:timesheets'])" routerLink="/approval">Approve Timesheets</a></li>
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+        <li><a *ngIf="!auth.isAuthenticated()" href="/docs/fr-ca/javascript:void(0)" (click)="auth.login()">Log In</a></li>
+        <li><a *ngIf="auth.isAuthenticated()" href="/docs/fr-ca/javascript:void(0)" (click)="auth.logout()">Log Out</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <router-outlet></router-outlet>
+</main>
+```
+
+### Protection d’une route
+
+Nous devons également protéger une route pour empêcher la navigation vers celle-ci si un utilisateur n’a pas reçu des permissions appropriées. Pour cela, nous pouvons ajouter une nouvelle classe de service `ScopeGuardService`,
+
+```javascript lines
+import { Injectable } from '@angular/core';
+import { Router, CanActivate, ActivatedRouteSnapshot } from '@angular/router';
+import { AuthService } from './auth.service';
+
+@Injectable()
+export class ScopeGuardService implements CanActivate {
+
+  constructor(public auth: AuthService, public router: Router) {}
+
+  canActivate(route: ActivatedRouteSnapshot): boolean {
+
+    const scopes = (route.data as any).expectedScopes;
+
+    if (!this.auth.isAuthenticated() || !this.auth.userHasScopes(scopes)) {
+      this.router.navigate(['']);
+      return false;
+    }
+    return true;
+  }
+
+}
+```
+
+Ensuite, l’utiliser lors de la configuration des routes pour déterminer si une route peut être activée. Remarquez l’utilisation du nouveau `ScopeGuardService` dans la définition de la route `approval` ci-dessous :
+
+```javascript lines
+// app.routes.ts
+
+import { Routes, CanActivate } from '@angular/router';
+import { HomeComponent } from './home/home.component';
+import { ProfileComponent } from './profile/profile.component';
+import { CallbackComponent } from './callback/callback.component';
+import { AuthGuardService as AuthGuard } from './auth/auth-guard.service';
+import { ScopeGuardService as ScopeGuard } from './auth/scope-guard.service';
+import { TimesheetListComponent } from './timesheet-list/timesheet-list.component';
+import { TimesheetAddComponent } from './timesheet-add/timesheet-add.component';
+import { ApprovalComponent } from './approval/approval.component';
+
+export const ROUTES: Routes = [
+  { path: '', component: HomeComponent },
+  { path: 'profile', component: ProfileComponent, canActivate: [AuthGuard] },
+  { path: 'callback', component: CallbackComponent },
+  { path: 'timesheets/add', component: TimesheetAddComponent, canActivate: [AuthGuard] },
+  { path: 'timesheets', component: TimesheetListComponent, canActivate: [AuthGuard] },
+  { path: 'approval', component: ApprovalComponent, canActivate: [ScopeGuard], data: { expectedScopes: ['approve:timesheets']} },
+  { path: '**', redirectTo: '' }
+];
+```
+
+## 5. Appeler l’API
+
+Le module [angular2-jwt](https://github.com/auth0/angular2-jwt) peut être utilisé pour lier automatiquement des jetons Web JSON à des requêtes effectuées vers votre API. Il le fait en fournissant une classe `AuthHttp` qui recouvre la classe `Http` d’Angular.
+
+Installer `angular2-jwt`:
+
+``` lines
+# installation with npm
+npm install --save angular2-jwt
+
+# installation with yarn
+yarn add angular2-jwt
+```
+
+Créez une fonction de fabrique avec quelques valeurs de configuration pour `angular2-jwt` et ajoutez-la au tableau `providers` dans le `@NgModule`de votre application. La fonction de fabrique doit avoir une fonction `tokenGetter` qui récupère le `access_token` du stockage local.
+
+```javascript lines
+import { Http, RequestOptions } from '@angular/http';
+import { AuthHttp, AuthConfig } from 'angular2-jwt';
+
+export function authHttpServiceFactory(http: Http, options: RequestOptions) {
+  return new AuthHttp(new AuthConfig({
+    tokenGetter: (() => localStorage.getItem('access_token'))
+  }), http, options);
+}
+
+@NgModule({
+  declarations: [...],
+  imports: [...],
+  providers: [
+    AuthService,
+    {
+      provide: AuthHttp,
+      useFactory: authHttpServiceFactory,
+      deps: [Http, RequestOptions]
+    }
+  ],
+  bootstrap: [...]
+})
+```
+
+Après la configuration de `angular2-jwt` ,vous pouvez utiliser la classe `AuthHttp` pour effectuer des appels sécurisés à votre API à partir de n’importe quel endroit dans l’application. Pour ce faire, injectez `AuthHttp` dans n’importe quel composant ou service où il est nécessaire et utilisez-le comme vous utiliseriez la classe `Http` régulière d’Angular.
+
+```javascript lines
+import { Injectable } from '@angular/core';
+import { Http } from '@angular/http';
+import { AuthHttp } from 'angular2-jwt';
+import 'rxjs/add/operator/map';
+import { NewTimesheetModel } from '../models/new-timesheet-model';
+
+@Injectable()
+export class TimesheetsService {
+
+  constructor(public authHttp: AuthHttp) { }
+
+  addTimesheet(model: NewTimesheetModel) {
+    return this.authHttp.post('http://localhost:8080/timesheets', JSON.stringify(model));
+  }
+
+  getAllTimesheets() {
+    return this.authHttp.get('http://localhost:8080/timesheets')
+      .map(res => res.json())
+  }
+}
+```
+
+## 6. Renouveler le jeton d’accès
+
+Le renouvellement du jeton d’accès de l’utilisateur nécessite de mettre à jour la SPA Angular. Ajoutez une méthode à `AuthService` qui appelle la méthode `checkSession` de auth0.js. Si le renouvellement est réussi, utilisez la méthode `setSession` existante pour enregistrer les nouveaux jetons dans le stockage local.
+
+```javascript lines
+public renewToken() {
+  this.auth0.checkSession({
+    audience: AUTH_CONFIG.apiUrl
+  }, (err, result) => {
+    if (!err) {
+      this.setSession(result);
+    }
+  });
+}
+```
+
+Dans la classe `AuthService` , ajoutez une méthode appelée `scheduleRenewal` pour définir un moment où l’authentification doit être renouvelée en silence. Dans l’exemple ci-dessous, cela est configuré pour se produire 30 secondes avant l’expiration réelle du jeton. Ajoutez également une méthode appelée `unscheduleRenewal` qui se désinscrira de l’Observable.
+
+```javascript lines
+public scheduleRenewal() {
+  if (!this.isAuthenticated()) return;
+
+  const expiresAt = JSON.parse(window.localStorage.getItem('expires_at'));
+
+  const source = Observable.of(expiresAt).flatMap(
+    expiresAt => {
+
+      const now = Date.now();
+
+      // Use the delay in a timer to
+      // run the refresh at the proper time
+      var refreshAt = expiresAt - (1000 * 30); // Refresh 30 seconds before expiry
+      return Observable.timer(Math.max(1, refreshAt - now));
+    });
+
+  // Once the delay time from above is
+  // reached, get a new JWT and schedule
+  // additional refreshes
+  this.refreshSubscription = source.subscribe(() => {
+    this.renewToken();
+  });
+}
+
+public unscheduleRenewal() {
+  if (!this.refreshSubscription) return;
+  this.refreshSubscription.unsubscribe();
+}
+```
+
+Enfin, vous devez initier le renouvellement du programme. Cela peut être fait en appelant `scheduleRenewal` dans votre `AppComponent` ce qui se produira lorsque la page est chargée. Cela se produira après chaque flux d’authentification, que ce soit lorsque l’utilisateur se connecte explicitement ou lorsque l’authentification silencieuse a lieu.
+
+### de rotation des jetons d’actualisation Les progrès récents des contrôles de confidentialité des navigateurs ont un impact négatif sur l’expérience de l’utilisateur en empêchant l’accès aux témoins tiers. Auth0 recommande d’utiliser la [Rotation des jetons d’actualisation] (/tokens/concepts/refresh-token-rotation), qui offre une méthode sécurisée pour utiliser des jetons d’actualisation dans les applications SPA tout en offrant aux utilisateurs finaux un accès transparent aux ressources, sans interruption de l’expérience utilisateur causée par des technologies de confidentialité des navigateurs comme l’ITP. :::
