@@ -1,0 +1,666 @@
+---
+description: How to use secure AWS API Gateway using custom authorizers that accept Auth0-issued access tokens.
+'og:image': https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+'og:title': Secure AWS API Gateway Endpoints Using Custom Authorizers
+'og:url': https://auth0.com/docs/
+permalink: aws-api-gateway-custom-authorizers
+title: Secure AWS API Gateway Endpoints Using Custom Authorizers
+'twitter:description': How to use secure AWS API Gateway using custom authorizers
+  that accept Auth0-issued access tokens.
+'twitter:title': Secure AWS API Gateway Endpoints Using Custom Authorizers
+---
+Secure AWS API Gateway endpoints using custom authorizers that accept Auth0-issued <Tooltip tip="Access Token: Authorization credential, in the form of an opaque string or JWT, used to access an API." cta="View Glossary" href="/glossary?term=access+tokens">access tokens</Tooltip>. To do this, you configure your API with API Gateway, create and configure your AWS Lambda functions (including the custom authorizers) to secure your API endpoints, and implement the <Tooltip tip="Authorization Flow: Authorization grant (or workflow) specified in the OAuth 2.0 framework." cta="View Glossary" href="/glossary?term=authorization+flow">authorization flow</Tooltip> so that your users can retrieve the access tokens needed to gain access to your API from Auth0.
+
+To learn more, visit [AWS Lambda Overview](https://aws.amazon.com/lambda/) once you log into your [AWS API Gateway](https://aws.amazon.com/api-gateway/).
+
+The API Gateway extends the capabilities of Lambda by adding a service layer in front of your Lambda functions to extend security, manage input and output message transformations, and provide capabilities like throttling and auditing. A serverless approach simplifies your operational demands since concerns like scaling out and fault tolerance are now the responsibility of the compute service that is executing your code.
+
+The custom authorizers will:
+
+* Confirm that the access token has been passed via the `authorization` header of the request to access the API.
+* Verify the RS256 signature of the Access Token using a public key obtained via a JWKS endpoint.
+* Ensure the access token has the required Issuer `iss` and <Tooltip tip="Audience: Unique identifier of the audience for an issued token. Named aud in a token, its value contains the ID of either an application (Client ID) for an ID Token or an API (API Identifier) for an Access Token." cta="View Glossary" href="/glossary?term=audience">audience</Tooltip> `aud` claims.
+
+Use the following steps to use custom authorizers:
+
+1. [Create an Auth0 API](#create-an-auth0-api)
+2. [Import and deploy the AWS API Gateway API](#import-and-deploy-the-aws-api-gateway-api)
+3. [Create the custom authorizers](#create-the-custom-authorizers)
+4. [Secure the API using custom authorizers](#secure-the-api-using-custom-authorizers)
+5. [Test your deployment](#test-your-deployment)
+
+To read more about <Tooltip tip="Signing Algorithm: Algorithm used to digitally sign tokens to ensure the token has not been tampered with." cta="View Glossary" href="/glossary?term=signing+algorithms">signing algorithms</Tooltip>, read [Signing Algorithms](/get-started/applications/signing-algorithms). For more details on using JWKS, visit [JSON Web Key Sets](/secure/tokens/json-web-tokens/json-web-key-sets).
+
+## How API Gateway custom authorizers work
+
+[According to Amazon](http://docs.aws.amazon.com/apigateway/latest/developerguide/use-custom-authorizer.html), an API Gateway custom authorizer is a "Lambda function you provide to control access to your API using bearer token authentication strategies, such as <Tooltip tip="OAuth 2.0: Authorization framework that defines authorization protocols and workflows." cta="View Glossary" href="/glossary?term=OAuth">OAuth</Tooltip> or <Tooltip tip="OAuth 2.0: Authorization framework that defines authorization protocols and workflows." cta="View Glossary" href="/glossary?term=SAML">SAML</Tooltip>."
+
+Whenever someone (or some program) attempts to call your API, API Gateway checks to see if there's a custom authorizer configured for the API.
+
+If **there is a custom authorizer for the API**, API Gateway calls the custom authorizer and provides the authorization token extracted from the request header received.
+
+You can use the custom authorizer to implement different types of authorization strategies, including JWT verification, to return IAM policies authorizing the request. If the policy returned is invalid or if the permissions are denied, the API call fails.
+
+For a valid policy, API caches the returned policy, associating it with the incoming token and using it for the current and subsequent requests. You can configure the amount of time for which the policy is cached. The default value is `300` seconds and the maximum length of caching is `3600` seconds (you can also set the value to 0 to disable caching).
+
+To read more, visit [What is Amazon API Gateway?](http://docs.aws.amazon.com/apigateway/latest/developerguide/use-custom-authorizer.html) in the Amazon Developer's Guide. For more information on <Tooltip tip="JSON Web Token (JWT): Standard ID Token format (and often Access Token format) used to represent claims securely between two parties." cta="View Glossary" href="/glossary?term=JWT">JWT</Tooltip> verification, review our [JSON Web Token](/secure/tokens/json-web-tokens) article.
+
+## Prerequisite
+
+You need to [sign up for an AWS account](https://portal.aws.amazon.com/gp/aws/developer/registration/index.html). This grants you access to the AWS features, including API Gateway and Lambda. All new members receive twelve months of free tier access to AWS.
+
+## Create an Auth0 API
+
+Configure the APIs consumed by the applications that successfully authorize.
+
+1. Go to [Auth0 Dashboard > Applications > APIs](https://manage.auth0.com/#/apis), and select **Create API**.
+2. Enter values for the following fields, and select **Create**.
+
+   <table class="table"><thead>
+   <tr>
+   <th>Field</th>
+   <th>Description</th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td>Name</td>
+   <td>A friendly name for your API. This is the name you'll see in your list of Auth0 APIs.</td>
+   </tr>
+   <tr>
+   <td>Identifier</td>
+   <td>A logical identifier for your API. We recommend formatting this identifier like a URL `https://your-api-gateway`.</td>
+   </tr>
+   <tr>
+   <td>Signing Algorithm</td>
+   <td>The algorithm you want Auth0 to use to sign the issued <Tooltip tip="Access Token: Authorization credential, in the form of an opaque string or JWT, used to access an API." cta="View Glossary" href="/glossary?term=access+token">access token</Tooltip>. To learn more, see <a href="/get-started/applications/signing-algorithms">Signing Algorithms</a>.</td>
+   </tr>
+   </tbody>
+   </table>
+
+To see the details of your newly-created API, refer to the **Settings** view.
+
+<Frame>![Dashboard - Create API - AWS API Gateway](/images/cdy7uua7fh8z/4P1N7SSCXUF1SfyC8SXTiO/28cbee1aea74738b71e87557c2400248/2024-07-08_14-06-28.png)</Frame>
+
+Creating an API also creates a Machine to Machine Application for use with the API. You can see this application listed as **Authorized** under the **Machine to Machine Application** view. Take note of the <Tooltip tip="Client ID: Identification value given to your registered resource from Auth0." cta="View Glossary" href="/glossary?term=Client+ID">Client ID</Tooltip>; you will need it in part 3 of this tutorial.
+
+## Import and deploy the AWS API Gateway API
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+This portion of the tutorial has been adapted from the [official AWS example](http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-api-from-example.html). Please refer to this example for in-depth notes and discussion.
+
+</Callout>
+
+In this step, you will:
+
+* Import an API into API Gateway
+* Test an API import
+* Deploy an API for use with any front-end applications
+* Test an API deployment
+
+### Import and configure the Pets API
+
+1. Log in to your AWS account, and using the **Services** drop-down located in the top navigation bar, go to the **API Gateway** Console.
+2. If you've previously created an API, simply navigate to the API Gateway Console and click **Create API**. You'll be given the option to create the **Example API** on the **Create new API** form.
+   If you've never created an API using API Gateway, you'll see the following screen. Click **Get Started** to proceed.
+
+   <Frame>![AWS API Gateway - Get Started](/images/cdy7uua7fh8z/3MX6jO6ZzTqEWNZaWps0j5/4b97df023e694e452d4f34f03d15d21c/aws-pt1-1.png)</Frame>
+
+   You'll see a pop-up message welcoming you to API Gateway. Click **OK** to proceed.
+3. On the **Create new API** form, you'll see that **Example API** is selected by default, and there's an example API defined in the editor. We'll use this API for the rest of our tutorial, so begin the API creation process by clicking **Import**.
+
+   <Frame>![AWS API Gateway - Example API](/images/cdy7uua7fh8z/8b4yGZNUwCNRYovU203Au/d010702b68635ef7e1864554c3a3826f/aws-pt1-4.png)</Frame>
+
+   When done, AWS displays a message indicating that your API created and populated with the provided data. Notice the API already has methods associated with it (namely, `GET` and `POST`). You can view the details of a method, modify its configuration, or test the method invocation by clicking the method name from the resource tree.
+
+   <Frame>![AWS API Gateway - Resources Tree](/images/cdy7uua7fh8z/1COXG4sI0DNSM4NIMEtma9/9cc6104e234ac25d1098fd92f1183bc1/aws-pt1-5a.png)</Frame>
+
+### Test your API
+
+To test your API, click **POST** under `/pets`. This brings up the **Method Execution** window that provides an overview of the `POST` method's structure and behaviors:
+
+* **Method Request** and **Method Response**: the API's interface with the front-end
+* **Integration Request** and **Integration Response**: the API's interface with the back-end
+
+We can use this area to test the API.
+
+1. Click **Test** (shown on the **Client** sliver located in the middle of the page). You'll be redirected to the `/pets - POST - Method Test` page. Scroll to the bottom of the page, and provide the following snippet as the **Request Body**:
+
+   ```json lines
+   {"type": "dog", "price": 249.99}
+   ```
+
+
+   
+
+   
+
+   The request body indicates the attributes of the pet we want to add to the database, as well as the cost for the pet.<Frame>![AWS API Gateway - Request Body](/images/cdy7uua7fh8z/5XKCxyYc5nBCsqln27HVLF/bcd9c16f9e3405fda8cc44f455cb819b/aws-pt1-5d.png)</Frame>
+2. Click **Test** to proceed. You'll see the results of the test at the right side of the page.
+
+   <Frame>![AWS API Gateway - Test Results](/images/cdy7uua7fh8z/2cwnpb0irU5DOVKCjcjnil/986f046738bc3b0f79145daa7b86ff3c/aws-pt1-5e.png)</Frame>
+
+### Deploy the API
+
+The test we just completed was done using the API Gateway console. To use the API with a different application, you'll need to deploy the API to a stage.
+
+1. From the **Actions** menu, select **Deploy API**.
+2. Provide the following values, and click **Deploy**.
+
+   <table class="table"><thead>
+   <tr>
+   <th><strong>Parameter</strong></th>
+   <th><strong>Value</strong></th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td><strong>Deployment stage</strong></td>
+   <td>Choose <code>[New Stage]</code></td>
+   </tr>
+   <tr>
+   <td><strong>Stage name</strong></td>
+   <td>Provide a name for your stage</td>
+   </tr>
+   <tr>
+   <td><strong>Stage description</strong></td>
+   <td>Provide a description for your stage</td>
+   </tr>
+   <tr>
+   <td><strong>Deployment description</strong></td>
+   <td>Provide a description for your API deployment</td>
+   </tr>
+   </tbody>
+   </table>
+
+### Test the deployment
+
+When the API has successfully deployed, you'll be redirected to the **Test Stage Editor**. You can, at this point, test the API to see if it deployed correctly.
+
+1. At the top of the **Test Stage Editor** window is a blue banner with your **Invoke URL**. This is the URL used to invoke the `GET` endpoint of your API. Click on the link to submit the `GET / method` request in a browser. This should result in the following success response:
+
+   <Frame>![AWS API Gateway - Deploy Test Response](/images/cdy7uua7fh8z/7d8340OcAtOF8GvBtihRBt/958eff065c665682ef53b9eedae77a8e/aws-pt1-8.png)</Frame>
+2. In the **Stages** page, expand the tree under **Test**. Click **GET** under `/pets/{petId}`.
+
+   <Frame>![AWS API Gateway - Get Pet ID](/images/cdy7uua7fh8z/2QzVCjIndpP9EQ4VUxVzZc/5c2afef3f8c83004b35636557c9ec59e/aws-pt1-9.png)</Frame>
+3. You'll see an **Invoke URL** displayed in the blue banner at the top of the window. The final portion, `{petID}`, stands for a path variable. Replace this variable with `1`, and navigate to the new URL using your browser. You should receive an HTTP 200 request with the following JSON payload:
+
+   ```json lines
+   {
+     "id": 1,
+     "type": "dog",
+     "price": 249.99
+   }
+   ```
+
+## Create the custom authorizers
+
+Now that we have a fully functional API that's managed by API Gateway, secure this API so only those with the appropriate authorization may access the back-end behind the API.
+
+Use API Gateway's custom request authorizers to authorize your APIs using bearer token authorization strategies, such as OAuth 2.0 or SAML. For each incoming request, the following happens:
+
+1. API Gateway checks for a properly-configured custom authorizer.
+2. API Gateway calls the custom authorizer (which is a Lambda function) with the authorization token.
+3. If the authorization token is valid, the custom authorizer returns the appropriate AWS Identity and Access Management (IAM) policies.
+4. API Gateway uses the policies returned in step 3 to authorize the request.
+
+### Prepare the custom authorizer
+
+You can [download a sample custom authorizer](https://github.com/auth0-samples/jwt-rsa-aws-custom-authorizer) that supports Auth0-issued tokens. Afterward, you'll need to customize the files so that the custom authorizer works for your environment.
+
+1. Unzip the folder containing the sample files you downloaded above to the location of your choice, and navigate to the folder using the command line.
+2. Within the sample folder, run `npm install` to install the Node.js packages required for deployment; AWS requires that these files be included in the bundle you will upload to AWS during a later step.
+3. Configure your local environment with a `.env` file. You can copy the `.env.sample` file (while simultaneously renaming it `.env`) using `cp .env.sample .env`. Make the following changes:
+
+   <table class="table"><thead>
+   <tr>
+   <th><strong>Parameter</strong></th>
+   <th><strong>Value</strong></th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td><strong><code>TOKEN_ISSUER</code></strong></td>
+   <td>The issuer of the token. If Auth0 is the token issuer, use `https://{yourDomain}/`. Be sure to include the trailing slash.</td>
+   </tr>
+   <tr>
+   <td><strong><code>JWKS_URI</code></strong></td>
+   <td>The URL of the JWKS endpoint. If Auth0 is the token issuer, use `https://{yourDomain}/.well-known/jwks.json`</td>
+   </tr>
+   <tr>
+   <td><strong><code>AUDIENCE</code></strong></td>
+   <td>The <strong>identifier</strong> value of the API you created in the Create an Auth0 API section above.</td>
+   </tr>
+   </tbody>
+   </table>
+
+   As an example, the text of your `.env` file should look something like this when complete:
+
+   ```http lines
+   JWKS_URI=https://{yourDomain}/.well-known/jwks.json
+   AUDIENCE=https://your-api-gateway
+   TOKEN_ISSUER=https://{yourDomain}/
+   ```
+
+
+   
+
+   
+
+### Test the custom authorizer locally
+
+Obtain a valid JWT access token. There are multiple ways you can get one and the method you choose depends on your application's type, trust level, or overall end-user experience. For more information, review [Get Access Tokens](/secure/tokens/access-tokens/get-access-tokens).
+
+1. You can get a test token for your API by navigating to [Auth0 Dashboard > Applications > APIs](https://manage.auth0.com/#/apis), selecting your API, and selecting **Test**.
+2. Create a local `event.json` file containing the token. You can copy the sample file (run `cp event.json.sample event.json`). Replace `ACCESS_TOKEN` with your JWT token, and `methodArn` with the appropriate ARN value for the `GET` method of your API.
+
+To get the `methodArn`:
+
+1. Using the API Gateway Console, open the **PetStore** API.
+2. In the left-hand navigation, select **Resources**.
+3. In the middle **Resources** panel, expand the resource tree. Underneath `/pets`, select **GET**.
+4. In the **Method Request** box, you'll see the **ARN**.
+5. Run the test using `npm test`.
+
+The test uses the lambda-local package to test the custom authorizer using your token. If the test was successful, you'll see output similar to the following:
+
+```json lines
+Message
+------
+{
+    "principalId": "C8npTEMVnBrILsBTI91MOh6dfuZbPVAU@clients",
+    "policyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "execute-api:Invoke",
+                "Effect": "Allow",
+                "Resource": "arn:aws:execute-api:us-east-1:1234567890:apiId/stage/method/resourcePath"
+            }
+        ]
+    },
+    "context": {
+        "scope": "FULL_LIST_OF_SCOPES"
+    }
+}
+```
+
+
+
+
+
+
+If the value of `Effect` is `Allow`, your authorizer would've allowed the call to API Gateway.
+
+To learn more, visit [Lambda-local](https://www.npmjs.com/package/lambda-local) at NPM.
+
+### Create the IAM role
+
+The IAM role has the required permissions to call Lambda functions; before we can proceed with our custom authorizer, we'll need to create an IAM role that can call our custom authorizer whenever API Gateway receives a request for access.
+
+1. Log in to AWS, and navigate to the [IAM Console](https://console.aws.amazon.com/iam). In the left-hand navigation, select **Roles**.
+2. Select **Create new role**.
+3. Under **AWS service**, select the **AWS Lambda** row, then **Next: Permissions**.
+4. On the **Attach permissions policy** screen, select the **AWSLambdaRole**. You can use the provided filter to narrow down the list of options. Select **Next: Tags**, then select **Next: Review** to proceed.
+5. On the **Review** screen, provide a **Role name**, such as `Auth0Integration`. Leave the rest of the fields as is. Select **Create role**.
+6. Once AWS has created your role, you'll be directed back to the **Roles** page of IAM. Select your new role.
+7. On the **Summary** page for the role you've just created, select the **Trust relationships** view.
+8. Select **Edit trust relationship**, and populate the **Policy Document** field with the following JSON snippet:
+
+   ```json lines
+   {
+   "Version": "2012-10-17",
+   "Statement": [
+       {
+       "Effect": "Allow",
+       "Principal": {
+           "Service": [
+           "apigateway.amazonaws.com",
+           "lambda.amazonaws.com"
+           ]
+       },
+       "Action": "sts:AssumeRole"
+       }
+   ]
+   }
+   ```
+
+
+   
+
+   
+9. Click **Update Trust Policy**.
+10. You'll be redirected back to the **Summary** page. Copy down the **Role ARN** value for later use.
+
+    <Frame>![undefined](/images/cdy7uua7fh8z/1ki5GDOZenh5WRgpbWwzC8/76f415684f08510b4206559032880a59/pt2-10.png)</Frame>
+
+### Create the Lambda function and deploy the custom authorizer
+
+Now that you've configured your custom authorizer for your environment and tested it to see it works, deploy it to AWS.
+
+1. Create a bundle that you can upload to AWS by running `npm run bundle`. This generates a `custom-authorizer.zip` bundle containing the source, configuration, and node modules required by AWS Lambda.
+2. Navigate to the [Lambda console](https://console.aws.amazon.com/lambda), and click **Create function**.
+3. On the **Select blueprint** page, click **Author from scratch** to create a blank function. Under **Basic information**, provide values for the following parameters:
+
+   <table class="table"><thead>
+   <tr>
+   <th><strong>Parameter</strong></th>
+   <th><strong>Value</strong></th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td><strong>Name</strong></td>
+   <td>A name for your Lambda function, such as <code>jwtRsaCustomAuthorizer</code></td>
+   </tr>
+   <tr>
+   <td><strong>Description</strong></td>
+   <td>A description for your Lambda function (optional)</td>
+   </tr>
+   <tr>
+   <td><strong>Runtime</strong></td>
+   <td>Select <code>Node.js 10.x</code></td>
+   </tr>
+   </tbody>
+   </table>
+4. Click **Create Function** to continue.
+5. On the **Configuration** page of your function, scroll down to the **Function Code** section.
+6. Select **Upload a .ZIP file** as the **Code entry type**.
+7. Click **Upload** and select the `custom-authorizer.zip` bundle you created earlier.
+8. Then, create the following three **Environment variables**. Note that this information is identical to that which is the `.env` file.
+
+   <table class="table"><thead>
+   <tr>
+   <th><strong>Parameter</strong></th>
+   <th><strong>Value</strong></th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td><strong><code>TOKEN_ISSUER</code></strong></td>
+   <td>The issuer of the token. If Auth0 is the token issuer, use `https://{yourDomain}/`</td>
+   </tr>
+   <tr>
+   <td><strong><code>JWKS_URI</code></strong></td>
+   <td>The URL of the JWKS endpoint. If Auth0 is the token issuer, use `https://{yourDomain}/.well-known/jwks.json`</td>
+   </tr>
+   <tr>
+   <td><strong><code>AUDIENCE</code></strong></td>
+   <td>The <strong>identifier</strong> value of the API you created in step 1.</td>
+   </tr>
+   </tbody>
+   </table>
+9. In the **Execution role** section, select **Use an existing role** then select the IAM role you created previously as the **Existing role**.
+10. Under **Basic settings**, set **Timeout** to **30** sec.
+11. Click **Save**.
+12. To test the Lambda function you just created, click **Test** in the top-right corner.
+13. Copy the contents of your `event.json` file into the **Configure test event** form. You can use the default "Hello World" event template.
+14. Click **Create**.
+15. Run your test by selecting it and clicking **Test**. If the test was successful, you'll see: "Execution result: succeeded". Expanding the output window should show a message similar to the one you received after your successful local test.
+
+    <Frame>![undefined](/images/cdy7uua7fh8z/8Xr9yXq8LwOChAbQkDZlJ/0905bbce96f257716a67376f17a0c975/pt2-19.png)</Frame>
+
+### Configure API Gateway custom authorizer
+
+1. Return to API Gateway Console and open the **PetStore** API we created earlier.
+2. Using the left-hand navigation, open **Authorizers** and select **Create New Authorizer**, then set the following parameters, and click **Create**.
+
+   <table class="table"><thead>
+   <tr>
+   <th><strong>Parameter</strong></th>
+   <th><strong>Value</strong></th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td><strong>Name</strong></td>
+   <td><code>jwt-rsa-custom-authorizer</code></td>
+   </tr>
+   <tr>
+   <td><strong>Type</strong></td>
+   <td>Select <strong>Lambda</strong></td>
+   </tr>
+   <tr>
+   <td><strong>Lambda Region</strong></td>
+   <td>Use the region for the Lambda function you created previously</td>
+   </tr>
+   <tr>
+   <td><strong>Lambda Function</strong></td>
+   <td><code>jwtRsaCustomAuthorizer</code></td>
+   </tr>
+   <tr>
+   <td><strong>Lambda Invoke Role</strong></td>
+   <td>The IAM Role ARN you copied above</td>
+   </tr>
+   <tr>
+   <td><strong>Lambda Event Payload</strong></td>
+   <td>Select <strong>Token</strong></td>
+   </tr>
+   <tr>
+   <td><strong>Token Source</strong></td>
+   <td><code>Authorization</code></td>
+   </tr>
+   <tr>
+   <td><strong>Token Validation</strong></td>
+   <td><code>^Bearer [-0-9a-zA-z\.]*$</code></td>
+   </tr>
+   <tr>
+   <td><strong>TTL (seconds)</strong></td>
+   <td><code>3600</code></td>
+   </tr>
+   </tbody>
+   </table>
+3. After AWS creates the authorizer and the page refreshes, test your authorizer by clicking **Test** and providing the Auth0 token (`Bearer ey...`) you previously used.
+   If the test was successful, you'll see a response similar to the following.
+
+   <Frame>![undefined](/images/cdy7uua7fh8z/5lx86XsQEJtxVikZJ4lC2C/c2a5c24a31b9cb4b6540267828bbd3a2/pt2-26.png)</Frame>
+
+## Secure the API using custom authorizers
+
+To learn how to secure your API's endpoints, see the Amazon API Gateway developer guide article: [Use API Gateway Lambda Authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html).
+
+### Configure API Gateway resources to use the custom authorizer
+
+1. Log in to AWS, and navigate to the [API Gateway Console](http://console.aws.amazon.com/apigateway).
+
+   <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+   Custom authorizers are set on a method by method basis; if you want to secure multiple methods using a single authorizer, you'll need to repeat the following instructions for each method.
+
+   </Callout>
+2. Open the **PetStore** API we created in step 2 of this tutorial. Under the **Resource** tree in the center pane, select the **GET** method under the `/pets` resource.
+
+   <Frame>![undefined](/images/cdy7uua7fh8z/3Z9Gmy20NDr9Hb9Yk0piXF/0c7572fc188e13106d9340562580e5e0/pt3-2.png)</Frame>
+3. Select **Method Request**.
+4. Under **Settings**, click the **pencil** icon to the right of **Authorization** and choose the `jwt-rsa-custom-authorizer` custom authorizer you created in step 3.
+5. Click the **check mark** icon to save your choice of custom authorizer. Make sure the **API Key Required** field is set to `false`.
+
+### Deploy the API
+
+To make your changes public, deploy your API.
+
+1. From the **Actions** menu, select **Deploy API**.
+2. Provide the following values, and click **Deploy**:
+
+   <table class="table"><thead>
+   <tr>
+   <th><strong>Parameter</strong></th>
+   <th><strong>Value</strong></th>
+   </tr>
+   </thead>
+   <tbody>
+   <tr>
+   <td><strong>Deployment stage</strong></td>
+   <td>Choose <code>[New Stage]</code></td>
+   </tr>
+   <tr>
+   <td><strong>Stage name</strong></td>
+   <td>Provide a name for your stage</td>
+   </tr>
+   <tr>
+   <td><strong>Stage description</strong></td>
+   <td>Provide a description for your stage</td>
+   </tr>
+   <tr>
+   <td><strong>Deployment description</strong></td>
+   <td>Provide a description for your API deployment</td>
+   </tr>
+   </tbody>
+   </table>
+
+If successful, you'll be redirected to the **Test Stage Editor**. Note the **Invoke URL** provided in the blue ribbon at the top because you need this to test your deployment.
+
+## Test your deployment
+
+To test your deployment, make a `GET` call to the **Invoke URL** you noted in the previous step. If this test fails, check that you obtained the JWT access token correctly.
+
+For details, see [Get Access Tokens](/secure/tokens/access-tokens/get-access-tokens).
+
+<CodeGroup>
+```bash cURL lines
+curl --request GET \
+  --url https://%7ByourInvokeUrl%7D/pets
+```
+```csharp C# lines
+var client = new RestClient("https://%7ByourInvokeUrl%7D/pets");
+var request = new RestRequest(Method.GET);
+IRestResponse response = client.Execute(request);
+```
+
+```go Go lines
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"io/ioutil"
+)
+
+func main() {
+
+	url := "https://%7ByourInvokeUrl%7D/pets"
+
+	req, _ := http.NewRequest("GET", url, nil)
+
+	res, _ := http.DefaultClient.Do(req)
+
+	defer res.Body.Close()
+	body, _ := ioutil.ReadAll(res.Body)
+
+	fmt.Println(res)
+	fmt.Println(string(body))
+
+}
+```
+```java Java lines
+HttpResponse<String> response = Unirest.get("https://%7ByourInvokeUrl%7D/pets")
+  .asString();
+```
+
+```javascript Node.JS lines
+var axios = require("axios").default;
+
+var options = {method: 'GET', url: 'https://%7ByourInvokeUrl%7D/pets'};
+
+axios.request(options).then(function (response) {
+  console.log(response.data);
+}).catch(function (error) {
+  console.error(error);
+});
+```
+```obj-c Obj-C lines
+#import <Foundation/Foundation.h>
+
+NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://%7ByourInvokeUrl%7D/pets"]
+                                                       cachePolicy:NSURLRequestUseProtocolCachePolicy
+                                                   timeoutInterval:10.0];
+[request setHTTPMethod:@"GET"];
+
+NSURLSession *session = [NSURLSession sharedSession];
+NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
+                                            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                                                if (error) {
+                                                    NSLog(@"%@", error);
+                                                } else {
+                                                    NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *) response;
+                                                    NSLog(@"%@", httpResponse);
+                                                }
+                                            }];
+[dataTask resume];
+```
+
+```php PHP lines
+$curl = curl_init();
+
+curl_setopt_array($curl, [
+  CURLOPT_URL => "https://%7ByourInvokeUrl%7D/pets",
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_ENCODING => "",
+  CURLOPT_MAXREDIRS => 10,
+  CURLOPT_TIMEOUT => 30,
+  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+  CURLOPT_CUSTOMREQUEST => "GET",
+]);
+
+$response = curl_exec($curl);
+$err = curl_error($curl);
+
+curl_close($curl);
+
+if ($err) {
+  echo "cURL Error #:" . $err;
+} else {
+  echo $response;
+}
+```
+```python Python lines
+import http.client
+
+conn = http.client.HTTPSConnection("")
+
+conn.request("GET", "%7ByourInvokeUrl%7D/pets")
+
+res = conn.getresponse()
+data = res.read()
+
+print(data.decode("utf-8"))
+```
+
+```ruby Ruby lines
+require 'uri'
+require 'net/http'
+require 'openssl'
+
+url = URI("https://%7ByourInvokeUrl%7D/pets")
+
+http = Net::HTTP.new(url.host, url.port)
+http.use_ssl = true
+http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+request = Net::HTTP::Get.new(url)
+
+response = http.request(request)
+puts response.read_body
+```
+```swift Swift lines
+import Foundation
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://%7ByourInvokeUrl%7D/pets")! as URL,
+                                        cachePolicy: .useProtocolCachePolicy,
+                                    timeoutInterval: 10.0)
+request.httpMethod = "GET"
+
+let session = URLSession.shared
+let dataTask = session.dataTask(with: request as URLRequest, completionHandler: { (data, response, error) -> Void in
+  if (error != nil) {
+    print(error)
+  } else {
+    let httpResponse = response as? HTTPURLResponse
+    print(httpResponse)
+  }
+})
+
+dataTask.resume()
+```
+</CodeGroup>

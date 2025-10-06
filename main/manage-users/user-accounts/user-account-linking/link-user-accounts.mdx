@@ -1,0 +1,1042 @@
+---
+description: Understand how to link user accounts from various identity providers,
+  so your users can authenticate from any account and be recognized by your app.
+'og:image': https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+'og:title': Link User Accounts
+'og:url': https://auth0.com/docs/
+permalink: link-user-accounts
+title: Link User Accounts
+'twitter:description': Understand how to link user accounts from various identity
+  providers, so your users can authenticate from any account and be recognized by
+  your app.
+'twitter:title': Link User Accounts
+---
+<Card title="Availability varies by Auth0 plan">
+
+Both your specific login implementation and your Auth0 plan or custom agreement affect whether this feature is available. To learn more, read [Pricing](https://auth0.com/pricing).
+
+</Card>
+
+You can link user accounts through a variety of methods:
+
+* Action with external linking application
+* Auth0 <Tooltip tip="Management API: A product to allow customers to perform administrative tasks." cta="View Glossary" href="/glossary?term=Management+API">Management API</Tooltip>
+* Auth0.js library
+
+## Action with external linking application
+
+You can use an Action along with an external linking application to link user accounts with the Management API.
+
+<Warning>
+
+**Auth0 does not automatically change to the correct primary** **user** after Account Linking, so it must be changed within the Actions code upon successful Account Linking.
+
+**Every manual account link should prompt the user to enter credentials**. Your tenant should request authentication for both accounts before linking occurs to avoid allowing malicious actors to access legitimate user accounts.
+
+</Warning>
+
+The following steps illustrate an example implementation:
+
+1. Action identifies the potential user accounts to link (if they exist).
+2. Action redirects the user to an external linking application with a token payload that contains candidate user identities:
+
+   ```json lines
+   {
+     "current_identity": {
+       "user_id": event.user.user_id,
+       "provider": event.connection.strategy,
+       "connection": event.connection.name
+     },
+     "candidate_identities": [
+       {
+         "user_id": USER_ID_1,
+         "provider": PROVIDER_1,
+         "connection": CONNECTION_1
+       },
+       {
+         "user_id": USER_ID_2,
+         "provider": PROVIDER_2,
+         "connection": CONNECTION_2
+       },
+       ...
+     ]
+   }
+   ```
+
+
+   
+
+   
+3. External linking application prompts the user to authenticate using the credentials for the account they wish to link.
+4. External linking application redirects the user back to the Action with a token payload that contains the primary and secondary user identities:
+
+   ```json lines
+   {
+     "primary_identity": {
+       "user_id": PRIMARY_USER_ID,
+       "provider": PRIMARY_PROVIDER_STRATEGY,
+       "connection": PRIMARY_CONNECTION_NAME,
+     },
+     "secondary_identity": {
+       "user_id": SECONDARY_USER_ID,
+       "provider": SECONDARY_PROVIDER_STRATEGY,
+       "connection": SECONDARY_CONNECTION_NAME,
+     }
+   }
+   ```
+
+
+   
+
+   
+5. Action validates the authenticity and contents of the token.
+6. Action calls the Management API to link the accounts based on the results from the external linking application.
+7. Action switches to the primary user if it doesn’t match the `event.user.user_id`.
+
+### Example: Account linking Action
+
+```javascript lines expandable
+const { ManagementClient, AuthenticationClient } = require('auth0');
+
+/**
+ * @constant {string} - Account linking timestamp key
+ */
+const ACCOUNT_LINKING_TIMESTAMP_KEY = 'account_linking_timestamp';
+
+/**
+ * @constant {number} - TTL leeway factor
+ */
+const TTL_LEEWAY_FACTOR = .2;
+
+/**
+ * @constant {string[]} - Properties to complete based on identities
+ */
+const PROPERTIES_TO_COMPLETE = [
+  'given_name',
+  'family_name',
+  'name'
+];
+
+/**
+* @param {Event} event
+* @param {PostLoginAPI} api
+* @returns {Promise<string>} - Management API access token
+*/
+const getManagementAccessToken = async (event, api) => {
+  const managementApiTokenCacheKey = `mgmt-api-token-${event.secrets.MANAGEMENT_API_CLIENT_ID}`;
+  const { value: cachedAccessToken } = api.cache.get(managementApiTokenCacheKey) || {};
+
+  if (cachedAccessToken) {
+    return cachedAccessToken;
+  }
+
+  const authentication = new AuthenticationClient({
+    domain: event.secrets.MANAGEMENT_API_DOMAIN,
+    clientId: event.secrets.MANAGEMENT_API_CLIENT_ID,
+    clientSecret: event.secrets.MANAGEMENT_API_CLIENT_SECRET
+  });
+
+  const { data: { access_token: accessToken, expires_in: expiresIn } } = await authentication.oauth.clientCredentialsGrant({
+    audience: `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/`,
+  });
+
+  api.cache.set(managementApiTokenCacheKey, accessToken, {
+    ttl: expiresIn - expiresIn * TTL_LEEWAY_FACTOR
+  });
+
+  return accessToken;
+}
+
+/**
+* @param {Event} event
+* @param {PostLoginAPI} api
+* @returns {Promise<ManagementClient>} - Auth0 management client
+*/
+const getManagementClient = async (event, api) => {
+  const token = await getManagementAccessToken(event, api);
+
+  return new ManagementClient({
+    domain: event.secrets.MANAGEMENT_API_DOMAIN,
+    token,
+  });
+}
+
+/**
+ * @typedef {Object} CandidateUsersIdentities
+ * @property {string} user_id
+ * @property {string} provider
+ * @property {string} connection
+ */
+
+/**
+ * @typedef {Object} CandidateUsers
+ * @property {string} email
+ * @property {boolean} email_verified
+ * @property {string} user_id
+ * @property {CandidateUsersIdentities[]} identities
+ */
+
+/**
+ * @typedef {Object} CandidateIdentities
+ * @property {User['user_id']} user_id
+ * @property {string} connection
+ * @property {string} provider
+ */
+
+/**
+ * @typedef {Object} LinkedIdentity
+ * @property {User['user_id']} user_id
+ */
+
+/**
+* @param {Event} event
+* @param {PostLoginAPI} api
+* @returns {Promise<CandidateUsers[]>} - List of users with the same email address
+*/
+const getUsersWithSameEmail = async (event, api) => {
+  const management = await getManagementClient(event, api);
+
+  const { data } = await management.usersByEmail.getByEmail({
+    email: event.user.email,
+    fields: 'email,email_verified,user_id,identities',
+    include_fields: true,
+  });
+
+  return data;
+}
+
+/**
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {CandidateUsers[]} candidateUsers - List of users that match the same email address
+* @returns {CandidateIdentities[]} - List of candidate identities
+*/
+const getCandidateIdentitiesWithVerifiedEmail = (event, candidateUsers) => {
+  // Removes current user from candidate identities and checks the email is verified
+  return candidateUsers
+    .filter((user) => user.user_id !== event.user.user_id && user.email_verified === true)
+    .filter((user) => user.identities)
+    // .flatMap((user) => user.identities)
+    .map((user) => {
+      return {
+        user_id: user.user_id,
+        provider: user.identities[0].provider,
+        connection: user.identities[0].connection
+      }
+    });
+}
+
+/**
+* @param {Event} event
+* @param {PostLoginAPI} api
+* @returns {Promise<LinkedIdentity[]>} - Linked identity response
+*/
+const linkIdentities = async (event, api, primaryIdentity, secondaryIdentity) => {
+  const management = await getManagementClient(event, api);
+
+  const { data } = await management.users.link({
+    id: primaryIdentity.user_id
+  }, {
+    provider: secondaryIdentity.provider,
+    user_id: secondaryIdentity.user_id
+  });
+
+  return data;
+}
+
+/**
+* @param {Event} event
+* @param {PostLoginAPI} api
+* @returns {void}
+*/
+const completeProperties = (event, api) => {
+  // go over each property and try to get missing
+  // information from secondary identities for ID Token
+  for (const property of PROPERTIES_TO_COMPLETE) {
+    if (!event.user[property]) {
+      for(const identity of event.user.identities) {
+        if (identity.profileData && identity.profileData[property]) {
+          api.idToken.setCustomClaim(property, identity.profileData[property]);
+          break;
+        }
+      }
+    }
+  }
+}
+
+/**
+* Handler that will be called during the execution of a PostLogin flow.
+*
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  if (
+    !event.secrets.MANAGEMENT_API_DOMAIN ||
+    !event.secrets.MANAGEMENT_API_CLIENT_ID ||
+    !event.secrets.MANAGEMENT_API_CLIENT_SECRET ||
+    !event.secrets.SESSION_TOKEN_SHARED_SECRET ||
+    !event.secrets.ACCOUNT_LINKING_SERVICE_URL
+  ) {
+    console.log('Missing required configuration for account linking action. Skipping.');
+    return;
+  }
+
+  // We won't process users for account linking until they have verified their email address.
+  // We might consider rejecting logins here or redirecting users to an external tool to
+  // remind the user to confirm their email address before proceeding.
+  //
+  // In this example, we simply won't process users unless their email is verified.
+  if (!event.user.email_verified) {
+    return;
+  }
+
+  // Account linking has already been processed and completed for this user. No further work
+  // to be done in this Action.
+  if (event.user.app_metadata[ACCOUNT_LINKING_TIMESTAMP_KEY] !== undefined) {
+    completeProperties(event, api);
+    return;
+  }
+
+  try {
+    const candidateUsers = await getUsersWithSameEmail(event, api);
+
+    // If there are no candidates, skip
+    if (!Array.isArray(candidateUsers) || candidateUsers.length === 0) {
+      return;
+    }
+
+    const candidateIdentities = getCandidateIdentitiesWithVerifiedEmail(event, candidateUsers);
+
+    // If there are no candidates, skip
+    if (candidateIdentities.length === 0) {
+      return;
+    }
+
+    // Encode the current user and an array of their candidate identities
+    const sessionToken = api.redirect.encodeToken({
+      payload: {
+        current_identity: {
+          user_id: event.user.user_id,
+          provider: event.connection.strategy,
+          connection: event.connection.name
+        },
+        candidate_identities: candidateIdentities,
+      },
+      secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+      expiresInSeconds: 20
+    });
+
+    // Redirect to your Account Linking UX
+    api.redirect.sendUserTo(event.secrets.ACCOUNT_LINKING_SERVICE_URL, {
+      query: {
+        session_token: sessionToken
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    // Handle error
+  }
+};
+
+/**
+* Handler that will be invoked when this action is resuming after an external redirect. If your
+* onExecutePostLogin function does not perform a redirect, this function can be safely ignored.
+*
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+exports.onContinuePostLogin = async (event, api) => {
+  // Validate the session token passed to `/continue?state` and extract the `user_id` claim. 
+  const { primary_identity: primaryIdentity, secondary_identity: secondaryIdentity } = api.redirect.validateToken({
+    secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+    tokenParameterName: 'session_token',
+  });
+
+  try {
+    const linkedIdentity = await linkIdentities(event, api, primaryIdentity, secondaryIdentity);
+
+    if (linkedIdentity !== undefined && linkedIdentity.length > 1) {
+      if (primaryIdentity.user_id !== event.user.user_id) {
+        // The account linking service indicated that the primary user changed.
+        api.authentication.setPrimaryUser(primaryIdentity.user_id);
+      }
+      // Mark the user as having been processed for account linking
+      api.user.setAppMetadata(ACCOUNT_LINKING_TIMESTAMP_KEY, Date.now());
+
+      completeProperties(event, api);
+    } else {
+      // Handle error
+      api.access.deny('Account linking failure');
+    }
+  } catch (err) {
+    console.error(err);
+    // Handle error
+  }
+};
+```
+
+
+
+
+
+
+## Management API
+
+You can use the Management API [Link a user account](https://auth0.com/docs/api/v2#!/Users/post_identities) endpoint in two ways:
+
+* User-initiated client-side account linking using <Tooltip tip="Access Token: Authorization credential, in the form of an opaque string or JWT, used to access an API." cta="View Glossary" href="/glossary?term=access+tokens">access tokens</Tooltip> with the `update:current_user_identities` scope.
+* Server-side account linking using access tokens with the `update:users` scope.
+
+### User-initiated client-side account linking
+
+For user-initiated client-side account linking, you need an access token that contains the following items in the payload:
+
+* `update:current_user_identites` scope
+* `user_id` of the primary account as part of the URL
+* <Tooltip tip="ID Token: Credential meant for the client itself, rather than for accessing a resource." cta="View Glossary" href="/glossary?term=ID+token">ID token</Tooltip> of the secondary account that is signed with RS256 and includes an `aud` claim identifying the client that matches the value of the requesting access token's `azp` claim.
+
+An access token that contains the `update:current_user_identities` scope can only be used to update the information of the currently logged-in user. Therefore, this method is suitable for scenarios where the user initiates the linking process.
+
+<CodeGroup>
+```bash cURL lines
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+  --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+  --header 'content-type: application/json' \
+  --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+```
+```csharp C# lines
+var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+var request = new RestRequest(Method.POST);
+request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+request.AddHeader("content-type", "application/json");
+request.AddParameter("application/json", "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}", ParameterType.RequestBody);
+IRestResponse response = client.Execute(request);
+```
+
+```go Go lines expandable
+package main
+
+import (
+	"fmt"
+	"strings"
+	"net/http"
+	"io/ioutil"
+)
+
+func main() {
+
+	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+
+	payload := strings.NewReader("{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}")
+
+	req, _ := http.NewRequest("POST", url, payload)
+
+	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+	req.Header.Add("content-type", "application/json")
+
+	res, _ := http.DefaultClient.Do(req)
+
+	defer res.Body.Close()
+	body, _ := ioutil.ReadAll(res.Body)
+
+	fmt.Println(res)
+	fmt.Println(string(body))
+
+}
+```
+```java Java lines
+HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+  .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+  .header("content-type", "application/json")
+  .body("{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}")
+  .asString();
+```
+
+```javascript Node.JS lines
+var axios = require("axios").default;
+
+var options = {
+  method: 'POST',
+  url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+  headers: {
+    authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+    'content-type': 'application/json'
+  },
+  data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
+};
+
+axios.request(options).then(function (response) {
+  console.log(response.data);
+}).catch(function (error) {
+  console.error(error);
+});
+```
+```obj-c Obj-C lines expandable
+#import <Foundation/Foundation.h>
+
+NSDictionary *headers = @{ @"authorization": @"Bearer MANAGEMENT_API_ACCESS_TOKEN",
+                           @"content-type": @"application/json" };
+NSDictionary *parameters = @{ @"link_with": @"SECONDARY_ACCOUNT_ID_TOKEN" };
+
+NSData *postData = [NSJSONSerialization dataWithJSONObject:parameters options:0 error:nil];
+
+NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"]
+                                                       cachePolicy:NSURLRequestUseProtocolCachePolicy
+                                                   timeoutInterval:10.0];
+[request setHTTPMethod:@"POST"];
+[request setAllHTTPHeaderFields:headers];
+[request setHTTPBody:postData];
+
+NSURLSession *session = [NSURLSession sharedSession];
+NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
+                                            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                                                if (error) {
+                                                    NSLog(@"%@", error);
+                                                } else {
+                                                    NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *) response;
+                                                    NSLog(@"%@", httpResponse);
+                                                }
+                                            }];
+[dataTask resume];
+```
+
+```php PHP lines expandable
+$curl = curl_init();
+
+curl_setopt_array($curl, [
+  CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_ENCODING => "",
+  CURLOPT_MAXREDIRS => 10,
+  CURLOPT_TIMEOUT => 30,
+  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+  CURLOPT_CUSTOMREQUEST => "POST",
+  CURLOPT_POSTFIELDS => "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}",
+  CURLOPT_HTTPHEADER => [
+    "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+    "content-type: application/json"
+  ],
+]);
+
+$response = curl_exec($curl);
+$err = curl_error($curl);
+
+curl_close($curl);
+
+if ($err) {
+  echo "cURL Error #:" . $err;
+} else {
+  echo $response;
+}
+```
+```python Python lines
+import http.client
+
+conn = http.client.HTTPSConnection("")
+
+payload = "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}"
+
+headers = {
+    'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+    'content-type': "application/json"
+    }
+
+conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+res = conn.getresponse()
+data = res.read()
+
+print(data.decode("utf-8"))
+```
+
+```ruby Ruby lines
+require 'uri'
+require 'net/http'
+require 'openssl'
+
+url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+http = Net::HTTP.new(url.host, url.port)
+http.use_ssl = true
+http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+request = Net::HTTP::Post.new(url)
+request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+request["content-type"] = 'application/json'
+request.body = "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}"
+
+response = http.request(request)
+puts response.read_body
+```
+```swift Swift lines expandable
+import Foundation
+
+let headers = [
+  "authorization": "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+  "content-type": "application/json"
+]
+let parameters = ["link_with": "SECONDARY_ACCOUNT_ID_TOKEN"] as [String : Any]
+
+let postData = JSONSerialization.data(withJSONObject: parameters, options: [])
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")! as URL,
+                                        cachePolicy: .useProtocolCachePolicy,
+                                    timeoutInterval: 10.0)
+request.httpMethod = "POST"
+request.allHTTPHeaderFields = headers
+request.httpBody = postData as Data
+
+let session = URLSession.shared
+let dataTask = session.dataTask(with: request as URLRequest, completionHandler: { (data, response, error) -> Void in
+  if (error != nil) {
+    print(error)
+  } else {
+    let httpResponse = response as? HTTPURLResponse
+    print(httpResponse)
+  }
+})
+
+dataTask.resume()
+```
+</CodeGroup>
+
+### Server-side account linking
+
+For server-side account linking, you need an access token that contains the following items in the payload:
+
+* `update:users` scope
+* `user_id` of the primary account as part of the URL
+* `user_id` of the secondary account
+* ID token of the secondary account that is signed with RS256 and includes an `aud` claim identifying the client that matches the value of the requesting access token's `azp` claim.
+
+Access tokens that contain the `update:users` scope can be used to update the information of any user. Therefore, this method is intended for use in server-side code only.
+
+<CodeGroup>
+```bash cURL lines
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+  --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+  --header 'content-type: application/json' \
+  --data '{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}'
+```
+```csharp C# lines
+var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+var request = new RestRequest(Method.POST);
+request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+request.AddHeader("content-type", "application/json");
+request.AddParameter("application/json", "{\"provider\":\"SECONDARY_ACCOUNT_PROVIDER\", \"user_id\": \"SECONDARY_ACCOUNT_USER_ID\"}", ParameterType.RequestBody);
+IRestResponse response = client.Execute(request);
+```
+
+```go Go lines expandable
+package main
+
+import (
+	"fmt"
+	"strings"
+	"net/http"
+	"io/ioutil"
+)
+
+func main() {
+
+	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+
+	payload := strings.NewReader("{\"provider\":\"SECONDARY_ACCOUNT_PROVIDER\", \"user_id\": \"SECONDARY_ACCOUNT_USER_ID\"}")
+
+	req, _ := http.NewRequest("POST", url, payload)
+
+	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+	req.Header.Add("content-type", "application/json")
+
+	res, _ := http.DefaultClient.Do(req)
+
+	defer res.Body.Close()
+	body, _ := ioutil.ReadAll(res.Body)
+
+	fmt.Println(res)
+	fmt.Println(string(body))
+
+}
+```
+```java Java lines
+HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+  .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+  .header("content-type", "application/json")
+  .body("{\"provider\":\"SECONDARY_ACCOUNT_PROVIDER\", \"user_id\": \"SECONDARY_ACCOUNT_USER_ID\"}")
+  .asString();
+```
+
+```javascript Node.JS lines
+var axios = require("axios").default;
+
+var options = {
+  method: 'POST',
+  url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+  headers: {
+    authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+    'content-type': 'application/json'
+  },
+  data: {provider: 'SECONDARY_ACCOUNT_PROVIDER', user_id: 'SECONDARY_ACCOUNT_USER_ID'}
+};
+
+axios.request(options).then(function (response) {
+  console.log(response.data);
+}).catch(function (error) {
+  console.error(error);
+});
+```
+```obj-c Obj-C lines expandable
+#import <Foundation/Foundation.h>
+
+NSDictionary *headers = @{ @"authorization": @"Bearer MANAGEMENT_API_ACCESS_TOKEN",
+                           @"content-type": @"application/json" };
+NSDictionary *parameters = @{ @"provider": @"SECONDARY_ACCOUNT_PROVIDER",
+                              @"user_id": @"SECONDARY_ACCOUNT_USER_ID" };
+
+NSData *postData = [NSJSONSerialization dataWithJSONObject:parameters options:0 error:nil];
+
+NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"]
+                                                       cachePolicy:NSURLRequestUseProtocolCachePolicy
+                                                   timeoutInterval:10.0];
+[request setHTTPMethod:@"POST"];
+[request setAllHTTPHeaderFields:headers];
+[request setHTTPBody:postData];
+
+NSURLSession *session = [NSURLSession sharedSession];
+NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
+                                            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                                                if (error) {
+                                                    NSLog(@"%@", error);
+                                                } else {
+                                                    NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *) response;
+                                                    NSLog(@"%@", httpResponse);
+                                                }
+                                            }];
+[dataTask resume];
+```
+
+```php PHP lines expandable
+$curl = curl_init();
+
+curl_setopt_array($curl, [
+  CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_ENCODING => "",
+  CURLOPT_MAXREDIRS => 10,
+  CURLOPT_TIMEOUT => 30,
+  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+  CURLOPT_CUSTOMREQUEST => "POST",
+  CURLOPT_POSTFIELDS => "{\"provider\":\"SECONDARY_ACCOUNT_PROVIDER\", \"user_id\": \"SECONDARY_ACCOUNT_USER_ID\"}",
+  CURLOPT_HTTPHEADER => [
+    "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+    "content-type: application/json"
+  ],
+]);
+
+$response = curl_exec($curl);
+$err = curl_error($curl);
+
+curl_close($curl);
+
+if ($err) {
+  echo "cURL Error #:" . $err;
+} else {
+  echo $response;
+}
+```
+```python Python lines
+import http.client
+
+conn = http.client.HTTPSConnection("")
+
+payload = "{\"provider\":\"SECONDARY_ACCOUNT_PROVIDER\", \"user_id\": \"SECONDARY_ACCOUNT_USER_ID\"}"
+
+headers = {
+    'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+    'content-type': "application/json"
+    }
+
+conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+res = conn.getresponse()
+data = res.read()
+
+print(data.decode("utf-8"))
+```
+
+```ruby Ruby lines
+require 'uri'
+require 'net/http'
+require 'openssl'
+
+url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+http = Net::HTTP.new(url.host, url.port)
+http.use_ssl = true
+http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+request = Net::HTTP::Post.new(url)
+request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+request["content-type"] = 'application/json'
+request.body = "{\"provider\":\"SECONDARY_ACCOUNT_PROVIDER\", \"user_id\": \"SECONDARY_ACCOUNT_USER_ID\"}"
+
+response = http.request(request)
+puts response.read_body
+```
+```swift Swift lines expandable
+import Foundation
+
+let headers = [
+  "authorization": "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+  "content-type": "application/json"
+]
+let parameters = [
+  "provider": "SECONDARY_ACCOUNT_PROVIDER",
+  "user_id": "SECONDARY_ACCOUNT_USER_ID"
+] as [String : Any]
+
+let postData = JSONSerialization.data(withJSONObject: parameters, options: [])
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")! as URL,
+                                        cachePolicy: .useProtocolCachePolicy,
+                                    timeoutInterval: 10.0)
+request.httpMethod = "POST"
+request.allHTTPHeaderFields = headers
+request.httpBody = postData as Data
+
+let session = URLSession.shared
+let dataTask = session.dataTask(with: request as URLRequest, completionHandler: { (data, response, error) -> Void in
+  if (error != nil) {
+    print(error)
+  } else {
+    let httpResponse = response as? HTTPURLResponse
+    print(httpResponse)
+  }
+})
+
+dataTask.resume()
+```
+</CodeGroup>
+
+The secondary user account's `user_id` and `provider` can be deduced by its unique identifier. For example, for the identifier `google-oauth2|108091299999329986433`:
+
+* `provider` is `google-oauth2`
+* `user_id` is `108091299999329986433`
+
+Alternatively, you can you can send the secondary account's ID token instead of the `provider` and `user_id`:
+
+<CodeGroup>
+```bash cURL lines
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+  --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+  --header 'content-type: application/json' \
+  --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+```
+```csharp C# lines
+var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+var request = new RestRequest(Method.POST);
+request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+request.AddHeader("content-type", "application/json");
+request.AddParameter("application/json", "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}", ParameterType.RequestBody);
+IRestResponse response = client.Execute(request);
+```
+
+```go Go lines expandable
+package main
+
+import (
+	"fmt"
+	"strings"
+	"net/http"
+	"io/ioutil"
+)
+
+func main() {
+
+	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+
+	payload := strings.NewReader("{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}")
+
+	req, _ := http.NewRequest("POST", url, payload)
+
+	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+	req.Header.Add("content-type", "application/json")
+
+	res, _ := http.DefaultClient.Do(req)
+
+	defer res.Body.Close()
+	body, _ := ioutil.ReadAll(res.Body)
+
+	fmt.Println(res)
+	fmt.Println(string(body))
+
+}
+```
+```java Java lines
+HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+  .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+  .header("content-type", "application/json")
+  .body("{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}")
+  .asString();
+```
+
+```javascript Node.JS lines
+var axios = require("axios").default;
+
+var options = {
+  method: 'POST',
+  url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+  headers: {
+    authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+    'content-type': 'application/json'
+  },
+  data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
+};
+
+axios.request(options).then(function (response) {
+  console.log(response.data);
+}).catch(function (error) {
+  console.error(error);
+});
+```
+```obj-c Obj-C lines expandable
+#import <Foundation/Foundation.h>
+
+NSDictionary *headers = @{ @"authorization": @"Bearer MANAGEMENT_API_ACCESS_TOKEN",
+                           @"content-type": @"application/json" };
+NSDictionary *parameters = @{ @"link_with": @"SECONDARY_ACCOUNT_ID_TOKEN" };
+
+NSData *postData = [NSJSONSerialization dataWithJSONObject:parameters options:0 error:nil];
+
+NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"]
+                                                       cachePolicy:NSURLRequestUseProtocolCachePolicy
+                                                   timeoutInterval:10.0];
+[request setHTTPMethod:@"POST"];
+[request setAllHTTPHeaderFields:headers];
+[request setHTTPBody:postData];
+
+NSURLSession *session = [NSURLSession sharedSession];
+NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
+                                            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                                                if (error) {
+                                                    NSLog(@"%@", error);
+                                                } else {
+                                                    NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *) response;
+                                                    NSLog(@"%@", httpResponse);
+                                                }
+                                            }];
+[dataTask resume];
+```
+
+```php PHP lines expandable
+$curl = curl_init();
+
+curl_setopt_array($curl, [
+  CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_ENCODING => "",
+  CURLOPT_MAXREDIRS => 10,
+  CURLOPT_TIMEOUT => 30,
+  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+  CURLOPT_CUSTOMREQUEST => "POST",
+  CURLOPT_POSTFIELDS => "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}",
+  CURLOPT_HTTPHEADER => [
+    "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+    "content-type: application/json"
+  ],
+]);
+
+$response = curl_exec($curl);
+$err = curl_error($curl);
+
+curl_close($curl);
+
+if ($err) {
+  echo "cURL Error #:" . $err;
+} else {
+  echo $response;
+}
+```
+```python Python lines
+import http.client
+
+conn = http.client.HTTPSConnection("")
+
+payload = "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}"
+
+headers = {
+    'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+    'content-type': "application/json"
+    }
+
+conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+res = conn.getresponse()
+data = res.read()
+
+print(data.decode("utf-8"))
+```
+
+```ruby Ruby lines
+require 'uri'
+require 'net/http'
+require 'openssl'
+
+url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+http = Net::HTTP.new(url.host, url.port)
+http.use_ssl = true
+http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+request = Net::HTTP::Post.new(url)
+request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+request["content-type"] = 'application/json'
+request.body = "{\"link_with\":\"SECONDARY_ACCOUNT_ID_TOKEN\"}"
+
+response = http.request(request)
+puts response.read_body
+```
+```swift Swift lines expandable
+import Foundation
+
+let headers = [
+  "authorization": "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+  "content-type": "application/json"
+]
+let parameters = ["link_with": "SECONDARY_ACCOUNT_ID_TOKEN"] as [String : Any]
+
+let postData = JSONSerialization.data(withJSONObject: parameters, options: [])
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")! as URL,
+                                        cachePolicy: .useProtocolCachePolicy,
+                                    timeoutInterval: 10.0)
+request.httpMethod = "POST"
+request.allHTTPHeaderFields = headers
+request.httpBody = postData as Data
+
+let session = URLSession.shared
+let dataTask = session.dataTask(with: request as URLRequest, completionHandler: { (data, response, error) -> Void in
+  if (error != nil) {
+    print(error)
+  } else {
+    let httpResponse = response as? HTTPURLResponse
+    print(httpResponse)
+  }
+})
+
+dataTask.resume()
+```
+</CodeGroup>
+
+## Auth0.js library
+
+You can use the Auth0.js library to perform client-side account linking. Read [Auth0.js v9 Reference > User management](/libraries/auth0js#user-management) to learn more.
+
+## Learn more
+
+* [User Account Linking: Server-Side Implementation](/manage-users/user-accounts/user-account-linking/suggested-account-linking-server-side-implementation)
+* [User-Initiated Account Linking: Client-Side Implementation](/manage-users/user-accounts/user-account-linking/user-initiated-account-linking-client-side-implementation)
+* [Unlink User Accounts](/manage-users/user-accounts/user-account-linking/unlink-user-accounts)
