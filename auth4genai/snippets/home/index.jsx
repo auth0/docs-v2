@@ -119,7 +119,7 @@ export const AvailableSDKs = () => {
         Available SDKs
       </h2>
 
-      <div className="flex flex-col md:flex-row md:flex-wrap gap-2 md:gap-4 mb-6">
+      <div className="flex flex-col md:flex-row md:flex-wrap gap-2 mb-6">
         {sdks.map((sdk, idx) => (
           <a
             key={idx}
@@ -219,7 +219,7 @@ export const StarterKits = () => {
         Starter Kits
       </h2>
 
-      <div className="flex flex-col md:flex-row md:flex-wrap gap-2 md:gap-4 mb-6">
+      <div className="flex flex-col md:flex-row md:flex-wrap gap-2 mb-6">
         {kits.map((kit, idx) => (
           <div
             key={idx}
