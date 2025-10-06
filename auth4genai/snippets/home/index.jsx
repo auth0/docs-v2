@@ -51,12 +51,12 @@ export const UseCasesGrid = () => {
         Use Cases
       </h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {useCases.map((useCase, idx) => (
           <a
             key={idx}
             href={useCase.href}
-            className="flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:-m-px hover:cursor-pointer no-underline"
+            className="group flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:-m-px hover:cursor-pointer no-underline dark:[box-shadow:0px_0px_4px_0px_#2927250D,0px_-1px_1px_-1px_#29272580,0px_-1px_12px_-4px_#FFFFFF17,0.5px_0.5px_4px_0px_#29272580_inset,-0.5px_-0.5px_2px_0px_#FFFFFF17_inset]"
           >
             <div className="w-[58px] h-[58px] aspect-square rounded-lg flex items-center justify-center text-white text-2xl mb-3">
               <img src={useCase.icon} />
@@ -75,7 +75,7 @@ export const UseCasesGrid = () => {
             <div className="w-full flex justify-end">
               <div className="flex h-8 px-4 py-1 items-center">
                 <span className="mr-2 text-[14px] font-medium leading-[130%] text-center text-[#191919] dark:text-[#EFEDE9]" style={{ fontFamily: 'Inter' }}>Learn more</span>
-                <img src="/img/arrow-right.svg" alt="arrow" className="dark:invert dark:brightness-90" style={{ width: '9.4px', height: '11.375px' }} />
+                <img src="/img/arrow-right.svg" alt="arrow" className="opacity-0 group-hover:opacity-100 transition-opacity dark:invert dark:brightness-90" style={{ width: '9.4px', height: '11.375px' }} />
               </div>
             </div>
           </a>
@@ -124,10 +124,7 @@ export const AvailableSDKs = () => {
           <a
             key={idx}
             href={sdk.href}
-            className="flex p-4 items-center gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px"
-            style={{
-              boxShadow: '0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset'
-            }}
+            className="flex p-4 items-center gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)]"
           >
             <div className="w-10 h-10 flex items-center justify-center">
               <img
@@ -145,7 +142,7 @@ export const AvailableSDKs = () => {
       <div className="text-right">
         <a
           href="/sdks/overview"
-          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5A3CAF] transition" style={{ fontFamily: 'Inter' }}
+          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5D34C7] hover:dark:text-[#7549F2] transition" style={{ fontFamily: 'Inter' }}
         >
           View more
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -161,25 +158,33 @@ export const GetStartedCTA = () => {
   return (
     <section className="max-w-[960px] mx-auto px-5 md:px-0">
       <div
-        className="rounded-xl flex flex-col md:flex-row p-8 items-center justify-between gap-4 self-stretch bg-[#AA8DFF24] dark:bg-[#7B4CFFF1]"
+        className="rounded-xl flex flex-col md:flex-row p-8 items-center justify-between gap-4 self-stretch bg-[#AA8DFF24] dark:bg-[#B49BFCF1]"
         style={{
-          boxShadow: '0 2px 4px 0 rgba(0, 0, 0, 0.05), 0 2px 1px -1px rgba(0, 0, 0, 0.04), 0 2px 12px -4px rgba(0, 0, 0, 0.08), 0.5px 0.5px 4px 0 rgba(255, 255, 255, 0.40) inset, -0.5px -0.5px 2px 0 rgba(0, 0, 0, 0.12) inset, 0 2px 2px 0 rgba(255, 255, 255, 0.25) inset'
+          boxShadow: '0px 2px 4px 0px #0000000D, 0px 2px 1px -1px #0000000A, 0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset, 0px 2px 2px 0px #FFFFFF40 inset'
         }}
       >
         <div className="flex flex-col">
-          <h2 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#FFFFFF] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
+          <h2 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#1F1F1F] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
             Get started quickly with Auth for AI Agents
           </h2>
           <p
-            className="text-xs font-medium leading-[130%] text-[#767676] dark:text-[#CECDCA] mt-0 mb-0"
+            className="text-xs font-medium leading-[130%] text-[#767676] dark:text-[#1F1F1F] mt-0 mb-0"
             style={{ fontFamily: 'Inter' }}
           >
             Use it for explanations, workflows, or direct integration into your app.
           </p>
         </div>
         <button
-          className="flex px-[14px] py-2 items-center rounded-2xl text-[#232220] dark:text-[#EFEDE9] font-semibold text-[14px] cursor-default"
-          style={{ background: 'rgba(0, 0, 0, 0.00)', fontFamily: 'Inter', lineHeight: '140%', letterSpacing: '0' }}
+          className="flex px-[14px] py-2 items-center text-[#232220] dark:text-[#EFEDE9] font-semibold text-[14px] cursor-default"
+          style={{
+            borderRadius: '16px',
+            border: '1px solid rgba(255, 255, 255, 0.40)',
+            background: 'rgba(255, 255, 255, 0.06)',
+            boxShadow: '-2px 2px 4px 0 rgba(0, 0, 0, 0.10) inset, 0 2px 4px 0 rgba(255, 255, 255, 0.06) inset, 0 4px 4px 0 rgba(255, 255, 255, 0.04) inset',
+            fontFamily: 'Inter',
+            lineHeight: '140%',
+            letterSpacing: '0'
+          }}
           onClick={(e) => e.preventDefault()}
         >
           Coming Soon
@@ -192,19 +197,19 @@ export const GetStartedCTA = () => {
 export const StarterKits = () => {
   const kits = [
     {
-      title: "AssistantD",
+      title: "Assistant0",
       description: "An assistant with secure auth, API access, approvals, and FGA-protected RAG.",
-      githubUrl: "https://github.com/auth0/assistant-d"
+      githubUrl: "https://github.com/auth0-samples/auth0-assistant0"
     },
     {
       title: "SmartHR Assistant",
       description: "An AI-driven assistant provides secure access to HR documents based on complex authorization rules.",
-      githubUrl: "https://github.com/auth0/smart-hr-assistant"
+      githubUrl: "https://github.com/auth0-samples/auth0-ai-smart-hr-assistant"
     },
     {
       title: "Agent0",
       description: "Reference AI personal assistant with pre-configured auth that demonstrates different auth for GenAI features.",
-      githubUrl: "https://github.com/auth0/agent0"
+      githubUrl: "https://github.com/auth0-samples/agent0"
     }
   ];
 
@@ -218,10 +223,7 @@ export const StarterKits = () => {
         {kits.map((kit, idx) => (
           <div
             key={idx}
-            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer"
-            style={{
-              boxShadow: '0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset'
-            }}
+            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)]"
           >
             <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
               {kit.title}
@@ -250,7 +252,7 @@ export const StarterKits = () => {
       <div className="text-right">
         <a
           href="/sample-apps"
-          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5A3CAF] transition" style={{ fontFamily: 'Inter' }}
+          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5D34C7] hover:dark:text-[#7549F2] transition" style={{ fontFamily: 'Inter' }}
         >
           View more
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -266,9 +268,9 @@ export const DeveloperProgram = () => {
   return (
     <section className="max-w-[960px] mx-auto">
       <div
-        className="rounded-2xl border border-[#ECEBE8] dark:border-[#3F3D3A] bg-[#FEFEFD] dark:bg-[#1F1F1F] overflow-hidden pt-1 pb-1 pl-1 pr-0"
+        className="overflow-hidden pt-1 pb-1 pl-1 pr-0 transition hover:dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] hover:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)] border border-[#ECEBE8] dark:border-0 bg-[#FEFEFD] dark:bg-[#1F1F1F]"
         style={{
-          boxShadow: '0 4px 4px -2px rgba(0, 0, 0, 0.04), 0 2px 2px -1px rgba(0, 0, 0, 0.04), 0 1px 1px -0.5px rgba(0, 0, 0, 0.04), 0 -1.5px 1.5px -1.5px rgba(0, 0, 0, 0.04) inset, 0 3px 3px -1.5px #FFF inset'
+          borderRadius: '16px'
         }}
       >
         <div className="flex flex-col lg:flex-row items-center">
@@ -292,22 +294,11 @@ export const DeveloperProgram = () => {
           </div>
           <div className="hidden lg:flex flex-1">
             <div className="flex items-center justify-center">
-              <div
-                className="w-[526px] min-h-[200px] overflow-hidden"
-                style={{
-                  borderRadius: '120px 4px 4px 4px',
-                  border: '1px solid rgba(0, 0, 0, 0.04)',
-                  background: 'rgba(25, 25, 25, 0.08)',
-                  boxShadow: '0 -2px 8px 0 rgba(0, 0, 0, 0.04) inset'
-                }}
-              >
-                <img
-                  src="/img/developer-program-auth0-secure.png"
-                  alt="Developer Program"
-                  className="pt-[45px] pl-[45px] pointer-events-none"
-                />
-              </div>
-
+              <img
+                src="/img/developer-program-diagram.png"
+                alt="Developer Program"
+                className="pointer-events-none"
+              />
             </div>
           </div>
         </div>
