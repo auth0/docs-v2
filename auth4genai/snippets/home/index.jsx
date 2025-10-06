@@ -221,9 +221,12 @@ export const StarterKits = () => {
 
       <div className="flex flex-col md:flex-row md:flex-wrap gap-2 mb-6">
         {kits.map((kit, idx) => (
-          <div
+          <a
             key={idx}
-            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)]"
+            href={kit.githubUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)] no-underline"
           >
             <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
               {kit.title}
@@ -236,16 +239,13 @@ export const StarterKits = () => {
               <div className="w-full h-px bg-[#ECEBE8] dark:bg-[#3F3D3A] mb-[14px]"></div>
 
               <div className="w-full flex justify-start pl-3 pb-1.5">
-                <a
-                  href={kit.githubUrl}
-                  className="flex items-center gap-2 text-xs font-medium leading-[130%] text-[#191919] dark:text-[#F4F4F4] no-underline" style={{ fontFamily: 'Inter' }}
-                >
+                <div className="flex items-center gap-2 text-xs font-medium leading-[130%] text-[#191919] dark:text-[#F4F4F4]" style={{ fontFamily: 'Inter' }}>
                   <img src="/img/github-logo-light.svg" alt="GitHub" className="w-4 h-4 dark:invert dark:brightness-90" />
                   Github
-                </a>
+                </div>
               </div>
             </div>
-          </div>
+          </a>
         ))}
       </div>
 
