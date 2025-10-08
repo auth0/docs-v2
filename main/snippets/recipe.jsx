@@ -37,6 +37,22 @@ export const Section = ({ id, title, stepNumber, children, isSingleColumn = fals
   );
 };
 
+export const SectionWithoutStep = ({ id, title, stepNumber, children, isSingleColumn = false }) => {
+  return (
+    <div id={id} className={`recipe-section flex flex-col transition-opacity duration-200`}>
+      {/*
+    OPTION WITH OPACITY
+    <div
+      id={id}
+      className={`recipe-section flex flex-col transition-opacity duration-200 ${
+        isSingleColumn ? "opacity-100 dark:opacity-100" : "opacity-60 dark:opacity-60"
+      }`}
+    > */}
+      {children}
+    </div>
+  );
+};
+
 export const SideMenu = ({ sections, children }) => {
   const [visibleSection, setVisibleSection] = useState(sections[0]?.id ?? null);
 
