@@ -10,7 +10,7 @@ export const AccountAndAppSteps = ({
     <Step title="Create an Auth0 Account">
       To continue with this quickstart, you need to have an{" "}
       <a
-        href="https://auth0.com/signup?onboard_app=genai&ocid=7014z000001NyoxAAC-aPA4z0000008OZeGAM"
+        href="https://auth0.com/signup?onboard_app=auth_for_aa&ocid=7014z000001NyoxAAC-aPA4z0000008OZeGAM"
         target="_blank"
       >
         Auth0 account.
