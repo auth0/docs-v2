@@ -1,27 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { useBreakpoint } from '@/hooks/media-query';
 
 import { AuthMenu } from './auth-menu';
 import { Button } from './ui/button';
-import type { UserData } from './ui/profile-menu';
-import type { TenantData } from './ui/tenant';
+import { useAppStore } from '@/hooks/use-app-store';
+import { userLogin } from '@/lib/api';
 
-interface NavActionsProps {
-  className?: string;
-  user: UserData | null;
-  tenants: TenantData[];
-}
+function NavActions({ className }: { className?: string }) {
+  const { session } = useAppStore();
 
-function NavActions({ className, user, tenants }: NavActionsProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isLgUp = useBreakpoint('lg');
-
-  const [currentTenant, setCurrentTenant] = useState(tenants[0] || null);
-
-  const handleSelectTenant = (tenant: TenantData) => {
-    setCurrentTenant(tenant);
-  };
+  const user = session.user;
 
   useEffect(() => {
     const updatePosition = () => {
@@ -57,17 +48,15 @@ function NavActions({ className, user, tenants }: NavActionsProps) {
         className,
       )}
     >
-      {user && currentTenant ? (
-        <AuthMenu
-          user={user}
-          selectedTenant={currentTenant}
-          tenants={tenants}
-          onSelectTenant={handleSelectTenant}
-        />
+      {user ? (
+        <AuthMenu />
       ) : (
         <>
-          <Button variant="ghost" asChild>
-            <a href="/docs/v2/auth/user/login">Log In</a>
+          <Button
+            variant="ghost"
+            onClick={() => userLogin(window.location.href)}
+          >
+            Log In
           </Button>
           <Button variant="default" asChild>
             <a href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D">

@@ -1,4 +1,7 @@
+import type { MouseEventHandler } from 'react';
+
 import { cn, getInitials } from '@/lib/utils';
+
 import { Tenant, type TenantData } from './tenant';
 import {
   DropdownMenuItem,
@@ -8,7 +11,6 @@ import {
 import { SvgIcon } from './svg-icon';
 import { Avatar, AvatarFallback, AvatarImage } from './avatar';
 import { ContentText } from './content-text';
-import type { MouseEventHandler } from 'react';
 
 interface UserData {
   name: string;
@@ -102,13 +104,15 @@ interface ProfileMenuContentProps extends React.ComponentProps<'div'> {
   selectedTenant: TenantData;
   user: UserData;
   onSwitchTenant?: MouseEventHandler<HTMLDivElement>;
+  onLogout?: MouseEventHandler<HTMLButtonElement>;
 }
 
 function ProfileMenuContent({
   className,
+  onSwitchTenant,
+  onLogout,
   selectedTenant,
   user,
-  onSwitchTenant,
   ...props
 }: ProfileMenuContentProps) {
   return (
@@ -120,6 +124,7 @@ function ProfileMenuContent({
             name={selectedTenant.name}
             flag={selectedTenant.flag}
             locality={selectedTenant.locality}
+            loginUrl={selectedTenant.loginUrl}
           />
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -150,17 +155,19 @@ function ProfileMenuContent({
           <SvgIcon iconName="caret-right" className="adu:ml-auto" />
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="adu:p-0">
-          <UserDetails
-            name={user.name}
-            profilePicture={user.profilePicture}
-            profileUrl={user.profileUrl}
-          />
-        </DropdownMenuItem>
+        {user && (
+          <DropdownMenuItem className="adu:p-0">
+            <UserDetails
+              name={user.name}
+              profilePicture={user.profilePicture}
+              profileUrl={user.profileUrl}
+            />
+          </DropdownMenuItem>
+        )}
       </div>
       <DropdownMenuItem className="adu:bg-surface-selected adu:h-14 adu:shrink-0 adu:items-center adu:justify-center adu:rounded-none">
         <ContentText variant="button" className="adu:text-foreground" asChild>
-          <span>Log Out</span>
+          <button onClick={onLogout}>Log Out</button>
         </ContentText>
         <SvgIcon iconName="logout" className="adu:text-foreground adu:ml-2" />
       </DropdownMenuItem>

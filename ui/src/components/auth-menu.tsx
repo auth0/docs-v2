@@ -2,13 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
+import { ProfileMenuContent, ProfileMenuTrigger } from './ui/profile-menu';
+import { useAppStore } from '@/hooks/use-app-store';
+
 import { TenantMenuContent, type TenantData } from './ui/tenant';
-import {
-  ProfileMenuContent,
-  ProfileMenuTrigger,
-  type UserData,
-} from './ui/profile-menu';
 import { DropdownMenu, DropdownMenuContent } from './ui/dropdown-menu';
+import { userLogout } from '@/lib/api';
 
 const SelectedMenu = {
   NONE: 'none',
@@ -170,25 +169,27 @@ export function useMenuAnimation(): [
   ];
 }
 
-interface AuthMenuProps {
-  selectedTenant: TenantData;
-  onSelectTenant?: (tenant: TenantData) => void;
-  tenants: TenantData[];
-  user: UserData;
-}
-
-function AuthMenu({
-  selectedTenant,
-  onSelectTenant,
-  tenants,
-  user,
-}: AuthMenuProps) {
+function AuthMenu() {
+  const { session, tenants } = useAppStore();
   const [menuState, menuActions, animationClasses, refs] = useMenuAnimation();
 
-  const handleSelectTenant = (tenant: TenantData) => {
-    onSelectTenant?.(tenant);
-    menuActions.closeMenu();
+  const user = session.user;
+  const selectedTenant = session.selectedTenant;
+
+  const handleSelectTenant = async (tenant: TenantData) => {
+    try {
+      const tenantLoginUrl = new URL(tenant.loginUrl);
+
+      tenantLoginUrl.searchParams.append('returnTo', window.location.href);
+
+      window.location.href = tenantLoginUrl.toString();
+    } catch (error) {
+      console.error('Failed to redirect to tenant login URL:', error);
+      menuActions.closeMenu();
+    }
   };
+
+  if (!user || !selectedTenant) return null;
 
   return (
     <DropdownMenu open={menuState.isOpen} onOpenChange={menuActions.openMenu}>
@@ -205,6 +206,9 @@ function AuthMenu({
           className={animationClasses.profileMenuClasses}
           selectedTenant={selectedTenant}
           user={user}
+          onLogout={() => {
+            userLogout(window.location.href);
+          }}
         />
         <TenantMenuContent
           ref={refs.tenantMenuRef}

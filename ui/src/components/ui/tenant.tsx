@@ -13,6 +13,7 @@ interface TenantData {
   flag: FlagIconProps['country'];
   locality: string;
   highlightName?: boolean;
+  loginUrl: string;
 }
 
 interface TenantProp extends TenantData {
@@ -112,6 +113,7 @@ function TenantMenuContent({
               flag={tenant.flag}
               locality={tenant.locality}
               isSelected={tenant.name === selectedTenant.name}
+              loginUrl={tenant.loginUrl}
             />
           </DropdownMenuItem>
         ))}
