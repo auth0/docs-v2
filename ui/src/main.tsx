@@ -13,11 +13,13 @@ import {
 import { initOneTrust } from './lib/one-trust';
 import { userLogin, getCurrentUser } from './lib/api';
 import { AppStoreProvider } from './components/ui/app-store-provider';
+import { OptOutBanner } from './components/ui/opt-out-banner';
 
 function main() {
   initOneTrust();
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
+      <OptOutBanner />
       <AppStoreProvider>
         <div className="adu:bg-page adu:flex adu:flex-col adu:items-start adu:gap-8 adu:p-4">
           <Button
