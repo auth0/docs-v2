@@ -1,403 +1,402 @@
-### 1. Configure Auth0 AI
+## or Follow manual steps
 
-First, you must install the SDK:
+<div id="manual-steps">
+  <Steps>
+    <Step title="Configure Auth0 AI">
+      First, you must install the SDK:
 
-```bash wrap lines
-npm install @auth0/ai-langchain
-```
+      ```bash wrap lines
+      npm install @auth0/ai-langchain
+      ```
 
-Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required Google Calendar scopes.
+      Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required Google Calendar scopes.
 
-```typescript ./src/lib/auth0-ai.ts wrap lines
-import { SUBJECT_TOKEN_TYPES } from "@auth0/ai";
-import { Auth0AI } from "@auth0/ai-langchain";
+      ```typescript ./src/lib/auth0-ai.ts wrap lines
+      import { SUBJECT_TOKEN_TYPES } from "@auth0/ai";
+      import { Auth0AI } from "@auth0/ai-langchain";
 
-const auth0AI = new Auth0AI({
-  auth0: {
-    domain: process.env.AUTH0_DOMAIN!,
-    clientId: process.env.AUTH0_CUSTOM_API_CLIENT_ID!,
-    clientSecret: process.env.AUTH0_CUSTOM_API_CLIENT_SECRET!,
-  },
-});
-
-const withAccessTokenForConnection = (connection: string, scopes: string[]) =>
-  auth0AI.withTokenVault({
-    connection,
-    scopes,
-    accessToken: async (_, config) => {
-      return config.configurable?.langgraph_auth_user?.getRawAccessToken();
-    },
-    subjectTokenType: SUBJECT_TOKEN_TYPES.SUBJECT_TYPE_ACCESS_TOKEN,
-  });
-
-export const withGoogleCalendar = withAccessTokenForConnection(
-  "google-oauth2",
-  ["https://www.googleapis.com/auth/calendar.freebusy"]
-);
-```
-
-### 2. Integrate your tool with Google Calendar
-
-Wrap your tool using the Auth0 AI SDK to obtain an access token for the Google Calendar API.
-
-```typescript ./src/lib/tools/checkUsersCalendar.ts wrap lines highlight={4-6,10,13,20-22,39-41}
-import { addHours, formatISO } from "date-fns";
-import { GaxiosError } from "gaxios";
-import { google } from "googleapis";
-import { getAccessTokenFromTokenVault } from "@auth0/ai-langchain";
-import { TokenVaultError } from "@auth0/ai/interrupts";
-import { withGoogleCalendar } from "@/lib/auth0-ai";
-import { tool } from "@langchain/core/tools";
-import { z } from "zod";
-
-export const checkUsersCalendar = withGoogleCalendar(
-  tool(async ({ date }) => {
-    // Get the access token from Auth0 AI
-    const accessToken = getAccessTokenFromTokenVault();
-
-    // Google SDK
-    try {
-      const calendar = google.calendar("v3");
-      const auth = new google.auth.OAuth2();
-
-      auth.setCredentials({
-        access_token: accessToken,
-      });
-
-      const response = await calendar.freebusy.query({
-        auth,
-        requestBody: {
-          timeMin: formatISO(date),
-          timeMax: addHours(date, 1).toISOString(),
-          timeZone: "UTC",
-          items: [{ id: "primary" }],
+      const auth0AI = new Auth0AI({
+        auth0: {
+          domain: process.env.AUTH0_DOMAIN!,
+          clientId: process.env.AUTH0_CUSTOM_API_CLIENT_ID!,
+          clientSecret: process.env.AUTH0_CUSTOM_API_CLIENT_SECRET!,
         },
       });
 
-      return {
-        available: response.data?.calendars?.primary?.busy?.length === 0,
-      };
-    } catch (err) {
-      if (err instanceof GaxiosError && err.status === 401) {
-        throw new TokenVaultError(
-          `Authorization required to access the Token Vault connection`
-        );
-      }
-      throw err;
-    }
-  },
-  {
-    name: "check_user_calendar",
-    description:
-      "Use this function to check if the user is available on a certain date and time",
-    schema: z.object({
-      date: z.coerce.date(),
-    }),
-  })
-);
-```
+      const withAccessTokenForConnection = (connection: string, scopes: string[]) =>
+        auth0AI.withTokenForConnection({
+          connection,
+          scopes,
+          accessToken: async (_, config) => {
+            return config.configurable?.langgraph_auth_user?.getRawAccessToken();
+          },
+          subjectTokenType: SUBJECT_TOKEN_TYPES.SUBJECT_TYPE_ACCESS_TOKEN,
+        });
 
-Now that the tool is protected, you can pass it your LangGraph agent as part of a `ToolNode`. The agent will automatically request the access token when the tool is called.
+      export const withGoogleCalendar = withAccessTokenForConnection(
+        "google-oauth2",
+        ["https://www.googleapis.com/auth/calendar.freebusy"]
+      );
+      ```
+    </Step>
+    <Step title="Integrate your tool with Google Calendar">
+      Wrap your tool using the Auth0 AI SDK to obtain an access token for the Google Calendar API.
 
-```typescript src/lib/agent.ts wrap lines highlight={7,10,33,39}
-import { AIMessage } from "@langchain/core/messages";
-import { RunnableLike } from "@langchain/core/runnables";
-import { END, InMemoryStore, MemorySaver, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { ChatOpenAI } from "@langchain/openai";
+      ```typescript ./src/lib/tools/checkUsersCalendar.ts wrap lines highlight={4-6,10,13,20-22,39-41}
+      import { addHours, formatISO } from "date-fns";
+      import { GaxiosError } from "gaxios";
+      import { google } from "googleapis";
+      import { getAccessTokenForConnection } from "@auth0/ai-langchain";
+      import { FederatedConnectionError } from "@auth0/ai/interrupts";
+      import { withGoogleCalendar } from "@/lib/auth0-ai";
+      import { tool } from "@langchain/core/tools";
+      import { z } from "zod";
 
-import { checkUsersCalendar } from "@/lib/tools/checkUsersCalendar";
+      export const checkUsersCalendar = withGoogleCalendar(
+        tool(async ({ date }) => {
+          // Get the access token from Auth0 AI
+          const accessToken = getAccessTokenForConnection();
 
-const model = new ChatOpenAI({ model: "gpt-4o", }).bindTools([
-  checkUsersCalendar,
-]);
+          // Google SDK
+          try {
+            const calendar = google.calendar("v3");
+            const auth = new google.auth.OAuth2();
 
-const callLLM = async (state: typeof MessagesAnnotation.State) => {
-  const response = await model.invoke(state.messages);
-  return { messages: [response] };
-};
+            auth.setCredentials({
+              access_token: accessToken,
+            });
 
-const routeAfterLLM: RunnableLike = function (state) {
-  const lastMessage = state.messages[state.messages.length - 1] as AIMessage;
-  if (!lastMessage.tool_calls?.length) {
-    return END;
-  }
-  return "tools";
-};
+            const response = await calendar.freebusy.query({
+              auth,
+              requestBody: {
+                timeMin: formatISO(date),
+                timeMax: addHours(date, 1).toISOString(),
+                timeZone: "UTC",
+                items: [{ id: "primary" }],
+              },
+            });
 
-const stateGraph = new StateGraph(MessagesAnnotation)
-  .addNode("callLLM", callLLM)
-  .addNode(
-    "tools",
-    new ToolNode(
-      [
-        // A tool with Token Vault access
+            return {
+              available: response.data?.calendars?.primary?.busy?.length === 0,
+            };
+          } catch (err) {
+            if (err instanceof GaxiosError && err.status === 401) {
+              throw new FederatedConnectionError(
+                `Authorization required to access the Federated Connection`
+              );
+            }
+            throw err;
+          }
+        },
+        {
+          name: "check_user_calendar",
+          description:
+            "Use this function to check if the user is available on a certain date and time",
+          schema: z.object({
+            date: z.coerce.date(),
+          }),
+        })
+      );
+      ```
+
+      Now that the tool is protected, you can pass it your LangGraph agent as part of a `ToolNode`. The agent will automatically request the access token when the tool is called.
+
+      ```typescript ./src/lib/agent.ts wrap lines highlight={7,10,33,39}
+      import { AIMessage } from "@langchain/core/messages";
+      import { RunnableLike } from "@langchain/core/runnables";
+      import { END, InMemoryStore, MemorySaver, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph";
+      import { ToolNode } from "@langchain/langgraph/prebuilt";
+      import { ChatOpenAI } from "@langchain/openai";
+
+      import { checkUsersCalendar } from "@/lib/tools/checkUsersCalendar";
+
+      const model = new ChatOpenAI({ model: "gpt-4o", }).bindTools([
         checkUsersCalendar,
-        // ... other tools
-      ],
-      {
-        // Error handler should be disabled in order to
-        // trigger interruptions from within tools.
-        handleToolErrors: false,
+      ]);
+
+      const callLLM = async (state: typeof MessagesAnnotation.State) => {
+        const response = await model.invoke(state.messages);
+        return { messages: [response] };
+      };
+
+      const routeAfterLLM: RunnableLike = function (state) {
+        const lastMessage = state.messages[state.messages.length - 1] as AIMessage;
+        if (!lastMessage.tool_calls?.length) {
+          return END;
+        }
+        return "tools";
+      };
+
+      const stateGraph = new StateGraph(MessagesAnnotation)
+        .addNode("callLLM", callLLM)
+        .addNode(
+          "tools",
+          new ToolNode(
+            [
+              // A tool with federated connection access
+              checkUsersCalendar,
+              // ... other tools
+            ],
+            {
+              // Error handler should be disabled in order to
+              // trigger interruptions from within tools.
+              handleToolErrors: false,
+            }
+          )
+        )
+        .addEdge(START, "callLLM")
+        .addConditionalEdges("callLLM", routeAfterLLM, [END, "tools"])
+        .addEdge("tools", "callLLM");
+
+      const checkpointer = new MemorySaver();
+      const store = new InMemoryStore();
+
+      export const graph = stateGraph.compile({
+        checkpointer,
+        store,
+        interruptBefore: [],
+        interruptAfter: [],
+      });
+      ```
+    </Step>
+    <Step title="Handle authentication redirects">
+      Interrupts are a way for the system to pause execution and prompt the user to take an action —such as authenticating or granting API access— before resuming the interaction. This ensures that any required access is granted dynamically and securely during the chat experience. In this context, Auth0-AI SDK manages such authentication redirects integrated with the Langchain SDK.
+
+      #### Server Side
+
+      On the server side of your Next.js application you need to set up a route to handle the Chat API requests. This route will be responsible for forwarding the requests to the LangGraph API. Additionally, you must provide the `accessToken` in the headers.
+
+      ```typescript ./src/app/api/langgraph/[..._path]/route.ts wrap lines
+      import { initApiPassthrough } from "langgraph-nextjs-api-passthrough";
+      import { NextRequest } from "next/server";
+
+      import { auth0 } from "@/lib/auth0";
+
+      async function getAccessToken() {
+        const tokenResult = await auth0.getAccessToken();
+        if (!tokenResult?.token) {
+          throw new Error("Error retrieving access token for langgraph api.");
+        }
+        return tokenResult.token;
       }
-    )
-  )
-  .addEdge(START, "callLLM")
-  .addConditionalEdges("callLLM", routeAfterLLM, [END, "tools"])
-  .addEdge("tools", "callLLM");
 
-const checkpointer = new MemorySaver();
-const store = new InMemoryStore();
+      export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
+        initApiPassthrough({
+          apiUrl: process.env.LANGGRAPH_API_URL,
+          apiKey: process.env.LANGSMITH_API_KEY,
+          runtime: "edge",
+          baseRoute: "langgraph/",
+          headers: async (req: NextRequest) => {
+            const headers: Record<string, string> = {};
+            req.headers.forEach((value, key) => {
+              headers[key] = value;
+            });
 
-export const graph = stateGraph.compile({
-  checkpointer,
-  store,
-  interruptBefore: [],
-  interruptAfter: [],
-});
-```
-
-### 3. Handle authentication redirects
-
-Interrupts are a way for the system to pause execution and prompt the user to take an action —such as authenticating or granting API access— before resuming the interaction. This ensures that any required access is granted dynamically and securely during the chat experience. In this context, Auth0-AI SDK manages such authentication redirects integrated with the Langchain SDK.
-
-#### Server Side
-
-On the server side of your Next.js application you need to set up a route to handle the Chat API requests. This route will be responsible for forwarding the requests to the LangGraph API. Additionally, you must provide the `accessToken` in the headers.
-
-```typescript ./src/app/api/langgraph/[..._path]/route.ts wrap lines
-import { initApiPassthrough } from "langgraph-nextjs-api-passthrough";
-import { NextRequest } from "next/server";
-
-import { auth0 } from "@/lib/auth0";
-
-async function getAccessToken() {
-  const tokenResult = await auth0.getAccessToken();
-  if (!tokenResult?.token) {
-    throw new Error("Error retrieving access token for langgraph api.");
-  }
-  return tokenResult.token;
-}
-
-export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
-  initApiPassthrough({
-    apiUrl: process.env.LANGGRAPH_API_URL,
-    apiKey: process.env.LANGSMITH_API_KEY,
-    runtime: "edge",
-    baseRoute: "langgraph/",
-    headers: async (req: NextRequest) => {
-      const headers: Record<string, string> = {};
-      req.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
-
-      const accessToken = await getAccessToken();
-      headers["Authorization"] = `Bearer ${accessToken}`;
-      return headers;
-    },
-  });
-
-
-```
-:::info
-Here, the property `auth0` is an instance of `@auth0/nextjs-auth0` to handle the application auth flows. <br/>
-You can check different authentication options for Next.js with Auth0 at the [official documentation.](https://github.com/auth0/nextjs-auth0?tab=readme-ov-file#3-create-the-auth0-sdk-client)
-:::
-
-### Add Custom Authentication
-<Info>
-For more information on how to add custom authentication for your LangGraph Platform application, see the [Custom Auth](https://langchain-ai.github.io/langgraphjs/how-tos/auth/custom_auth/) guide.
-</Info>
-In your langgraph.json, add the path to your auth file:
-```typescript langgraph.json wrap lines highlight={8}
-{
-  "node_version": "20",
-  "graphs": {
-    "agent": "./src/lib/agent.ts:agent"
-  },
-  "env": ".env",
-  "auth": {
-    "path": "./src/lib/auth.ts:authHandler"
-  }
-}
-```
-Then, in your auth.ts file, add your auth logic:
-```typescript src/lib/auth.ts wrap lines
-import { createRemoteJWKSet, jwtVerify } from "jose";
-
-const { Auth, HTTPException } = require("@langchain/langgraph-sdk/auth");
-
-const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;
-const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;
-
-// JWKS endpoint for Auth0
-const JWKS = createRemoteJWKSet(
-  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
-);
-
-// Create the Auth instance
-const auth = new Auth();
-// Register the authentication handler
-auth.authenticate(async (request: Request) => {
-  const authHeader = request.headers.get("Authorization");
-  const xApiKeyHeader = request.headers.get("x-api-key");
-    /**
-     * LangGraph Platform will convert the `Authorization` header from the client to an `x-api-key` header automatically
-     * as of now: https://docs.langchain.com/langgraph-platform/custom-auth
-     *
-     * We can still leverage the `Authorization` header when served in other infrastructure w/ langgraph-cli
-     * or when running locally.
-     */
-    // This header is required in Langgraph Cloud.
-    if (!authHeader && !xApiKeyHeader) {
-      throw new HTTPException(401, {
-        message: "Invalid auth header provided.",
-      });
-    }
-
-    // prefer the xApiKeyHeader first
-    let token = xApiKeyHeader || authHeader;
-
-    // Remove "Bearer " prefix if present
-    if (token && token.startsWith("Bearer ")) {
-      token = token.substring(7);
-    }
-
-    // Validate Auth0 Access Token using common JWKS endpoint
-    if (!token) {
-      throw new HTTPException(401, {
-        message:
-          "Authorization header format must be of the form: Bearer <token>",
-      });
-    }
-
-    if (token) {
-      try {
-        // Verify the JWT using Auth0 JWKS
-        const { payload } = await jwtVerify(token, JWKS, {
-          issuer: `https://${AUTH0_DOMAIN}/`,
-          audience: AUTH0_AUDIENCE,
+            const accessToken = await getAccessToken();
+            headers["Authorization"] = `Bearer ${accessToken}`;
+            return headers;
+          },
         });
 
-        console.log("✅ Auth0 JWT payload resolved!", payload);
 
-        // Return the verified payload - this becomes available in graph nodes
-        return {
-          identity: payload.sub!,
-          email: payload.email as string,
-          permissions:
-            typeof payload.scope === "string" ? payload.scope.split(" ") : [],
-          auth_type: "auth0",
-          // include the access token for use with Auth0 Token Vault exchanges by tools
-          getRawAccessToken: () => token,
-          // Add any other claims you need
-          ...payload,
+      ```
+
+      <Info>
+      Here, the property `auth0` is an instance of `@auth0/nextjs-auth0` to handle the application auth flows. <br/>
+      You can check different authentication options for Next.js with Auth0 at the [official documentation.](https://github.com/auth0/nextjs-auth0?tab=readme-ov-file#3-create-the-auth0-sdk-client)
+      </Info>
+
+      ### Add Custom Authentication
+      <Info>
+      For more information on how to add custom authentication for your LangGraph Platform application, see the [Custom Auth](https://langchain-ai.github.io/langgraphjs/how-tos/auth/custom_auth/) guide.
+      </Info>
+      In your langgraph.json, add the path to your auth file:
+      ```typescript langgraph.json wrap lines highlight={8}
+      {
+        "node_version": "20",
+        "graphs": {
+          "agent": "./agent.mts:graph"
+        },
+        "env": ".env",
+        "auth": {
+          "path": "./auth.mts:auth"
+        }
+      }
+      ```
+      Then, in your auth.mts file, add your auth logic:
+      ```typescript ./auth.mts wrap lines
+      import { createRemoteJWKSet, jwtVerify } from "jose";
+
+      const { Auth, HTTPException } = require("@langchain/langgraph-sdk/auth");
+
+      const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;
+      const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;
+
+      // JWKS endpoint for Auth0
+      const JWKS = createRemoteJWKSet(
+        new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+      );
+
+      // Create the Auth instance
+      const auth = new Auth();
+      // Register the authentication handler
+      auth.authenticate(async (request: Request) => {
+        const authHeader = request.headers.get("Authorization");
+        const xApiKeyHeader = request.headers.get("x-api-key");
+          /**
+           * LangGraph Platform will convert the `Authorization` header from the client to an `x-api-key` header automatically
+          * as of now: https://docs.langchain.com/langgraph-platform/custom-auth
+          *
+          * We can still leverage the `Authorization` header when served in other infrastructure w/ langgraph-cli
+          * or when running locally.
+          */
+          // This header is required in Langgraph Cloud.
+          if (!authHeader && !xApiKeyHeader) {
+            throw new HTTPException(401, {
+              message: "Invalid auth header provided.",
+            });
+          }
+
+          // prefer the xApiKeyHeader first
+          let token = xApiKeyHeader || authHeader;
+
+          // Remove "Bearer " prefix if present
+          if (token && token.startsWith("Bearer ")) {
+            token = token.substring(7);
+          }
+
+          // Validate Auth0 Access Token using common JWKS endpoint
+          if (!token) {
+            throw new HTTPException(401, {
+              message:
+                "Authorization header format must be of the form: Bearer <token>",
+            });
+          }
+
+          if (token) {
+            try {
+              // Verify the JWT using Auth0 JWKS
+              const { payload } = await jwtVerify(token, JWKS, {
+                issuer: `https://${AUTH0_DOMAIN}/`,
+                audience: AUTH0_AUDIENCE,
+              });
+
+              console.log("✅ Auth0 JWT payload resolved!", payload);
+
+              // Return the verified payload - this becomes available in graph nodes
+              return {
+                identity: payload.sub!,
+                email: payload.email as string,
+                permissions:
+                  typeof payload.scope === "string" ? payload.scope.split(" ") : [],
+                auth_type: "auth0",
+                // include the access token for use with Auth0 Token Vault exchanges by tools
+                getRawAccessToken: () => token,
+                // Add any other claims you need
+                ...payload,
+              };
+            } catch (jwtError) {
+              ...
+            }
+          }
+      });
+
+      export { auth as authHandler };
+      ```
+
+      #### Client Side
+
+      On this example we utilize the `EnsureAPIAccessPopup` component to show a popup that allows the user to authenticate with Google Calendar and grant access with the requested scopes. You'll first need to install the `@auth0/ai-components` package:
+
+      ```bash wrap lines
+      npx @auth0/ai-components add FederatedConnections
+      ```
+
+      Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
+
+      ```tsx ./src/components/chat.tsx wrap lines highlight={2-3,63-73}
+      import { useStream } from "@langchain/langgraph-sdk/react";
+      import { FederatedConnectionInterrupt } from "@auth0/ai/interrupts";
+      import { EnsureAPIAccessPopup } from "@/components/auth0-ai/FederatedConnections/popup";
+
+      const useFocus = () => {
+        const htmlElRef = useRef<HTMLInputElement>(null);
+        const setFocus = () => {
+          if (!htmlElRef.current) {
+            return;
+          }
+          htmlElRef.current.focus();
         };
-      } catch (jwtError) {
-        console.log(
-          "Auth0 JWT validation failed:",
-          jwtError instanceof Error ? jwtError.message : "Unknown error"
-        );
-        throw new HTTPException(401, {
-          message: "Invalid Authorization token provided.",
+        return [htmlElRef, setFocus] as const;
+      };
+
+      export default function Chat() {
+        const [threadId, setThreadId] = useQueryState("threadId");
+        const [input, setInput] = useState("");
+        const thread = useStream({
+          apiUrl: `${process.env.NEXT_PUBLIC_URL}/api/langgraph`,
+          assistantId: "agent",
+          threadId,
+          onThreadId: setThreadId,
+          onError: (err) => {
+            console.dir(err);
+          },
         });
+
+        const [inputRef, setInputFocus] = useFocus();
+        useEffect(() => {
+          if (thread.isLoading) {
+            return;
+          }
+          setInputFocus();
+        }, [thread.isLoading, setInputFocus]);
+
+        const handleSubmit: FormEventHandler<HTMLFormElement> = async (e) => {
+          e.preventDefault();
+          thread.submit(
+            { messages: [{ type: "human", content: input }] },
+            {
+              optimisticValues: (prev) => ({
+                messages: [
+                  ...((prev?.messages as []) ?? []),
+                  { type: "human", content: input, id: "temp" },
+                ],
+              }),
+            }
+          );
+          setInput("");
+        };
+
+        return (
+          <div>
+            {thread.messages.filter((m) => m.content && ["human", "ai"].includes(m.type)).map((message) => (
+              <div key={message.id}>
+                {message.type === "human" ? "User: " : "AI: "}
+                {message.content as string}
+              </div>
+            ))}
+
+            {thread.interrupt && FederatedConnectionInterrupt.isInterrupt(thread.interrupt.value) ? (
+              <div key={thread.interrupt.ns?.join("")}>
+                <EnsureAPIAccessPopup
+                  interrupt={thread.interrupt.value}
+                  onFinish={() => thread.submit(null)}
+                  connectWidget={{
+                      title: "Check your availability in Google Calendar",
+                      description:"description ...",
+                      action: { label: "Check" },
+                    }}
+                />
+              </div>
+            ) : null}
+
+            <form onSubmit={handleSubmit}>
+              <input ref={inputRef} value={input} placeholder="Say something..." readOnly={thread.isLoading} disabled={thread.isLoading} onChange={(e) => setInput(e.target.value)} />
+            </form>
+          </div>
+        );
       }
-    }
-});
-
-export { auth as authHandler };
-```
-
-#### Client Side
-
-In this example, we utilize the `TokenVaultConsentPopup` component to show a pop-up that allows the user to authenticate with Google Calendar and grant access with the requested scopes. You'll first need to install the `@auth0/ai-components` package:
-
-```bash wrap lines
-npx @auth0/ai-components add TokenVault
-```
-
-Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
-
-```tsx ./src/components/chat.tsx wrap lines highlight={2-3,63-73}
-import { useStream } from "@langchain/langgraph-sdk/react";
-import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
-import { TokenVaultConsentPopup } from "@/components/auth0-ai/TokenVault/popup";
-
-const useFocus = () => {
-  const htmlElRef = useRef<HTMLInputElement>(null);
-  const setFocus = () => {
-    if (!htmlElRef.current) {
-      return;
-    }
-    htmlElRef.current.focus();
-  };
-  return [htmlElRef, setFocus] as const;
-};
-
-export default function Chat() {
-  const [threadId, setThreadId] = useQueryState("threadId");
-  const [input, setInput] = useState("");
-  const thread = useStream({
-    apiUrl: `${process.env.NEXT_PUBLIC_URL}/api/langgraph`,
-    assistantId: "agent",
-    threadId,
-    onThreadId: setThreadId,
-    onError: (err) => {
-      console.dir(err);
-    },
-  });
-
-  const [inputRef, setInputFocus] = useFocus();
-  useEffect(() => {
-    if (thread.isLoading) {
-      return;
-    }
-    setInputFocus();
-  }, [thread.isLoading, setInputFocus]);
-
-  const handleSubmit: FormEventHandler<HTMLFormElement> = async (e) => {
-    e.preventDefault();
-    thread.submit(
-      { messages: [{ type: "human", content: input }] },
-      {
-        optimisticValues: (prev) => ({
-          messages: [
-            ...((prev?.messages as []) ?? []),
-            { type: "human", content: input, id: "temp" },
-          ],
-        }),
-      }
-    );
-    setInput("");
-  };
-
-  return (
-    <div>
-      {thread.messages.filter((m) => m.content && ["human", "ai"].includes(m.type)).map((message) => (
-        <div key={message.id}>
-          {message.type === "human" ? "User: " : "AI: "}
-          {message.content as string}
-        </div>
-      ))}
-
-      {thread.interrupt && TokenVaultInterrupt.isInterrupt(thread.interrupt.value) ? (
-        <div key={thread.interrupt.ns?.join("")}>
-          <TokenVaultConsentPopup
-            interrupt={thread.interrupt.value}
-            onFinish={() => thread.submit(null)}
-            connectWidget={{
-                title: "Check your availability in Google Calendar",
-                description:"description ...",
-                action: { label: "Check" },
-              }}
-          />
-        </div>
-      ) : null}
-
-      <form onSubmit={handleSubmit}>
-        <input ref={inputRef} value={input} placeholder="Say something..." readOnly={thread.isLoading} disabled={thread.isLoading} onChange={(e) => setInput(e.target.value)} />
-      </form>
-    </div>
-  );
-}
-```
+      ```
+    </Step>
+  </Steps>
+</div>
