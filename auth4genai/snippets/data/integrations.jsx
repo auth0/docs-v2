@@ -4,7 +4,7 @@ export const integrations = [
   {
     id: "gmail",
     title: "Gmail",
-    icon: "/ai/docs/img/integrations/gmail-avatar.png",
+    icon: "/img/integrations/gmail-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -14,7 +14,7 @@ export const integrations = [
   {
     id: "google-calendar",
     title: "Google Calendar",
-    icon: "/ai/docs/img/integrations/google-calendar-avatar.png",
+    icon: "/img/integrations/google-calendar-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -24,7 +24,7 @@ export const integrations = [
   {
     id: "google-drive",
     title: "Google Drive",
-    icon: "/ai/docs/img/integrations/google-drive-avatar.png",
+    icon: "/img/integrations/google-drive-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -34,7 +34,7 @@ export const integrations = [
   {
     id: "google-sheets",
     title: "Google Sheets",
-    icon: "/ai/docs/img/integrations/google-sheets-avatar.png",
+    icon: "/img/integrations/google-sheets-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -44,7 +44,7 @@ export const integrations = [
   {
     id: "google-slides",
     title: "Google Slides",
-    icon: "/ai/docs/img/integrations/google-slides-avatar.png",
+    icon: "/img/integrations/google-slides-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -54,7 +54,7 @@ export const integrations = [
   {
     id: "google-contacts",
     title: "Google Contacts",
-    icon: "/ai/docs/img/integrations/google-contacts-avatar.png",
+    icon: "/img/integrations/google-contacts-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -64,7 +64,7 @@ export const integrations = [
   {
     id: "google-tasks",
     title: "Google Tasks",
-    icon: "/ai/docs/img/integrations/google-tasks-avatar.png",
+    icon: "/img/integrations/google-tasks-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -74,7 +74,7 @@ export const integrations = [
   {
     id: "google-workspace",
     title: "Google Workspace",
-    icon: "/ai/docs/img/integrations/google-avatar.png",
+    icon: "/img/integrations/google-avatar.png",
     href: "/integrations/google-workspace",
     status: "Available",
     type: "Enterprise",
@@ -84,7 +84,7 @@ export const integrations = [
   {
     id: "youtube",
     title: "YouTube",
-    icon: "/ai/docs/img/integrations/youtube-avatar.png",
+    icon: "/img/integrations/youtube-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
@@ -94,7 +94,7 @@ export const integrations = [
   {
     id: "microsoft",
     title: "Microsoft",
-    icon: "/ai/docs/img/integrations/microsoft-avatar.png",
+    icon: "/img/integrations/microsoft-avatar.png",
     href: "/integrations/microsoft",
     status: "Available",
     type: "Social",
@@ -103,7 +103,7 @@ export const integrations = [
   {
     id: "microsoft-azure",
     title: "Microsoft Entra (Azure AD)",
-    icon: "/ai/docs/img/integrations/microsoft-avatar.png",
+    icon: "/img/integrations/microsoft-avatar.png",
     href: "/integrations/microsoft-azure",
     status: "Available",
     type: "Enterprise",
@@ -112,7 +112,7 @@ export const integrations = [
   {
     id: "github",
     title: "GitHub",
-    icon: "/ai/docs/img/integrations/github-avatar.png",
+    icon: "/img/integrations/github-avatar.png",
     href: "/integrations/github",
     status: "Available",
     type: "Social",
@@ -125,7 +125,7 @@ export const integrations = [
   {
     id: "slack",
     title: "Sign in with Slack",
-    icon: "/ai/docs/img/integrations/slack-avatar.png",
+    icon: "/img/integrations/slack-avatar.png",
     href: "/integrations/slack",
     status: "Available",
     type: "Social",
@@ -134,7 +134,7 @@ export const integrations = [
   {
     id: "box",
     title: "Box",
-    icon: "/ai/docs/img/integrations/box-avatar.png",
+    icon: "/img/integrations/box-avatar.png",
     href: "/integrations/box",
     status: "Available",
     type: "Social",
@@ -144,7 +144,7 @@ export const integrations = [
   {
     id: "oauth2",
     title: "OAuth2",
-    icon: "/ai/docs/img/integrations/oauth2-avatar.png",
+    icon: "/img/integrations/oauth2-avatar.png",
     href: "/integrations/oauth2",
     status: "Available",
     type: "Social",
@@ -154,7 +154,7 @@ export const integrations = [
   {
     id: "oidc",
     title: "OpenID Connect",
-    icon: "/ai/docs/img/integrations/oidc-avatar.png",
+    icon: "/img/integrations/oidc-avatar.png",
     href: "/integrations/oidc",
     status: "Available",
     type: "Enterprise",
@@ -164,7 +164,7 @@ export const integrations = [
   {
     id: "discord",
     title: "Discord",
-    icon: "/ai/docs/img/integrations/discord-avatar.png",
+    icon: "/img/integrations/discord-avatar.png",
     href: "/integrations/discord",
     status: "Available",
     type: "Social",
@@ -174,7 +174,7 @@ export const integrations = [
   {
     id: "figma",
     title: "Figma",
-    icon: "/ai/docs/img/integrations/figma-avatar.png",
+    icon: "/img/integrations/figma-avatar.png",
     href: "/integrations/figma",
     status: "Available",
     type: "Social",
@@ -184,7 +184,7 @@ export const integrations = [
   {
     id: "freshbooks",
     title: "FreshBooks",
-    icon: "/ai/docs/img/integrations/fresh-books-avatar.png",
+    icon: "/img/integrations/fresh-books-avatar.png",
     href: "/integrations/freshbooks",
     status: "Available",
     type: "Social",
@@ -194,7 +194,7 @@ export const integrations = [
   {
     id: "snapchat",
     title: "Snapchat",
-    icon: "/ai/docs/img/integrations/snapchat-avatar.png",
+    icon: "/img/integrations/snapchat-avatar.png",
     href: "/integrations/snapchat",
     status: "Available",
     type: "Social",
@@ -204,7 +204,7 @@ export const integrations = [
   {
     id: "spotify",
     title: "Spotify",
-    icon: "/ai/docs/img/integrations/spotify-avatar.png",
+    icon: "/img/integrations/spotify-avatar.png",
     href: "/integrations/spotify",
     status: "Available",
     type: "Social",
@@ -214,7 +214,7 @@ export const integrations = [
   {
     id: "stripe",
     title: "Stripe Connect",
-    icon: "/ai/docs/img/integrations/stripe-avatar.png",
+    icon: "/img/integrations/stripe-avatar.png",
     href: "/integrations/stripe-connect",
     status: "Available",
     type: "Social",
@@ -224,7 +224,7 @@ export const integrations = [
   {
     id: "tumblr",
     title: "Tumblr",
-    icon: "/ai/docs/img/integrations/tumblr-avatar.png",
+    icon: "/img/integrations/tumblr-avatar.png",
     href: "/integrations/tumblr",
     status: "Available",
     type: "Social",
@@ -234,7 +234,7 @@ export const integrations = [
   {
     id: "amazon",
     title: "Amazon",
-    icon: "/ai/docs/img/integrations/amazon-avatar.png",
+    icon: "/img/integrations/amazon-avatar.png",
     href: "/integrations/amazon",
     status: "Available",
     type: "Social",
@@ -244,7 +244,7 @@ export const integrations = [
   {
     id: "basecamp",
     title: "Basecamp",
-    icon: "/ai/docs/img/integrations/basecamp-avatar.png",
+    icon: "/img/integrations/basecamp-avatar.png",
     href: "/integrations/basecamp",
     status: "Available",
     type: "Social",
@@ -254,7 +254,7 @@ export const integrations = [
   {
     id: "digitalocean",
     title: "DigitalOcean",
-    icon: "/ai/docs/img/integrations/digitalocean-avatar.png",
+    icon: "/img/integrations/digitalocean-avatar.png",
     href: "/integrations/digitalocean",
     status: "Available",
     type: "Social",
@@ -264,7 +264,7 @@ export const integrations = [
   {
     id: "salesforce",
     title: "Salesforce",
-    icon: "/ai/docs/img/integrations/salesforce-avatar.png",
+    icon: "/img/integrations/salesforce-avatar.png",
     href: "/integrations/salesforce",
     status: "Available",
     type: "Social",
@@ -274,7 +274,7 @@ export const integrations = [
   {
     id: "twitch",
     title: "Twitch",
-    icon: "/ai/docs/img/integrations/twitch-avatar.png",
+    icon: "/img/integrations/twitch-avatar.png",
     href: "/integrations/twitch",
     status: "Available",
     type: "Social",
@@ -284,7 +284,7 @@ export const integrations = [
   {
     id: "twitter",
     title: "X (Twitter)",
-    icon: "/ai/docs/img/integrations/x-avatar.png",
+    icon: "/img/integrations/x-avatar.png",
     href: "/integrations/twitter",
     status: "Available",
     type: "Social",
@@ -292,10 +292,10 @@ export const integrations = [
       "Allow your AI agent to post tweets, manage followers, and integrate with social media workflows.",
   },
   {
-   
+
     id: "bitbucket",
     title: "Bitbucket",
-    icon: "/ai/docs/img/integrations/bitbucket-avatar.png",
+    icon: "/img/integrations/bitbucket-avatar.png",
     href: "/integrations/bitbucket",
     status: "Available",
     type: "Social",
@@ -305,7 +305,7 @@ export const integrations = [
   {
     id: "dropbox",
     title: "Dropbox",
-    icon: "/ai/docs/img/integrations/dropbox-avatar.png",
+    icon: "/img/integrations/dropbox-avatar.png",
     href: "/integrations/dropbox",
     status: "Available",
     type: "Social",
@@ -315,7 +315,7 @@ export const integrations = [
   {
     id: "fitbit",
     title: "Fitbit",
-    icon: "/ai/docs/img/integrations/fitbit-avatar.png",
+    icon: "/img/integrations/fitbit-avatar.png",
     href: "/integrations/fitbit",
     status: "Available",
     type: "Social",
@@ -325,7 +325,7 @@ export const integrations = [
   {
     id: "hugging-face",
     title: "Hugging Face",
-    icon: "/ai/docs/img/integrations/hugging-face-avatar.png",
+    icon: "/img/integrations/hugging-face-avatar.png",
     href: "/integrations/hugging-face",
     status: "Available",
     type: "Social",
@@ -335,7 +335,7 @@ export const integrations = [
   {
     id: "paypal",
     title: "PayPal",
-    icon: "/ai/docs/img/integrations/paypal-avatar.png",
+    icon: "/img/integrations/paypal-avatar.png",
     href: "/integrations/paypal",
     status: "Available",
     type: "Social",
