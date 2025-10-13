@@ -100,7 +100,7 @@ export const AvailableSDKs = () => {
       padding: "5px 6px 6px 5px"
     },
     {
-      name: "Vercel AI",
+      name: "AI SDK",
       logo: "/img/icon-landing-vercel-light.png",
       href: "/sdks/vercel-ai-sdk",
       padding: "10px 8.45px"
