@@ -208,7 +208,7 @@ export const StarterKits = () => {
     },
     {
       title: "Agent0",
-      description: "Reference AI personal assistant with pre-configured auth that demonstrates different auth for GenAI features.",
+      description: "Reference AI personal assistant with pre-configured auth that demonstrates different Auth0 for AI Agents features.",
       githubUrl: "https://github.com/auth0-samples/agent0"
     }
   ];
