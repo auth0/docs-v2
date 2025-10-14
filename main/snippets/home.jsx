@@ -11,9 +11,15 @@ export const DocsBanner = () => {
         <div className="flex justify-center mt-5">
           <img
             noZoom
-            src="/docs/images/home/home-banner.svg"
+            src="/docs/images/home/banner.svg"
             alt="Auth0 Docs Banner"
-            className="rounded-xl shadow-md"
+            className="block dark:hidden rounded-xl shadow-md"
+          />
+          <img
+            noZoom
+            src="/docs/images/home/banner-dark.svg"
+            alt="Auth0 Docs Banner"
+            className="hidden dark:block rounded-xl shadow-md"
           />
         </div>
       </div>
@@ -26,19 +32,19 @@ export const DocsFeatureCards = () => {
     {
       title: "Documentation",
       link: "/docs/get-started",
-      icon: "/docs/images/home/icon1.svg",
+      icon: "/docs/images/home/icon1",
       external: true,
     },
     {
       title: "API References",
       link: "https://auth0.com/docs/api",
-      icon: "/docs/images/home/icon2.svg",
+      icon: "/docs/images/home/icon2",
       external: false,
     },
     {
       title: "SDKs",
       link: "/docs/libraries",
-      icon: "/docs/images/home/icon3.svg",
+      icon: "/docs/images/home/icon3",
       external: false,
     },
   ];
@@ -57,7 +63,8 @@ export const DocsFeatureCards = () => {
         >
           <div className="flex flex-col items-start gap-3 w-full">
             <div className="h-9 w-9 flex items-center justify-center rounded-md">
-              <img src={f.icon} alt={f.title} className="h-7 w-7" />
+              <img src={`${f.icon}.svg`} alt={f.title} className="block dark:hidden h-7 w-7" />
+              <img src={`${f.icon}-dark.svg`} alt={f.title} className="hidden dark:block h-7 w-7" />
             </div>
 
             <div className="flex items-center justify-between w-full">
@@ -89,52 +96,44 @@ export const DocsFeatureCards = () => {
 export const LanguageGrid = () => {
   const languages = [
     {
-      img: "/docs/images/home/node-light.svg",
-      imgDark: "/docs/images/home/node-dark.svg",
-      label: "NodeJS",
-      href: "/docs/quickstart/backend/nodejs",
+      img: "react.svg",
+      label: "React",
+      href: "/docs/quickstart/spa/react",
     },
     {
-      img: "/docs/images/home/rails-light.svg",
-      imgDark: "/docs/images/home/rails-dark.svg",
-      label: "Ruby",
-      href: "/docs/quickstart/backend/rails",
+      img: "angular.svg",
+      label: "Angular",
+      href: "/docs/quickstart/spa/angular",
     },
     {
-      img: "/docs/images/home/go-light.svg",
-      imgDark: "/docs/images/home/go-dark.svg",
-      label: "Go",
-      href: "/docs/quickstart/backend/go",
+      img: "nextjs.svg",
+      label: "Next.js",
+      href: "/docs/quickstart/webapp/nextjs",
     },
     {
-      img: "/docs/images/home/php-light.svg",
-      imgDark: "/docs/images/home/php-dark.svg",
-      label: "PHP",
-      href: "/docs/quickstart/backend/php",
+      img: "apple.svg",
+      label: "iOS",
+      href: "/docs/quickstart/native/ios-swift",
     },
     {
-      img: "/docs/images/home/python-light.svg",
-      imgDark: "/docs/images/home/python-dark.svg",
-      label: "Python",
-      href: "/docs/quickstart/backend/python",
+      img: "android.svg",
+      label: "Android",
+      href: "/docs/quickstart/native/android",
     },
     {
-      img: "/docs/images/home/node-light.svg",
-      imgDark: "/docs/images/home/node-dark.svg",
+      img: "java.svg",
+      label: "Java",
+      href: "/docs/quickstart/backend/java-spring-security5/interactive",
+    },
+    {
+      img: "dotnet.svg",
       label: ".NET",
       href: "/docs/quickstart/backend/dotnet",
     },
     {
-      img: "/docs/images/home/java-light.svg",
-      imgDark: "/docs/images/home/java-dark.svg",
-      label: "Java",
-      href: "/docs/quickstart/backend/java",
-    },
-    {
-      img: "/docs/images/home/laravel-light.svg",
-      imgDark: "/docs/images/home/laravel-dark.svg",
-      label: "Laravel",
-      href: "/docs/quickstart/backend/laravel",
+      img: "python.svg",
+      label: "Python",
+      href: "/docs/quickstart/backend/python",
     },
   ];
 
@@ -156,14 +155,18 @@ export const LanguageGrid = () => {
                       hover:border-black dark:hover:border-white 
                       transition"
           >
-            {lang.imgDark ? (
-              <>
-                <img noZoom src={lang.img} alt={lang.label} className="h-8 w-8 mb-4 block dark:hidden" />
-                <img noZoom src={lang.imgDark} alt={lang.label} className="h-8 w-8 mb-4 hidden dark:block" />
-              </>
-            ) : (
-              <img noZoom src={lang.img} alt={lang.label} className="h-8 w-8 mb-4" />
-            )}
+            <img
+              noZoom
+              src={`/docs/images/icons/light/${lang.img}`}
+              alt={lang.label}
+              className="h-8 w-8 mb-4 block dark:hidden"
+            />
+            <img
+              noZoom
+              src={`/docs/images/icons/dark/${lang.img}`}
+              alt={lang.label}
+              className="h-8 w-8 mb-4 hidden dark:block"
+            />
             <span className="font-inter text-base text-gray-900 dark:text-white">{lang.label}</span>
           </a>
         ))}
@@ -220,14 +223,26 @@ export const LearnBasicsGrid = () => {
       title: "Basic concepts",
       desc: "Comprehensive course designed on the fundamental principles of identity.",
       href: "/docs/learn/basic-concepts",
+      img: "/docs/images/home/basics-card1",
     },
-    { title: "Cookbooks", desc: "Open-source collection of examples & guides.", href: "/docs/learn/cookbooks" },
+    {
+      title: "Cookbooks",
+      desc: "Open-source collection of examples & guides.",
+      href: "/docs/learn/cookbooks",
+      img: "/docs/images/home/basics-card2",
+    },
     {
       title: "Community",
       desc: "Join the community for questions, suggestions and product feedback.",
       href: "/community",
+      img: "/docs/images/home/basics-card3",
     },
-    { title: "Status", desc: "Check the status of Auth0 services", href: "https://status.auth0.com/" },
+    {
+      title: "Status",
+      desc: "Check the status of Auth0 services",
+      href: "https://status.auth0.com/",
+      img: "/docs/images/home/basics-card4",
+    },
   ];
 
   return (
@@ -236,41 +251,23 @@ export const LearnBasicsGrid = () => {
         Learn identity basics
       </h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {items.map((it) => (
-          <a key={it.title} href={it.href} className="no_external_icon group block">
-            {/* Thumbnail */}
-            <div
-              className="
-                rounded-[22px] border border-gray-200 dark:border-white/10
-                bg-white/70 dark:bg-neutral-900/60
-                shadow-sm hover:shadow-md transition
-                aspect-[4/3]
-                relative
-                p-1.5
-              "
-            >
-              {/* Inner rounded container (clips the image + subtle inner border) */}
-              <div className="h-full w-full rounded-[18px] overflow-hidden border border-black/5 dark:border-white/5">
-                {/* GRID image (light) */}
-                <img
-                  src="/docs/images/home/LearnBasics_Light.svg"
-                  alt=""
-                  className="h-full w-full object-cover block dark:hidden"
-                />
-                {/* GRID image (dark) */}
-                <img
-                  src="/docs/images/home/LearnBasics_Dark.svg"
-                  alt=""
-                  className="h-full w-full object-cover hidden dark:block"
-                />
-              </div>
+          <a
+            key={it.title}
+            href={it.href}
+            className="no_external_icon group block rounded-2xl border border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-black dark:hover:border-white hover:shadow-lg transition-all"
+          >
+            {/* Icon */}
+            <div className="w-12 h-12 mb-4 overflow-hidden">
+              <img src={`${it.img}.svg`} alt={it.title} className="block dark:hidden w-full h-full object-cover" />
+              <img src={`${it.img}-dark.svg`} alt={it.title} className="hidden dark:block w-full h-full object-cover" />
             </div>
 
             {/* Text */}
-            <div className="mt-2 px-2">
-              <h3 className="font-inter font-medium text-lg text-gray-900 dark:text-white">{it.title}</h3>
-              <p className="mt-2 text-[15px] leading-6 text-gray-600 dark:text-gray-400">{it.desc}</p>
+            <div>
+              <h3 className="font-inter font-medium text-lg text-gray-900 dark:text-white mb-2">{it.title}</h3>
+              <p className="text-[15px] leading-6 text-gray-600 dark:text-gray-400">{it.desc}</p>
             </div>
           </a>
         ))}
