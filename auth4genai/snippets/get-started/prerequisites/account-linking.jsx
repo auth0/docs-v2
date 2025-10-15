@@ -20,7 +20,7 @@ export const Prerequisites = ({
       click <strong>Update</strong> to save the changes.
       <Frame>
         <img
-          src="/ai/docs/img/app_enabled_user_update.png"
+          src="/img/app_enabled_user_update.png"
           alt="Enable Auth0 Management API"
         />
       </Frame>
@@ -736,7 +736,7 @@ function sha256(str) {
       </ul>
       <Frame>
         <img
-          src="/ai/docs/img/account_linking_action_secrets.png"
+          src="/img/account_linking_action_secrets.png"
           alt="Enable Auth0 Management API"
         />
       </Frame>
@@ -766,7 +766,7 @@ function sha256(str) {
       </ul>
       <Frame>
         <img
-          src="/ai/docs/img/account_linking_action_deps.png"
+          src="/img/account_linking_action_deps.png"
           alt="Enable Auth0 Management API"
         />
       </Frame>
@@ -787,7 +787,7 @@ function sha256(str) {
       <br />
       <Frame>
         <img
-          src="/ai/docs/img/account_linking_post_login.png"
+          src="/img/account_linking_post_login.png"
           alt="Attach Account Linking Action to Post Login Trigger"
         />
       </Frame>
