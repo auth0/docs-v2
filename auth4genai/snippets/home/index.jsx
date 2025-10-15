@@ -56,7 +56,7 @@ export const UseCasesGrid = () => {
           <a
             key={idx}
             href={useCase.href}
-            className="group flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:-m-px hover:cursor-pointer no-underline dark:[box-shadow:0px_0px_4px_0px_#2927250D,0px_-1px_1px_-1px_#29272580,0px_-1px_12px_-4px_#FFFFFF17,0.5px_0.5px_4px_0px_#29272580_inset,-0.5px_-0.5px_2px_0px_#FFFFFF17_inset]"
+            className="group flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A] transition duration-300 hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:-m-px hover:cursor-pointer no-underline dark:[box-shadow:0px_0px_4px_0px_#2927250D,0px_-1px_1px_-1px_#29272580,0px_-1px_12px_-4px_#FFFFFF17,0.5px_0.5px_4px_0px_#29272580_inset,-0.5px_-0.5px_2px_0px_#FFFFFF17_inset]"
           >
             <div className="w-[58px] h-[58px] aspect-square rounded-lg flex items-center justify-center text-white text-2xl mb-3">
               <img src={useCase.icon} />
@@ -73,9 +73,9 @@ export const UseCasesGrid = () => {
             <div className="w-full h-px bg-[#ECEBE8] dark:bg-[#3F3D3A] mb-[13px]"></div>
 
             <div className="w-full flex justify-end">
-              <div className="flex h-8 px-4 py-1 items-center">
-                <span className="mr-2 text-[14px] font-medium leading-[130%] text-center text-[#191919] dark:text-[#EFEDE9]" style={{ fontFamily: 'Inter' }}>Learn more</span>
-                <img src="/img/arrow-right.svg" alt="arrow" className="opacity-0 group-hover:opacity-100 transition-opacity dark:invert dark:brightness-90" style={{ width: '9.4px', height: '11.375px' }} />
+              <div className="inline h-8 py-1 items-center">
+                <span className="inline text-[14px] font-medium leading-[130%] text-center text-[#191919] dark:text-[#EFEDE9]" style={{ fontFamily: 'Inter' }}>Learn more</span>
+                <img src="/img/arrow-right.svg" alt="arrow" className="inline -ml-2 group-hover:ml-2 opacity-0 group-hover:opacity-100 transition-all duration-300 dark:invert dark:brightness-90" style={{ width: '9.4px', height: '11.375px' }} />
               </div>
             </div>
           </a>
@@ -124,7 +124,7 @@ export const AvailableSDKs = () => {
           <a
             key={idx}
             href={sdk.href}
-            className="flex p-4 items-center gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)]"
+            className="flex p-4 items-center transition duration-300 gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)]"
           >
             <div className="w-10 h-10 flex items-center justify-center">
               <img
@@ -142,7 +142,7 @@ export const AvailableSDKs = () => {
       <div className="text-right">
         <a
           href="/sdks/overview"
-          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5D34C7] hover:dark:text-[#7549F2] transition" style={{ fontFamily: 'Inter' }}
+          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5D34C7] hover:dark:text-[#7549F2] transition duration-300" style={{ fontFamily: 'Inter' }}
         >
           View more
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -156,9 +156,9 @@ export const AvailableSDKs = () => {
 
 export const GetStartedCTA = () => {
   return (
-    <section className="max-w-[960px] mx-auto px-5 md:px-0">
+    <a href="/build-with-ai/using-ai-tools" className="group max-w-[960px] mx-auto px-5 md:px-0 block">
       <div
-        className="rounded-xl flex flex-col md:flex-row p-8 items-center justify-between gap-4 self-stretch bg-[#AA8DFF24] dark:bg-[#B49BFCF1]"
+        className="rounded-xl flex flex-col md:flex-row p-8 items-center justify-between gap-4 self-stretch bg-[#DCD4F6] dark:bg-[#B49BFCF1]"
         style={{
           boxShadow: '0px 2px 4px 0px #0000000D, 0px 2px 1px -1px #0000000A, 0px 2px 12px -4px #00000014, 0.5px 0.5px 4px 0px #FFFFFF66 inset, -0.5px -0.5px 2px 0px #0000001F inset, 0px 2px 2px 0px #FFFFFF40 inset'
         }}
@@ -174,23 +174,31 @@ export const GetStartedCTA = () => {
             Use it for explanations, workflows, or direct integration into your app.
           </p>
         </div>
-        <button
-          className="flex px-[14px] py-2 items-center text-[#232220] dark:text-[#EFEDE9] font-semibold text-[14px] cursor-default"
+        <div
+          className="transition-all flex px-[14px] py-2 items-center text-[#232220] font-semibold text-[14px] pl-6"
           style={{
             borderRadius: '16px',
             border: '1px solid rgba(255, 255, 255, 0.40)',
-            background: 'rgba(255, 255, 255, 0.06)',
-            boxShadow: '-2px 2px 4px 0 rgba(0, 0, 0, 0.10) inset, 0 2px 4px 0 rgba(255, 255, 255, 0.06) inset, 0 4px 4px 0 rgba(255, 255, 255, 0.04) inset',
+            background: '#F2EFFC',
             fontFamily: 'Inter',
             lineHeight: '140%',
             letterSpacing: '0'
           }}
-          onClick={(e) => e.preventDefault()}
         >
-          Coming Soon
-        </button>
+          <div className="w-full flex transition-all">
+              <div className="flex items-center transition-all">
+                <span>Start Building with AI</span>
+                <img
+                  src="/img/arrow-right.svg"
+                  alt="arrow"
+                  className="opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:ml-5 ml-1"
+                  style={{ width: '9.4px', height: '11.375px' }}
+                />
+              </div>
+            </div>
+        </div>
       </div>
-    </section>
+    </a>
   );
 };
 
@@ -226,7 +234,7 @@ export const StarterKits = () => {
             href={kit.githubUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex px-4 pt-4 pb-[14px] flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)] no-underline"
+            className="flex px-4 pt-4 pb-[14px] transition duration-300 flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-2 hover:border-[#1F1F1F] hover:dark:border-2 hover:dark:border-[#EEEEEE] hover:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.08),0.5px_0.5px_4px_0px_rgba(255,255,255,0.4)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset] hover:dark:[box-shadow:0px_2px_12px_-4px_rgba(0,0,0,0.25),0.5px_0.5px_4px_0px_rgba(31,31,31,1)_inset,-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.25)_inset] hover:-m-px hover:cursor-pointer dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] [box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)] no-underline"
           >
             <h3 className="text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1 mt-0" style={{ fontFamily: 'Inter' }}>
               {kit.title}
@@ -252,7 +260,7 @@ export const StarterKits = () => {
       <div className="text-right">
         <a
           href="/sample-apps"
-          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5D34C7] hover:dark:text-[#7549F2] transition" style={{ fontFamily: 'Inter' }}
+          className="inline-flex items-center gap-2 text-sm font-medium leading-[145%] tracking-[-0.084px] text-[#6742D5] dark:text-[#B0A8FC] hover:text-[#5D34C7] hover:dark:text-[#7549F2] transition duration-300" style={{ fontFamily: 'Inter' }}
         >
           View more
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -266,9 +274,9 @@ export const StarterKits = () => {
 
 export const DeveloperProgram = () => {
   return (
-    <section className="max-w-[960px] mx-auto">
+    <a className="max-w-[960px] mx-auto group block" href="https://auth0.com/signup?onboard_app=genai">
       <div
-        className="overflow-hidden pt-1 pb-1 pl-1 pr-0 transition hover:dark:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(255,255,255,0.09)_inset,0.5px_0.5px_4px_0px_rgba(41,39,37,0.50)_inset,0px_2px_12px_-4px_rgba(255,255,255,0.09)] hover:[box-shadow:-0.5px_-0.5px_2px_0px_rgba(0,0,0,0.12)_inset,0.5px_0.5px_4px_0px_rgba(255,255,255,0.40)_inset,0px_2px_12px_-4px_rgba(0,0,0,0.08)] border border-[#ECEBE8] dark:border-0 bg-[#FEFEFD] dark:bg-[#1F1F1F]"
+        className="overflow-hidden pt-1 pb-1 pl-1 pr-0 transition duration-300 border border-[#ECEBE8] dark:border-[#3F3D3A] border-box hover:cursor-pointer bg-[#FEFEFD] dark:bg-[#1F1F1F]"
         style={{
           borderRadius: '16px'
         }}
@@ -283,14 +291,23 @@ export const DeveloperProgram = () => {
                 Join today to start building secure GenAI applications and provide feedback to shape the platform's future.
               </p>
             </div>
-            <a
-              href="https://auth0.com/signup?onboard_app=genai"
-              className="inline-flex items-center gap-2 rounded-2xl bg-[#191919] dark:bg-[#F4F4F4] px-[14px] py-1 text-[#FEFEFD] dark:text-[#232220] text-sm font-medium leading-6 transition self-start"
-              style={{ fontFamily: 'Inter' }}
+            <div
+              className="pl-7 transition-all inline-flex px-[14px] rounded-2xl py-1 items-center bg-[#191919] dark:bg-[#F4F4F4] self-start gap-2"
+              style={{
+                fontFamily: 'Inter',
+              }}
             >
-              Join Dev Program
-              <img src="/img/cta-arrow-right.svg" alt="arrow" className="w-4 h-4 dark:invert" />
-            </a>
+              <div className="flex transition-all">
+                <div className="flex items-center transition-all">
+                  <span className="text-sm font-medium leading-6 font-medium text-[14px] text-[#FEFEFD] dark:text-[#232220]">Join Dev Program</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"
+                    className="opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:ml-3 ml-1 w-4 h-4 dark:invert"
+                  >
+                    <path d="M6 4L10 8L6 12" stroke="#FEFEFD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <script xmlns="" id="eaecf3c2-fe49-4c57-9236-91fec2a36396"/></svg>
+                </div>
+              </div>
+            </div>
           </div>
           <div className="hidden lg:flex flex-1">
             <div className="flex items-center justify-center">
@@ -303,6 +320,6 @@ export const DeveloperProgram = () => {
           </div>
         </div>
       </div>
-    </section>
+    </a>
   );
 };
