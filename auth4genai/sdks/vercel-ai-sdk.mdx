@@ -1,5 +1,5 @@
 ---
-title: AI SDK & Samples
+title: AI SDK
 description: Auth0 for AI Agents AI SDK make it easy for developers to integrate with and secure AI agent workflows using AI SDK.
 sidebarTitle: AI SDK
 ---
@@ -16,69 +16,146 @@ This SDK provides building blocks for using Auth0 for AI Agents with the AI SDK.
 npm install @auth0/ai-vercel
 ```
 
-## Sample applications
+Below are examples that demonstrate how to integrate Auth0’s token vault and authorization flows with AI tools. You’ll see how to:
 
-Checkout our sample applications for JavaScript/TypeScript built with frameworks like LangGraph and AI SDK.
+- Use a token vault to call third-party APIs on behalf of the user
+- Use Client-Initiated Backchannel Authentication (CIBA) for consent flows
 
-<Columns cols={2}>
-  <Card
-    title="Assistant0 (Next.js)"
-    href="https://github.com/auth0-samples/auth0-assistant0/tree/main/ts-vercel-ai"
-  >
-    A fullstack AI personal assistant with pre-configured tools that demonstrate different Auth0 for AI Agents features like User Authentication, Calling APIs (Gmail, Google Calendar, etc) securely using Token Vault, Human-in-the-loop interactions using Asynchronous Authorization, and using Auth0 FGA for securing RAG tools.
-  </Card>
-  <Card title="Agent0 (Fastify)" href="https://github.com/auth0-samples/agent0">
-    A full-stack AI personal assistant, powered by React and Fastify, that
-    invokes your APIs using tool calls on a logged-in user's behalf.
-  </Card>
-  <Card
-    title="AI Samples"
-    href="https://github.com/auth0-samples/auth0-ai-samples"
-  >
-    Explore our repository of standalone sample applications that showcase
-    Auth0's authentication and authorization capabilities in generative AI
-    applications. Each sample demonstrates a specific Auth0 for AI Agents feature.
-  </Card>
-  <Card
-    title="Auth0 AI SDK Samples"
-    href="https://github.com/auth0/auth0-ai-js/tree/main/examples"
-  >
-    Explore example applications that accompany Auth0's JavaScript AI SDKs.
-    These demonstrate recommended implementation patterns for the SDKs.
-  </Card>
-</Columns>
+For more examples, click [here](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-vercel).
 
-## Guides & Tutorials
+<AccordionGroup>
+<Accordion title="Calling 3rd Party APIs">
+Token Vault allows you to exchange refresh tokens for access tokens for third-party APIs. This is useful when you want to use a token vault (like Google, Facebook, etc.) to authenticate users and then use the access token to call the API on behalf of the user.
 
-Checkout our guides for AI SDK in TypeScript.
+First initialize the Token Vault Authorizer as follows:
 
-<Columns cols={2}>
-  <Card
-    title="Check Google Calendar Availability"
-    href="/how-tos/check-google-calendar-availability"
-    icon="google"
-    iconType="solid"
-    horizontal
-  />
-  <Card
-    title="List GitHub Repositories"
-    href="/how-tos/list-github-repositories"
-    icon="github"
-    iconType="solid"
-    horizontal
-  />
-  <Card
-    title="List Slack Channels"
-    href="/how-tos/list-slack-channels"
-    icon="slack"
-    iconType="solid"
-    horizontal
-  />
-  <Card
-    title="Get Salesforce Opportunities"
-    href="/how-tos/get-salesforce-opportunities"
-    icon="salesforce"
-    iconType="solid"
-    horizontal
-  />
-</Columns>
+```javascript lines
+import { auth0 } from "./auth0";
+
+export const withGoogleAccess = auth0AI.withTokenVault({
+  // A function to retrieve the refresh token of the context.
+  refreshToken: async () => {
+    const session = await auth0.getSession();
+    const refreshToken = session?.tokenSet.refreshToken!;
+    return refreshToken;
+  },
+  // The connection name.
+  connection: 'google-oauth2',
+  // The scopes to request.
+  scopes: ["https://www.googleapis.com/auth/calendar.freebusy"],
+});
+```
+
+Then use the `withGoogleAccess` to wrap the tool and use `getAccessTokenFromTokenVault` from the SDK to get the access token.
+
+```javascript lines focus={2,14,23-30} expandable
+import { tool } from "ai";
+import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
+import { TokenVaultError } from "@auth0/ai/interrupts";
+import { addHours } from "date-fns";
+
+export const checkUsersCalendar = withGoogleAccess(
+  tool({
+    description:
+      "Check user availability on a given date time on their calendar",
+    parameters: z.object({
+      date: z.coerce.date(),
+    }),
+    execute: async ({ date }) => {
+      const accessToken = getAccessTokenFromTokenVault();
+      const url = "https://www.googleapis.com/calendar/v3/freeBusy";
+      const body = JSON.stringify({
+        timeMin: date,
+        timeMax: addHours(date, 1),
+        timeZone: "UTC",
+        items: [{ id: "primary" }],
+      });
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new TokenVaultError(
+            `Authorization required to access the Token Vault`
+          );
+        }
+        throw new Error(
+          `Invalid response from Google Calendar API: ${
+            response.status
+          } - ${await response.text()}`
+        );
+      }
+
+      const busyResp = await response.json();
+      return { available: busyResp.calendars.primary.busy.length === 0 };
+    },
+  })
+);
+```
+</Accordion>
+<Accordion title="Using Client-Initiated Backchannel Authentication">
+CIBA (Client-Initiated Backchannel Authentication) enables secure, user-in-the-loop authentication for sensitive operations. This flow allows you to request user authorization asynchronously and resume execution once authorization is granted.
+
+```javascript lines
+import { auth0 } from "./auth0";
+
+export const buyStockAuthorizer = auth0AI.withAsyncAuthorization({
+  // Same parameters passed to the tool execute function
+  userID: (params: { userID: string }, ctx) => params.userID,
+
+  // The message the user will see on the notification
+  bindingMessage: async ({ qty , ticker }) => {
+    return `Confirm the purchase of ${qty} ${ticker}`;
+  },
+  // Expiration for this request in seconds (default=300s)
+  requestedExpiry: 300,
+  // The scopes and audience to request
+  scope: "openid stock:trade",
+  audience: "http://localhost:8081",
+});
+```
+
+Then wrap the tool as follows:
+
+```javascript lines expandable
+export const purchaseStock = buyStockAuthorizer({
+  description: "Execute a stock purchase given stock ticker and quantity",
+  parameters: z.object({
+    tradeID: z
+      .string()
+      .uuid()
+      .describe("The unique identifier for the trade provided by the user"),
+    userID: z
+      .string()
+      .describe("The user ID of the user who created the conditional trade"),
+    ticker: z.string().describe("The stock ticker to trade"),
+    qty: z
+      .number()
+      .int()
+      .positive()
+      .describe("The quantity of shares to trade"),
+  }),
+  execute: async ({
+    userID,
+    ticker,
+    qty,
+  }: {
+    userID: string;
+    ticker: string;
+    qty: number;
+  }): Promise<string> => {
+    const credentials = getAsyncAuthorizationCredentials();
+    // Use credentials.accessToken to call the stock API.
+    return `Just bought ${qty} shares of ${ticker} for ${userID}`;
+  },
+});
+```
+</Accordion>
+</AccordionGroup>
