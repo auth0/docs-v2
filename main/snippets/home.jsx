@@ -177,9 +177,9 @@ export const LanguageGrid = () => {
 
 export const ProductGrid = () => {
   const products = [
-    { label: "Authentication", href: "/docs/authentication" },
-    { label: "Fine-Grained Authorization", href: "/docs/fine-grained-authorization" },
-    { label: "Auth for GenAI", href: "/docs/genai-auth" },
+    { label: "Authentication", href: "https://auth0.com/platform/authentication" },
+    { label: "Fine-Grained Authorization", href: "https://auth0.com/fine-grained-authorization" },
+    { label: "Auth0 for AI Agents", href: "https://auth0.com/ai" },
   ];
 
   return (
@@ -194,6 +194,7 @@ export const ProductGrid = () => {
             key={p.href}
             href={p.href}
             className="
+              no_external_icon
               group
               flex items-center justify-center
               rounded-2xl
@@ -222,19 +223,19 @@ export const LearnBasicsGrid = () => {
     {
       title: "Basic concepts",
       desc: "Comprehensive course designed on the fundamental principles of identity.",
-      href: "/docs/learn/basic-concepts",
+      href: "https://auth0.com/learn#concepts",
       img: "/docs/images/home/basics-card1",
     },
     {
       title: "Cookbooks",
       desc: "Open-source collection of examples & guides.",
-      href: "/docs/learn/cookbooks",
+      href: "https://developer.auth0.com/resources/guides?_gl=1*hg464v*_gcl_aw*R0NMLjE3NTg1NTU5NTQuQ2owS0NRanc1OFBHQmhDa0FSSXNBRGJEaWx6TGFiRWtJUWNCR0Iybi1WcjA2Z2lZX0FoTjdpaFoxTjRValdTMGZJX2sxVjNNV3FOOUowY2FBdmg2RUFMd193Y0I.*_gcl_au*MjYwOTY4MDAwLjE3NTUwODIyNDM.*_ga*NTU0NzcwODMwLjE3NTUwODIyNDM.*_ga_QKMSDV5369*czE3NjAzNjgxMDYkbzEwMCRnMSR0MTc2MDM2ODEyNCRqNDIkbDAkaDA.",
       img: "/docs/images/home/basics-card2",
     },
     {
       title: "Community",
       desc: "Join the community for questions, suggestions and product feedback.",
-      href: "/community",
+      href: "https://community.auth0.com/?_gl=1*1mc779c*_gcl_aw*R0NMLjE3NTg1NTU5NTQuQ2owS0NRanc1OFBHQmhDa0FSSXNBRGJEaWx6TGFiRWtJUWNCR0Iybi1WcjA2Z2lZX0FoTjdpaFoxTjRValdTMGZJX2sxVjNNV3FOOUowY2FBdmg2RUFMd193Y0I.*_gcl_au*MjYwOTY4MDAwLjE3NTUwODIyNDM.*_ga*NTU0NzcwODMwLjE3NTUwODIyNDM.*_ga_QKMSDV5369*czE3NjAzNjgxMDYkbzEwMCRnMSR0MTc2MDM2ODk2OSRqNTkkbDAkaDA.",
       img: "/docs/images/home/basics-card3",
     },
     {
@@ -256,6 +257,7 @@ export const LearnBasicsGrid = () => {
           <a
             key={it.title}
             href={it.href}
+            target="_blank"
             className="no_external_icon group block rounded-2xl border border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-black dark:hover:border-white hover:shadow-lg transition-all"
           >
             {/* Icon */}
