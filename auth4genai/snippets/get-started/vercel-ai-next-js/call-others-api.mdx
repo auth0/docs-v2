@@ -81,7 +81,7 @@ In the root directory of your project, install the following packages:
 - `googleapis`: Node.js client for Google APIs that supports authentication and authorization with OAuth 2.0.
 
 ```bash wrap lines
-npm install @auth0/ai-vercel@4 ai@4 @ai-sdk/openai@1 @ai-sdk/react@1 zod@3 googleapis@148
+npm install @auth0/ai-vercel@4 ai@5.0.33 @ai-sdk/openai@2.0.24 @ai-sdk/react@2.0.33 zod@3.25.76 googleapis@161
 ```
 
 ### Update your environment file
@@ -177,7 +177,7 @@ import { getAccessToken, withGoogleConnection } from '../auth0-ai';
 export const getCalendarEventsTool = withGoogleConnection(
   tool({
     description: `Get calendar events for a given date from the user's Google Calendar`,
-    parameters: z.object({
+    inputSchema: z.object({
       date: z.coerce.date(),
     }),
     execute: async ({ date }) => {
@@ -362,31 +362,53 @@ export async function POST(req: NextRequest) {
     getCalendarEventsTool,
   };
 
-  return createDataStreamResponse({
-    execute: withInterruptions(
-      async (dataStream: DataStreamWriter) => {
-        const result = streamText({
-          model: openai("gpt-4o-mini"),
-          system: AGENT_SYSTEM_TEMPLATE,
-          messages,
-          maxSteps: 5,
-          tools,
-        });
+   const modelMessages = convertToModelMessages(messages);
 
-        result.mergeIntoDataStream(dataStream, {
-          sendReasoning: true,
+  const stream = createUIMessageStream({
+    originalMessages: messages,
+    execute: withInterruptions(
+      async ({ writer }) => {
+        const result = streamText({
+          model: openai('gpt-4o-mini'),
+          system: AGENT_SYSTEM_TEMPLATE,
+          messages: modelMessages,
+          tools,
+
+          onFinish: (output) => {
+            if (output.finishReason === 'tool-calls') {
+              const lastMessage = output.content[output.content.length - 1];
+              if (lastMessage?.type === 'tool-error') {
+                const { toolName, toolCallId, error, input } = lastMessage;
+                const serializableError = {
+                  cause: error,
+                  toolCallId: toolCallId,
+                  toolName: toolName,
+                  toolArgs: input,
+                };
+
+                throw serializableError;
+              }
+            }
+          },
         });
+        writer.merge(
+          result.toUIMessageStream({
+            sendReasoning: true,
+          }),
+        );
       },
       {
-        messages,
+        messages: messages,
         tools,
-      }
+      },
     ),
-    onError: errorSerializer((err: any) => {
-      console.log(err);
-      return `An error occurred! ${err.message}`;
+    onError: errorSerializer((err) => {
+      console.error('ai-sdk route: stream error', err);
+      return 'Oops, an error occured!';
     }),
   });
+
+  return createUIMessageStreamResponse({ stream });
 }
 ```
 

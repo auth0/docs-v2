@@ -22,7 +22,7 @@ In the root directory of your project, install the following dependencies:
 - `zod`: TypeScript-first schema validation library.
 
 ```bash wrap lines
-npm install @auth0/ai-vercel@4 ai@4 @ai-sdk/openai@1 @ai-sdk/react@1 zod@3
+npm install @auth0/ai-vercel@4 ai@5.0.33 @ai-sdk/openai@2.0.24 @ai-sdk/react@2.0.33 zod@3.25.76
 ```
 
 ### Update the environment file
@@ -59,16 +59,34 @@ export const withAsyncAuthorization = auth0AI.withAsyncAuthorization({
   audience: process.env["SHOP_API_AUDIENCE"]!,
 
   /**
+   * Note: Setting a requested expiry greater than 300 (seconds) will force email verification
+   * instead of using the push notification flow.
+   */
+  // requestedExpiry: 301,
+
+  /**
+   * The behavior when the authorization request is made.
+   *
+   * - `block`: The tool execution is blocked until the user completes the authorization.
+   * - `interrupt`: The tool execution is interrupted until the user completes the authorization.
+   * - a callback: Same as "block" but give access to the auth request and executing logic.
+   *
+   * Defaults to `interrupt`.
+   *
    * When this flag is set to `block`, the execution of the tool awaits
    * until the user approves or rejects the request.
-   *
    * Given the asynchronous nature of the CIBA flow, this mode
    * is only useful during development.
    *
    * In practice, the process that is awaiting the user confirmation
    * could crash or timeout before the user approves the request.
    */
-  onAuthorizationRequest: "block",
+  onAuthorizationRequest: async (authReq, creds) => {
+    console.log(`An authorization request was sent to your mobile device or your email.`);
+    await creds;
+    console.log(`Thanks for approving the order.`);
+  },
+
   onUnauthorized: async (e: Error) => {
     if (e instanceof AccessDeniedInterrupt) {
       return "The user has denied the request";
@@ -192,35 +210,30 @@ import { shopOnlineTool } from "@/lib/tools/shop-online";
 
 //...
 export async function POST(req: NextRequest) {
-  const request = await req.json();
+  const { id, messages }: { id: string; messages: Array<UIMessage> } = await req.json();
 
-  const messages = sanitizeMessages(request.messages);
+  const tools = { shopOnlineTool };
 
-  setAIContext({ threadID: request.id });
+  setAIContext({ threadID: id });
 
-  const tools = {
-    shopOnlineTool,
-  };
-
-  return createDataStreamResponse({
-    execute: async (dataStream: DataStreamWriter) => {
+  const stream = createUIMessageStream({
+    async execute({ writer }) {
       const result = streamText({
-        model: openai("gpt-4o-mini"),
+        model: openai.chat('gpt-4o-mini'),
         system: AGENT_SYSTEM_TEMPLATE,
-        messages,
-        maxSteps: 5,
+        messages: convertToModelMessages(messages),
         tools,
       });
 
-      result.mergeIntoDataStream(dataStream, {
-        sendReasoning: true,
-      });
-    },
-    onError: (err: any) => {
-      console.log(err);
-      return `An error occurred! ${err.message}`;
+      writer.merge(
+        result.toUIMessageStream({
+          sendReasoning: true,
+        }),
+      );
     },
   });
+
+  return createUIMessageStreamResponse({ stream });
 }
 //...
 ```
