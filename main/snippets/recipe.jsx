@@ -145,7 +145,7 @@ export const SignUpForm = () => {
         }}
       >
         Sign up for an{" "}
-        <a href="https://auth0.com/signup?onboard_app=auth_for_aa&ocid=7014z000001NyoxAAC-aPA4z0000008OZeGAM" target="_blank" rel="noopener noreferrer">
+        <a href="https://auth0.com/signup?onboard_app=auth_for_aa&ocid=701KZ000000cXXxYAM-aPA4z0000008OZeGAM" target="_blank" rel="noopener noreferrer">
           Auth0 account
         </a>{" "}
         or{" "}
