@@ -115,32 +115,20 @@ export const Prerequisites = ({
     );
   }
   // Always include these final steps
+
   steps.push(
     <Step key="my-account-api" title="Configure My Account API">
-      To enable <a href="/intro/account-linking">account linking</a>, configure the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a> in the Auth0 Dashboard:
+      In the Auth0 Dashboard, configure the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a> to enable <a href="/intro/account-linking">account linking</a>:
       <ul>
-        <li>Navigate to <strong>Authentication > APIs</strong> to activate the My Account API.</li>
-        <li>Configure your client application to authorize the My Account API:
+        <li>Navigate to <strong>Authentication &gt; APIs</strong>, locate the My Account API banner, and select <strong>Activate</strong> to activate the My Account API.</li>
+        <li>To configure your client application to authorize the My Account API:
           <ul>
-            <li>Navigate to <strong>Applications > Applications</strong> and select your client application.</li>
-            <li>Under <strong>APIs</strong>, toggle on Auth0 My Account API.</li>
-            <li>Select the Connected Accounts scopes for the application in the dropdown.</li>
+            <li>Navigate to <strong>Applications &gt; Applications</strong> and select your client application.</li>
+            <li>Under <strong>APIs</strong>, toggle on <strong>Auth0 My Account API</strong>.</li>
+            <li>Select the <a href="https://auth0.com/docs/manage-users/my-account-api#scope" target="_blank">Connected Accounts scopes</a> for the application in the dropdown.</li>
             <li>Select <strong>Update</strong>.</li>
           </ul>
         </li>
-      </ul>
-    </Step>
-  );
-
-  steps.push(
-    <Step key="token-vault" title="Configure Token Vault">
-      To configure <a href="/intro/token-vault">Token Vault</a> for your client application:
-      <br />
-      <ul>
-        <li>Navigate to <strong>Applications > Applications</strong>.</li>
-        <li>Select the application you want to configure.</li> 
-        <li>Under <strong>Advanced Settings > Grant Types</strong>, select the <strong>Token Vault</strong> grant type.</li>
-        <li>Select <strong>Save Changes</strong>.</li>
       </ul>
     </Step>
   );
