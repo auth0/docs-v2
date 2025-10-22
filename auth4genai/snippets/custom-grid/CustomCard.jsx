@@ -21,10 +21,6 @@ export const CustomCard = ({ item }) => {
       </p>
 
       <div className="custom-card-footer">
-        <span className={`custom-card-type-tag ${isComingSoon ? 'coming-soon' : ''}`}>
-          {item.type}
-        </span>
-
         {isComingSoon && (
           <em className="custom-card-coming-soon">
             Coming Soon

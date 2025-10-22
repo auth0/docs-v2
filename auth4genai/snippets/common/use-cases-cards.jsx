@@ -7,10 +7,6 @@ export const UseCaseCards = ({ items }) => {
           href={item.href}
           className="group flex px-6 pt-6 pb-3 flex-col items-start rounded-xl border border-[#C5C5C5] dark:border-[#3F3D3A] transition duration-300 hover:border-1 hover:border-[#1F1F1F] hover:dark:border-1 hover:dark:border-[#EEEEEE] hover:cursor-pointer no-underline"
         >
-          <div className="w-[35px] h-[35px] aspect-square dark:invert -ml-[9px]">
-            {item.icon}
-          </div>
-
           <h3 className="mt-4 text-base font-semibold leading-[115%] tracking-[-0.176px] text-left text-[#232220] dark:text-[#F4F4F4] mb-1" style={{ fontFamily: 'Inter' }}>
             {item.title}
           </h3>

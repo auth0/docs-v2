@@ -5,7 +5,7 @@ export const SDKCards = ({ items }) => {
         <a
           key={idx}
           href={item.href}
-          className="flex p-4 py-3.5 items-center transition duration-300 gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-1 hover:border-[#1F1F1F] hover:dark:border-1 hover:dark:border-[#EEEEEE]"
+          className="flex p-4 py-3.5 items-center transition duration-300 gap-3 w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#18181B] transition hover:border-1 hover:border-[#1F1F1F] hover:dark:border-1 hover:dark:border-[#EEEEEE]"
         >
           <div className="w-8 h-8 flex items-center justify-center">
             <img
