@@ -81,14 +81,6 @@ export const AccountAndAppSteps = ({
             changes.
           </li>
         </ul>
-        To learn more about Auth0 applications, read{" "}
-        <a
-          href="https://auth0.com/docs/get-started/applications"
-          target="_blank"
-        >
-          Applications
-        </a>
-        .
       </Step>
     );
   }

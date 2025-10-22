@@ -179,7 +179,11 @@ export const ProductGrid = () => {
   const products = [
     { label: "Authentication", href: "/docs/authentication" },
     { label: "Fine-Grained Authorization", href: "/docs/fine-grained-authorization" },
+<<<<<<< HEAD
     { label: "Auth0 for AI Agents", href: "https://auth0.com/ai/docs" },
+=======
+    { label: "Auth0 for AI Agents", href: "/docs/genai-auth" },
+>>>>>>> bad49b88 (updatning fga for rag)
   ];
 
   return (
