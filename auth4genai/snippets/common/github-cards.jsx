@@ -7,7 +7,7 @@ export const GitHubCards = ({ items }) => {
           href={item.href}
           target="_blank"
           rel="noopener noreferrer"
-          className="group min-h-[170px] flex px-4 pt-4 pb-[14px] transition-border duration-300 flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#21201F] transition hover:border-1 hover:border-[#1F1F1F] hover:dark:border-1 hover:dark:border-[#EEEEEE] no-underline cursor-pointer"
+          className="group min-h-[170px] flex px-4 pt-4 pb-[14px] transition-border duration-300 flex-col w-full md:flex-1 self-stretch rounded-xl border border-[#CECDCA] dark:border-[#3F3D3A] bg-white dark:bg-[#18181B] transition hover:border-1 hover:border-[#1F1F1F] hover:dark:border-1 hover:dark:border-[#EEEEEE] no-underline cursor-pointer"
         >
           <div className="flex flex-col flex-1 gap-2">
             <div className="flex items-center justify-between">
