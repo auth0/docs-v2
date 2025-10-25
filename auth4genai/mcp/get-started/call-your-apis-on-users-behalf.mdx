@@ -1,0 +1,599 @@
+---
+title: Call Your API on User's Behalf
+description: Learn how to call an Auth0-protected API from your MCP Server.
+sidebarTitle: Call Your API on User's Behalf
+---
+
+To be able to call your APIs on your users’ you might need to exchange a custom token for an Auth0 access token and verify it, this is called Token Exchange and in the context of MCP this can be done using Custom Token Exchange.
+
+By the end of this quickstart, you should have an MCP server that can:
+
+* Exchange a custom token for an Auth0 access token using RFC 8693  
+* Verify the access token with `jose` against your tenant JWKS, enforcing issuer, audience, and RS256
+
+  Custom Token Exchange is currently in Early Access for Enterprise customers only and it is available under the Early Access program. Go to the [Early Access section](/mcp/intro/overview#early-access) to learn how to gain access.
+
+## Pre-requisites
+
+<Steps>
+  <Step title="Create or log in to your Auth0 Account">
+      To continue with this quickstart, you need to have an [Auth0 account](https://auth0.com/signup).
+  </Step>
+  <Step title="Enable your Tenant to use the Resource Parameter Compatibility Profile">
+      To use the `resource` parameter in your access tokens, you need to enable the compatibility profile
+
+      1. Navigate to Settings and click on the **Advanced** tab  
+      2. Scroll down to the Settings section, find and enable **Resource Parameter Compatibility Profile**.
+      <Frame>
+        <img
+          className="hidden dark:block"
+          src="/img/mcp/enable_resource_param_compatibility_dark.png"
+          alt="Resource Parameter Compatibility Profile enabled"
+        />
+        <img
+          className="block dark:hidden"
+          src="/img/mcp/enable_resource_param_compatibility_light.png"
+          alt="Resource Parameter Compatibility Profile enabled"
+        />
+      </Frame>
+      Resource Parameter Compatibility Profile is available under the Early Access program. Go to the [Early Access section](/mcp/intro/overview#early-access) to learn how to gain access.
+  </Step>
+  <Step title="Install the Auth0 CLI ">
+      This guide uses [Auth0 CLI](https://auth0.github.io/auth0-cli/) to configure an Auth0 tenant for secure MCP tool access.
+      1. Follow the [Auth0 CLI installation instructions](https://auth0.github.io/auth0-cli/).  
+      2. Log in to your account with the Auth0 CLI:
+        ```shell wrap lines
+        auth0 login --scopes "read:client_grants,create:client_grants,delete:client_grants,read:clients,create:clients,update:clients,read:resource_servers,create:resource_servers,update:resource_servers,read:roles,create:roles,update:roles,update:tenant_settings,read:connections,update:connections,create:token_exchange_profiles"
+        ```
+
+        Confirm you are in the correct tenant by double-checking on the terminal the tenant domain, or run the command below:
+
+        ```shell
+        auth0 tenants list
+        ```
+
+        If more than one tenant is configured, the default tenant will be indicated by an arrow.
+  </Step>
+  <Step title="Improve user consent experience">
+    Enable the [user-friendly descriptions for scopes](https://auth0.com/docs/get-started/applications/confidential-and-public-applications/user-consent-and-third-party-applications#scope-descriptions) on the consent screen:
+
+    ```shell wrap lines
+    auth0 tenant-settings update set flags.use_scope_descriptions_for_consent
+    ```
+  </Step>
+</Steps>
+
+## Configure Tenant Settings
+
+To allow third-party clients like [MCP inspector](https://modelcontextprotocol.io/docs/tools/inspector) to use a connection like username-and-password or a social connection, you need to promote the connection to a domain level. [Learn more about enabling third-party applications](https://auth0.com/docs/get-started/applications/confidential-and-public-applications/enable-third-party-applications).
+
+<Steps>
+  <Step title="List your connection">
+    List your connections to get their IDs
+    ```shell
+    auth0 api get connections
+    ```
+  </Step>
+  <Step title="Choose your connections">
+    From the list, identify which connections you want to use for the MCP server and copy the ID.  
+      * For the username and password database, look for the connection with the strategy `auth0`.  
+      * For Google social connection, look for the connection with the strategy `google-oauth2`.  
+  </Step>
+  <Step title="Upgrade the connection to domain-level">
+    For each of those specific connection IDs, run the following command to mark it as a domain-level connection. Replace `YOUR_CONNECTION_ID` with the actual ID (e.g., `con_XXXXXXXXXXXXXXXX`)
+
+    ```shell wrap lines
+    auth0 api patch connections/YOUR_CONNECTION_ID --data '{"is_domain_connection": true}'
+    ```
+  </Step>
+</Steps>
+
+## Create an Application for your MCP Server
+
+In the custom token exchange scenario, the MCP server acts as a client in order to obtain an Auth0 access token with custom token exchange:
+
+```shell wrap lines
+auth0 api post clients --data '{
+  "name": "MCP Server Client",
+  "app_type": "non_interactive",
+  "is_first_party": true,
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "client_secret_post",
+  "oidc_conformant": true,
+  "jwt_configuration": { "alg": "RS256" },
+}' | jq -r '"\nClient ID:     " + .client_id + "\nClient Secret: " +  .client_secret'
+```
+
+Save the `Client ID` and the `Client Secret` from the output.
+
+Now use the `Client ID` from the last command and allow your client to use custom token exchange:
+
+```shell
+auth0 api patch clients/<client_id> --data '{ 
+  "token_exchange": { 
+    "allow_any_profile_of_type": ["custom_authentication"]
+  } 
+}'
+```
+
+## Create a first-party API to call from the MCP Server
+
+Since your objective is to have the MCP server make a tool call that calls a protected first-party API you need to configure an API in Auth0, this will be your upstream API:
+
+```shell
+auth0 api post resource-servers --data '{
+  "identifier": "http://localhost:8787/",
+  "name": "Protected First Party API",
+  "signing_alg": "RS256",
+  "enforce_policies": true,
+  "scopes": [
+    {"value": "read:private", "description": "Private scope"}
+  ]
+}'  | jq -r '"\nAudience:     " + .identifier'
+```
+
+Save the `Audience` from the command output, you’ll need it on a later step.
+
+## Create an API to Represent Your MCP Server
+
+The API (also known as a Resource Server) represents your protected MCP Server and sets it as the default for your tenant.
+
+```shell wrap lines
+auth0 api post resource-servers --data '{
+  "identifier": "http://localhost:3001/",
+  "name": "MCP Tools API",
+  "signing_alg": "RS256",
+  "token_dialect": "rfc9068_profile_authz",
+  "enforce_policies": true,
+  "scopes": [
+    {"value": "tool:whoami", "description": "Access the WhoAmI tool"},
+    {"value": "tool:greet", "description": "Access the Greeting tool"}
+  ]
+}'
+```
+
+## Configure Roles and Permissions
+
+The sample application in this quickstart is prepared to show different tools depending on the role of a given user. For example an Tool Administrator will have access to different tools from an Tool User.
+
+If your application doesn’t require that level of access, i.e. all users have access to available tools, this step is not required for your use case.
+
+Let’s create roles that allow you to control which users can access which tools.
+
+### Create roles
+
+For each role you need (e.g., "Tool Administrator", "Tool User"), run the create command as below.
+
+```shell wrap lines
+# Example for an admin role
+auth0 roles create --name "Tool Administrator" --description "Grants access to all MCP tools"
+
+# Example for a basic user role
+auth0 roles create --name "Tool User" --description "Grants access to basic MCP tools"
+```
+
+Save the ID from the output (they start with `rol_`) as you’ll need them for the next step.
+
+### Assign permissions to roles
+
+After creating roles, assign the API permissions to it:
+
+```shell wrap lines
+# Example for admin role (all scopes)
+auth0 roles permissions add YOUR_ADMIN_ROLE_ID --api-id "http://localhost:3001/" --permissions "tool:whoami,tool:greet"
+
+# Example for user role (one scope)
+auth0 roles permissions add YOUR_USER_ROLE_ID --api-id "http://localhost:3001/" --permissions "tool:whoami"
+```
+
+### Assign Roles to Users
+
+Find users and assign them to the roles. You can search by their email address:
+
+```shell wrap lines
+auth0 users search --query "email:\"example@google.com\""
+```
+
+Copy the user ID (`USERID`) from last command’s output then assign the role to the user:
+
+```shell wrap lines
+auth0 users roles assign "USER_ID_HERE" --roles "YOUR_ROLE_ID_HERE"
+```
+
+## Clone the sample app
+
+Clone the repository and navigate to the correct folder:
+
+```shell wrap lines
+git clone https://github.com/auth0-samples/auth0-ai-samples.git
+cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-customtokenexchange-js
+```
+
+This repository contains the code for various MCP servers examples, for this quickstart you are going to use the FastMCP MCP Server with Auth0 Integration in JavaScript.
+
+For this quickstart sample you have an MCP server and an API built with [Fastify](https://fastify.dev/) that will be called by the MCP server if the user uses the `greet` tool.
+
+## Install packages
+
+Ensure you have npm installed or follow the instructions to [install npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) in its documentation. In the `fastmcp-mcp-customtokenexchange-js` directory, install the required packages:
+
+```shell
+npm install
+```
+
+## Create your environment file
+
+In the `fastmcp-mcp-customtokenexchange-js` directory, rename the `.env.example` to `.env` file and update the following content:
+
+```shell wrap lines
+# Auth0 tenant domain
+AUTH0_DOMAIN=<your-tenant.auth0.com>
+# Auth0 API Identifier
+AUTH0_AUDIENCE=http://localhost:3001/
+
+# Server port
+PORT=3001
+
+# MCP server URL
+MCP_SERVER_URL=http://localhost:3001/
+
+# MCP Auth0 client credentials and configuration
+MCP_AUTH0_CLIENT_ID=your-client-id
+MCP_AUTH0_CLIENT_SECRET=your-client-secret
+
+# Subject token type for CTE
+MCP_AUTH0_SUBJECT_TOKEN_TYPE=urn:fastmcp:mcp
+
+# Scopes to request
+MCP_AUTH0_EXCHANGE_SCOPE=read:tasks
+
+# Upstream API configuration
+API_AUTH0_AUDIENCE=http://localhost:8787/
+API_BASE_URL=http://localhost:8787/
+```
+
+To get your Auth0 application’s `AUTH0_DOMAIN`, run the following command:
+
+```shell
+auth0 tenants list
+```
+
+Copy the domain under `TENANT` from the output and update the corresponding variable on the `.env`.
+
+For `MCP_AUTH0_CLIENT_ID` and `MCP_AUTH0_CLIENT_SECRET` you will use the values obtained on the [Create an Application for your MCP Server](./call-your-apis-on-users-behalf#create-an-application-for-your-mcp-server) step.
+
+## Use Custom Token Exchange Action
+
+The Custom Token Exchange Action, available as a part of Custom Token Exchange Early Access. Navigate to [the On-behalf-of token exchange for first-party apps template available here](https://manage.auth0.com/#/actions/library/templates/templates/daeda4e8-8da2-4abb-afb5-ac09df0ebb2a) and click on **Use This Template**.
+
+<Frame>
+  <img
+    src="/img/mcp/cte_action_template_page.png"
+    alt="Action On-behalf-of token exchange for first-party apps template page"
+  />
+</Frame>
+
+This will open a modal for you to name the action:
+
+<Frame>
+  <img
+    class="img-sizing"
+    src="/img/mcp/cte_action_creation_modal.png"
+    alt="Action creation modal"
+  />
+</Frame>
+
+Once the action is created you can **Deploy** it. When you deploy the Action, Auth0 assigns it an Action ID. You still need to add your custom logic to the Action, but first, get the Action ID to create the Custom Token Exchange Profile.
+
+### Setup the token exchange profile
+
+Copy the action ID by running the command below:
+
+```shell
+auth0 actions list
+```
+
+If you have more Actions in your tenant look for the one that matches the same name you used when you created the Action.
+
+Now use the Action ID in the command below:
+
+```shell
+auth0 api post token-exchange-profiles -d '{
+  "name": "fastmcp-cte-profile",
+  "subject_token_type": "urn:fastmcp:mcp",
+  "action_id": "<your-action-id>",
+  "type": "custom_authentication"
+}'
+```
+
+## Create an Application to Represent Your MCP Client
+
+The MCP client will provide the interface to connect to your MCP server. For this quickstart we will use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) as our client.
+
+Run this command to create the client:
+
+```shell wrap lines
+auth0 api post clients --data '{
+  "name": "MCP Inspector",
+  "app_type": "regular_web",
+  "is_first_party": false,
+  "callbacks": ["http://localhost:6274/oauth/callback"],
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "client_secret_post",
+  "oidc_conformant": true,
+  "jwt_configuration": { "alg": "RS256" },
+  "logo_uri": "https://avatars.githubusercontent.com/u/182288589"
+}' | jq -r '"\nClient ID:     " + .client_id + "\nClient Secret: " +  .client_secret'
+```
+
+Save the `Client ID` and `Client Secret` from the command output.
+
+## Run the MCP Server and the API
+
+Run this command to start your server:
+
+```shell
+npm run start
+```
+
+And in a separate window run this command to start the API:
+
+```shell
+npm run start:api
+```
+
+## Run your MCP client and log in
+
+Now, with your server running in a separate terminal window, run the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector):
+
+```shell
+npx @modelcontextprotocol/inspector@latest
+```
+
+This will open the MCP Inspector interface on your default browser.
+
+<Frame>
+  <img
+    src="/img/mcp/mcp_inspector_configured.png"
+    alt="MCP Inspector page after running it"
+  />
+</Frame>
+
+In the MCP Inspector, select `Streamable HTTP` as the **Transport Type** and enter `http://localhost:3001/mcp` as the URL.
+
+Open the Authentication menu on the navigation menu on the left, and add the `Client ID` and `Client Secret` from the TOD[client creation step](./call-your-apis-on-users-behalf#create-an-application-for-your-mcp-server) in the corresponding fields and click **Connect.**
+
+When you connect to the server for the first time you will be guided through the authentication process using the Auth0 Universal Login. You’ll see the consent screen where you can check the tools you have access:
+
+<Frame>
+  <img
+    class="img-sizing"
+    src="/img/mcp/consent_screen_while_logging_in.png"
+    alt="Consent modal while authenticating"
+  />
+</Frame>
+
+Use the same user you gave access to the tools in the previous step. You can sign in with that account on future visits.
+
+<Info>If you don’t see tools listed on the consent screen that’s because you are not logging in with the correct user</Info>
+
+<Frame>
+  <img
+    src="/img/mcp/mcp_inspector_after_login.png"
+    alt="MCP Inspector page after running it"
+  />
+</Frame>
+
+For details on the configuration of the server complete the User Authentication quickstart. Below you can see the code for the tools:
+
+```javascript wrap lines
+import { z } from "zod";
+import { FastMCP } from "fastmcp";
+import { FastMCPAuthSession } from "./types.js";
+import { exchangeCustomToken } from "./auth0.js";
+
+export const MCP_TOOL_SCOPES = ["tool:greet", "tool:whoami"];
+
+function hasAllScopes(
+  requiredScopes: readonly string[]
+): (auth: FastMCPAuthSession) => boolean {
+  return (auth: FastMCPAuthSession) => {
+    const userScopes = auth.scopes;
+    return requiredScopes.every((scope) => userScopes.includes(scope));
+  };
+}
+
+async function bearerForUpstream(subjectToken: string) {
+  if (!subjectToken) return { token: null, scopes: null };
+
+  try {
+    const result = await exchangeCustomToken(subjectToken);
+    return {
+      token: result.accessToken,
+      scopes: result.scope,
+    }
+  } catch (err) {
+    console.error('Error during token exchange:', err);
+    throw err;
+  }
+}
+
+export function registerTools(mcpServer: FastMCP<FastMCPAuthSession>) {
+  mcpServer.addTool({
+    name: "whoami",
+    description: "Returns information about the authenticated user",
+    annotations: {
+      title: "Who Am I? (FastMCP)",
+      readOnlyHint: true,
+    },
+    canAccess: hasAllScopes(["tool:whoami"]),
+    execute: async (_args, { session: authInfo }) => {
+      const info = { user: authInfo?.extra, scopes: authInfo?.scopes };
+      return JSON.stringify(info, null, 2);
+    },
+  });
+
+  mcpServer.addTool({
+    name: "greet",
+    description:
+      "Greet a user with personalized authentication information retrieved from an upstream API using Custom Token Exchange.",
+    annotations: {
+      title: "Greet User with Custom Token Exchange",
+      readOnlyHint: true,
+    },
+    parameters: z.object({
+      name: z
+        .string()
+        .optional()
+        .describe("The name of the person to greet (optional)."),
+    }),
+    canAccess: hasAllScopes(["tool:greet"]),
+    execute: async (args, { session: authInfo }) => {
+      const { name } = args;
+      const userName = name ?? "there";
+
+      console.log(`Greet tool invoked for user: ${authInfo?.extra?.sub}`);
+
+      // Perform Custom Token Exchange and call upstream API
+      const sourceToken = authInfo!.token;
+      const { token: bearer, scopes } = await bearerForUpstream(sourceToken);
+      const headers = { 'content-type': 'application/json', authorization: `Bearer ${bearer}` };
+
+      // Call to an upstream API using the exchanged token
+      const res = await fetch(`${process.env.API_BASE_URL}/api/private-scope`, {
+        method: 'GET',
+        headers,
+      });
+      const upstreamResult = await res.json();
+      console.log('Upstream API response:', upstreamResult);
+
+      return `
+        Hello, ${userName} (${authInfo?.extra?.sub})!
+        Upstream API Response: ${JSON.stringify(upstreamResult, null, 2)}
+        `.trim();
+    },
+  });
+}
+```
+
+The `greet` tool makes the custom token exchange and then calls the upstream first-party API with the received access token in the highlighted section below:
+
+```javascript wrap lines highlight={23-25,28-33}
+ mcpServer.addTool({
+    name: "greet",
+    description:
+      "Greet a user with personalized authentication information retrieved from an upstream API using Custom Token Exchange.",
+    annotations: {
+      title: "Greet User with Custom Token Exchange",
+      readOnlyHint: true,
+    },
+    parameters: z.object({
+      name: z
+        .string()
+        .optional()
+        .describe("The name of the person to greet (optional)."),
+    }),
+    canAccess: hasAllScopes(["tool:greet"]),
+    execute: async (args, { session: authInfo }) => {
+      const { name } = args;
+      const userName = name ?? "there";
+
+      console.log(`Greet tool invoked for user: ${authInfo?.extra?.sub}`);
+
+      // Perform Custom Token Exchange and call upstream API
+      const sourceToken = authInfo!.token;
+      const { token: bearer, scopes } = await bearerForUpstream(sourceToken);
+      const headers = { 'content-type': 'application/json', authorization: `Bearer ${bearer}` };
+
+      // Call to an upstream API using the exchanged token
+      const res = await fetch(`${process.env.API_BASE_URL}/api/private-scope`, {
+        method: 'GET',
+        headers,
+      });
+      const upstreamResult = await res.json();
+      console.log('Upstream API response:', upstreamResult);
+
+      return `
+        Hello, ${userName} (${authInfo?.extra?.sub})!
+        Upstream API Response: ${JSON.stringify(upstreamResult, null, 2)}
+        `.trim();
+    },
+  });
+```
+
+the `bearerForUpstream` which calls the `exchangeCustomToken` and handles the errors:
+
+```shell wrap lines highlight={5}
+async function bearerForUpstream(subjectToken: string) {
+  if (!subjectToken) return { token: null, scopes: null };
+
+  try {
+    const result = await exchangeCustomToken(subjectToken);
+    return {
+      token: result.accessToken,
+      scopes: result.scope,
+    }
+  } catch (err) {
+    console.error('Error during token exchange:', err);
+    throw err;
+  }
+}
+```
+   
+The `exchangeCustomToken` holds the token exchange logic can be found in `src/auth0.ts` which uses an `ApiClient` from the `auth0-api-js` SDK to facilitate the implementation:
+
+```javascript wrap lines highlight={1,9}
+ const exchangeClient = new ApiClient({
+  domain: AUTH0_DOMAIN,
+  audience: API_AUTH0_AUDIENCE,
+  clientId: MCP_AUTH0_CLIENT_ID,
+  clientSecret: MCP_AUTH0_CLIENT_SECRET,
+});
+
+export async function exchangeCustomToken(subjectToken: string) {
+    return await exchangeClient.getTokenByExchangeProfile(subjectToken, {
+      subjectTokenType: MCP_AUTH0_SUBJECT_TOKEN_TYPE,
+      audience: API_AUTH0_AUDIENCE,
+      ...(MCP_AUTH0_EXCHANGE_SCOPE && { scope: MCP_AUTH0_EXCHANGE_SCOPE }),
+    });
+}
+```
+
+## Run your tools
+
+Users with the **Tool User** role will only see the `whoami` tool:
+
+<Frame>
+  <img
+    src="/img/mcp/tools_list_tool_user_role.png"
+    alt="List of tools for an user with the Tool User role"
+  />
+</Frame>
+
+Whereas users with the **Tool Administrator** role will see both the `greet` and the `whoami` tools:  
+
+<Frame>
+  <img
+    src="/img/mcp/tools_list_tool_administrator_role.png"
+    alt="List of tools for an user with the Tool Administrator role"
+  />
+</Frame>
+
+Now, click on the tool you want to use and **Run Tool**.
+
+<Frame>
+  <img
+    src="/img/mcp/greet_tool_call_with_cte.png"
+    alt="WhoAmI tool call response in MCP Inspector"
+  />
+</Frame>
+
+TODO: missing image of the the greet tool call with token exchange
+
+---
+
+## Next steps
+
+* To set up user authentication, complete the [User Authentication](./user-authentication) quickstart.
+* To learn how to enable Dynamic Client Registration (DCR), complete the [Metadata Discovery and Client Registration](./metadata-discovery-and-client-registration) quickstart.
+* Learn more about [Calling Your APIs on Users Behalf](/mcp/intro/call-your-apis-on-users-behalf).
