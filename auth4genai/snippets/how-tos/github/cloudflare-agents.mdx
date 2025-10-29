@@ -19,30 +19,35 @@ npm install @auth0/ai-vercel @auth0/ai-cloudflare @auth0/ai
 
 Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required GitHub scopes.
 
-```typescript ./src/lib/auth0-ai.ts wrap lines
+```typescript ./src/agent/auth0-ai.ts wrap lines
 import { Auth0AI, setGlobalAIContext } from "@auth0/ai-vercel";
 import { getCurrentAgent } from "agents";
-import type { Chat } from "./chat";
+
+setGlobalAIContext(() => ({ threadID: getAgent().name }));
+
+const auth0AI = new Auth0AI({
+  store: () => {
+    return (getAgent() as any).auth0AIStore;
+  },
+});
 
 const getAgent = () => {
-  const { agent } = getCurrentAgent<Chat>();
+  const { agent } = getCurrentAgent();
   if (!agent) {
     throw new Error("No agent found");
   }
   return agent;
 };
 
-setGlobalAIContext(() => ({ threadID: getAgent().name }));
-
-const auth0AI = new Auth0AI();
+const refreshToken = async () => {
+  const credentials = (getAgent() as any).getCredentials();
+  return credentials?.refresh_token;
+};
 
 export const withGitHub = auth0AI.withTokenVault({
+  refreshToken,
   connection: "github",
   scopes: ["repo"],
-  refreshToken: async () => {
-    const credentials = getAgent().getCredentials();
-    return credentials?.refresh_token;
-  },
 });
 ```
 
@@ -50,19 +55,19 @@ export const withGitHub = auth0AI.withTokenVault({
 
 Wrap your tool using the Auth0 AI SDK to obtain an access token for the GitHub API.
 
-```typescript ./src/agent/tools/listRepositories.ts wrap lines highlight={2-4,9,15,19-21,31-33}
+```typescript ./src/agent/tools/listRepositories.ts wrap lines highlight={6-7,9,15,19-21,28-30}
+import { tool } from "ai";
+import { z } from "zod/v3";
+
 import { Octokit, RequestError } from "octokit";
 import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
 import { TokenVaultError } from "@auth0/ai/interrupts";
-import { withGitHub } from "@/lib/auth0-ai";
-import { tool } from "ai";
-import { z } from "zod";
-
+import { withGitHub } from "@/agent/auth0-ai";
 
 export const listRepositories = withGitHub(
   tool({
     description: "List respositories for the current user on GitHub",
-    parameters: z.object({}),
+    inputSchema: z.object({}),
     execute: async () => {
       // Get the access token from Auth0 AI
       const accessToken = getAccessTokenFromTokenVault();
@@ -72,17 +77,14 @@ export const listRepositories = withGitHub(
         const octokit = new Octokit({
           auth: accessToken,
         });
-
         const { data } = await octokit.rest.repos.listForAuthenticatedUser();
 
         return data.map((repo) => repo.name);
       } catch (error) {
-        console.log("Error", error);
-
         if (error instanceof RequestError) {
           if (error.status === 401) {
             throw new TokenVaultError(
-              `Authorization required to access the Token Vault connection`
+              `Authorization required to access the Token Vault`
             );
           }
         }
@@ -92,6 +94,7 @@ export const listRepositories = withGitHub(
     },
   })
 );
+
 ```
 
 ### 3. Handle authentication redirects
