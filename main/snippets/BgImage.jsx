@@ -4,17 +4,17 @@ export const BgImage = () => {
       <span
         className="fixed inset-0 -z-10 pointer-events-none dark:hidden"
         style={{
-          backgroundImage: "url('/images/bg_light.svg')",
+          backgroundImage: "url('/docs/images/bg_light.svg')",
           backgroundRepeat: "no-repeat",
           backgroundSize: "cover",
-          backgroundPosition: "left -400px",
+          backgroundPosition: "left -250px",
           backgroundAttachment: "fixed",
         }}
       />
       <span
         className="fixed inset-0 -z-10 pointer-events-none hidden dark:block"
         style={{
-          backgroundImage: "url('/images/dark_bg.svg')",
+          backgroundImage: "url('/docs/images/bg_dark.svg')",
           backgroundRepeat: "no-repeat",
           backgroundSize: "",
           backgroundPosition: "center 0",

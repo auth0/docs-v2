@@ -23,7 +23,7 @@ export const LoggedInForm = ({ sampleApp }) => {
     const raw = localStorage.getItem(LS_APPS_KEY);
     if (raw) return JSON.parse(raw);
     // seed with the 3 shown in screenshots
-    const seeded = [{ id: "mz9iNEIo2PHu7oeh8QRt19ndTyyCIgai", name: "Default App" }];
+    const seeded = [{ id: "{yourClientId}", name: "Default App" }];
     localStorage.setItem(LS_APPS_KEY, JSON.stringify(seeded));
     return seeded;
   }

@@ -1,0 +1,1379 @@
+---
+title: "Mise en œuvre d’applications mobiles Android (applications mobiles + API)"
+permalink: "mobile-implementation-android"
+'description': "Mise en œuvre Android de l’API pour le scénario d’architecture Mobile + API"
+'og:title': "Mise en œuvre d’applications mobiles Android (applications mobiles + API)"
+'og:description': "Mise en œuvre Android de l’API pour le scénario d’architecture Mobile + API"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Mise en œuvre d’applications mobiles Android (applications mobiles + API)"
+'twitter:description': "Mise en œuvre Android de l’API pour le scénario d’architecture Mobile + API"
+---
+
+Ce document fait partie du scénario d’architecture Mobile + API et explique comment mettre en œuvre l’application mobile avec Android. Veuillez vous référer au scénario pour obtenir des informations sur la solution mise en œuvre.
+
+## 1. Configurer l’application
+
+### Exemple de projet
+
+Pour commencer, téléchargez un exemple de projet spécifique à ce tutoriel.
+
+[Télécharger](/docs/fr-ca/package/v2?org=auth0-samples&repo=auth0-pnp-exampleco-timesheets&path=timesheets-mobile/android)
+[Fork sur Github](https://github.com/auth0-samples/auth0-pnp-exampleco-timesheets/tree/master/timesheets-mobile/android)
+
+Exigences Système
+
+* Android Studio 2.3
+* Trousse SDK pour Android 25
+* Emulateur - Nexus 5X - Android 6.0
+
+Afficher les exigences
+
+### Définir les dépendances
+
+Pour cette mise en œuvre, nous utiliserons les dépendances suivantes au sein du fichier `build.gradle` de l’application :
+
+* [Auth0.Android](https://github.com/auth0/Auth0.Android): ce package permet l’intégration avec Auth0 pour l’authentification des utilisateurs.
+* [OkHttp](http://square.github.io/okhttp/): ce package fournit une application HTTP pour effectuer des requêtes à l’API Node.JS.
+* [JWTDecode.Android](https://github.com/auth0/JWTDecode.Android) : ce package aidera à décoder les <Tooltip href="/docs/fr-ca/glossary?term=json-web-token" tip="Jeton Web JSON (JWT)
+Format standard de jeton d’ID (et souvent de jeton d’accès) utilisé pour représenter en toute sécurité des demandes entre deux parties." cta="Voir le glossaire">JWT</Tooltip>.
+* AppCompat: ce package nous permet d’utiliser le gadget logiciel de la barre d’outils pour la navigation dans nos activités.
+
+``` lines
+dependencies {
+    compile 'com.squareup.okhttp:okhttp:2.7.5'
+    compile 'com.auth0.android:auth0:1.10.0'
+    compile 'com.auth0.android:jwtdecode:1.1.1'
+    compile 'com.android.support:appcompat-v7:25.3.1'
+    testCompile 'junit:junit:4.12'
+}
+```
+
+### Mise à jour du manifeste
+
+Open the application’s `AndroidManifest.xml` and add the internet permission:
+
+```xml lines
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+Nous mettrons également à jour les détails de l’application afin d’utiliser le gadget logiciel.
+
+```xml lines
+<application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+    </application>
+```
+
+### Définir les valeurs de configuration
+
+Définissez votre ID client Auth0, votre domaine Auth0 et l’URL de l’API dans la ressource `strings.xml` située dans `/res/values/strings.xml`.
+
+```xml lines
+<resources>
+    <string name="app_name">ExampleCo Timesheets</string>
+    <string name="login">Log in</string>
+    <string name="auth0_client_id">...</string>
+    <string name="auth0_domain">...</string>
+    <string name="api_url">http://10.0.2.2:8080/timesheets</string>
+</resources>
+```
+
+Pour cette mise en œuvre, créez des répertoires pour les activités, les modèles et les utilitaires dans le package d’application.
+
+* `activities/`: ce package contiendra `LoginActivity.java`, `TimeSheetActivity.java`, `FormActivity.java`, et `UserActivity.java`.
+* `models/`: ce package contiendra les modèles de données `TimeSheet.java` et `User.java`.
+* `utils/`: ce package contiendra `UserProfileManager.java`, `TimeSheetAdapter.java`, et `ImageTask.java`
+
+## 2. Autoriser L’utilisateur
+
+### Mise à jour du manifeste
+
+Open the app’s `AndroidManifest.xml` and add the `LoginActivity`:
+
+```xml lines
+<activity
+            android:name="com.auth0.samples.activities.LoginActivity"
+            android:launchMode="singleTask">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="@string/auth0_domain"
+                    android:pathPrefix="/android/com.auth0.samples/callback"
+                    android:scheme="demo" />
+            </intent-filter>
+</activity>
+```
+
+### Créer l’activité de connexion
+
+La `LoginActivity` traite l’autorisation de l’utilisateur et correspond à l’écran initial que les utilisateurs voient. Nous allons créer une méthode `login()` pour initialiser un `WebAuthProvider` et lancer l’authentification. Assurez-vous de fournir le bon schéma, la bonne <Tooltip data-tooltip-id="react-containers-DefinitionTooltip-1" tip="">audience</Tooltip> et la bonne permission au `WebAuthProvider`. Pour cette mise en œuvre, nous utiliserons :
+
+* **scheme**: `demo`
+* **audience**: `https://api.exampleco.com/timesheet`s (l’API Node.JS)
+* **response_type**: `code`
+* **permission** : `create:timesheets read:timesheets openid profile email offline_access`. Ces permissions nous permettront d’envoyer `POST` et `GET` à l’API Node.JS, ainsi que de récupérer le profil utilisateur et un jeton d’actualisation.
+
+```java lines
+private void login() {
+        Auth0 auth0 = new Auth0(getString(R.string.auth0_client_id), getString(R.string.auth0_domain));
+        auth0.setOIDCConformant(true);
+
+        WebAuthProvider.init(auth0)
+                .withScheme("demo")
+                .withAudience("https://api.exampleco.com/timesheets")
+                .withResponseType(ResponseType.CODE)
+                .withScope("create:timesheets read:timesheets openid profile email offline_access")
+                .start(
+                    // ...
+                );
+}
+```
+
+In the `login()` method, upon successful authentication we’ll redirect the user to the `TimeSheetActivity`.
+
+```java lines
+package com.auth0.samples.activities;
+
+import android.app.Activity;
+import android.app.Dialog;
+import android.content.Intent;
+import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.view.View;
+import android.widget.Button;
+import android.widget.Toast;
+
+import com.auth0.android.Auth0;
+import com.auth0.android.authentication.AuthenticationException;
+import com.auth0.android.jwt.JWT;
+import com.auth0.android.provider.AuthCallback;
+import com.auth0.android.provider.ResponseType;
+import com.auth0.android.provider.WebAuthProvider;
+import com.auth0.android.result.Credentials;
+import com.auth0.samples.R;
+import com.auth0.samples.models.User;
+import com.auth0.samples.utils.CredentialsManager;
+import com.auth0.samples.utils.UserProfileManager;
+
+public class LoginActivity extends Activity {
+
+    @Override
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.login_activity);
+        Button loginWithTokenButton = (Button) findViewById(R.id.loginButton);
+        loginWithTokenButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                login();
+            }
+        });
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        if (WebAuthProvider.resume(intent)) {
+            return;
+        }
+        super.onNewIntent(intent);
+    }
+
+    private void login() {
+        Auth0 auth0 = new Auth0(getString(R.string.auth0_client_id), getString(R.string.auth0_domain));
+        auth0.setOIDCConformant(true);
+
+        WebAuthProvider.init(auth0)
+                .withScheme("demo")
+                .withAudience("https://api.exampleco.com/timesheets")
+                .withResponseType(ResponseType.CODE)
+                .withScope("create:timesheets read:timesheets openid profile email")
+                .start(LoginActivity.this, new AuthCallback() {
+                    @Override
+                    public void onFailure(@NonNull final Dialog dialog) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                dialog.show();
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(final AuthenticationException exception) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(LoginActivity.this, "Error: " + exception.getMessage(), Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onSuccess(@NonNull final Credentials credentials) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(LoginActivity.this, "Log In - Success", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                        startActivity(new Intent(LoginActivity.this, TimeSheetActivity.class));
+                    }
+                });
+    }
+}
+```
+
+### Stocker les identifiants
+
+Nous utiliserons le `CredentialsManager` de la bibliothèque Auth0.Android et [SharedPreferences](https://developer.android.com/reference/android/content/SharedPreferences.html) pour stocker les identifiants reçus après la connexion.
+
+Nous pouvons créer le `CredentialsManager` avant d’initialiser le `WebAuthProvider` dans la méthode `login()`. La transmission d’un `AuthenticationAPIClient` au `CredentialsManager` lui permet d’actualiser les jetons d’accès s’ils ont expiré.
+
+```java lines
+private void login() {
+        Auth0 auth0 = new Auth0(getString(R.string.auth0_client_id), getString(R.string.auth0_domain));
+        auth0.setOIDCConformant(true);
+
+        AuthenticationAPIClient authAPIClient = new AuthenticationAPIClient(auth0);
+        SharedPreferencesStorage sharedPrefStorage = new SharedPreferencesStorage(this);
+        final CredentialsManager credentialsManager = new CredentialsManager(authAPIClient, sharedPrefStorage);
+
+        WebAuthProvider.init(auth0)
+        // ...
+    }
+```
+
+Mettez maintenant à jour la méthode `login()` pour que les identifiants soient stockés via le `CredentialsManager` après une authentification réussie.
+
+```java lines
+// ...
+@Override
+public void onSuccess(@NonNull final Credentials credentials) {
+    runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+            Toast.makeText(LoginActivity.this, "Log In - Success", Toast.LENGTH_SHORT).show();
+        }
+    });
+
+    credentialsManager.saveCredentials(credentials);
+    startActivity(new Intent(LoginActivity.this, TimeSheetActivity.class));
+// ...
+}
+```
+
+## 3. Obtenez le profil utilisateur
+
+### Créer le modèle utilisateur
+
+Créer un modèle simple d’utilisateur qui sera utilisé par `UserProfileManager` et `UserActivity`.
+
+```java lines
+package com.auth0.samples.models;
+
+public class User {
+    private String email;
+    private String name;
+    private String pictureURL;
+
+    public User(String email, String name, String pictureURL) {
+        this.email = email;
+        this.name = name;
+        this.pictureURL = pictureURL;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getPictureURL() {
+        return pictureURL;
+    }
+}
+```
+
+### Stocker le profil utilisateur
+
+Pour gérer le stockage des informations relatives au profil de l’utilisateur, nous allons créer une classe de gestionnaire, `UserProfileManager`. Le `UserProfileManager` utilisera [SharedPref​erences](https://developer.android.com/reference/android/content/SharedPreferences.html) pour stocker les données.
+
+```java lines
+package com.auth0.samples.utils;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import com.auth0.android.result.UserProfile;
+import com.auth0.samples.models.User;
+
+public class UserProfileManager {
+
+    private static final String PREFERENCES_NAME = "auth0_user_profile";
+    private static final String EMAIL = "email";
+    private static final String NAME = "name";
+    private static final String PICTURE_URL = "picture_url";
+
+    public static void saveUserInfo(Context context, User userInfo) {
+        SharedPreferences sp = context.getSharedPreferences(
+                PREFERENCES_NAME, Context.MODE_PRIVATE);
+
+        sp.edit()
+                .putString(EMAIL, userInfo.getEmail())
+                .putString(NAME, userInfo.getName())
+                .putString(PICTURE_URL, userInfo.getPictureURL())
+                .apply();
+    }
+
+    public static User getUserInfo(Context context) {
+        SharedPreferences sp = context.getSharedPreferences(
+                PREFERENCES_NAME, Context.MODE_PRIVATE);
+
+        return new User(
+                sp.getString(EMAIL, null),
+                sp.getString(NAME, null),
+                sp.getString(PICTURE_URL, null)
+        );
+    }
+
+    public static void deleteUserInfo(Context context) {
+        SharedPreferences sp = context.getSharedPreferences(
+                PREFERENCES_NAME, Context.MODE_PRIVATE);
+
+        sp.edit()
+                .putString(EMAIL, null)
+                .putString(NAME, null)
+                .putString(PICTURE_URL, null)
+                .apply();
+    }
+}
+```
+
+Mettez ensuite à jour la méthode `login()` dans `LoginActivity` pour récupérer le jeton d’ID et obtenir le profil de utilisateur à partir du jeton avec la bibliothèque JWTDecode.Android. Stockez ensuite le profil utilisateur avec `UserProfileManager`.
+
+```java lines
+// ...
+@Override
+public void onSuccess(@NonNull final Credentials credentials) {
+    runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+            Toast.makeText(LoginActivity.this, "Log In - Success", Toast.LENGTH_SHORT).show();
+        }
+    });
+
+    credentialsManager.saveCredentials(credentials);
+    JWT jwt = new JWT(credentials.getIdToken());
+    User user = new User(
+            jwt.getClaim("email").asString(),
+            jwt.getClaim("name").asString(),
+            jwt.getClaim("picture").asString()
+    );
+    UserProfileManager.saveUserInfo(LoginActivity.this, user);
+
+    startActivity(new Intent(LoginActivity.this, TimeSheetActivity.class));
+}
+// ...
+```
+
+## 4. Afficher les éléments de l’interface utilisateur de manière conditionnelle en fonction de la permission
+
+Pour déterminer si un utilisateur a les autorisations requises pour effectuer certaines actions, nous pouvons examiner la permission `scope` qui a été accordée à l’utilisateur au cours du processus d’authentification. La permission `scope` contiendra une chaîne avec toutes les permissions accordées à un utilisateur, de sorte que pour déterminer si une permission particulière a été accordée, il suffit de regarder si la chaîne des permissions contient la sous-chaîne de cette permission particulière.
+
+### Stocker la permission
+
+Tout d’abord, nous pouvons mettre à jour la classe `User` pour stocker les permissions accordées, puis fournir une méthode d’aide, `hasScope()`, qui peut être utilisée pour déterminer si les permissions accordées contiennent une permission donnée.
+
+```java lines
+public class User {
+    private String email;
+    private String name;
+    private String pictureURL;
+    private String grantedScope;
+
+    public User(String email, String name, String pictureURL, String grantedScope) {
+        this.email = email;
+        this.name = name;
+        this.pictureURL = pictureURL;
+        this.grantedScope = grantedScope;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public String getGrantedScope() { 
+        return grantedScope; 
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getPictureURL() {
+        return pictureURL;
+    }
+
+    public Boolean hasScope(String scope) {
+        return grantedScope.contains(scope);
+    }
+}
+```
+
+N’oubliez pas non plus de mettre à jour le `UserProfileManager` afin de stocker le champ supplémentaire :
+
+```java lines
+public class UserProfileManager {
+
+    private static final String PREFERENCES_NAME = "auth0_user_profile";
+    private static final String EMAIL = "email";
+    private static final String NAME = "name";
+    private static final String PICTURE_URL = "picture_url";
+    private static final String SCOPE = "scope";
+
+    public static void saveUserInfo(Context context, User userInfo) {
+        SharedPreferences sp = context.getSharedPreferences(
+                PREFERENCES_NAME, Context.MODE_PRIVATE);
+
+        sp.edit()
+                .putString(EMAIL, userInfo.getEmail())
+                .putString(NAME, userInfo.getName())
+                .putString(PICTURE_URL, userInfo.getPictureURL())
+                .putString(SCOPE, userInfo.getGrantedScope())
+                .apply();
+    }
+
+    public static User getUserInfo(Context context) {
+        SharedPreferences sp = context.getSharedPreferences(
+                PREFERENCES_NAME, Context.MODE_PRIVATE);
+
+        return new User(
+                sp.getString(EMAIL, null),
+                sp.getString(NAME, null),
+                sp.getString(PICTURE_URL, null),
+                sp.getString(SCOPE, null)
+        );
+    }
+
+    public static void deleteUserInfo(Context context) {
+        SharedPreferences sp = context.getSharedPreferences(
+                PREFERENCES_NAME, Context.MODE_PRIVATE);
+
+        sp.edit()
+                .putString(EMAIL, null)
+                .putString(NAME, null)
+                .putString(PICTURE_URL, null)
+                .putString(SCOPE, null)
+                .apply();
+    }
+}
+```
+
+Mettez ensuite à jour la `LoginActivity` pour transmettre la permission `scope` afin qu’elle puisse être stockée dans l’objet `User` :
+
+```java lines
+// ...
+@Override
+public void onSuccess(@NonNull final Credentials credentials) {
+    runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+            Toast.makeText(LoginActivity.this, "Log In - Success", Toast.LENGTH_SHORT).show();
+        }
+    });
+
+    credentialsManager.saveCredentials(credentials);
+    JWT jwt = new JWT(credentials.getIdToken());
+    String scopes = credentials.getScope();
+    User user = new User(
+            jwt.getClaim("email").asString(),
+            jwt.getClaim("name").asString(),
+            jwt.getClaim("picture").asString(),
+            credentials.getScope()
+    );
+    UserProfileManager.saveUserInfo(LoginActivity.this, user);
+
+    startActivity(new Intent(LoginActivity.this, TimeSheetActivity.class));
+}
+// ...
+```
+
+### Affichage du menu d’approbation basé sur la permission
+
+Nous pouvons désormais afficher certains éléments de l’interface utilisateur en fonction de la permission accordée à l’utilisateur. Par exemple, nous avons un élément du menu d’approbation qui ne doit être visible que par les utilisateurs qui ont reçu la permission `approve:timesheets`.
+
+Vous pouvez voir ci-dessous le code de la classe `BaseActivity` qui vérifie si un utilisateur dispose de la permission `approve:timesheets` et qui, en fonction de cela, définit la visibilité de l’élément de menu qui affiche l’activité d’approbation.
+
+```java lines
+// ...
+@Override
+public boolean onCreateOptionsMenu(Menu menu) {
+    Boolean canApprove = UserProfileManager.getUserInfo(this).hasScope("approve:timesheets");
+    MenuInflater inflater = getMenuInflater();
+    inflater.inflate(R.menu.actions, menu);
+    MenuItem item = menu.findItem(R.id.action_approve);
+    item.setVisible(canApprove);
+    return super.onCreateOptionsMenu(menu);
+}
+// ...
+```
+
+## 5. Appeler l’API
+
+### Mise à jour du manifeste
+
+Open the app’s `AndroidManifest.xml` and add the `TimeSheetActivity`:
+
+```xml lines
+<activity android:name="com.auth0.samples.activities.TimeSheetActivity" />
+```
+
+### Créer les modèles d’activité des feuilles de temps
+
+Créez ensuite `timesheet_activity.xml`, le modèle de `TimeSheetsActivity` :
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <android.support.v7.widget.Toolbar
+        android:id="@+id/navToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        android:elevation="4dp"
+        android:theme="@style/ThemeOverlay.AppCompat.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"/>
+
+    <ListView
+        android:id="@+id/timesheetList"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</LinearLayout>
+```
+
+Le gadget logiciel `ListView` contiendra des entrées individuelles représentées par le modèle `item_entry.xml` :
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical" android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <TextView
+        android:id="@+id/tvUserID"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="UserID"
+        android:textStyle="bold" />
+    <TextView
+        android:id="@+id/tvDate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Date" />
+
+    <TextView
+        android:id="@+id/tvProjectName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Project"
+        android:textStyle="italic" />
+    <TextView
+        android:id="@+id/tvHours"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hours" />
+</LinearLayout>
+```
+
+Pour la barre d’outils de navigation de l’activité `TimeSheetActivity`, nous créerons la ressource de menu `timesheet_action_menu.xml` (`/res/menu/​`) :
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_profile"
+        android:title="Profile"
+        app:showAsAction="always" />
+    <item
+        android:id="@+id/action_new"
+        android:title="New Timesheet"
+        app:showAsAction="always" />
+</menu>
+```
+
+### Créer le modèle de feuille de temps
+
+Créez un modèle pour travailler avec les données des feuilles de temps dans nos affichages :
+
+```java lines
+package com.auth0.samples.models;
+
+import java.util.Date;
+
+/**
+ * Created by ej on 7/9/17.
+ */
+
+public class TimeSheet {
+    private String userID;
+    private String projectName;
+    private String date;
+    private double hours;
+    private int ID;
+
+    public TimeSheet(String gUserID, String gProjectName, String gDate, double gHours, int gID) {
+        this.userID = gUserID;
+        this.projectName = gProjectName;
+        this.date = gDate;
+        this.hours = gHours;
+        this.ID = gID;
+    }
+
+    public String getUserID() {
+        return userID;
+    }
+
+    public String getProjectName() {
+        return projectName;
+    }
+
+    public String getDateString() {
+        return date;
+    }
+
+    public double getHours() {
+        return hours;
+    }
+
+    public int getID() {
+        return ID;
+    }
+}
+```
+
+### Créer l’adaptateur de feuille de temps
+
+Le `TimeSheetAdapter` est une classe utilitaire qui prend un tableau d’entrées de feuilles de temps et les applique au `ListView` de `TimeSheetActivity`.
+
+```java lines
+package com.auth0.samples.utils;
+
+import android.content.Context;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.TextView;
+import com.auth0.samples.R;
+import com.auth0.samples.models.TimeSheet;
+import java.util.ArrayList;
+
+public class TimeSheetAdapter extends ArrayAdapter<TimeSheet> {
+
+    public TimeSheetAdapter(Context context, ArrayList<TimeSheet> timesheets) {
+        super(context, 0, timesheets);
+    }
+
+    @Override
+    public View getView(int position, View convertView, ViewGroup parent) {
+
+        TimeSheet timesheet = getItem(position);
+
+        if (convertView == null) {
+            convertView = LayoutInflater.from(getContext()).inflate(R.layout.item_entry, parent, false);
+        }
+
+        TextView tvUserID = (TextView) convertView.findViewById(R.id.tvUserID);
+        TextView tvDate = (TextView) convertView.findViewById(R.id.tvDate);
+        TextView tvProjectName = (TextView) convertView.findViewById(R.id.tvProjectName);
+        TextView tvHours = (TextView) convertView.findViewById(R.id.tvHours);
+
+        tvUserID.setText(timesheet.getUserID());
+        tvDate.setText(timesheet.getDateString());
+        tvProjectName.setText(timesheet.getProjectName());
+        tvHours.setText(Double.toString(timesheet.getHours()));
+
+        return convertView;
+    }
+}
+```
+
+### Créer l’activité Feuille de temps
+
+La `TimeSheetActivity` affiche les entrées de la feuille de temps de l’utilisateur connecté qui sont stockées sur le serveur.
+
+* `@string/api_url` est définie sur `http://10.0.2.2:8080/timesheets` de manière à ce que l’émulateur Android puisse se connecter à l’API Node.JS s’exécutant sur `http://localhost:8080`.
+* La méthode `callAPI()` récupère les feuilles de temps à partir de l’API Node.JS.
+* La méthode `processResults()` prend la réponse JSON de `callAPI()` et la convertit en objets `TimeSheet`.
+* Les méthodes `onCreateOptionsMenu(`) et `onOptionsItemSelected(`) gèrent la fonctionnalité de navigation du gadget logiciel de la barre d’outils.
+
+```java lines
+package com.auth0.samples.activities;
+
+import android.content.Intent;
+import android.os.Bundle;
+import android.support.annotation.Nullable;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.widget.ListView;
+import android.widget.Toast;
+
+import com.auth0.android.Auth0;
+import com.auth0.android.authentication.AuthenticationAPIClient;
+import com.auth0.android.authentication.storage.CredentialsManager;
+import com.auth0.android.authentication.storage.CredentialsManagerException;
+import com.auth0.android.authentication.storage.SharedPreferencesStorage;
+import com.auth0.android.callback.BaseCallback;
+import com.auth0.android.result.Credentials;
+import com.auth0.samples.R;
+import com.auth0.samples.utils.TimeSheetAdapter;
+import com.auth0.samples.models.TimeSheet;
+import com.squareup.okhttp.Callback;
+import com.squareup.okhttp.OkHttpClient;
+import com.squareup.okhttp.Request;
+import com.squareup.okhttp.Response;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.util.ArrayList;
+
+public class TimeSheetActivity extends AppCompatActivity {
+
+    private ArrayList<TimeSheet> timesheets = new ArrayList<>();
+
+    private String accessToken;
+
+    @Override
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.timesheet_activity);
+        Toolbar navToolbar = (Toolbar) findViewById(R.id.navToolbar);
+        setSupportActionBar(navToolbar);
+
+        Auth0 auth0 = new Auth0(getString(R.string.auth0_client_id), getString(R.string.auth0_domain));
+        auth0.setOIDCConformant(true);
+
+        AuthenticationAPIClient authAPIClient = new AuthenticationAPIClient(auth0);
+        SharedPreferencesStorage sharedPrefStorage = new SharedPreferencesStorage(this);
+
+        CredentialsManager credentialsManager = new CredentialsManager(authAPIClient, sharedPrefStorage);
+        credentialsManager.getCredentials(new BaseCallback<Credentials, CredentialsManagerException>() {
+            @Override
+            public void onSuccess(Credentials payload) {
+                accessToken = payload.getAccessToken();
+                callAPI();
+            }
+
+            @Override
+            public void onFailure(CredentialsManagerException error) {
+                Toast.makeText(TimeSheetActivity.this, "Error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void callAPI() {
+        final Request.Builder reqBuilder = new Request.Builder()
+                .get()
+                .url(getString(R.string.api_url))
+                .addHeader("Authorization", "Bearer " + accessToken);
+
+        OkHttpClient client = new OkHttpClient();
+        Request request = reqBuilder.build();
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Request request, IOException e) {
+                Log.e("API", "Error: ", e);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(TimeSheetActivity.this, "An error occurred", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+
+            @Override
+            public void onResponse(final Response response) throws IOException {
+                timesheets = processResults(response);
+                final TimeSheetAdapter adapter = new TimeSheetAdapter(TimeSheetActivity.this, timesheets);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (response.isSuccessful()) {
+                            ListView listView = (ListView) findViewById(R.id.timesheetList);
+                            listView.setAdapter(adapter);
+                            adapter.addAll(timesheets);
+                        } else {
+                            Toast.makeText(TimeSheetActivity.this, "API call failed.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    private ArrayList<TimeSheet> processResults (Response response) {
+        ArrayList<TimeSheet> timesheets = new ArrayList<>();
+        try {
+            String jsonData = response.body().string();
+            if (response.isSuccessful()) {
+                JSONArray timesheetJSONArray = new JSONArray(jsonData);
+                for (int i = 0; i < timesheetJSONArray.length(); i++) {
+                    JSONObject timesheetJSON = timesheetJSONArray.getJSONObject(i);
+                    String userID = timesheetJSON.getString("user_id");
+                    String projectName = timesheetJSON.getString("project");
+                    String dateStr = timesheetJSON.getString("date");
+                    Double hours = timesheetJSON.getDouble("hours");
+                    int id = timesheetJSON.getInt("id");
+
+                    TimeSheet timesheet = new TimeSheet(userID, projectName, dateStr, hours, id);
+                    timesheets.add(timesheet);
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return timesheets;
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        MenuInflater inflater = getMenuInflater();
+        inflater.inflate(R.menu.timesheet_action_menu, menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.action_new:
+                startActivity(new Intent(TimeSheetActivity.this, FormActivity.class));
+                break;
+            case R.id.action_profile:
+                startActivity(new Intent(TimeSheetActivity.this, UserActivity.class));
+                break;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+        return true;
+    }
+}
+```
+
+## 6. Afficher le profil utilisateur
+
+Pour afficher le profil de l’utilisateur connecté, nous allons créer `UserActivity`, un modèle `user_activity.xml` correspondant et le fichier `user_action_menu.xml` pour la navigation dans la barre d’outils. L’écran affiche le nom de l’utilisateur, son courriel et sa photo de profil.
+
+### Mise à jour du manifeste
+
+Open the app’s `AndroidManifest.xml` and add the `UserActivity`:
+
+```xml lines
+<activity android:name="com.auth0.samples.activities.UserActivity" />
+```
+
+#### Créer les modèles d’activité de l’utilisateur
+
+Next create `user_activity.xml`, the layout for the `UserActivity`, with an `ImageView` for the profile picture and `TextViews` for the user’s name and email.
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <android.support.v7.widget.Toolbar
+        android:id="@+id/navToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        android:elevation="4dp"
+        android:theme="@style/ThemeOverlay.AppCompat.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"/>
+
+    <ImageView
+        android:id="@+id/ivPicture"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:srcCompat="@android:color/darker_gray" />
+
+    <TextView
+        android:id="@+id/tvName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Name"
+        android:textSize="24sp" />
+
+    <TextView
+        android:id="@+id/tvEmail"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Email"
+        android:textSize="24sp" />
+</LinearLayout>
+```
+
+Créez le fichier `user_actions_menu.xml` pour la barre d’outils `UserActivity`:
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_view"
+        android:title="View Timesheets"
+        app:showAsAction="always" />
+    <item
+        android:id="@+id/action_new"
+        android:title="New Timesheet"
+        app:showAsAction="always" />
+</menu>
+```
+
+### Chargez l’image du profil à partir de URL
+
+Afin de charger la photo du profil de l’utilisateur à partir de l’URL, créez une tâche qui étend `AsyncTask` et s’exécute en arrière-plan.
+
+```java lines
+package com.auth0.samples.utils;
+
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.AsyncTask;
+import android.util.Log;
+import android.widget.ImageView;
+
+import java.io.InputStream;
+import java.net.URL;
+
+public class ImageTask extends AsyncTask<String, Void, Bitmap> {
+
+    private ImageView bmImage;
+
+    public ImageTask(ImageView bmImage) {
+        this.bmImage = bmImage;
+    }
+
+    protected Bitmap doInBackground(String... urls) {
+        String urldisplay = urls[0];
+        Bitmap mIcon11 = null;
+
+        try {
+            InputStream in = new URL(urldisplay).openStream();
+            mIcon11 = BitmapFactory.decodeStream(in);
+        } catch (Exception e) {
+            Log.e("Error", e.getMessage());
+            e.printStackTrace();
+        }
+        return mIcon11;
+    }
+
+    protected void onPostExecute(Bitmap result) {
+        bmImage.setImageBitmap(result);
+    }
+}
+```
+
+### Créer l’activité de l’utilisateur
+
+Dans la méthode `onCreate()` nous allons récupérer les informations de l’utilisateur dans le `UserProfileManager` et définir les valeurs affichées. Comme précédemment, les méthodes `onCreateOptionsMenu()` et `onOptionsItemSelected()` gèrent la fonctionnalité de navigation du gadget logiciel de la barre d’outils.
+
+```java lines
+package com.auth0.samples.activities;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.os.Bundle;
+import android.support.annotation.Nullable;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.widget.ImageView;
+import android.widget.TextView;
+
+import com.auth0.samples.R;
+import com.auth0.samples.utils.ImageTask;
+import com.auth0.samples.utils.UserProfileManager;
+
+public class UserActivity extends AppCompatActivity {
+
+    @Override
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.user_activity);
+        Toolbar navToolbar = (Toolbar) findViewById(R.id.navToolbar);
+        setSupportActionBar(navToolbar);
+
+        TextView tvName = (TextView) findViewById(R.id.tvName);
+        TextView tvEmail = (TextView) findViewById(R.id.tvEmail);
+
+        tvName.setText(UserProfileManager.getUserInfo(this).getName());
+        tvEmail.setText(UserProfileManager.getUserInfo(this).getEmail());
+
+        new ImageTask((ImageView) findViewById(R.id.ivPicture))
+                .execute(UserProfileManager.getUserInfo(this).getPictureURL());
+
+                UserProfileManager.getUserInfo(this).getName();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu items for use in the action bar
+        MenuInflater inflater = getMenuInflater();
+        inflater.inflate(R.menu.user_action_menu, menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.action_new:
+                startActivity(new Intent(UserActivity.this, FormActivity.class));
+                break;
+            case R.id.action_view:
+                startActivity(new Intent(UserActivity.this, TimeSheetActivity.class));
+                break;
+            default:
+                // If we got here, the user's action was not recognized.
+                // Invoke the superclass to handle it.
+                return super.onOptionsItemSelected(item);
+
+        }
+        return true;
+    }
+}
+```
+
+## 7. Formulaire pour les nouvelles feuilles de temps
+
+Créez ensuite la `FormActivity`et le modèle pour gérer la création de nouvelles entrées dans la feuille de temps.
+
+### Mise à jour du manifeste
+
+Open the app’s `AndroidManifest.xml` and add the `FormActivity`:
+
+```xml lines
+<activity android:name="com.auth0.samples.activities.FormActivity" />
+```
+
+### Créer les modèles d’activité du formulaire
+
+Créez le modèle `form_activity.xml` avec `EditText​` pour le nom du projet et les heures travaillées, et un `DatePicker` pour le jour travaillé.
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/mainForm"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:weightSum="1">
+
+    <android.support.v7.widget.Toolbar
+        android:id="@+id/navToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        android:elevation="4dp"
+        android:theme="@style/ThemeOverlay.AppCompat.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"/>
+
+    <EditText
+        android:id="@+id/editProjectName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ems="10"
+        android:hint="Project Name"
+        android:inputType="textPersonName" />
+
+    <EditText
+        android:id="@+id/editHours"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ems="10"
+        android:hint="Hours Worked"
+        android:inputType="number|numberDecimal" />
+
+    <DatePicker
+        android:id="@+id/datePicker"
+        android:layout_width="match_parent"
+        android:layout_height="191dp"
+        android:layout_weight="0.93" />
+
+    <Button
+        android:id="@+id/submitTimeSheetButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Submit" />
+</LinearLayout>
+```
+
+Créez le fichier `form_actions_menu.xml` pour la barre d’outils `FormActivity`:
+
+```xml lines
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_profile"
+        android:title="Profile"
+        app:showAsAction="always" />
+    <item
+        android:id="@+id/action_view"
+        android:title="View Timesheets"
+        app:showAsAction="always" />
+</menu>
+```
+
+### Créer l’activité du formulaire
+
+* `@string/api_url` est définie sur `http://10.0.2.2:8080/timesheets` de manière à ce que l’émulateur Android puisse se connecter à l’API Node.JS s’exécutant sur `http://localhost:8080`.
+* La méthode `onCreate()` initialise le formulaire et collecte les données pour la méthode `postAPI()` lorsque l’on appuie sur le bouton de soumission.
+* La méthode `postAPI()` enverra les données de l’utilisateur extraites du formulaire à l’API Node.JS au format JSON.
+* La méthode `clearForm()` vide les formulaires de saisie.
+* Les méthodes `onCreateOptionsMenu()` et `onOptionsItemSelected()` gèrent la fonctionnalité de navigation du gadget logiciel de la barre d’outils.
+
+```java lines
+package com.auth0.samples.activities;
+
+import android.content.Intent;
+import android.os.Bundle;
+import android.support.annotation.Nullable;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.DatePicker;
+import android.widget.EditText;
+import android.widget.Toast;
+
+import com.auth0.android.Auth0;
+import com.auth0.android.authentication.AuthenticationAPIClient;
+import com.auth0.android.authentication.storage.CredentialsManager;
+import com.auth0.android.authentication.storage.CredentialsManagerException;
+import com.auth0.android.authentication.storage.SharedPreferencesStorage;
+import com.auth0.android.callback.BaseCallback;
+import com.auth0.android.result.Credentials;
+import com.auth0.samples.R;
+import com.squareup.okhttp.Callback;
+import com.squareup.okhttp.MediaType;
+import com.squareup.okhttp.OkHttpClient;
+import com.squareup.okhttp.Request;
+import com.squareup.okhttp.RequestBody;
+import com.squareup.okhttp.Response;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.util.Calendar;
+import java.util.Date;
+
+public class FormActivity extends AppCompatActivity {
+
+    private static final MediaType MEDIA_TYPE_JSON = MediaType.parse("application/json; charset=utf-8");
+
+    private String accessToken;
+
+    @Override
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.form_activity);
+        Toolbar navToolbar = (Toolbar) findViewById(R.id.navToolbar);
+        setSupportActionBar(navToolbar);
+
+        Auth0 auth0 = new Auth0(getString(R.string.auth0_client_id), getString(R.string.auth0_domain));
+        auth0.setOIDCConformant(true);
+
+        AuthenticationAPIClient authAPIClient = new AuthenticationAPIClient(auth0);
+        SharedPreferencesStorage sharedPrefStorage = new SharedPreferencesStorage(this);
+
+        CredentialsManager credentialsManager = new CredentialsManager(authAPIClient, sharedPrefStorage);
+        credentialsManager.getCredentials(new BaseCallback<Credentials, CredentialsManagerException>() {
+            @Override
+            public void onSuccess(Credentials payload) {
+                accessToken = payload.getAccessToken();
+            }
+
+            @Override
+            public void onFailure(CredentialsManagerException error) {
+                Toast.makeText(FormActivity.this, "Error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        Button submitTimeSheetButton = (Button) findViewById(R.id.submitTimeSheetButton);
+        final EditText editProjectName = (EditText) findViewById(R.id.editProjectName);
+        final EditText editHours = (EditText) findViewById(R.id.editHours);
+        final DatePicker datePicker = (DatePicker) findViewById(R.id.datePicker);
+
+        submitTimeSheetButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                int day = datePicker.getDayOfMonth();
+                int month = datePicker.getMonth();
+                int year =  datePicker.getYear();
+
+                Calendar calendar = Calendar.getInstance();
+                calendar.set(year, month, day);
+
+                postAPI(
+                        editProjectName.getText().toString(),
+                        calendar.getTime(),
+                        editHours.getText().toString()
+                );
+            }
+        });
+    }
+
+    private void postAPI(String projectName, Date date, String hours) {
+
+        JSONObject postBody = new JSONObject();
+        try {
+            postBody.put("project", projectName);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        try {
+            postBody.put("date", date);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        try {
+            postBody.put("hours", hours);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        String postStr = postBody.toString();
+
+        final Request.Builder reqBuilder = new Request.Builder()
+                .post(RequestBody.create(MEDIA_TYPE_JSON, postStr))
+                .url(getString(R.string.api_url))
+                .addHeader("Authorization", "Bearer " + accessToken);
+
+        OkHttpClient client = new OkHttpClient();
+        Request request = reqBuilder.build();
+
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Request request, IOException e) {
+                Log.e("API", "Error: ", e);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(FormActivity.this, "An error occurred", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+
+            @Override
+            public void onResponse(final Response response) throws IOException {
+                final String resBody = response.body().string();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (response.isSuccessful()) {
+                            clearForm((ViewGroup) findViewById(R.id.mainForm));
+                            Intent intent = new Intent(FormActivity.this, TimeSheetActivity.class);
+                            FormActivity.this.startActivity(intent);
+                        } else {
+                            Toast.makeText(FormActivity.this, "Timesheet creation failed.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    private void clearForm(ViewGroup group) {
+        for (int i = 0, count = group.getChildCount(); i < count; ++i) {
+            View view = group.getChildAt(i);
+            if (view instanceof EditText) {
+                ((EditText)view).setText("");
+            }
+
+            if(view instanceof ViewGroup && (((ViewGroup)view).getChildCount() > 0))
+                clearForm((ViewGroup)view);
+        }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        MenuInflater inflater = getMenuInflater();
+        inflater.inflate(R.menu.form_action_menu, menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.action_view:
+                startActivity(new Intent(FormActivity.this, TimeSheetActivity.class));
+                break;
+            case R.id.action_profile:
+                startActivity(new Intent(FormActivity.this, UserActivity.class));
+                break;
+            default:
+                return super.onOptionsItemSelected(item);
+
+        }
+        return true;
+    }
+}
+```
+
+## Tester l’application
+
+Avant de continuer, assurez-vous que vous avez [mis en œuvre l’API Node.JS](https://auth0.com/docs/architecture-scenarios/application/mobile-api/api-implementation-nodejs).
+
+1. Start the API by navigating to the API’s directory in your terminal and entering the `node server` command.
+2. Ouvrez l’application mobile dans Android Studio et appuyez sur le bouton **Exécuter**.
+3. Sélectionnez l’appareil virtuel Nexus 5X API 23.
+4. Une fois que l’émulateur a chargé l’application mobile, vous pouvez vous connecter en tant qu’utilisateur, puis créer et afficher des entrées de feuilles de temps à partir de l’API Node.JS en cours d’exécution.
+
+C’est fini! Vous avez terminé!

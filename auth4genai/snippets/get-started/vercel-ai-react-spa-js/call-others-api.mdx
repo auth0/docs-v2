@@ -1,5 +1,6 @@
 import { Prerequisites } from "/snippets/get-started/prerequisites/call-others-api.jsx";
 import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/download-quickstart/DownloadQuickstartButton.jsx";
 
 <Prerequisites
   createAuth0ApplicationStep={{
@@ -7,9 +8,8 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
     callbackUrl: "http://localhost:5173/auth/callback",
     logoutUrl: "http://localhost:5173",
     allowedWebOrigins: "http://localhost:5173",
-  }}
-  refreshTokenGrantStep={{
-    applicationName: "Single Page Web Application",
+    enableTokenVaultGrant: true,
+    enableRefreshTokenGrant: true,
   }}
   createAuth0ApiStep={{}}
   createResourceServerClientStep={{}}
@@ -27,14 +27,13 @@ This React SPA implementation differs from the <a href="/get-started/call-others
 3. **Resource Server Client**: Requires a special Resource Server Client configured for token exchange with Token Vault.
 4. **Interrupt Handling**: The React client manages tool access errors and step-up authorization using interrupts that trigger a pop-up for re-authorization.
 
-### Prepare React SPA + Hono API
 
-**Recommended**: To use this example, clone the [Auth0 AI JS](https://github.com/auth0-lab/auth0-ai-js.git) repository:
-
-```bash wrap lines
-git clone https://github.com/auth0-lab/auth0-ai-js.git
-cd auth0-ai-js/examples/calling-apis/spa-with-backend-api/react-hono-ai-sdk
-```
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="call-others-apis-on-users-behalf"
+  framework="langchain-react-spa-js"
+/>
 
 ### Install dependencies
 
@@ -43,7 +42,7 @@ In the root directory of your project, you have the following client and server 
 **Client dependencies:**
 
 - `@auth0/auth0-spa-js`: Auth0 SPA SDK for client-side authentication
-- `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-vercel) built for GenAI applications
+- `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-vercel) built for AI agents
 - `ai`: Core [Vercel AI SDK](https://sdk.vercel.ai/docs) module
 
 **Server dependencies:**
@@ -88,21 +87,21 @@ PORT=3001
 
 Unlike the <a href="/get-started/call-others-apis-on-users-behalf#vercel-ai-%2B-next-js" target="_blank">Next.js example</a>, which uses refresh tokens, this React SPA approach uses **access tokens** for token exchange with Token Vault. The SPA handles step-up authorization using Auth0 SPA SDK's `loginWithPopup()` method to display the consent screen and allow the user to grant additional permissions.
 
-Create `client/src/components/FederatedConnectionPopup.tsx`:
+Create `client/src/components/TokenVaultConsentPopup.tsx`:
 
-```tsx client/src/components/FederatedConnectionPopup.tsx wrap lines
+```tsx client/src/components/TokenVaultConsentPopup.tsx wrap lines
 import { getAuth0Client } from "../lib/auth0";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
 import type { Auth0InterruptionUI } from "@auth0/ai-vercel/react";
-interface FederatedConnectionPopupProps {
+interface TokenVaultConsentPopupProps {
   interrupt: Auth0InterruptionUI;
 }
 
-export function FederatedConnectionPopup({
+export function TokenVaultConsentPopup({
   interrupt,
-}: FederatedConnectionPopupProps) {
+}: TokenVaultConsentPopupProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   const { connection, requiredScopes, resume } = interrupt;
@@ -200,7 +199,7 @@ import { tool } from "ai";
 import { google } from "googleapis";
 import { z } from "zod";
 
-import { getAccessTokenForConnection } from "@auth0/ai-vercel";
+import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
 
 import type { ToolWrapper } from "@auth0/ai-vercel";
 
@@ -215,10 +214,10 @@ export const createListUserCalendarsTool = (
   googleCalendarWrapper(
     tool({
       description: "List all calendars the user has access to",
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         // Get the access token from Token Vault using the enhanced SDK
-        const token = getAccessTokenForConnection();
+        const token = getAccessTokenFromTokenVault();
 
         const calendar = google.calendar("v3");
         const auth = new google.auth.OAuth2();
@@ -268,7 +267,7 @@ export const createGoogleCalendarTool = (c: Context): ToolWrapper => {
   if (!accessToken) {
     throw new Error("Access token not available in auth context");
   }
-  return auth0AI.withTokenForConnection({
+  return auth0AI.withTokenVault({
     accessToken: async () => accessToken,
     subjectTokenType: SUBJECT_TOKEN_TYPES.SUBJECT_TYPE_ACCESS_TOKEN,
     connection: process.env.GOOGLE_CONNECTION_NAME || "google-oauth2",
@@ -290,10 +289,11 @@ Create `server/src/index.ts`:
 
 ```ts server/src/index.ts wrap lines
 import {
-  createDataStreamResponse,
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
   generateId,
   streamText,
-  ToolExecutionError,
 } from "ai";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -301,11 +301,11 @@ import { decodeJwt } from "jose";
 
 import { openai } from "@ai-sdk/openai";
 import { setAIContext } from "@auth0/ai-vercel";
-import { InterruptionPrefix, withInterruptions } from "@auth0/ai-vercel/interrupts";
-import { Auth0Interrupt } from "@auth0/ai/interrupts";
+import { errorSerializer, withInterruptions } from "@auth0/ai-vercel/interrupts";
 import { serve } from "@hono/node-server";
 
-import { listUserCalendars } from "./lib/tools/listUserCalendars";
+import { createGoogleCalendarTool } from "./lib/auth";
+import { createListUserCalendarsTool } from "./lib/tools/listUserCalendars";
 import { jwtAuthMiddleware } from "./middleware/auth";
 
 import type { ApiResponse } from "shared/dist";
@@ -334,45 +334,54 @@ export const app = new Hono().post("/chat", jwtAuthMiddleware(), async (c) => {
     // note: you can see more examples of Hono API consumption with AI SDK here:
     // https://ai-sdk.dev/cookbook/api-servers/hono?utm_source=chatgpt.com#hono
 
-    return createDataStreamResponse({
+     const modelMessages = convertToModelMessages(requestMessages);
+
+    const stream = createUIMessageStream({
+      originalMessages: requestMessages,
       execute: withInterruptions(
-        async (dataStream) => {
+        async ({ writer }) => {
           const result = streamText({
             model: openai("gpt-4o-mini"),
             system:
-              "You are a helpful calendar assistant! You can help users with their calendar events and schedules. Keep your responses concise and helpful.",
-            messages: requestMessages,
-            maxSteps: 5,
+              "You are a helpful calendar assistant! You can help users with their calendar events and schedules. Keep your responses concise and helpful. Always format your responses as plain text. Do not use markdown formatting like **bold**, ##headers, or -bullet points. Use simple text formatting with line breaks and indentation only.",
+            messages: modelMessages,
             tools,
-          });
 
-          result.mergeIntoDataStream(dataStream, {
-            sendReasoning: true,
-          });
-        },
-        { messages: requestMessages, tools }
-      ),
-      onError: (error: any) => {
-        // Handle Auth0 AI interrupts
-        if (
-          error.cause instanceof Auth0Interrupt ||
-          error.cause instanceof FederatedConnectionInterrupt
-        ) {
-          const serializableError = {
-            ...error.cause.toJSON(),
-            toolCall: {
-              id: error.toolCallId,
-              args: error.toolArgs,
-              name: error.toolName,
+            onFinish: (output) => {
+              if (output.finishReason === "tool-calls") {
+                const lastMessage = output.content[output.content.length - 1];
+                if (lastMessage?.type === "tool-error") {
+                  const { toolName, toolCallId, error, input } = lastMessage;
+                  const serializableError = {
+                    cause: error,
+                    toolCallId: toolCallId,
+                    toolName: toolName,
+                    toolArgs: input,
+                  };
+
+                  throw serializableError;
+                }
+              }
             },
-          };
-
-          return `${InterruptionPrefix}${JSON.stringify(serializableError)}`;
+          });
+          writer.merge(
+            result.toUIMessageStream({
+              sendReasoning: true,
+            })
+          );
+        },
+        {
+          messages: requestMessages,
+          tools,
         }
-
-        return "Oops! An error occurred.";
-      },
+      ),
+      onError: errorSerializer((err) => {
+        console.error("react-hono-ai-sdk route: stream error", err);
+        return "Oops, an error occurred!";
+      }),
     });
+
+    return createUIMessageStreamResponse({ stream });
   });
 
 // Start the server for Node.js
@@ -388,72 +397,55 @@ console.log(`✅ Server running on http://localhost:${port}`);
 
 Update your chat component to handle step-up auth interrupts:
 
-```tsx client/src/components/Chat.tsx wrap lines highlight={3,5,12,18-33,49-65, 124-126}
+```tsx client/src/components/Chat.tsx wrap lines highlight={9,24,100-104,106-109}
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+} from "ai";
 import { Loader2, Send, Trash2 } from "lucide-react";
+import { useState } from "react";
+
 import { useChat } from "@ai-sdk/react";
 import { useInterruptions } from "@auth0/ai-vercel/react";
+import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
+
 import { useAuth0 } from "../hooks/useAuth0";
-import { FederatedConnectionPopup } from "./FederatedConnectionPopup";
+import { TokenVaultConsentPopup } from "./TokenVaultConsentPopup";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 
-import type { Message } from "ai";
-
-const InterruptionPrefix = "AUTH0_AI_INTERRUPTION:";
-const SERVER_URL = import.meta.env.VITE_SERVER_URL;
+import type { TextUIPart, UIMessage } from "ai";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3000";
 
 export function Chat() {
   const { getToken } = useAuth0();
-
+  const [input, setInput] = useState<string>("");
   const chatHelpers = useInterruptions((errorHandler) =>
     useChat({
-      api: `${SERVER_URL}/chat`,
-      fetch: async (url: string | URL | Request, init?: RequestInit) => {
-        const token = await getToken();
-        return fetch(url, {
-          ...init,
-          headers: {
-            "Content-Type": "application/json",
-            ...init?.headers,
-            Authorization: `Bearer ${token}`,
-          },
-        });
-      },
+      transport: new DefaultChatTransport({
+        api: `${SERVER_URL}/chat`,
+        fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+          const token = await getToken();
+          return fetch(url, {
+            ...init,
+            headers: {
+              "Content-Type": "application/json",
+              ...init?.headers,
+              Authorization: `Bearer ${token}`,
+            },
+          });
+        }) as typeof fetch,
+      }),
+      onError: errorHandler((error) => {
+        console.error("Chat error:", error);
+      }),
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     })
   );
 
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading,
-    error,
-    setMessages,
-    toolInterrupt,
-  } = chatHelpers;
-
-  // Filter out interrupted tool calls from messages
-  let displayMessages = messages;
-
-  if (toolInterrupt) {
-    displayMessages = messages.map((message) => ({
-      ...message,
-      parts: message.parts?.map((part) =>
-        part.type === "tool-invocation" &&
-        part.toolInvocation.toolCallId === toolInterrupt.toolCall?.id
-          ? {
-              ...part,
-              toolInvocation: {
-                ...part.toolInvocation,
-                state: "call",
-              },
-            }
-          : part
-      ),
-    }));
-  }
+  const { messages, sendMessage, status, error, setMessages, toolInterrupt } =
+    chatHelpers;
 
   const clearMessages = () => {
     setMessages([]);
@@ -479,7 +471,7 @@ export function Chat() {
       <CardContent className="space-y-4">
         {/* Messages */}
         <div className="space-y-4 max-h-96 overflow-y-auto">
-          {displayMessages.length === 0 ? (
+          {messages.length === 0 ? (
             <div className="text-center text-muted-foreground py-8">
               <p className="text-sm">Ask me about your calendar events!</p>
               <p className="text-xs mt-1">
@@ -488,11 +480,11 @@ export function Chat() {
               </p>
             </div>
           ) : (
-            displayMessages.map((message) => (
+            messages.map((message) => (
               <MessageBubble key={message.id} message={message} />
             ))
           )}
-          {isLoading && (
+          {status === "streaming" && (
             <div className="flex justify-start">
               <div className="bg-muted rounded-lg px-3 py-2 max-w-[80%] flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -505,30 +497,37 @@ export function Chat() {
         </div>
 
         {/* Error message - hide if it's an Auth0 interrupt (we show the popup instead) */}
-        {error && !error.message.startsWith(InterruptionPrefix) && (
+        {error && !TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
           <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg">
             Error: {error.message}
           </div>
         )}
 
         {/* Step-Up Auth Interrupt Handling */}
-        {toolInterrupt && (
-          <FederatedConnectionPopup interrupt={toolInterrupt} />
+        {TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
+          <TokenVaultConsentPopup interrupt={toolInterrupt} />
         )}
 
         {/* Input form */}
-        <form onSubmit={handleSubmit} className="flex gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendMessage({ text: input });
+            setInput("");
+          }}
+          className="flex gap-2"
+        >
           <Input
             value={input}
-            onChange={handleInputChange}
+            onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about your calendar..."
-            disabled={isLoading}
+            disabled={status === "streaming"}
             className="flex-1"
           />
           <Button
             className="h-10"
             type="submit"
-            disabled={isLoading || !input.trim()}
+            disabled={status === "streaming" || !input.trim()}
           >
             <Send className="h-4 w-4" />
           </Button>
@@ -538,8 +537,14 @@ export function Chat() {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === "user";
+
+  // Get all text content from the message parts
+  const textContent = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => (part as TextUIPart).text)
+    .join("");
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -548,7 +553,7 @@ function MessageBubble({ message }: { message: Message }) {
           isUser ? "bg-primary text-primary-foreground" : "bg-muted"
         }`}
       >
-        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+        <p className="text-sm whitespace-pre-wrap">{textContent}</p>
       </div>
     </div>
   );
@@ -563,6 +568,6 @@ function MessageBubble({ message }: { message: Message }) {
 
 The application will automatically prompt for additional calendar permissions when needed using Auth0's step-up authorization flow.
 
-That's it! You've successfully integrated federated connections with access tokens into your React SPA + Vercel AI application.
+That's it! You've successfully integrated Token Vault with access tokens into your React SPA + Vercel AI application.
 
-Explore [the example app on GitHub](https://github.com/auth0-lab/auth0-ai-js/tree/main/examples/calling-apis/spa-with-backend-api/react-hono-ai-sdk).
+Explore [the example app on GitHub](https://github.com/auth0/auth0-ai-js/tree/main/examples/calling-apis/spa-with-backend-api/react-hono-ai-sdk).

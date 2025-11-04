@@ -1,22 +1,21 @@
 import { Prerequisites } from "/snippets/get-started/prerequisites/async-auth.jsx";
 import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/download-quickstart/DownloadQuickstartButton.jsx";
 
-<Prerequisites />
+<Prerequisites createAuth0ApiStep={{}} />
 
-### Prepare Next.js app
-
-**Recommended**: To use a starter template, clone the [Auth0 AI samples](https://github.com/auth0-samples/auth0-ai-samples) repository:
-
-```bash wrap lines
-git clone https://github.com/auth0-samples/auth0-ai-samples.git
-cd auth0-ai-samples/authenticate-users/langchain-next-js
-```
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="authenticate-users"
+  framework="langchain-next-js"
+/>
 
 ### Install dependencies
 
 In the root directory of your project, install the following dependencies:
 
-- `@auth0/ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-langchain) built for GenAI applications powered by LangChain.
+- `@auth0/ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-langchain) built for AI agents powered by LangChain.
 - `@langchain/langgraph`: For building stateful, multi-actor applications with LLMs.
 - `langchain`: The LangChain library.
 - `@langchain/core`: LangChain core libraries.
@@ -24,7 +23,7 @@ In the root directory of your project, install the following dependencies:
 - `langgraph-nextjs-api-passthrough`: API passthrough for LangGraph.
 
 ```bash wrap lines
-npm install @auth0/ai-langchain@3 @langchain/core@0.3 @langchain/langgraph@0.3 @langchain/openai@0.6 langchain@0.3 langgraph-nextjs-api-passthrough@0.1
+npm install @auth0/ai-langchain@4 @langchain/core@0.3.77 @langchain/langgraph@0.4.9 @langchain/openai@0.6.13 langchain@0.3.33 langgraph-nextjs-api-passthrough@0.1.4
 ```
 ### Update the environment file
 
@@ -36,7 +35,7 @@ Integrate the Auth0 AI SDK into your application to secure your async AI agent w
 
 #### Configure the Auth0 AI SDK
 
-To require asynchronous authorization for your tool, the tool needs to be wrapped with the Async authorizer, `withAsyncUserConfirmation()`. Let's create a helper function to wrap the tool with the Async authorizer.
+To require asynchronous authorization for your tool, the tool needs to be wrapped with the Async authorizer, `withAsyncAuthorization()`. Let's create a helper function to wrap the tool with the Async authorizer.
 
 Create a file at `src/lib/auth0-ai.ts` and instantiate a new Auth0 AI SDK client:
 
@@ -46,10 +45,10 @@ import { AccessDeniedInterrupt } from "@auth0/ai/interrupts";
 
 const auth0AI = new Auth0AI();
 
-// CIBA flow for user confirmation
-export const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
+// Async Authorization flow for user confirmation
+export const withAsyncAuthorization = auth0AI.withAsyncAuthorization({
   userID: async (_params, config) => {
-    return config?.configurable?._credentials?.user?.sub;
+    return config.configurable?.langgraph_auth_user?.sub;
   },
   bindingMessage: async ({ product, qty }) =>
     `Do you want to buy ${qty} ${product}`,
@@ -57,16 +56,33 @@ export const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
   audience: process.env["SHOP_API_AUDIENCE"]!,
 
   /**
+   * Controls how long the authorization request is valid for.
+   */
+  // requestedExpiry: 301,
+
+  /**
+   * The behavior when the authorization request is made.
+   *
+   * - `block`: The tool execution is blocked until the user completes the authorization.
+   * - `interrupt`: The tool execution is interrupted until the user completes the authorization.
+   * - a callback: Same as "block" but give access to the auth request and executing logic.
+   *
+   * Defaults to `interrupt`.
+   *
    * When this flag is set to `block`, the execution of the tool awaits
    * until the user approves or rejects the request.
-   *
    * Given the asynchronous nature of the CIBA flow, this mode
    * is only useful during development.
    *
    * In practice, the process that is awaiting the user confirmation
    * could crash or timeout before the user approves the request.
    */
-  onAuthorizationRequest: "block",
+  onAuthorizationRequest: async (authReq, creds) => {
+    console.log(`An authorization request was sent to your mobile device.`);
+    await creds;
+    console.log(`Thanks for approving the order.`);
+  },
+
   onUnauthorized: async (e: Error) => {
     if (e instanceof AccessDeniedInterrupt) {
       return "The user has denied the request";
@@ -76,9 +92,9 @@ export const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
 });
 ```
 
-This will intercept the tool call to initiate a CIBA request:
+This will intercept the tool call to initiate a Async Authorization request:
 
-- The CIBA request includes the user ID that will approve the request.
+- The Async Authorization request includes the user ID that will approve the request.
 - Auth0 sends the user a mobile push notification. The AI agent polls the `/token` endpoint for a user response.
 - The mobile application retrieves the `bindingMessage` containing the consent details, in this case, the details of the product to purchase.
 - The user responds to the request:
@@ -93,50 +109,155 @@ This will intercept the tool call to initiate a CIBA request:
 
 Next, add the following code to `src/lib/auth0.ts`:
 
-```tsx src/lib/auth0.ts wrap lines highlight={2-5}
+```tsx src/lib/auth0.ts wrap lines highlight={12-20}
 //... existing code
-export const getUser = async () => {
-  const session = await auth0.getSession();
-  return session?.user;
+export const auth0 = new Auth0Client({
+  authorizationParameters: {
+    // In v4, the AUTH0_SCOPE and AUTH0_AUDIENCE environment variables are no longer automatically picked up by the SDK.
+    // Instead, we need to provide the values explicitly.
+    scope: process.env.AUTH0_SCOPE,
+    audience: process.env.AUTH0_AUDIENCE,
+  },
+});
+
+// Get the Access token from Auth0 session
+export const getAccessToken = async () => {
+  const tokenResult = await auth0.getAccessToken();
+
+  if(!tokenResult || !tokenResult.token) {
+    throw new Error("No access token found in Auth0 session");
+  }
+
+  return tokenResult.token;
 };
 ```
 
-Update the `/src/app/api/chat/[..._path]/route.ts` file with the following code. The `user` will be passed to your LangGraph agent so we can use it from the Auth0 AI SDK to get the current user.
+Update the `/src/app/api/chat/[..._path]/route.ts` file with the following code. The access token will be passed to your LangGraph agent so we can use it from the Auth0 AI SDK to get the current user.
 
-```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,19}
+```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,9-13}
 import { initApiPassthrough } from "langgraph-nextjs-api-passthrough";
 
-import { getUser } from "@/lib/auth0";
+import { getAccessToken } from "@/lib/auth0";
 
 export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
   initApiPassthrough({
     apiUrl: process.env.LANGGRAPH_API_URL,
     baseRoute: "chat/",
-    bodyParameters: async (req, body) => {
-      if (
-        req.nextUrl.pathname.endsWith("/runs/stream") &&
-        req.method === "POST"
-      ) {
-        return {
-          ...body,
-          config: {
-            configurable: {
-              _credentials: {
-                user: await getUser(),
-              },
-            },
-          },
-        };
-      }
-
-      return body;
-    },
+    headers: async () => {
+      const accessToken = await getAccessToken();
+      return {
+        Authorization: `Bearer ${accessToken}`,
+      };
   });
+```
+
+### Add Custom Authentication
+<Info>
+For more information on how to add custom authentication for your LangGraph Platform application, read the [Custom Auth](https://langchain-ai.github.io/langgraphjs/how-tos/auth/custom_auth/) guide.
+</Info>
+In your `langgraph.json`, add the path to your auth file:
+```typescript langgraph.json wrap lines highlight={8}
+{
+  "node_version": "20",
+  "graphs": {
+    "agent": "./src/lib/agent.ts:agent"
+  },
+  "env": ".env",
+  "auth": {
+    "path": "./src/lib/auth.ts:authHandler"
+  }
+}
+```
+Then, in your auth.ts file, add your auth logic:
+```typescript src/lib/auth.ts wrap lines
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const { Auth, HTTPException } = require("@langchain/langgraph-sdk/auth");
+
+const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;
+
+// JWKS endpoint for Auth0
+const JWKS = createRemoteJWKSet(
+  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+);
+
+// Create the Auth instance
+const auth = new Auth();
+// Register the authentication handler
+auth.authenticate(async (request: Request) => {
+  const authHeader = request.headers.get("Authorization");
+  const xApiKeyHeader = request.headers.get("x-api-key");
+    /**
+     * LangGraph Platform will convert the `Authorization` header from the client to an `x-api-key` header automatically
+     * as of now: https://docs.langchain.com/langgraph-platform/custom-auth
+     *
+     * We can still leverage the `Authorization` header when served in other infrastructure w/ langgraph-cli
+     * or when running locally.
+     */
+    // This header is required in Langgraph Cloud.
+    if (!authHeader && !xApiKeyHeader) {
+      throw new HTTPException(401, {
+        message: "Invalid auth header provided.",
+      });
+    }
+
+    // prefer the xApiKeyHeader first
+    let token = xApiKeyHeader || authHeader;
+
+    // Remove "Bearer " prefix if present
+    if (token && token.startsWith("Bearer ")) {
+      token = token.substring(7);
+    }
+
+    // Validate Auth0 Access Token using common JWKS endpoint
+    if (!token) {
+      throw new HTTPException(401, {
+        message:
+          "Authorization header format must be of the form: Bearer <token>",
+      });
+    }
+
+    if (token) {
+      try {
+        // Verify the JWT using Auth0 JWKS
+        const { payload } = await jwtVerify(token, JWKS, {
+          issuer: `https://${AUTH0_DOMAIN}/`,
+          audience: AUTH0_AUDIENCE,
+        });
+
+        console.log("✅ Auth0 JWT payload resolved!", payload);
+
+        // Return the verified payload - this becomes available in graph nodes
+        return {
+          identity: payload.sub!,
+          email: payload.email as string,
+          permissions:
+            typeof payload.scope === "string" ? payload.scope.split(" ") : [],
+          auth_type: "auth0",
+          // include the access token for use with Auth0 Token Vault exchanges by tools
+          getRawAccessToken: () => token,
+          // Add any other claims you need
+          ...payload,
+        };
+      } catch (jwtError) {
+        console.log(
+          "Auth0 JWT validation failed:",
+          jwtError instanceof Error ? jwtError.message : "Unknown error"
+        );
+        throw new HTTPException(401, {
+          message: "Invalid Authorization token provided.",
+        });
+      }
+    }
+});
+
+export { auth as authHandler };
 ```
 
 #### Create a tool to call your API
 
-In this example, we use a tool that buys products on the user's behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the shop's API. Upon completing the CIBA flow, the AI agent responds with a message confirming the purchase. The Auth0 AI SDK returns an error response if the user denies the transaction.
+In this example, we use a tool that buys products on the user's behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the shop's API. Upon completing the Async Authorization flow, the AI agent responds with a message confirming the purchase. The Auth0 AI SDK returns an error response if the user denies the transaction.
 
 Now, create a file `src/lib/tools/shop-online.ts` and add the following code:
 
@@ -144,7 +265,7 @@ Now, create a file `src/lib/tools/shop-online.ts` and add the following code:
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-import { getCIBACredentials } from "@auth0/ai-langchain";
+import { getAsyncAuthorizationCredentials } from "@auth0/ai-langchain";
 
 export const shopOnlineTool = tool(
   async ({ product, qty, priceLimit }) => {
@@ -167,7 +288,7 @@ export const shopOnlineTool = tool(
       priceLimit,
     };
 
-    const credentials = getCIBACredentials();
+    const credentials = getAsyncAuthorizationCredentials();
     const accessToken = credentials?.accessToken;
 
     if (accessToken) {

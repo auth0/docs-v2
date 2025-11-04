@@ -1,0 +1,322 @@
+---
+title: "Redirect Users from Within Rules"
+permalink: "redirect-users"
+'description': "Learn how to customize authentication flows by redirecting users using rules. Example areas that can be customized include MFA, privacy policy acceptance, and gathering user data."
+'og:title': "Redirect Users from Within Rules"
+'og:description': "Learn how to customize authentication flows by redirecting users using rules. Example areas that can be customized include MFA, privacy policy acceptance, and gathering user data."
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Redirect Users from Within Rules"
+'twitter:description': "Learn how to customize authentication flows by redirecting users using rules. Example areas that can be customized include MFA, privacy policy acceptance, and gathering user data."
+---
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+
+<Warning>
+
+La date de fin de vie (EOL) des Règles et des Appels sera le **18 novembre 2026**. Ils ne sont plus disponibles pour les nouveaux locataires créés à partir du **16 octobre 2023**. Les locataires actuels ayant des hooks actifs conserveront l’accès aux produit Hooks jusqu’à la fin de leur durée de vie.
+
+Nous vous conseillons vivement d’utiliser les Actions pour étendre Auth0. Avec les Actions, vous avez accès à des informations de type enrichies, à une documentation intégrée et à des packages `npm` publics, et vous pouvez connecter des intégrations externes qui optimisent votre expérience d’extensibilité globale. Pour en savoir plus sur ce que les Actions proposent, consultez [Comprendre comment fonctionnent Auth0 Actions](/docs/fr-ca/customize/actions/actions-overview).
+
+Pour vous aider dans votre migration, nous proposons des guides qui vous aideront à [migrer des Règles vers les Actions](/docs/fr-ca/customize/actions/migrate/migrate-from-rules-to-actions) et à [migrer des Hooks vers les Actions](/docs/fr-ca/customize/actions/migrate/migrate-from-hooks-to-actions). Nous avons également une page dédiée à la [Migration vers les Actions](https://auth0.com/extensibility/movetoactions) qui met en évidence les comparaisons de fonctionnalités, [une démo des Actions](https://www.youtube.com/watch?v=UesFSY1klrI)  et d’autres ressources pour vous aider dans votre parcours de migration.
+
+Pour en savoir plus sur l’obsolescence des Règles et des Appels, consultez notre article de blog : [Preparing for Rules and Hooks End of Life (Préparation à la fin de vie des règles et des crochets)](https://auth0.com/blog/preparing-for-rules-and-hooks-end-of-life/).
+
+</Warning>
+
+You can use [Auth0 Rules](/docs/fr-ca/customize/rules) to redirect users before an authentication transaction is complete. This lets you implement custom authentication flows that require additional user interaction beyond the standard login form. Redirect rules are commonly used to do custom <Tooltip href="/docs/fr-ca/glossary?term=multifactor-authentication" tip="Authentification multifacteur (MFA)
+Processus d’authentification de l’utilisateur qui utilise un facteur en plus du nom d’utilisateur et du mot de passe, tel qu’un code par SMS." cta="Voir le glossaire">Multi-factor Authentication</Tooltip> (MFA) in Auth0, but they can also be used for:
+
+* Custom privacy policy acceptance, terms of service, and data disclosure forms.
+* Securely performing a one-time collection of additional required profile data.
+* Allowing remote Active Directory users to change their password.
+* Requiring users to provide additional verification when logging in from unknown locations.
+* Gathering more information about your users than they provided at initial signup.
+
+You can redirect a user **once** per authentication flow. If you have one rule that redirects a user, you **cannot** invoke a second rule to redirect the user at a later time.
+
+To learn more, see [Multi-Factor Authentication in Auth0](/docs/fr-ca/secure/multi-factor-authentication).
+
+## Start redirect and resume authentication
+
+Set the `context.redirect` property as follows:
+
+```javascript lines
+function (user, context, callback) {
+  context.redirect = {
+    url: "https://example.com/foo"
+  };
+  return callback(null, user, context);
+}
+```
+
+Once all rules have finished executing, Auth0 redirects the user to the URL specified in the `context.redirect.url` property. Auth0 also passes a `state` parameter in that URL. For example:
+
+``` lines
+https://example.com/foo?state=abc123
+```
+
+Your redirect URL needs to extract the `state` parameter and send it back to Auth0 to resume the authentication transaction. State is an opaque value, used to prevent [Cross-Site Request Forgery (CSRF) attacks](/docs/fr-ca/security/common-threats#cross-site-request-forgery).
+
+After the redirect, resume authentication by redirecting the user to the `/continue` endpoint and include the `state` parameter you received in the URL. If you do not send the original state back to the `/continue` endpoint, Auth0 will lose the context of the login transaction and the user will not be able to log in due to an `invalid_request` error.
+
+For example:
+
+export const codeExample1 = `https://{yourDomain}/continue?state={originalState}`;
+
+<AuthCodeBlock children={codeExample1} language="bash" />
+
+If you're using a <Tooltip href="/docs/fr-ca/glossary?term=custom-domain" tip="Domaine personnalisé
+Domaine tiers avec un nom spécialisé ou reflétant votre marque." cta="Voir le glossaire">custom domain</Tooltip>:
+
+```bash lines
+https://{yourAuth0CustomDomain}/continue?state={originalState}
+```
+
+`THE_ORIGINAL_STATE` is the value that Auth0 generated and sent to the redirect URL. For example, if your rule redirected to `https://example.com/foo`, Auth0 would use a redirect URL similar to `https://example.com/foo?state=abc123`. So `abc123` would be the `THE_ORIGINAL_STATE`. To resume the authentication transaction, you would redirect to:
+
+export const codeExample2 = `https://{yourDomain}/continue?state=abc123`;
+
+<AuthCodeBlock children={codeExample2} language="bash" />
+
+When a user has been redirected to the `/continue` endpoint:
+
+* **all rules will be run again**, however, the `context.redirect` will be ignored to allow authentication to continue.
+* any changes to the user object are made during the redirect, prior to calling the `/continue` endpoint. For example, updates through the Auth0 <Tooltip href="/docs/fr-ca/glossary?term=management-api" tip="Management API
+Un produit permettant aux clients d’effectuer des tâches administratives." cta="Voir le glossaire">Management API</Tooltip> are available after continuing the transaction.
+
+## Validate resumed login
+
+To distinguish between user-initiated logins and resumed login flows, check the `context.protocol` property:
+
+```javascript lines
+function (user, context, callback) {
+    if (context.protocol === "redirect-callback") {
+        // User was redirected to the /continue endpoint
+    } else {
+        // User is logging in directly
+    }
+}
+```
+
+## Force password change example
+
+In some cases, you may want to force users to change their passwords under specific conditions. You can write a rule that has the following behavior:
+
+1. The user attempts to log in and needs to change their password.
+2. The user is redirected to an application-specific page with a JWT in the query string. This JWT ensures that only this user's password can be changed and **must be validated** by the application.
+3. The user changes their password in the application-specific page by having the application call the [Auth0 Management API](/docs/fr-ca/api/v2#!/Users/patch_users_by_id)
+4. Once the user has successfully changed their password, the application extracts the `authorize_again` claim from the verified and decoded JWT, then proceeds to redirect the user to that URL allowing them to sign in with their new password.
+
+```javascript lines
+function(user, context, callback) {
+   /*
+   * Prerequisites:
+   * 1. Implement a `mustChangePassword` function
+   * 2. Set configuration variables for the following:
+   *    - CLIENT_ID
+   *    - CLIENT_SECRET
+   *    - ISSUER
+   */
+
+  const url = require('url@0.10.3');
+  const req = context.request;
+
+  function mustChangePassword() {
+    // TODO: implement function
+    return true;
+  }
+
+  if (mustChangePassword()) {
+    // User has initiated a login and is forced to change their password
+    // Send user's information and query params in a JWT to avoid tampering
+    function createToken(clientId, clientSecret, issuer, user) {
+      const options = {
+        expiresInMinutes: 5,
+        audience: clientId,
+        issuer: issuer
+      };
+      return jwt.sign(user, clientSecret, options);
+    }
+
+    const token = createToken(
+      configuration.CLIENT_ID,
+      configuration.CLIENT_SECRET,
+      configuration.ISSUER,
+      {
+        sub: user.user_id,
+        email: user.email,
+        authorize_again: url.format({
+          protocol: 'https',
+          hostname: auth0.com,
+          pathname: '/authorize',
+          query: req.query
+        })
+      }
+    );
+
+    context.redirect = {
+      url: `https://example.com/change-pw?token=${token}`
+    };
+  }
+
+  return callback(null, user, context);
+}
+```
+
+## Where to store data
+
+Beware of storing too much data in the Auth0 profile. This data is intended to be used for authentication and authorization purposes. The metadata and search capabilities of Auth0 are not designed for marketing research or anything else that requires heavy search or update frequency. Your system is likely to run into scalability and performance issues if you use Auth0 for this purpose. A better approach is to store data in an external system and store a pointer (the user ID) in Auth0 so that backend systems can fetch the data if needed. A simple rule to follow is to store only items that you plan to use in rules to add to tokens or make decisions.
+
+## Security considerations
+
+Passing information back and forth in the front channel opens up surface area for <Tooltip href="/docs/fr-ca/glossary?term=bad-actors" tip="Acteurs menaçants
+Des entités qui représentent une menace pour une entreprise ou un environnement, avec l’intention de causer des dommages." cta="Voir le glossaire">bad actors</Tooltip> to attack. This should definitely be done only in conditions where you must take action in the rule (such as rejecting the authorization attempt with `UnauthorizedError`).
+
+If, however, you need to communicate directly back to Auth0 and give it instructions for restricting access (you are implementing CAPTCHA checks or custom MFA), then you must have a way to securely tell Auth0 that the requirements of that operation were performed. Likewise, if you need to hand information to the application that you are redirecting to, then you must have a secure way to ensure that the information transferred has not been tampered with.
+
+### Ensure app is logging into the same user
+
+The application is going to redirect the user back to the Auth0 tenant, so any data related to the user can be gathered through the <Tooltip href="/docs/fr-ca/glossary?term=id-token" tip="Jeton d’ID
+Identifiant conçu pour le client lui-même, et non pour l’accès à une ressource." cta="Voir le glossaire">ID token</Tooltip> that is returned to the application. However, you may want to ensure that the application is logging into the same user that is being redirected from to ensure that there is no tampering of any sort in-between. Therefore you will likely want to send a token along with the request.
+
+The token sent to the app should have the following requirements:
+
+<table class="table"><thead>
+<tr>
+<th>Élément de jeton</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`sub`</td>
+<td>Le `user_id` d’Auth0 de l’utilisateur.</td>
+</tr>
+<tr>
+<td>`iss`</td>
+<td>Un identifiant qui identifie la règle elle-même.</td>
+</tr>
+<tr>
+<td>`aud`</td>
+<td>L’application ciblée par la redirection.</td>
+</tr>
+<tr>
+<td>`jti`</td>
+<td>Une chaîne générée aléatoirement qui est stockée pour confirmation dans l’objet utilisateur (dans le code de règle, définissez user.jti = uuid.v4(); puis ajoutez-la en tant que jti au jeton que vous créez).  user.jti sera toujours défini lorsque les règles s’exécuteront à nouveau lorsque /continue sera appelé.  Ceci est conforme aux spécifications.</td>
+</tr>
+<tr>
+<td>`exp`</td>
+<td>Doit être aussi court que possible pour éviter la réutilisation du jeton.</td>
+</tr>
+<tr>
+<td>`other`</td>
+<td>Toute autre information de demande personnalisée que vous devez transmettre.</td>
+</tr>
+<tr>
+<td>`signature`</td>
+<td>Si l’application dispose d’un emplacement sécurisé pour stocker un secret, vous pouvez opter pour des signatures HS256.  Cela simplifie grandement la solution, et puisque le jeton retourné doit également être signé, cette approche satisfait cette exigence.  RS256 est également une option, mais cela implique de générer un certificat et de le renouveler lorsqu’il expire.  Si aucune information n’est directement transmise aux règles, vous pouvez envisager l’utilisation d’une application monopage (SPA) pour cet intermédiaire, en privilégiant RS256 afin d’éviter de stocker des informations au sein de l’application.  Cela impliquerait que vous disposiez d’un mécanisme pour valider le jeton, soit en utilisant un point de terminaison d’introspection, soit en passant par un point de terminaison JWKS public.</td>
+</tr>
+</tbody>
+</table>
+
+<Warning>
+
+Ce jeton **ne doit pas** être traité comme un jeton du porteur! Il s’agit d’un élément d’information signé à utiliser dans l’application. L’application doit toujours rediriger vers Auth0 pour authentifier l’utilisateur.
+
+</Warning>
+
+### Pass information back to the rule
+
+In most scenarios, even if you want to pass information from the rule to the application. The application will hopefully be able to safely store the information in whatever storage is necessary. Even if the idea is to update the app or user metadata in Auth0, that can be done using the management API and the user information will be updated as long as it has been completed before redirecting the user back to the `/continue` endpoint. Only if the rule itself must get information and that information is only relevant to this particular sign in session should you pass information back to the rule.
+
+When passing information back to the `/continue` endpoint, the token passed should have the following requirements:
+
+<table class="table"><thead>
+<tr>
+<th>Élément jeton</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>`sub`</td>
+<td>L’identifiant `user_ID` Auth0 de l’utilisateur.</td>
+</tr>
+<tr>
+<td>`iss`</td>
+<td>L’application qui est ciblée pour la redirection.</td>
+</tr>
+<tr>
+<td>`aud`</td>
+<td>Un identifiant qui identifie la règle elle-même.</td>
+</tr>
+<tr>
+<td>`jti`</td>
+<td>Le même identifiant JTI qui a été stocké dans le jeton passé à l’application (NOTE : il doit correspondre à l’identifiant user.jti ou échouer).</td>
+</tr>
+<tr>
+<td>`exp`</td>
+<td>Doit être aussi court que possible pour éviter la réutilisation du jeton.</td>
+</tr>
+<tr>
+<td>`other`</td>
+<td>Toute autre information de demande personnalisée que vous devez transmettre.</td>
+</tr>
+<tr>
+<td>`signature`</td>
+<td>En supposant que l’application dispose d’un emplacement sécurisé pour stocker un secret, vous pouvez utiliser des signatures signées par l’algorithme HS256.  Cela réduit considérablement la complexité de la solution et comme le jeton renvoyé devra également être signé, c’est une exigence de cette solution.  Vous pouvez utiliser l’algorithme RS256, mais il nécessite la création d’un certificat et la mise à jour de ce certificat lorsqu’il expire.</td>
+</tr>
+</tbody>
+</table>
+
+It should be sent using POST and then fetched at `context.request.body.token` (or something similar) rather than passing it as a query parameter. This is similar to the form-post method for authentication.
+
+If you are not passing information back to the `/continue` endpoint, you may want to denylist the JTI unless your expiration times are short enough that replay attacks will be almost impossible.
+
+## Restrictions and limitations
+
+Redirect Rules won't work with:
+
+* [Resource Owner endpoint](/docs/fr-ca/api/authentication/reference#resource-owner)
+* [Password exchange](/docs/fr-ca/get-started/authentication-and-authorization-flow/resource-owner-password-flow)
+* [Refresh Token exchange](/docs/fr-ca/secure/tokens/refresh-tokens)
+
+You can detect the above cases by checking `context.protocol`:
+
+* For Password exchange: `context.protocol === 'oauth2-password'`
+* For <Tooltip href="/docs/fr-ca/glossary?term=refresh-token" tip="Jeton d’actualisation
+Jeton utilisé pour obtenir un jeton d’accès renouvelé sans obliger les utilisateurs à se connecter à nouveau." cta="Voir le glossaire">Refresh Token</Tooltip> exchange: `context.protocol === 'oauth2-refresh-token'`
+* For <Tooltip href="/docs/fr-ca/glossary?term=resource-owner" tip="Propriétaire de ressources
+Entité (telle qu’un utilisateur ou une application) capable d’accorder l’accès à une ressource protégée." cta="Voir le glossaire">Resource Owner</Tooltip> logins: `context.protocol === 'oauth2-resource-owner'`
+
+### Session timeout
+
+Redirect rule sessions are normally valid for 3 days unless you have configured a shorter timeout in your **Login Session Management** settings. You can find these settings in your [tenant's advanced settings](https://manage.auth0.com/#/tenant/advanced).
+
+### Resource Owner endpoint
+
+It is impossible to use redirect rules in the context where you are calling `/oauth/token` directly for the Resource Owner Password Grant. Since the user is not in a redirect flow to begin with, you can not redirect the user in a rule. If you attempt to set context.redirect you will get a failed login attempt with the error interaction_required.
+
+### Flows where prompt=none
+
+Since the goal of `prompt=none` is to avoid any scenario where the user will be required to enter input, any redirection will result in an `error=interaction_required`.
+
+Since rules run after an authentication session is created, you cannot use `prompt=none` if you have a redirect rule that is attempting to block access to tokens under certain conditions (custom MFA, CAPTCHA with login, etc.).
+
+You cannot create a redirect flow that blocks token access and bypasses the redirect rule if `prompt=none` because after a failed attempt, a user can simply call again with `prompt=none` and get tokens because their authentication session has been created even though rules failed the first time.
+
+### Refresh tokens
+
+Due to the fact that using a refresh token requires a backchannel call to `/oauth/token`, this will also fail if you set `context.redirect`.
+
+It is difficult to securely verify that any restrictions on login were carried out. There is not a consistent session ID in the context that could be used to collect information associated with the session such as this user passed MFA challenges. Therefore, you cannot use `prompt=none` at all.
+
+Anytime `context.redirect` is set in a rule, if `prompt=none` was passed, then the authorization fails with `error=interaction_required`, but since the user's session is created even if rules fail, we can't trust that a user passed all `context.redirect` challenges and therefore can't use `prompt=none` as a way to get tokens.
+
+In this specific case, we recommend that you use refresh tokens exclusively, because you can ensure that a user passed challenges if those challenges are required to generate a refresh token.
+
+## En savoir plus
+
+* [Rediriger les utilisateurs](/docs/fr-ca/authenticate/login/redirect-users-after-login)
+* [Comment fonctionne le profilage progressif](/docs/fr-ca/manage-users/user-accounts/user-profiles/progressive-profiling)
+* [Rediriger les utilisateurs avec une déconnexion alternative](/docs/fr-ca/authenticate/login/logout/redirect-users-after-logout)

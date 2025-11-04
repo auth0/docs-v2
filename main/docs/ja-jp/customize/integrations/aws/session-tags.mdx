@@ -1,0 +1,178 @@
+---
+title: "ロールベースのアクセス制御にAmazon Web Servicesセッションタグを使用する"
+permalink: "session-tags"
+'description': "Amazon Web Services（AWS）セッション タグを使用して、AWS APIおよびリソースのロールベースのアクセス制御（RBAC）を実装する方法を学びます。"
+'og:title': "ロールベースのアクセス制御にAmazon Web Servicesセッションタグを使用する"
+'og:description': "Amazon Web Services（AWS）セッション タグを使用して、AWS APIおよびリソースのロールベースのアクセス制御（RBAC）を実装する方法を学びます。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "ロールベースのアクセス制御にAmazon Web Servicesセッションタグを使用する"
+'twitter:description': "Amazon Web Services（AWS）セッション タグを使用して、AWS APIおよびリソースのロールベースのアクセス制御（RBAC）を実装する方法を学びます。"
+---
+
+Amazon Web Services（AWS）セッションタグを使用すると、リソースにタグを付け、ユーザーにキーと値のペアを割り当てることができます。これにより、AWS APIとリソースにロールベースのアクセス制御（RBAC）を実装できます。
+
+このガイドの例では、AWSリソースにAWSセッションタグをタグ付けし、AWS IAMロールのポリシーを作成します。これにより、このロールと適切なタグを持つユーザーがAWSリソースに対して特定のアクションを実行できるようになります。次に、Auth0でルールを作成し、AWS IAMロールと適切なAWSセッションタグをAuth0ユーザーに添付して、トークン内の<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-1" href="/docs/ja-jp/glossary?term=security-assertion-markup-language" tip="Security Assertion Markup Language（SAML）: パスワードなしに二者間で認証情報を交換できる標準化プロトコル。" cta="用語集の表示">SAML</Tooltip>アサーションを通じて渡します。この例は、[Amazon Web Servicesをシングルサインオン用に構成する](/docs/ja-jp/customize/integrations/aws/configure-amazon-web-services-for-sso)で提示されている例に基づいています。
+
+AWS APIとリソースでAWSセッションタグを使用するには、次の操作を行います。
+
+1. AWSインスタンスにタグを付ける。
+2. 専用のAWS IAMロールを作成する。
+3. Auth0ルールを作成する。
+4. 構成をテストする。
+
+## 前提条件
+
+* 管理者である[Amazon Web Services（AWS）アカウント](https://portal.aws.amazon.com/billing/signup#/start)が必要です。
+* [SSO用にAWSを設定する](/docs/ja-jp/customize/integrations/aws/configure-amazon-web-services-for-sso)
+* [AWS VMインスタンスをいくつかセットアップします](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html#ec2-launch-instance)。このガイドの例では、3つの個別インスタンスを使用します。
+
+### AWSインスタンスをタグ付けする
+
+AWSリソースにタグを追加します。[Amazon Elastic Compute CloudユーザーガイドのLinuxインスタンス個々のリソースへのタグの追加および削除](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Using_Tags.html#adding-or-deleting-tags)のステップに従ってください。。
+
+3つのインスタンスが作成されているはずです。次のタグを追加します。
+
+<table class="table"><thead>
+<tr>
+<th>インスタンス</th>
+<th>タグ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>キー：`CostCenter`、値：`marketing`<br/>キー：`Project`、値：`website`</td>
+</tr>
+<tr>
+<td>2</td>
+<td>キー：`CostCenter`、値：`engineering`<br/>キー：`Project`、値：`management_dashboard`</td>
+</tr>
+<tr>
+<td>3</td>
+<td>キー：`CostCenter`、値：`marketing`<br/>キー：`Project`、値：`community_site`</td>
+</tr>
+</tbody>
+</table>
+
+### 特殊なAWS IAMロールを作成する
+
+前提条件中に設定したAWS SAML IDプロバイダーを使用してIAMロールを作成します。[AWS IdentityおよびAccess ManagementユーザーガイドSAML 2.0 Federation（コンソール）のロールを作成する](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_saml.html)のステップに従ってください。。
+
+ロールを設定するときは、次のパラメーターを使用するようにしてください。
+
+<table class="table"><thead>
+<tr>
+<th>パラメーター</th>
+<th>説明およびサンプル値</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SAML Provider（SAMLプロバイダー）</td>
+<td>前提条件で作成したIDプロバイダーの名前（例：`auth0SamlProvider`）。 **［Allow programmatic and AWS Management Console access（プログラムとAWSマネジメントコンソールによるアクセスを許可する）］** を選択します。</td>
+</tr>
+</tbody>
+</table>
+
+**アクセス許可ポリシーを添付** するよう求められたら、次 JSONを使用してポリシーを作成し、`VirtualMachineAccessByCostCenter`という名前を付けます。
+
+```json lines
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstances"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:ResourceTag/CostCenter": "<%= "${aws:PrincipalTag/CostCenter}" %>"
+                }
+            }
+        }
+    ]
+}
+```
+
+ポリシーが作成されたら、ロールのポリシーリストを更新し、新しいポリシーをフィルタリングして選択します。
+
+設定を確認するときは、次のパラメーターを必ず使用してください。
+
+<table class="table"><thead>
+<tr>
+<th>パラメーター</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Role name（ロール名）</td>
+<td>ロールの説明的な名前。たとえば`AccessByCostCenter`。</td>
+</tr>
+<tr>
+<td>Role description（ロールの説明）</td>
+<td>ロールを使用する目的の説明。</td>
+</tr>
+</tbody>
+</table>
+
+### Auth0ルールを作成する
+
+AWSロールとタグをユーザーにマッピングするには、Auth0で[ルールを作成する](/docs/ja-jp/customize/rules/create-rules)必要があります。これらの値は、トークン内のSAMLアサーションを通じて渡されます。例:
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+`awsAccount`変数の値を自分のアカウント番号で置き換えてください。
+
+</Callout>
+
+```javascript lines
+function(user, context, callback) {
+  var awsAccount = '013823792818';
+  var rolePrefix = `arn:aws:iam::` + awsAccount; 
+  var samlIdP = rolePrefix + `:saml-provider/auth0SamlProvider`;
+
+  user.awsRole = rolePrefix + `:role/AccessByCostCenter,` + samlIdP;
+  user.awsRoleSession = user.email;
+  user.awsTagKeys = ['CostCenter', 'Project'];
+  user.CostCenter = 'marketing';
+  user.Project = 'website';
+
+  context.samlConfiguration.mappings = {
+    'https://aws.amazon.com/SAML/Attributes/Role': 'awsRole',
+    'https://aws.amazon.com/SAML/Attributes/RoleSessionName': 'awsRoleSession',
+    'https://aws.amazon.com/SAML/Attributes/PrincipalTag:CostCenter': 'CostCenter',
+    'https://aws.amazon.com/SAML/Attributes/PrincipalTag:Project': 'Project'
+  };
+
+  callback(null, user, context);
+}
+```
+
+### 構成をテストする
+
+これで、Auth0ユーザーを使用してAWSコンソールにログインし、実装をテストできるようになります。
+
+ログインするには、AWSコンソールの<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=single-sign-on" tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインした後、そのユーザーを他のアプリケーションに自動的にログインさせるサービス。" cta="用語集の表示">SSO</Tooltip>ログインが必要です。これを見つけるには:
+
+1. [［Dashboard］>［Applications（アプリケーション）］>［Applications（アプリケーション）］](https://manage.auth0.com/#/applications)に移動し、アプリケーションの名前を選択して表示します。
+2. **［Addons（アドオン）］** タブで **［SAML2 Web App（SAML2 Webアプリ）］** アドオンを有効にします。
+3. **［Usage（使用状況）］** タブで、 **［Identity Provider Login URL（IDプロバイダーのログインURL）］** を見つけます。
+4. 表示されたURLに移動します。
+5. サインインしたら、 **EC2** から **インスタンス** を選択します。`マーケティング`の`CostCenter`でタグ付けされたインスタンスの1つをクリックし、 **［Actions（アクション）］** > **［Instance State（インスタンス状態）］** > **［Stop（停止）］** をクリックします。アクションが正常に完了したことを確認します。
+6. `エンジニアリング`の`CostCenter`でタグ付けされたインスタンスをクリックし、 **［Actions（アクション）］** > **［Instance State（インスタンス状態）］** > **［Stop（停止）］** をクリックします。アクションがエラーで失敗したことを確認します。
+
+## もっと詳しく
+
+* [シングルサインオンにAmazon Web Servicesを構成する](/docs/ja-jp/customize/integrations/aws/configure-amazon-web-services-for-sso)
+* [Amazon Web ServicesをSAMLサービスプロバイダーとして構成する](/docs/ja-jp/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-aws)

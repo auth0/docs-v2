@@ -1,0 +1,177 @@
+---
+title: "Association de comptes d’utilisateur : mise en œuvre côté serveur"
+permalink: "suggested-account-linking-server-side-implementation"
+'description': "Décrit comment associer des comptes d’utilisateurs à une application Web classique à l’aide d’un code côté serveur en utilisant un exemple de scénario."
+'og:title': "Association de comptes d’utilisateur : mise en œuvre côté serveur"
+'og:description': "Décrit comment associer des comptes d’utilisateurs à une application Web classique à l’aide d’un code côté serveur en utilisant un exemple de scénario."
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Association de comptes d’utilisateur : mise en œuvre côté serveur"
+'twitter:description': "Décrit comment associer des comptes d’utilisateurs à une application Web classique à l’aide d’un code côté serveur en utilisant un exemple de scénario."
+---
+
+Auth0 permet de relier des comptes d’utilisateurs provenant de différents fournisseurs d’identité. Vous pouvez utiliser un code côté serveur pour associer des comptes à une application Web ordinaire, en demandant à l’utilisateur son autorisation avant de poursuivre. Votre code authentifiera les utilisateurs et recherchera et déterminera les utilisateurs à l’aide de leur adresse courriel. Votre application invitera alors l’utilisateur à associer ses comptes en s’authentifiant avec les identifiants du compte cible, et associera ultérieurement les comptes.
+
+Vous pouvez trouver la source complète de cet exemple d’application sur [GitHub](https://github.com/auth0-samples/auth0-link-accounts-sample/tree/master/RegularWebApp).
+
+1. Connectez l’utilisateur à votre application.
+
+   L’utilisateur s’authentifie auprès de votre application à l’aide de la [connexion universelle](/docs/fr-ca/authenticate/login/auth0-universal-login). Pour en savoir plus, consultez [Démarrage rapide des applications Web ordinaires](/docs/fr-ca/quickstart/webapp), demandant un jeton pour le public de Management API Auth0 (audience=`https://{yourDomain}/api/v2/`).
+2. Recherchez les utilisateurs dont l’adresse courriel est identique.
+
+   Vous pouvez obtenir le profil utilisateur et la liste des utilisateurs ayant le même courriel vérifié.
+
+   ```javascript lines expandable
+   router.get("/", async (req, res) => {
+     const { sub, email_verified } = req.openid.user;
+     //fetch user profile containing the user_metadata and app_metadata properties
+     try {
+       let getUsersWithSameVerifiedEmail = [];
+       const getUserProfile = auth0Client.getUser(sub);
+       if (email_verified)
+         // account linking is only offered verified email
+         getUsersWithSameVerifiedEmail = auth0Client.getUsersWithSameVerifiedEmail(
+           req.openid.user
+         );
+
+       const [user, suggestedUsers] = await Promise.all([
+         getUserProfile,
+         getUsersWithSameVerifiedEmail,
+       ]);
+
+       const flashError = clear(req);
+       res.render("user", {
+         user,
+         suggestedUsers,
+         wrongAccountError: flashError && flashError === Errors.WrongAccount,
+       });
+     } catch (err) {
+       debug("GET /user[s] failed: %o", err);
+       res.render("error", err);
+     }
+   });
+   ```
+
+   
+
+   
+
+   Pour obtenir une liste de tous les enregistrements d’utilisateurs ayant la même adresse courriel, votre application appelle le point de terminaison [Get Users By Email endpoint](/docs/fr-ca/api/v2#!/users-by-email/get_users_by_email) en utilisant un [jeton d’accès Management API](/docs/fr-ca/secure/tokens/access-tokens/management-api-access-tokens) avec la permission `read:users`.
+
+   ```javascript lines
+   const request = require('request');
+   class Auth0Client {
+   ...
+   async getUsersWithSameVerifiedEmail({ sub, email }) {
+     return await this.request({
+       url: `${process.env.ISSUER_BASE_URL}/api/v2/users-by-email?email=${email}`,
+     });
+   }
+   ```
+
+   
+
+   
+3. Invitez l’utilisateur à associer les comptes.
+
+   1. Si Auth0 renvoie un ou plusieurs enregistrements avec des adresses de courriel correspondantes, l’utilisateur verra la liste ainsi que le message suivant l’invitant à associer les comptes.
+   2. Si l’utilisateur souhaite associer un compte donné, il peut cliquer sur **Associer** à côté du compte concerné.
+
+      <Frame>![Example application with server-side account linking page](/docs/images/fr-ca/cdy7uua7fh8z/7unQjUtxTZUc4tRFOxhaP3/050fb853d2b3be37795ce88b8a60ffed/account-linking-webapp-small__1_.png)</Frame>
+
+4. Lorsque l’utilisateur clique sur **Associer**, votre application lui demande de s’authentifier avec le compte cible, puis effectue l’association entre les comptes.
+
+   <Warning>
+
+   Pour conserver et fusionner les métadonnées `user_metadata` du compte secondaire, vous devez les récupérer et les fusionner avec les métadonnées du compte principal avant d’appeler le point de terminaison de l’API. Une fois les comptes associés, les métadonnées du compte secondaire sont supprimées.
+
+   Lorsque vous lancez l’association de comptes, vous pouvez sélectionner l’identité qui sera utilisée comme compte principal et celle qui sera utilisée comme compte secondaire. Ce choix dépend de l’ensemble des attributs que vous souhaitez conserver dans le profil principal.
+
+   </Warning>
+
+   L’extrait de code suivant montre comment vérifier et fusionner les métadonnées :
+
+   ```javascript lines expandable
+   async function accountLink(req, res, next) {
+   const {
+     linking: { targetUserId },
+   } = req.appSession;
+   const { sub: authenticatedTargetUserId } = req.openidTokens.claims();
+   if (authenticatedTargetUserId !== targetUserId) {
+     debug(
+       "Skipping account linking as the authenticated user(%s)  is different than target linking user (%s)",
+       authenticatedTargetUserId,
+       targetUserId
+     );
+     set(req, Errors.WrongAccount);
+     return next();
+   }
+
+   debug(
+     "User %s succesfully authenticated. Account linking with %s... ",
+     authenticatedTargetUserId,
+     targetUserId
+   );
+   const { id_token: targetIdToken } = req.openidTokens;
+   const { sub: primaryUserId } = req.appSession.claims;
+
+   try {
+     await mergeMetadata(primaryUserId, authenticatedTargetUserId);
+     await auth0Client.linkAccounts(primaryUserId, targetIdToken);
+     debug("Accounts linked.");
+   } catch (err) {
+     debug("Linking failed %o", err);
+   } finally {
+     next();
+   }
+   }
+   ```
+
+   
+
+   
+5. Votre application appelle le point de terminaison [Associer un point de terminaison de compte utilisateur](/docs/fr-ca/api/v2#!/Users/post_identities) de l’API à l’aide d’un [Jeton d’accès Management API Access Token](/docs/fr-ca/secure/tokens/access-tokens/management-api-access-tokens) avec la permission `update:users`.
+
+## Exemple de fusion de métadonnées
+
+L’exemple suivant montre explicitement comment `user_metadata` et `app_metadata` du compte secondaire sont fusionnés dans le compte principal à l’aide de la [Trousse SDK Auth0 Node.js pour API V2](https://github.com/auth0/node-auth0).
+
+```javascript lines expandable
+/*
+ * Recursively merges user_metadata and app_metadata from secondary into primary user.
+ * Data of primary user takes preponderance.
+ * Array fields are joined.
+ */
+async function mergeMetadata(primaryUserId, secondaryUserId) {
+  // load both users with metedata.
+  const [primaryUser, secondaryUser] = await Promise.all(
+    [primaryUserId, secondaryUserId].map((uid) => auth0Client.getUser(uid))
+  );
+
+  const customizerCallback = function (objectValue, sourceValue) {
+    if (_.isArray(objectValue)) {
+      return sourceValue.concat(objectValue);
+    }
+  };
+  const mergedUserMetadata = _.merge(
+    {},
+    secondaryUser.user_metadata,
+    primaryUser.user_metadata,
+    customizerCallback
+  );
+  const mergedAppMetadata = _.merge(
+    {},
+    secondaryUser.app_metadata,
+    primaryUser.app_metadata,
+    customizerCallback
+  );
+  await auth0Client.updateUser(primaryUserId, {
+    user_metadata: mergedUserMetadata,
+    app_metadata: mergedAppMetadata,
+  });
+}
+```
+
+## En savoir plus
+
+* [Vérifier les appels d’API](/docs/fr-ca/troubleshoot/authentication-issues/check-api-calls)
+* [Dépannage des erreurs de jeton non valide](/docs/fr-ca/troubleshoot/basic-issues/invalid-token-errors)

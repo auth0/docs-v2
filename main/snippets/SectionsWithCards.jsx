@@ -369,8 +369,8 @@ export const SectionCard = ({ item }) => {
 
   const isHttpsLogo = typeof item?.logo === "string" && /^https:\/\//i.test(item.logo);
 
-  const src = isHttpsLogo ? item.logo : `/images/icons/light/${item?.logo}`;
-  const srcDark = isHttpsLogo ? item.logo : `/images/icons/dark/${item?.logo}`;
+  const src = isHttpsLogo ? item.logo : `/docs/images/icons/light/${item?.logo}`;
+  const srcDark = isHttpsLogo ? item.logo : `/docs/images/icons/dark/${item?.logo}`;
 
   // Add grayscale class only if https
   const imgClass = "!my-0 w-8 h-8 object-contain shrink-0 " + (isHttpsLogo ? "mint-filter mint-grayscale" : "");

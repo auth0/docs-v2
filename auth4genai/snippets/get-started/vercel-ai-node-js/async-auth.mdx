@@ -12,11 +12,11 @@ Install the following dependencies:
 - `dotenv`: A module that loads environment variables from a `.env` file.
 - `auth0`: [Auth0 Node.js](https://github.com/auth0/node-auth0) library.
 - `@ai-sdk/openai`: [OpenAI](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) provider for the [Vercel AI SDK](https://sdk.vercel.ai/docs).
-- `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-vercel) built for GenAI applications powered by the Vercel AI SDK.
+- `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-vercel) built for AI agents powered by the Vercel AI SDK.
 
 ```bash Create a new Node.js project wrap lines
 npm init -y
-npm i auth0@4 @auth0/ai-vercel@2 zod@3 ai@4 @ai-sdk/openai@1 dotenv@16
+npm i auth0@5 @auth0/ai-vercel@4 zod@3.25.76 ai@5.0.33 @ai-sdk/openai@2.0.24 dotenv@16
 ```
 
 Add the below to `package.json`:
@@ -31,7 +31,7 @@ Add the below to `package.json`:
 
 ### Integrate Auth0 AI SDK
 
-Integrate the [Auth0 AI SDK](https://github.com/auth0-lab/auth0-ai-js) into your application to secure your async AI agent workflow.
+Integrate the [Auth0 AI SDK](https://github.com/auth0/auth0-ai-js) into your application to secure your async AI agent workflow.
 
 #### 1. Create your environment file
 
@@ -52,11 +52,11 @@ STOCK_API_AUDIENCE=sample-stock-api
 
 #### 2. Require async authorization for your tool
 
-To require asynchronous authorization for your tool wrap the tool with the Async authorizer, `withAsyncUserConfirmation()`.
+To require asynchronous authorization for your tool wrap the tool with the Async authorizer, `withAsyncAuthorization()`.
 
-Wrap the tool with the Async authorizer in `src/lib/tools/buy.ts`. This will intercept the tool call to initiate a CIBA request:
+Wrap the tool with the Async authorizer in `src/lib/tools/buy.ts`. This will intercept the tool call to initiate an Async Authorization request:
 
-- The CIBA request includes the user ID that will approve the request.
+- The Async Authorization request includes the user ID that will approve the request.
 - Auth0 sends the user a mobile push notification. The AI agent polls the `/token` endpoint for a user response.
 - The mobile application retrieves the `binding_message` containing the consent details, in this case, the quantity of stock to purchase for a stock ticker.
 - The user responds to the request:
@@ -80,7 +80,7 @@ import "dotenv/config";
 import { tool } from "ai";
 import { z } from "zod";
 
-import { Auth0AI, getCIBACredentials } from "@auth0/ai-vercel";
+import { Auth0AI, getAsyncAuthorizationCredentials } from "@auth0/ai-vercel";
 import { AccessDeniedInterrupt } from "@auth0/ai/interrupts";
 export type Context = {
   userId: string;
@@ -90,7 +90,7 @@ const auth0AI = new Auth0AI();
 
 export const buy = (context: Context) => {
   // highlight-next-line
-  const withAsyncAuthorization = auth0AI.withAsyncUserConfirmation({
+  const withAsyncAuthorization = auth0AI.withAsyncAuthorization({
     // highlight-next-line
     userID: context.userId,
     // highlight-next-line
@@ -99,18 +99,37 @@ export const buy = (context: Context) => {
       `Do you want to buy ${qty} shares of ${ticker}`,
     scopes: ["openid", "stock:trade"],
     audience: process.env["STOCK_API_AUDIENCE"]!,
+
     /**
+     * Controls how long the authorization request is valid for.
+     */
+    // requestedExpiry: 301,
+
+    /**
+     * The behavior when the authorization request is made.
+     *
+     * - `block`: The tool execution is blocked until the user completes the authorization.
+     * - `interrupt`: The tool execution is interrupted until the user completes the authorization.
+     * - a callback: Same as "block" but give access to the auth request and executing logic.
+     *
+     * Defaults to `interrupt`.
+     *
      * When this flag is set to `block`, the execution of the tool awaits
      * until the user approves or rejects the request.
-     *
      * Given the asynchronous nature of the CIBA flow, this mode
      * is only useful during development.
      *
      * In practice, the process that is awaiting the user confirmation
      * could crash or timeout before the user approves the request.
      */
-    // highlight-next-line
-    onAuthorizationRequest: "block",
+    onAuthorizationRequest: async (_authReq, creds) => {
+      console.log(
+        `An authorization request was sent to your mobile device.`
+      );
+      await creds;
+      console.log(`Thanks for approving the order.`);
+    },
+
     onUnauthorized: async (e: Error) => {
       if (e instanceof AccessDeniedInterrupt) {
         return "The user has deny the request";
@@ -122,7 +141,7 @@ export const buy = (context: Context) => {
   return withAsyncAuthorization(
     tool({
       description: "Use this function to buy stock",
-      parameters: z.object({
+      inputSchema: z.object({
         ticker: z.string(),
         qty: z.number(),
       }),
@@ -135,7 +154,7 @@ export const buy = (context: Context) => {
           qty: qty,
         };
         // highlight-next-line
-        const credentials = getCIBACredentials();
+        const credentials = getAsyncAuthorizationCredentials();
         const accessToken = credentials?.accessToken?.value;
 
         if (accessToken) {
@@ -164,32 +183,27 @@ Create a file at `src/index.ts` and add tool calling to the Vercel AI agent usin
 ```ts src/index.ts wrap lines
 import { setAIContext } from "@auth0/ai-vercel";
 import crypto from "node:crypto";
-import { generateText } from "ai";
+import { generateText, stepCountIs } from "ai";
 import { openai } from "@ai-sdk/openai";
 
 import { buy } from "./lib/tools/buy";
 
 async function main() {
   const threadID = crypto.randomUUID();
-  // highlight-next-line
   setAIContext({ threadID });
 
-  console.log(
-    "Check your mobile device for Auth0 Guardian notification and approve the request"
-  );
+  const userPrompt = "Use the buy tool to purchase 3 shares of Google (GOOGL) stock";
 
   const { text } = await generateText({
     model: openai("gpt-4o-mini"),
-    prompt: "Buy 3 stocks of Google",
-    maxSteps: 2,
-    tools: {
-      // pass an Auth0 user id. For example, 'auth0|100000000000000000000' or 'google-oauth2|100000000000000000000'
-      // highlight-next-line
-      buy: buy({ userId: "<authenticated-user-id>" }),
-    },
+    system: "You are an assistant. Invoke the tool if needed, then respond with a past-tense confirmation.",
+    prompt: userPrompt,
+    // pass an Auth0 user id. For example, 'auth0|100000000000000000000' or 'google-oauth2|100000000000000000000'
+    tools: { buy: buy({ userId: "<authenticated-user-id>" }) },
+    stopWhen: stepCountIs(3), // tool call + result + final assistant message
   });
 
-  console.log(text);
+  console.log("Final response:", (text && text.trim()) || "<empty>");
 }
 
 main().catch(console.error);

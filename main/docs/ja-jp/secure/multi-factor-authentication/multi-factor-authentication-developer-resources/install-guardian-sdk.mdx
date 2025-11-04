@@ -1,0 +1,230 @@
+---
+title: "Guardian SDKをインストールする"
+permalink: "install-guardian-sdk"
+'description': "Guardian SDKをインストールして、オプションを構成し、使用する方法について説明します。"
+'og:title': "Guardian SDKをインストールする"
+'og:description': "Guardian SDKをインストールして、オプションを構成し、使用する方法について説明します。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "Guardian SDKをインストールする"
+'twitter:description': "Guardian SDKをインストールして、オプションを構成し、使用する方法について説明します。"
+---
+
+Guardian SDKはGuardianのUIのないクライアントを提供します。
+
+`npm install auth0-guardian-js`
+
+## ソースファイル
+
+* [SDKの完全版](https://cdn.auth0.com/js/guardian-js/1.3/guardian-js.js)
+* [SDKの圧縮版](https://cdn.auth0.com/js/guardian-js/1.3/guardian-js.min.js)
+* [完全なGuardian API](https://github.com/auth0/auth0-guardian.js#full-api)
+
+## Guardianを構成する
+
+```javascript lines
+var auth0GuardianJS = require('auth0-guardian-js')({
+	// For US tenants: https://{name}.guardian.auth0.com
+ 	// For AU tenants: https://{name}.guardian.au.auth0.com
+ 	// For EU tenants: https://{name}.guardian.eu.auth0.com
+  // For JP tenants: https://{name}.guardian.jp.auth0.com
+	serviceUrl: "https://{{ userData.tenant }}.guardian.auth0.com",
+	requestToken: "{{ requestToken }}", // or ticket: "{{ ticket }}" - see below
+
+	issuer: {
+		// The issuer name to show in OTP Generator apps
+		label: "{{ userData.tenantFriendlyName }}",
+		name: "{{ userData.tenant }}",
+	},
+
+	// The account label to show in OTP Generator apps
+	accountLabel: "{{ userData.friendlyUserId }}",
+
+	// Optional, for debugging purpose only,
+	// ID that allows to associate a group of requests
+	// together as belonging to the same "transaction" (in a wide sense)
+	globalTrackingId: "{{ globalTrackingId }}"
+});
+```
+
+`requestToken`または`ticket`の使用は認証方法に応じます。チケットは、前に生成された[登録チケット](/docs/ja-jp/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/create-custom-enrollment-tickets)に相当します。
+
+### カスタムドメインを使用する
+
+Auth0テナントに構成されたカスタムドメインがある場合は、Guardianエンドポイントをポイントするように`serviceUrl`を適切に更新する必要があります。
+
+```javascript lines
+var auth0GuardianJS = require('auth0-guardian-js')({
+    // For custom domains
+    serviceUrl: "https://{yourCustomDomain}/guardian/",
+    ...
+});
+```
+
+## デバイスを登録する
+
+以下の手順でデバイスを登録できます。
+
+1. トランザクションを開始します。
+2. （任意）ユーザーがすでに登録されていることを確認します。登録は2回できません。
+3. 登録に必要な情報を送信します。
+4. 登録を確定します。
+5. 回復コードを表示します。
+
+方法によっては一部の手順を省くことができます。すべての方法で同じインターフェイスを使用するため、統一されたコードを記述できます。方法によって、認証が完了する場合と、さらに追加の認証手順が必要な場合があります。`enrollment-complete`イベントをリッスンすることで判断してください。
+
+```javascript lines
+function enroll(transaction, method) {
+	if (transaction.isEnrolled()) {
+		console.log('You are already enrolled');
+		return;
+	}
+
+	var enrollData = {};
+
+	if (method === 'sms') {
+		enrollData.phoneNumber = prompt('Phone number'); // Collect phone number
+	}
+
+	return transaction.enroll(method, enrollData, function (err, otpEnrollment) {
+		if (err) {
+			console.error(err);
+			return;
+		}
+
+		var uri = otpEnrollment.getUri();
+		if (uri) {
+			showQR(uri);
+		}
+
+		var confirmData = {};
+		if (method === 'otp' || method === 'sms') {
+			confirmData.otpCode = prompt('Otp code'); // Collect verification otp
+		}
+
+		otpEnrollment.confirm(confirmData);
+	});
+}
+
+auth0GuardianJS.start(function(err, transaction) {
+	if (err) {
+		console.error(err);
+		return;
+	}
+
+	transaction.on('error', function(error) {
+		console.error(error);
+	});
+
+	transaction.on('timeout', function() {
+		console.log('Timeout');
+	});
+
+	transaction.on('enrollment-complete', function(payload) {
+		if (payload.recoveryCode) {
+			alert('Recovery code is ' + payload.recoveryCode);
+		}
+
+		if (payload.authRequired) {
+			showAuthenticationFor(transaction, payload.enrollment);
+			return;
+		}
+	});
+
+	transaction.on('auth-response', function(payload) {
+		if (payload.recoveryCode) {
+			alert('The new recovery code is ' + payload.recoveryCode);
+		}
+
+		if (!payload.accepted) {
+			alert('Authentication has been rejected');
+			return;
+		}
+
+		auth0GuardianJS.formPostHelper('{{ postActionURL }}', { signature: payload.signature });
+	});
+
+	var availableEnrollmentMethods = transaction.getAvailableEnrollmentMethods();
+
+	method = prompt('What method do you want to use, select one of '
+		+ availableEnrollmentMethods.join(', '));
+
+	enroll(transaction, method) // For sms
+});
+```
+
+## 認証
+
+方法を使用して認証するには、以下の手順を実行する必要があります。
+
+1. トランザクションを開始します。
+2. （任意）ユーザーがすでに登録されていることを確認します。登録済みでなければ認証できません。
+3. 認証を要求します（プッシュ通知またはSMS）。要求はOTPにはNOOPです。
+4. OTPを検証します（プッシュでは`.verify`はNOOPです）。
+
+方法によっては一部の手順を省くことができます。すべての方法で同じインターフェイスを使用するため、統一されたコードを記述できます。要素が検証された、またはプッシュが受け付けられた後、サーバーに送信するためのペイロードを伴う`auth-response`イベントを受信します。`auth0GuardianJS.formPostHelper('{{ postActionURL }}', payload)`を使用してメッセージをサーバーへポストバックできます。
+
+プッシュ通知が受信されたら、`auth-rejected`を受信することもあります。
+
+```javascript lines
+function authenticate(method) {
+	auth0GuardianJS.start(function (err, transaction) {
+		if (err) {
+			console.error(err);
+			return;
+		}
+
+		if (!transaction.isEnrolled()) {
+			console.log('You are not enrolled');
+			return;
+		}
+
+		transaction.on('error', function(error) {
+			console.error(error);
+		});
+
+		transaction.on('timeout', function() {
+			console.log('Timeout');
+		});
+
+		transaction.on('auth-response', function(payload) {
+			if (payload.recoveryCode) {
+				alert('The new recovery code is ' + payload.recoveryCode);
+			}
+
+			if (!payload.accepted) {
+				alert('Authentication has been rejected');
+				return;
+			}
+
+			auth0GuardianJS.formPostHelper('{{ postActionURL }}', { signature: payload.signature });
+		});
+
+		var enrollment = transaction.getEnrollments()[0];
+
+		if (enrollment.getAvailableAuthenticatorTypes().length === 0) {
+			alert('Somethings went wrong, seems that there is no authenticators');
+			return;
+		}
+
+		transaction.requestAuth(enrollment, { method: method } function(err, auth) {
+			if (err) {
+				console.error(err);
+				return;
+			}
+
+			var data = {};
+			if (method === 'sms' || method === 'otp') {
+				data.otpCode = prompt('Otp code');
+			} else if (method === 'recovery-code') {
+				data.recoveryCode = prompt('Recovery code');
+			}
+
+			return auth.verify(data);
+		});
+	});
+}
+```
+
+## もっと詳しく
+
+* [Guardianエラーコードのリファレンス](/docs/ja-jp/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/guardian-error-code-reference)

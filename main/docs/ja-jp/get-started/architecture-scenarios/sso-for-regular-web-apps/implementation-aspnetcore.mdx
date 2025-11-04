@@ -1,0 +1,182 @@
+---
+title: "ASP.NET Coreの実装（Webアプリ + SSO）"
+permalink: "implementation-aspnetcore"
+'description': "通常のWebアプリアーキテクチャーシナリオでのシングルサインオン（SSO）のためのASP.NET Coreの実装"
+'og:title': "ASP.NET Coreの実装（Webアプリ + SSO）"
+'og:description': "通常のWebアプリアーキテクチャーシナリオでのシングルサインオン（SSO）のためのASP.NET Coreの実装"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "ASP.NET Coreの実装（Webアプリ + SSO）"
+'twitter:description': "通常のWebアプリアーキテクチャーシナリオでのシングルサインオン（SSO）のためのASP.NET Coreの実装"
+---
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+
+ASP.NET Coreの実装で使用する全ソースコードは、[こちらのGitHubリポジトリ](https://github.com/auth0-samples/auth0-pnp-webapp-oidc)でご覧いただけます。
+
+## クッキーおよびOIDCミドルウェアを構成する
+
+このガイドの目的のために、シンプルなホスト型ログインを使用します。標準クッキーと、ASP.NET Coreで利用できるOIDCミドルウェアを使用できるため、NuGetパッケージをインストールしてください。
+
+``` lines
+Install-Package Microsoft.AspNetCore.Authentication.Cookies
+Install-Package Microsoft.AspNetCore.Authentication.OpenIdConnect
+```
+
+その後、アプリケーションのミドルウェアパイプライン内でクッキーとOIDCミドルウェアを構成します。
+
+export const codeExample = `public class Startup
+{
+    public void ConfigureServices(IServiceCollection services)
+    {
+        // Add authentication services
+        services.AddAuthentication(
+            options => options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme);
+
+        // Code omitted for brevity...
+    }
+
+    public void Configure(IApplicationBuilder app, IHostingEnvironment env, ILoggerFactory loggerFactory, IOptions<Auth0Settings> auth0Settings)
+    {
+        // Code omitted for brevity...
+
+        // Add the cookie middleware
+        app.UseCookieAuthentication(new CookieAuthenticationOptions
+        {
+            AutomaticAuthenticate = true,
+            AutomaticChallenge = true
+        });
+
+        // Add the OIDC middleware
+        app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions("Auth0")
+        {
+            // Set the authority to your Auth0 domain
+            Authority = "https://{yourDomain}/",
+
+            // Configure the Auth0 Client ID and Client Secret
+            ClientId = {yourClientId},
+            ClientSecret = {yourClientSecret},
+
+            // Do not automatically authenticate and challenge
+            AutomaticAuthenticate = false,
+            AutomaticChallenge = false,
+
+            // Set response type to code
+            ResponseType = "code",
+
+            CallbackPath = new PathString("/signin-auth0"),
+
+            // Configure the Claims Issuer to be Auth0
+            ClaimsIssuer = "Auth0"
+        });
+
+        // Code omitted for brevity...
+    }
+}`;
+
+<AuthCodeBlock children={codeExample} language="csharp" />
+
+上記のコードでは、2つの異なるタイプの認証ミドルウェアを構成しました。
+
+1つ目は、`UseCookieAuthentication`の呼び出しに登録されたクッキーミドルウェアです。2つ目は、`UseOpenIdConnectAuthentication`の呼び出しで実行されるOIDCミドルウェアです。
+
+ユーザーがOIDCミドルウェアを使用してAuth0にサインインすると、ユーザーの情報はセッションクッキー内に自動的に保存されます。上記の通りにミドルウェアを構成するだけで、ユーザーセッションは管理されます。
+
+<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=openid" tip="OpenID: アプリケーションがログイン情報を収集および保存することなくにユーザーのIDを検証できるようにする認証用のオープン標準。" cta="用語集の表示">OpenID</Tooltip> Connect（OIDC）ミドルウェアはまた、ユーザーが認証されたらAuth0から送信されるIDトークンからクレームすべてを抽出し、それを`ClaimsIdentity`のクレームとして追加します。
+
+## ログアウトを実装する
+
+`AuthenticationManager`クラスの`SignOutAsync`メソッドを使用し、サインアウトしたい認証スキームを伝えて、アプリケーションセッションとAuth0セッションの両方をコントロールできます。
+
+クッキーミドルウェアのサインアウトと、それによるアプリケーションの認証クッキーの消去の例として、以下の呼び出しを作成できます。
+
+```csharp lines
+await HttpContext.Authentication.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+```
+
+同様に、`SignOutAsync`メソッドを呼び出し、サインアウトするために認証スキームとして`Auth0`を伝えることで、ユーザーをAuth0からログアウトできます。
+
+```csharp lines
+await HttpContext.Authentication.SignOutAsync("Auth0");
+```
+
+ただし上記が機能するためには、`OnRedirectToIdentityProviderForSignOut`イベントを処理して、OIDCミドルウェアを登録するときに別の構成を追加する必要があります。イベント内で、Auth0クッキーを消去する[Auth0ログアウトエンドポイント](https://auth0.com/docs/api/authentication/reference#logout)にリダイレクトする必要があります。
+
+```csharp lines
+app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions("Auth0")
+{
+    // Some code omitted for brevity
+    Events = new OpenIdConnectEvents
+    {
+        OnRedirectToIdentityProviderForSignOut = context =>
+        {
+            context.Response.Redirect($"https://{auth0Settings.Value.Domain}/v2/logout?client_id={auth0Settings.Value.ClientId}&returnTo={context.Request.Scheme}://{context.Request.Host}/");
+            context.HandleResponse();
+
+            return Task.FromResult(0);
+        }
+    }
+});
+```
+
+また、<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=auth0-dashboard" tip="Auth0 Dashboard: サービスを構成するためのAuth0の主製品。" cta="用語集の表示">Auth0 Dashboard</Tooltip>内のアプリケーションのために、アプリケーションのURLを **［Allowed Logout URLs（許可されているログアウトURL）］** に追加する必要があります。詳細については、[ログアウト](https://auth0.com/docs/logout)を参照してください。
+
+## 管理者権限の実装
+
+グループをASP.NET Coreアプリケーションに組み入れる最も簡単な方法は、ASP.NET Coreで利用可能な組み込みの[ロールベースの認可](https://docs.asp.net/en/latest/security/authorization/roles.html)を使用することです。これを達成するには、ユーザーが割り当てられるそれぞれのグループについて、
+
+``` lines
+http://schemas.microsoft.com/ws/2008/06/identity/claims/role
+```
+
+上記タイプのクレームを追加する必要があります。
+
+クレームが追加されたら、クレームを`[Authorize(Roles = "Admin")]`属性で装飾することで、簡単に特定のアクションを`Admin`のみに利用可能にできます。また、コントローラー内で`User.IsInRole("Admin")`を呼び出して、ユーザーがコードの特定のロールかどうかを確認できます。
+
+ASP.NET OIDCミドルウェアは、<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-3" href="/docs/ja-jp/glossary?term=json-web-token" tip="JSON Web Token（JWT）: 二者間のクレームを安全に表現するために使用される標準IDトークン形式（および多くの場合、アクセストークン形式）。" cta="用語集の表示">JWT</Tooltip>で返されたすべてのクレームを、クレームとして`ClaimsIdentity`に自動的に追加します。このため、`authorization`クレームから情報を抽出し、クレームのJSONボディーを逆シリアル化して、グループごとに、`http://schemas.microsoft.com/ws/2008/06/identity/claims/role`クレームを`ClaimsIdentity`に追加する必要があります。
+
+```csharp lines
+app.UseOpenIdConnectAuthentication(new OpenIdConnectOptions("Auth0")
+{
+    // Some configuration omitted for brevity
+
+    Events = new OpenIdConnectEvents
+    {
+        OnTicketReceived = context =>
+        {
+            var options = context.Options as OpenIdConnectOptions;
+
+            // Get the ClaimsIdentity
+            var identity = context.Principal.Identity as ClaimsIdentity;
+            if (identity != null)
+            {
+                // Add the groups as roles
+                var authzClaim = context.Principal.FindFirst(c => c.Type == "authorization");
+                if (authzClaim != null)
+                {
+                    var authorization = JsonConvert.DeserializeObject<Auth0Authorization>(authzClaim.Value);
+                    if (authorization != null)
+                    {
+                        foreach (var group in authorization.Groups)
+                        {
+                            identity.AddClaim(new Claim(ClaimTypes.Role, group, ClaimValueTypes.String, options.Authority));
+                        }
+                    }
+                }
+            }
+
+            return Task.FromResult(0);
+        }
+    }
+});
+```
+
+その後、管理者にタイムシートの承認を許可するアクションを追加できます。
+
+```csharp lines
+[Authorize(Roles = "Admin")]
+public IActionResult TimesheetApproval()
+{          
+    return View();
+}
+```
+

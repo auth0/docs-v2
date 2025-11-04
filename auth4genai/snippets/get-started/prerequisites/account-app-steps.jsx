@@ -5,6 +5,8 @@ export const AccountAndAppSteps = ({
   appCreation = true,
   allowedWebOrigins,
   copyDomain,
+  enableTokenVaultGrant = false,
+  enableRefreshTokenGrant = false,
 }) => {
   const steps = [
     <Step title="Create an Auth0 Account">
@@ -62,6 +64,16 @@ export const AccountAndAppSteps = ({
           {allowedWebOrigins && (
             <li>
               Set Allowed Web Origins as: <code>{allowedWebOrigins}</code>
+            </li>
+          )}
+          {enableTokenVaultGrant && !enableRefreshTokenGrant && (
+            <li>
+              Scroll down and expand the <strong>Advanced</strong> section. Switch to the <strong>Grant Types</strong> tab and enable the <strong>Token Vault</strong> grant type.
+            </li>
+          )}
+          {enableTokenVaultGrant && enableRefreshTokenGrant && (
+            <li>
+              Scroll down and expand the <strong>Advanced</strong> section. Switch to the <strong>Grant Types</strong> tab and enable the <strong>Token Vault</strong> and <strong>Refresh Token</strong> grant types.
             </li>
           )}
           <li>

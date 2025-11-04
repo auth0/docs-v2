@@ -9,7 +9,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and send Gmail emails.",
+      "Allow your AI agents to search, create, and send Gmail emails.",
   },
   {
     id: "google-calendar",
@@ -19,7 +19,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, schedule, and update events in Google Calendar.",
+      "Allow your AI agents to search, schedule, and update events in Google Calendar.",
   },
   {
     id: "google-drive",
@@ -29,7 +29,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and modify files in Google Drive.",
+      "Allow your AI agents to search, create, and modify files in Google Drive.",
   },
   {
     id: "google-sheets",
@@ -39,7 +39,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and modify spreadsheets in Google Sheets.",
+      "Allow your AI agents to search, create, and modify spreadsheets in Google Sheets.",
   },
   {
     id: "google-slides",
@@ -49,7 +49,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and modify slides in Google Slides.",
+      "Allow your AI agents to search, create, and modify slides in Google Slides.",
   },
   {
     id: "google-contacts",
@@ -59,7 +59,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and modify contacts in Google Contacts.",
+      "Allow your AI agents to search, create, and modify contacts in Google Contacts.",
   },
   {
     id: "google-tasks",
@@ -69,7 +69,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and modify tasks in Google Tasks.",
+      "Allow your AI agents to search, create, and modify tasks in Google Tasks.",
   },
   {
     id: "google-workspace",
@@ -83,13 +83,13 @@ export const integrations = [
   },
   {
     id: "youtube",
-    title: "Youtube",
+    title: "YouTube",
     icon: "/ai/docs/img/integrations/youtube-avatar.png",
     href: "/integrations/google",
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and manage YouTube videos.",
+      "Allow your AI agents to search, create, and manage YouTube videos.",
   },
   {
     id: "microsoft",
@@ -102,12 +102,12 @@ export const integrations = [
   },
   {
     id: "microsoft-azure",
-    title: "Microsoft Azure AD",
+    title: "Microsoft Entra (Azure AD)",
     icon: "/ai/docs/img/integrations/microsoft-avatar.png",
     href: "/integrations/microsoft-azure",
     status: "Available",
     type: "Enterprise",
-    description: "Allow your AI agents to Microsoft Azure AD services including Outlook, Teams, OneDrive, and more.",
+    description: "Allow your AI agents to connect to Microsoft Entra (Azure AD) services including Outlook, Teams, OneDrive, and more.",
   },
   {
     id: "github",
@@ -117,7 +117,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to create and manage GitHub issues and pull requests.",
+      "Allow your AI agents to create and manage GitHub issues and pull requests.",
     styles: {
       filter: "var(--github-logo-filter, none)",
     },
@@ -129,7 +129,7 @@ export const integrations = [
     href: "/integrations/slack",
     status: "Available",
     type: "Social",
-    description: "Allow your AI Agents to send and receive Slack messages.",
+    description: "Allow your AI agents to send and receive Slack messages.",
   },
   {
     id: "box",
@@ -139,7 +139,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agents to search, create, and modify files in Box.",
+      "Allow your AI agents to search, create, and modify files in Box.",
   },
   {
     id: "oauth2",
@@ -149,7 +149,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to connect with any OAuth2 compliant identity provider or service.",
+      "Allow your AI agent to connect with any OAuth2 compliant identity provider or service.",
   },
   {
     id: "oidc",
@@ -159,7 +159,7 @@ export const integrations = [
     status: "Available",
     type: "Enterprise",
     description:
-      "Allow your AI Agent to connect with any OpenID Connect (OIDC) compliant identity provider.",
+      "Allow your AI agent to connect with any OpenID Connect (OIDC) compliant identity provider.",
   },
   {
     id: "discord",
@@ -169,7 +169,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to welcome new members, play music, manage user roles, and integrate with other services to post notifications.",
+      "Allow your AI agent to welcome new members, play music, manage user roles, and integrate with other services to post notifications.",
   },
   {
     id: "figma",
@@ -179,7 +179,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to export assets, apply changes to design files programmatically, and comment on prototypes to automate design feedback loops.",
+      "Allow your AI agent to export assets, apply changes to design files programmatically, and comment on prototypes to automate design feedback loops.",
   },
   {
     id: "freshbooks",
@@ -189,7 +189,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to create and send invoices, track expenses from receipts, and manage client information.",
+      "Allow your AI agent to create and send invoices, track expenses from receipts, and manage client information.",
   },
   {
     id: "snapchat",
@@ -199,7 +199,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to share content (photos, videos, links) directly to a user's Snapchat account.",
+      "Allow your AI agent to share content (photos, videos, links) directly to a user's Snapchat account.",
   },
   {
     id: "spotify",
@@ -209,17 +209,17 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to discover music, create and modify playlists based on user taste, control playback on devices, and add songs to the user's library.",
+      "Allow your AI agent to discover music, create and modify playlists based on user taste, control playback on devices, and add songs to the user's library.",
   },
   {
     id: "stripe",
-    title: "Stripe",
+    title: "Stripe Connect",
     icon: "/ai/docs/img/integrations/stripe-avatar.png",
-    href: "/integrations/stripe",
+    href: "/integrations/stripe-connect",
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to act as a platform finance agent that can onboard new sellers, facilitate payments between customers and sellers, manage payouts, and handle marketplace financial operations.",
+      "Allow your AI agent to act as a platform finance agent that can onboard new sellers, facilitate payments between customers and sellers, manage payouts, and handle marketplace financial operations.",
   },
   {
     id: "tumblr",
@@ -229,7 +229,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to create and schedule new posts (text, photo, video), reblog content, and manage a user's blog theme and settings.",
+      "Allow your AI agent to create and schedule new posts (text, photo, video), reblog content, and manage a user's blog theme and settings.",
   },
   {
     id: "amazon",
@@ -239,7 +239,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as an Amazon seller to manage inventory, update product listings, and track sales performance. Or, as a consumer, a shopping agent that tracks product prices and availability.",
+      "Allow your AI agent as an Amazon seller to manage inventory, update product listings, and track sales performance. Or, as a consumer, a shopping agent that tracks product prices and availability.",
   },
   {
     id: "basecamp",
@@ -249,7 +249,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to manage projects, to-do lists, messages, schedules, and team collaboration in Basecamp.",
+      "Allow your AI agent to manage projects, to-do lists, messages, schedules, and team collaboration in Basecamp.",
   },
   {
     id: "digitalocean",
@@ -259,7 +259,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to provision and manage cloud infrastructure, Droplets, Kubernetes clusters, and automate deployment workflows.",
+      "Allow your AI agent to provision and manage cloud infrastructure, Droplets, Kubernetes clusters, and automate deployment workflows.",
   },
   {
     id: "salesforce",
@@ -269,7 +269,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent to access customer records, manage sales opportunities, and automate CRM workflows in Salesforce.",
+      "Allow your AI agent to access customer records, manage sales opportunities, and automate CRM workflows in Salesforce.",
   },
   {
     id: "twitch",
@@ -279,17 +279,17 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Twitch user to access streaming data, manage broadcasts, and integrate with gaming workflows.",
+      "Allow your AI agent to access Twitch streaming data, manage broadcasts, and integrate with gaming workflows.",
   },
   {
     id: "twitter",
-    title: "Twitter",
+    title: "X (Twitter)",
     icon: "/ai/docs/img/integrations/x-avatar.png",
     href: "/integrations/twitter",
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Twitter user to post tweets, manage followers, and integrate with social media workflows.",
+      "Allow your AI agent to post tweets, manage followers, and integrate with social media workflows.",
   },
   {
    
@@ -300,7 +300,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Bitbucket user to manage repositories, track issues, and automate work with code repositories.",
+      "Allow your AI agent to manage Bitbucket repositories, track issues, and automate work with code repositories.",
   },
   {
     id: "dropbox",
@@ -310,7 +310,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Dropbox user to manage files, share Dropbox content for analysis, and automate document processing.",
+      "Allow your AI agent to manage files, share Dropbox content for analysis, and automate document processing.",
   },
   {
     id: "fitbit",
@@ -320,7 +320,7 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Fitbit user to access health data, track fitness goals, and manage user profiles.",
+      "Allow your AI agent to access Fitbit health data, track fitness goals, and manage user profiles.",
   },
   {
     id: "hugging-face",
@@ -330,16 +330,16 @@ export const integrations = [
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Hugging Face user to access model information, manage datasets, and integrate with machine learning workflows.",
+      "Allow your AI agent to access Hugging Face model information, manage datasets, and integrate with machine learning workflows.",
   },
   {
     id: "paypal",
-    title: "Paypal",
+    title: "PayPal",
     icon: "/ai/docs/img/integrations/paypal-avatar.png",
     href: "/integrations/paypal",
     status: "Available",
     type: "Social",
     description:
-      "Allow your AI Agent as a Paypal user to access transaction information, manage payments, and integrate with financial workflows.",
+      "Allow your AI agent to access PayPal transaction information, manage payments, and integrate with financial workflows.",
   },
 ];

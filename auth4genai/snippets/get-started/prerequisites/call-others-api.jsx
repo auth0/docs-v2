@@ -8,18 +8,13 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
  * @param {string} [props.createAuth0ApplicationStep.applicationType] - Type of Auth0 application (e.g., "Regular Web")
  * @param {string} [props.createAuth0ApplicationStep.callbackUrl] - Allowed callback URL for the application
  * @param {string} [props.createAuth0ApplicationStep.logoutUrl] - Allowed logout URL for the application
- *
- * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application
- *
- * @param {Object|undefined} [props.refreshTokenGrantStep] - Configuration for refresh token grant step
- * @param {string} [props.refreshTokenGrantStep.applicationName] - Name of the application for refresh token grant
+ * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application 
+ * @param {boolean} [props.createAuth0ApplicationStep.enableTokenVaultGrant] - Enable Token Vault Grant for the application
+ * @param {boolean} [props.createAuth0ApplicationStep.enableRefreshTokenGrant] - Enable Refresh Token Grant for the application
  *
  * @param {Object|undefined} [props.createAuth0ApiStep] - Configuration for Auth0 API creation step
  *
  * @param {Object|undefined} [props.createResourceServerClientStep] - Configuration for resource server client creation step
- *
- * @param {Object|undefined} [props.tokenVaultGrantStep] - Configuration for token vault grant step
- * @param {string} [props.tokenVaultGrantStep.applicationName] - Name of the application for token vault grant
  *
  * @returns {JSX.Element} A React component containing prerequisite steps
  */
@@ -30,13 +25,11 @@ export const Prerequisites = ({
     callbackUrl: "http://localhost:3000/auth/callback",
     logoutUrl: "http://localhost:3000",
     allowedWebOrigins: undefined,
+    enableTokenVaultGrant: undefined,
+    enableRefreshTokenGrant: undefined,
   },
-  refreshTokenGrantStep = undefined,
   createAuth0ApiStep = undefined,
   createResourceServerClientStep = undefined,
-  tokenVaultGrantStep = {
-    applicationName: "Auth0 Application",
-  },
 }) => {
   // Build steps array dynamically based on conditions
   const steps = [];
@@ -48,37 +41,10 @@ export const Prerequisites = ({
       logoutUrl: createAuth0ApplicationStep.logoutUrl,
       appCreation: !!createAuth0ApplicationStep,
       allowedWebOrigins: createAuth0ApplicationStep.allowedWebOrigins,
+      enableTokenVaultGrant: createAuth0ApplicationStep.enableTokenVaultGrant,
+      enableRefreshTokenGrant: createAuth0ApplicationStep.enableRefreshTokenGrant,
     })
   );
-
-  if (tokenVaultGrantStep) {
-    steps.push(
-      <Step key="token-exchange" title="Enable Token Vault Grant">
-        Enable the Token Vault Grant for your{" "}
-        {tokenVaultGrantStep.applicationName}. Go to{" "}
-        <strong>
-          Applications &gt; [Your Application] &gt; Settings &gt; Advanced &gt;
-          Grant Types
-        </strong>{" "}
-        and enable the <strong>Token Vault</strong> grant type.
-      </Step>
-    );
-  }
-
-  // Conditionally add steps
-  if (refreshTokenGrantStep) {
-    steps.push(
-      <Step key="refresh-token" title="Enable Refresh Token Grant">
-        Enable the Refresh Token Grant for your{" "}
-        {refreshTokenGrantStep.applicationName}. Go to{" "}
-        <strong>
-          Applications &gt; [Your Application] &gt; Settings &gt; Advanced &gt;
-          Grant Types
-        </strong>{" "}
-        and enable the <strong>Refresh Token</strong> grant type.
-      </Step>
-    );
-  }
 
   if (createAuth0ApiStep) {
     steps.push(

@@ -1,19 +1,18 @@
 import { Prerequisites } from "/snippets/get-started/prerequisites/async-auth.jsx";
 import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/download-quickstart/DownloadQuickstartButton.jsx";
 
 <Prerequisites
   callbackUrl="http://localhost:8000/api/auth/callback"
   logoutUrl="http://localhost:5173"
 />
 
-### Prepare the FastAPI app
-
-**Recommended**: Use the starter template by cloning [Auth0 AI samples](https://github.com/auth0-samples/auth0-ai-samples) repository:
-
-```bash wrap lines
-git clone https://github.com/auth0-samples/auth0-ai-samples.git
-cd auth0-ai-samples/authenticate-users/langchain-fastapi-py
-```
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="authenticate-users"
+  framework="langchain-fastapi-py"
+/>
 
 The project is divided into two parts:
 
@@ -24,7 +23,7 @@ The project is divided into two parts:
 
 In the `backend` directory of your project, install the following dependencies:
 
-- `auth0-ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0-lab/auth0-ai-python/tree/main/packages/auth0-ai-langchain) built for GenAI applications powered by LangChain.
+- `auth0-ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0/auth0-ai-python/tree/main/packages/auth0-ai-langchain) built for AI agents powered by LangChain.
 - `langgraph`: [LangGraph](https://pypi.org/project/langgraph/) for building stateful, multi-factor applications with LLMs.
 - `langchain-openai`: LangChain integrations for OpenAI.
 - `langgraph-cli`: LangGraph CLI for running a local LangGraph server.
@@ -34,7 +33,7 @@ Make sure you have [uv](https://docs.astral.sh/uv/) installed and run the follow
 ```bash wrap lines
 cd backend
 uv sync
-uv add "auth0-ai-langchain>=1.0.0b3" "langgraph>=0.5.4" langchain-openai "langgraph-cli[inmem]" --prerelease=allow
+uv add "auth0-ai-langchain>=1.0.0b4" "langgraph>=0.5.4" langchain-openai "langgraph-cli[inmem]>=0.3.6" --prerelease=allow
 ```
 
 ### Update the environment file
@@ -47,7 +46,7 @@ Integrate the Auth0 AI SDK into your application to secure your async AI agent w
 
 #### Configure the Auth0 AI SDK
 
-To require asynchronous authorization for your tool, the tool needs to be wrapped with the Async authorizer, `with_async_user_confirmation()`. Let's create a helper function to wrap the tool with the Async authorizer.
+To require asynchronous authorization for your tool, the tool needs to be wrapped with the Async authorizer, `with_async_authorization()`. Let's create a helper function to wrap the tool with the Async authorizer.
 
 Create a file at `app/core/auth0_ai.py` and instantiate a new Auth0 AI SDK client:
 
@@ -68,8 +67,9 @@ auth0_ai = Auth0AI(
     )
 )
 
-with_async_user_confirmation = auth0_ai.with_async_user_confirmation(
+with_async_authorization = auth0_ai.with_async_authorization(
     audience=settings.SHOP_API_AUDIENCE,
+    # param: scopes
     # add any scopes you want to use with your API
     scopes=["openid", "product:buy"],
     binding_message=lambda product, quantity: f"Do you want to buy {quantity} {product}",
@@ -78,6 +78,11 @@ with_async_user_confirmation = auth0_ai.with_async_user_confirmation(
     .get("_credentials")
     .get("user")
     .get("sub"),
+    # param: requested_expiry
+    # Controls how long the authorization request is valid.
+    # requested_expiry=301,
+
+    # param: on_authorization_request
     # When this flag is set to `block`, the execution of the tool awaits
     # until the user approves or rejects the request.
     #
@@ -87,12 +92,14 @@ with_async_user_confirmation = auth0_ai.with_async_user_confirmation(
     # In practice, the process that is awaiting the user confirmation
     # could crash or timeout before the user approves the request.
     on_authorization_request="block",
+
+    # requested_expiry=301,
 )
 ```
 
-This will intercept the tool call to initiate a CIBA request:
+This will intercept the tool call to initiate an Async Authorization request:
 
-- The CIBA request includes the user ID that will approve the request.
+- The Async Authorization request includes the user ID that will approve the request.
 - Auth0 sends the user a mobile push notification. The AI agent polls the `/token` endpoint for a user response.
 - The mobile application retrieves the `bindingMessage` containing the consent details, in this case, the details of the product to purchase.
 - The user responds to the request:
@@ -139,17 +146,17 @@ async def api_route(
 
 #### Create a tool to call your API
 
-In this example, we use a tool that buys products on the user's behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the shop's API. Upon completing the CIBA flow, the AI agent responds with a message confirming the purchase. The Auth0 AI SDK returns an error response if the user denies the transaction.
+In this example, we use a tool that buys products on the user's behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the shop's API. Upon completing the Async Authorization flow, the AI agent responds with a message confirming the purchase. The Auth0 AI SDK returns an error response if the user denies the transaction.
 
 Now, create a file `app/agents/tools/shop_online.py` and add the following code:
 
 ```python app/agents/tools/shop_online.py wrap lines
 import httpx
 from langchain_core.tools import StructuredTool
-from auth0_ai_langchain.ciba import get_ciba_credentials
+from auth0_ai_langchain.async_authorization import get_async_authorization_credentials
 from pydantic import BaseModel
 
-from app.core.auth0_ai import with_async_user_confirmation
+from app.core.auth0_ai import with_async_authorization
 from app.core.config import settings
 
 
@@ -167,10 +174,10 @@ async def shop_online_fn(product: str, quantity: int):
         # No API set, mock a response
         return f"Ordered {quantity} {product}"
 
-    credentials = get_ciba_credentials()
+    credentials = get_async_authorization_credentials()
 
     if not credentials:
-        raise ValueError("CIBA credentials not found")
+        raise ValueError("Async Authorization credentials not found")
 
     headers = {
         "Authorization": f"Bearer {credentials['access_token']}",
@@ -202,7 +209,7 @@ async def shop_online_fn(product: str, quantity: int):
         }
 
 
-shop_online = with_async_user_confirmation(
+shop_online = with_async_authorization(
     StructuredTool(
         name="shop_online",
         description="Tool to buy products online.",

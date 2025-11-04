@@ -1,22 +1,21 @@
 import { Prerequisites } from "/snippets/get-started/prerequisites/auth-for-rag.jsx";
 import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/download-quickstart/DownloadQuickstartButton.jsx";
 
-<Prerequisites />
+<Prerequisites createAuth0ApiStep={{}} />
 
-### Prepare Next.js app
-
-**Recommended**: To use a starter template, clone the [Auth0 AI samples](https://github.com/auth0-samples/auth0-ai-samples) repository:
-
-```bash wrap lines
-git clone https://github.com/auth0-samples/auth0-ai-samples.git
-cd auth0-ai-samples/authenticate-users/langchain-next-js
-```
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="authorization-for-rag"
+  framework="langchain-next-js"
+/>
 
 ### Install dependencies
 
 In the root directory of your project, install the following dependencies:
 
-- `@auth0/ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0-lab/auth0-ai-js/tree/main/packages/ai-langchain) built for GenAI applications powered by LangChain.
+- `@auth0/ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-langchain) built for AI agents powered by LangChain.
 - `@langchain/langgraph`: For building stateful, multi-actor applications with LLMs.
 - `langchain`: The LangChain library.
 - `@langchain/core`: Core LangChain dependencies.
@@ -25,7 +24,7 @@ In the root directory of your project, install the following dependencies:
 - `langgraph-nextjs-api-passthrough`: API passthrough for LangGraph.
 
 ```bash wrap lines
-npm install @auth0/ai-langchain@3 @langchain/core@0.3 @langchain/langgraph@0.3 @langchain/openai@0.6 langchain@0.3 langgraph-nextjs-api-passthrough@0.1
+npm install @auth0/ai-langchain@4 @langchain/core@0.3.77 @langchain/langgraph@0.4.4 @langchain/openai@0.6.13 langchain@0.3.12 langgraph-nextjs-api-passthrough@0.1.4
 ```
 
 ### Update the environment file
@@ -112,10 +111,10 @@ export const getContextDocumentsTool = tool(
 
 Call the tool from your AI agent to get data from documents. First, update the `/src/app/api/chat/[..._path]/route.ts` file with the following code to pass the user credentials to your agent:
 
-```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,19}
+```ts src/app/api/chat/[..._path]/route.ts wrap lines highlight={3,19,31}
 import { initApiPassthrough } from "langgraph-nextjs-api-passthrough";
 
-import { getUser } from "@/lib/auth0";
+import { getUser, getAccessToken } from "@/lib/auth0";
 
 export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
   initApiPassthrough({
@@ -140,20 +139,151 @@ export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
 
       return body;
     },
+    headers: async () => {
+      const accessToken = await getAccessToken();
+      return {
+        Authorization: `Bearer ${accessToken}`,
+      };
+    },
   });
 ```
 
 Next, add the following code to `src/lib/auth0.ts`:
 
-```tsx src/lib/auth0.ts wrap lines highlight={2-5}
-//... existing code
+```tsx src/lib/auth0.ts wrap lines highlight={13-21,23-26}
+import { Auth0Client } from '@auth0/nextjs-auth0/server';
+
+export const auth0 = new Auth0Client({
+  authorizationParameters: {
+    // In v4, the AUTH0_SCOPE and AUTH0_AUDIENCE environment variables are no longer automatically picked up by the SDK.
+    // Instead, we need to provide the values explicitly.
+    scope: process.env.AUTH0_SCOPE,
+    audience: process.env.AUTH0_AUDIENCE,
+  },
+});
+
+// Get the Access token from Auth0 session
+export const getAccessToken = async () => {
+  const tokenResult = await auth0.getAccessToken();
+
+  if(!tokenResult || !tokenResult.token) {
+    throw new Error("No access token found in Auth0 session");
+  }
+
+  return tokenResult.token;
+};
+
 export const getUser = async () => {
   const session = await auth0.getSession();
   return session?.user;
 };
 ```
 
-Now, update the `/src/lib/agent.ts` file with the following code to add the tool to your agent:
+### Add Custom Authentication
+<Info>
+For more information on how to add custom authentication for your LangGraph Platform application, read the [Custom Auth](https://langchain-ai.github.io/langgraphjs/how-tos/auth/custom_auth/) guide.
+</Info>
+In your `langgraph.json`, add the path to your auth file:
+```typescript langgraph.json wrap lines highlight={8}
+{
+  "node_version": "20",
+  "graphs": {
+    "agent": "./src/lib/agent.ts:agent"
+  },
+  "env": ".env",
+  "auth": {
+    "path": "./src/lib/auth.ts:authHandler"
+  }
+}
+```
+Then, in your `auth.ts` file, add your auth logic:
+```typescript src/lib/auth.ts wrap lines
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const { Auth, HTTPException } = require("@langchain/langgraph-sdk/auth");
+
+const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;
+
+// JWKS endpoint for Auth0
+const JWKS = createRemoteJWKSet(
+  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+);
+
+// Create the Auth instance
+const auth = new Auth();
+// Register the authentication handler
+auth.authenticate(async (request: Request) => {
+  const authHeader = request.headers.get("Authorization");
+  const xApiKeyHeader = request.headers.get("x-api-key");
+    /**
+     * LangGraph Platform will convert the `Authorization` header from the client to an `x-api-key` header automatically
+     * as of now: https://docs.langchain.com/langgraph-platform/custom-auth
+     *
+     * We can still leverage the `Authorization` header when served in other infrastructure w/ langgraph-cli
+     * or when running locally.
+     */
+    // This header is required in Langgraph Cloud.
+    if (!authHeader && !xApiKeyHeader) {
+      throw new HTTPException(401, {
+        message: "Invalid auth header provided.",
+      });
+    }
+
+    // prefer the xApiKeyHeader first
+    let token = xApiKeyHeader || authHeader;
+
+    // Remove "Bearer " prefix if present
+    if (token && token.startsWith("Bearer ")) {
+      token = token.substring(7);
+    }
+
+    // Validate Auth0 Access Token using common JWKS endpoint
+    if (!token) {
+      throw new HTTPException(401, {
+        message:
+          "Authorization header format must be of the form: Bearer <token>",
+      });
+    }
+
+    if (token) {
+      try {
+        // Verify the JWT using Auth0 JWKS
+        const { payload } = await jwtVerify(token, JWKS, {
+          issuer: `https://${AUTH0_DOMAIN}/`,
+          audience: AUTH0_AUDIENCE,
+        });
+
+        console.log("✅ Auth0 JWT payload resolved!", payload);
+
+        // Return the verified payload - this becomes available in graph nodes
+        return {
+          identity: payload.sub!,
+          email: payload.email as string,
+          permissions:
+            typeof payload.scope === "string" ? payload.scope.split(" ") : [],
+          auth_type: "auth0",
+          // include the access token for use with Auth0 Token Vault exchanges by tools
+          getRawAccessToken: () => token,
+          // Add any other claims you need
+          ...payload,
+        };
+      } catch (jwtError) {
+        console.log(
+          "Auth0 JWT validation failed:",
+          jwtError instanceof Error ? jwtError.message : "Unknown error"
+        );
+        throw new HTTPException(401, {
+          message: "Invalid Authorization token provided.",
+        });
+      }
+    }
+});
+
+export { auth as authHandler };
+```
+
+Now, update the `src/lib/agent.ts` file with the following code to add the tool to your agent:
 
 ```ts src/lib/agent.ts wrap lines highlight={1,7}
 import { getContextDocumentsTool } from "./tools/context-docs";

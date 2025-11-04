@@ -1,0 +1,166 @@
+---
+title: "ルールの実行に関するベストプラクティス"
+permalink: "rules-execution-best-practices"
+'description': "Auth0ルールを実行するためのベストプラクティスについて説明します。"
+'og:title': "ルールの実行に関するベストプラクティス"
+'og:description': "Auth0ルールを実行するためのベストプラクティスについて説明します。"
+'og:image': "https://cdn2.auth0.com/docs/1.14567.0/img/share-image.png"
+'twitter:title': "ルールの実行に関するベストプラクティス"
+'twitter:description': "Auth0ルールを実行するためのベストプラクティスについて説明します。"
+---
+
+<Warning>
+
+RulesとHooksのサポート終了（EOL）日は**2026年11月18日** であり、**2023年10月16** 日の時点で作成された新しいテナントは使用できなくなります。Hooksが有効な既存のテナントは、サポート終了までHooksを利用できます。
+
+今後はActionsに移行して、Auth0の機能を拡張することを強くお勧めします。Actionsを使用すると、豊富な情報やインラインドキュメント、パブリック`npm`パッケージにアクセスして、外部統合を使って全体的な拡張エクスペリエンスを強化することができます。Actionsの詳細については、「[Auth0 Actionsの仕組みを理解する](/docs/ja-jp/customize/actions/actions-overview)」をお読みください。
+
+当社では、移行の参考資料として、[RulesからActionsへの移行](/docs/ja-jp/customize/actions/migrate/migrate-from-rules-to-actions)と[HooksからActionsへの移行](/docs/ja-jp/customize/actions/migrate/migrate-from-hooks-to-actions)に関するガイドを提供しています。また、専用の「[Actionsへの移行](https://auth0.com/extensibility/movetoactions)」ページでは、機能の比較や[Actionsのデモ](https://www.youtube.com/watch?v=UesFSY1klrI)、その他のリソースを掲載して、円滑な移行をサポートしています。
+
+RulesとHooksの廃止の詳細については、当社のブログ記事「[RulesとHooksの提供終了について](https://auth0.com/blog/preparing-for-rules-and-hooks-end-of-life/)」をお読みください。
+
+</Warning>
+
+各ルールは、定義された順序で呼び出されるJavaScript関数として実行されます。次のルールは、前のルールが完了するまで実行されません。さらに、ルールパイプラインは、ユーザー資格情報を含むワークフローに対してのみ実行されます。ルールパイプラインは、[クライアントの資格情報フロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/client-credentials-flow)中には実行**されません** 。ルールに類似する機能が必要な場合、`credentials-exchange`トリガーの[マシンツーマシンフロー](/docs/ja-jp/customize/actions/explore-triggers/machine-to-machine-trigger)の[アクション](/docs/ja-jp/customize/actions)で代用することができます。
+
+パイプラインの用語では、ルールはルールに提供された`callback`関数が呼び出されたときに完了します。関数の呼び出しに失敗すると、パイプラインの実行は停止し、最終的にはエラーが返されます。各ルールは、`callback`関数を1回**だけ** 呼び出す必要があります。
+
+ルールの実行はJavaScriptの非同期な性質に対応しており、[`Promise`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)オブジェクトなどのコンストラクトを使用することができます。非同期処理は、非同期操作の完了を待つ間、パイプラインを事実上一時停止することになります。Auth0サーバーレスWebtaskコンテナーには通常、約20秒の実行制限があり、その後コンテナはリサイクルできます。この制限によってコンテナーがリサイクルされると、一時停止されているかどうかに関係なく、パイプラインが途中で終了され、最終的には認証エラーが返されます（`global`オブジェクトもリセットされる可能性があります）。
+
+`context.redirect`を設定すると、すべてのルールが完了した時点でリダイレクトがトリガーされます（リダイレクトは設定された時点で強制されません）。リダイレクトが発生するには、すべてのルールがWebtaskコンテナーの実行制限内で完了する必要がありますが、リダイレクト処理の一環としてかかる所要時間が、その制限を超える場合があります。`/continue`エンドポイント経由でAuth0にリダイレクトする場合は、理想的には1時間以内に行うことをお勧めします。`/continue`エンドポイントへのリダイレクトによっても、現在のパイプラインのコンテキストで新しいコンテナーが作成され、すべてのルールが再び実行されます。
+
+非同期実行では、非同期操作が完了した後に（JavaScript）コールバックが実行されます。このコールバックは通常、JavaScript関数のメイン（同期）本文が完了した後のいずれかの時点で呼び出されます。ルールが非同期処理を利用している場合、（Auth0）提供の`callback`関数の呼び出しは、非同期処理が完了するまで延期され、最後に呼び出される必要があります。上述のように、（Auth0）提供の`callback`関数は1回だけ呼び出す必要があります。ルール内で関数を複数回呼び出すと、予期しない結果が得られたり、エラーが発生したりすることにつながります。
+
+## contextオブジェクト
+
+`context`オブジェクトは、ルールが実行されるコンテキストに関する情報（クライアントID、接続名、セッションID、要求のコンテキスト、プロトコルなど）を提供します。コンテキストオブジェクトを使用すると、ルールは実行の理由を判断できます。たとえば、以下のサンプルフラグメントに示すように、`context.clientID`と`context.protocol`を使用して条件付き処理を実装することで、ルールロジックが実行されるタイミングを判断できます。このサンプルでは、​​例外処理、`npm`モジュールの使用（`Promise`スタイルの処理用）、および`callback`オブジェクトに関するベストプラクティスもいくつか紹介されています。詳細については、「[カスタムデータベースのアクションスクリプト環境のベストプラクティス](/docs/ja-jp/authenticate/database-connections/custom-db/custom-database-connections-scripts/environment)」をお読みください`。`
+
+```javascript lines
+switch (context.protocol) {
+    case 'redirect-callback':
+      return callback(null, user, context);
+    	break;
+
+    default: {
+      user.app_metadata = user.app_metadata || {};
+      switch(context.clientID) {
+        case configuration.PROFILE_CLIENT: {
+          user.user_metadata = user.user_metadata || {};
+          Promise.resolve(new
+            Promise(function (resolve, reject) {
+              switch (context.request.query.audience) {
+                case configuration.PROFILE_AUDIENCE: {
+                  switch (context.connection) {
+                      .
+                      .
+                  }
+                } break;
+              .
+              .
+            })
+          )
+          .then(function () {
+              .
+              .
+          })
+          .catch(function (error) {
+            return callback(new UnauthorizedError("unauthorized"), user, context);
+          });
+        } break;
+
+        default:
+          return callback(null, user, context);
+          break;
+
+    } break;
+```
+
+コンテキストバイパスロジックを使用して多要素認証チェックを行う場合は、ベストプラクティスを確認することを強くお勧めします。たとえば、<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=multifactor-authentication" tip="多要素認証（MFA）: ユーザー名とパスワードに加えて、SMS経由のコードなどの要素を使用するユーザー認証プロセス。" cta="用語集の表示">MFA</Tooltip>の使用が`context.request.query.prompt==='none'`を前提としている場合、**重大なセキュリティ上の欠陥** が表面化する可能性があります。さらに、`context`オブジェクトの内容は**セキュリティ上重要** なため、オブジェクトを外部またはサードパーティのサービスに直接渡さ**ない** でください。
+
+### リダイレクト
+
+アプリケーションが多数あり、それを一元管理するサービスが必要な場合や、SPAを使用していて、特定の条件下でユーザーがアクセストークンを取得できないようにしたい場合、ログインフローの一部としてユーザーから情報を収集するのは実用的ではない場合があります。このような場合、情報を収集したり、ユーザーにチャレンジを提供したりするための一元的な方法が必要です。
+
+Auth0を使用すると、ユーザーから情報を収集できる任意のURLにユーザーをリダイレクトし、その後、リダイレクトをトリガーした元の/authorize要求を完了できる`/continue`エンドポイントにユーザーを戻すことができます。これは強力な機能であり、ユースケースによっては、誤って実行した場合の影響は、無害なものから、アプリケーションにセキュリティの脆弱性を残すものまでさまざまです。そのため、これを正しく実行することが重要です。
+
+ほとんどの使用例では、リダイレクトルールは、次のようなプロファイルへの変更をユーザーに促すために使用されます。
+
+* パスワード変更の強制
+* メールの確認
+* プロファイルへの情報の追加
+
+ルールでは、ユーザーの`app_metadata`内のフラグまたは値をチェックし、Auth0への独自の/authorize呼び出しを実行するアプリケーションにリダイレクトして、ユーザーのメタデータに変更を加え、ユーザーをAuth0にリダイレクトすることをお勧めします。これは、プロファイル変更のリダイレクトや、ユーザーのログインを制限する必要がない場合に最適です。
+
+ルールからのリダイレクトを使用すると、context.redirectによってトリガーされる追加のユーザー操作を必要とするカスタム認証フローを実装できます。ルールからのリダイレクトは、`/authorize`エンドポイントを呼び出す場合にのみ使用できます。
+
+独自のホスト型ユーザーインターフェイスへのリダイレクトは、パイプラインが完了する前に実行され、`context.clientID`コンテキストごとに1回トリガーできます。リダイレクトは、本番環境で実行される場合にのみHTTPSを使用し、一般的なセキュリティの脅威を軽減するために追加のパラメーターを最小限に抑える必要があります。Auth0が提供する`state`が、提供される唯一のパラメーターであることが望ましいです。
+
+リダイレクトされると、独自のホスト型ユーザーインターフェイスは、ユーザー認証されたコンテキストで実行され、Auth0 <Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=single-sign-on" tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインした後、そのユーザーを他のアプリケーションに自動的にログインさせるサービス。" cta="用語集の表示">SSO</Tooltip>によって信頼性アーティファクトを取得します。これらのアーティファクト（<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=openid" tip="OpenID: アプリケーションがログイン情報を収集および保存することなくにユーザーのIDを検証できるようにする認証用のオープン標準。" cta="用語集の表示">OpenID</Tooltip> Connect（OIDC）のIDトークンや<Tooltip data-tooltip-id="react-containers-DefinitionTooltip-1" href="/docs/ja-jp/glossary?term=oath2" tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集の表示">OAuth 2.0</Tooltip>のアクセストークンなど）を取得するには、リダイレクトをトリガーしたものでは**ない** `context.clientID`コンテキストを使用します。これを行うには、`/authorize`エンドポイントにリダイレクトします。たとえば、SPAの場合は、サイレント認証を使用します。これにより、すべてのルールが再度実行される新しいパイプラインが作成され、ルール内の`context`オブジェクトを使用して条件付き処理を実行できます。
+
+実行する処理が完了すると、`/continue`エンドポイントを介してユーザーをAuth0にリダイレクトし（提供された`state`を指定）、パイプラインの実行が続行されます。これにより、すべてのルールが現在のパイプライン内で再度実行され、ルール内の`context`オブジェクトを使用して条件付き処理チェックを実行できます。
+
+Auth0のプロファイルに保管するデータは多すぎないようにします。このデータは認証および認可の目的で使用されるものです。Auth0のメタデータと検索機能は、市場調査や高い検索・更新の頻度が必要なものを想定して設計されていません。Auth0をそのような目的で使用すると、ほぼ確実にシステムの拡張性や性能に問題が生じます。データを外部システムに保管して、Auth0にポインター（ユーザーID）を保管した方が、バックエンドシステムが必要に応じてデータを取得できます。簡単なルールとして、トークンに追加したり決定を下したりするためにルールで使用する予定のアイテムのみを保存すると良いです。
+
+情報をフロントチャネルでやり取りすると、悪意のある行為者の攻撃対象になる領域を広げることになります。これは、ルールでアクションを実行する必要がある場合にのみ実行する必要があります（`UnauthorizedError`で承認試行を拒否するなど）。
+
+## userオブジェクト
+
+`user`オブジェクトは、Auth0のユーザーアカウント（ユーザープロファイル）レコードのキャッシュされたコピーへのアクセスを提供します。このオブジェクトは、Auth0管理APIにアクセスすることなく、ユーザーに関する情報へのアクセスを提供します。このアクセスは、レート制限があり、遅延することがあります。
+
+`user`オブジェクトの内容は変更できますが（たとえば、あるルールで変更を加え、別のルールがその実行に影響を与える可能性があります）、加えられた変更は保持されません。たとえば、ユーザーに関連付けられたメタデータの更新を保持することが必要になる場合がありますが、その場合は必要に応じて`auth0`オブジェクトを使用して操作を実行できます。
+
+`auth0`オブジェクトを使用してユーザーを更新すると、最終的にはAuth0 <Tooltip data-tooltip-id="react-containers-DefinitionTooltip-0" href="/docs/ja-jp/glossary?term=management-api" tip="Management API: 顧客が管理タスクを実行できるようにするための製品。" cta="用語集の表示">Management API</Tooltip>が呼び出されます。Auth0 Management APIはレート制限があり、遅延の影響を受けるため、更新を実行するタイミングと頻度については注意が必要です。
+
+`context`オブジェクトには、プライマリーユーザーのユーザーIDを参照する`primaryUser`プロパティが含まれています。このユーザーIDは通常、`user`オブジェクトのルートにある`user_id`プロパティと同じになります。プライマリーユーザーは、ルールパイプラインが完了したときにAuth0エンジンに返されるユーザーであり、`user_id`はAuth0テナント内でユーザーを一意に識別するためにAuth0によって生成される一意の値です。この`user_id`は不透明な値として扱う必要があります。
+
+プライマリーユーザーが変更される可能性があるため、`primaryUser`を更新する必要がある場合があります。つまり、Auth0エンジンに返されるユーザーは、ルールパイプラインエントリのユーザーとは異なります。このような場合、ルールは`primaryUser`を更新して、新しいプライマリーユーザーIDを反映する必要があります。この変更は、パイプラインの現在のインスタンスで実行される後続のルールには影響しません。`user`オブジェクトは変更されません。
+
+### アイデンティティ
+
+`user`オブジェクトには、ユーザーアカウントに関連付けられたIDへの参照も含まれます。`ID`プロパティはオブジェクトの配列であり、各オブジェクトには、IDプロバイダーに知られているそれぞれのIDに関連付けられたプロパティが含まれます（たとえば、`provider`名、Auth0の関連付けられた`connection`、そのIDを使用して最後に認証したときにIDプロバイダーから取得された`profileData`など）。ユーザーアカウントをリンクすると、配列に複数のエントリが作成されます。
+
+`ID`配列内の各IDには、`user_id`プロパティも含まれます。このプロパティは、IDプロバイダーに知られているユーザーのIDです。`user`オブジェクトのルートにある`user_id`プロパティには、IDプロバイダーが認識しているユーザーの識別子も含まれる場合がありますが、ベストプラクティスとしては、配列IDで`user_id`プロパティを使用することをお勧めします。ユーザーオブジェクトのルートにある`user_id`は不透明な値として扱う必要があるため、解析しないでください。
+
+### メタデータ
+
+`user_metadata`プロパティと`app_metadata`プロパティは、ユーザーに関連付けられたメタデータの2つの異なる側面を参照します。`user_metadata`プロパティと`app_metadata`プロパティはどちらも、それぞれのキャッシュされたコピーへのアクセスを提供します。
+
+ロール、グループ、部門、ジョブコードなどのユーザーの認証関連属性は、`u​​ser_metadata`ではなく`app_metadata`に保存する必要があります。これは、`user_metadata`は基本的にユーザーが変更できるのに対し、`app_metadata`は変更できないためです。
+
+たとえば、ユーザーに関連付けられたメタデータの更新を保持することが必要になる場合があり、必要に応じて`auth0`オブジェクトを使用してそのような操作を実行できます。いずれかのメタデータオブジェクトを更新するときは、保存する情報について慎重に検討することが重要です。メタデータのベストプラクティスに従って、メタデータを過剰に使用しないように注意してください。メタデータの過剰使用は、パイプライン内での過剰な処理によって遅延が増える可能性があります。詳細については、[メタデータのフィールド名とデータタイプ](/docs/ja-jp/manage-users/user-accounts/metadata/metadata-fields-data)をご覧ください。`auth0`オブジェクトを使用すると、Auth0管理APIも呼び出されます。Auth0管理APIはレート制限があり、遅延の影響を受けるため、更新を実行するタイミングと頻度については注意が必要です。
+
+## callback関数
+
+ルールに提供される`callback`関数は、ルールの完了を示す信号として効果的に機能します。ルールは、コールバック関数の呼び出しの直後に暗示的または（JavaScript）`return`ステートメントを明示的に実行して完了する必要があり、その他の操作は実行しません。
+
+関数の呼び出しに失敗すると、パイプラインの実行は停止し、最終的にはエラー状態が返されます。各ルールは、`callback`関数を1回だけ呼び出す必要があります。1回呼び出すとパイプラインの停止は防止されますが、複数回呼び出すと、予期しない結果やエラーが発生する可能性があります。
+
+```javascript lines
+function (user, context, callback) {
+  getRoles(user.user_id, (err, roles) => {
+    if (err) return callback(err);
+
+    context.idToken['https://example.com/roles'] = roles;
+
+    return callback(null, user, context);
+  });
+}
+```
+
+上記の例からわかるように、`callback`関数は最大3つのパラメーターで呼び出すことができます。最初のパラメーターは必須で、ルール操作のステータスを示します。2番目と3番目のパラメーターは任意で、パイプラインの次のルールに提供されるユーザーとコンテキストを表します。これらを指定する場合、ルールに提供される`user`および`context`オブジェクトを（それぞれ）渡すことが推奨されるベストプラクティスです。
+
+特定の状況では、`user`または`context`オブジェクトの特定のコンテンツを変更することは許容されますが、推奨されるベストプラクティスとして、`user`または`context`オブジェクトの新規作成されたインスタンスを渡さないようにしてください。`user`または`context`オブジェクト以外のものを渡すと、予期しない結果が生じ、例外またはエラー状態が発生する可能性があります。
+
+ステータスパラメーターは、`null`、`Error`オブジェクトのインスタンス、または`UnauthorizedError`オブジェクトのインスタンスのいずれかとして渡す必要があります。nullを指定するとパイプライン処理の継続が許可されますが、その他の値を指定するとパイプラインが終了します。`UnauthorizedError`はアクセス拒否を通知し、アクセス拒否の理由に関する情報を認証操作の発信者に返すことができます。これらのパラメーターのいずれかにその他の値を渡すと、予期しない結果が生じ、例外またはエラー状態が発生する可能性があります。
+
+認証はすでに行われているため、（認証）エラーでパイプラインが早期に終了しても、ブラウザー内の認証済みセッションには影響しません。/authorizeへの後続のリダイレクトは通常、自動ログインになります。パイプラインが早期に終了すると、トークンなどの生成が停止されます。1つのオプションは、必要に応じてアプリケーションを認証APIの[ログアウトエンドポイント](/docs/ja-jp/api/authentication#logout)にリダイレクトし、ブラウザー内のAuth0セッションを強制的に終了することです。
+
+ログアウトエンドポイントへの呼び出しは中断される可能性があるため、明示的なAuth0セッションの終了は保証されません。これは,`unauthorized`エラーの原因となった明示的な条件を、後続のルールパイプライン実行で再チェックする必要があり、他の条件（`prompt===none` など）によってこれらの条件チェックをバイパスできないようにする必要があるため重要です。
+
+## もっと詳しく
+
+* [ルールの構造に関するベストプラクティス](/docs/ja-jp/rules-best-practices/rules-anatomy-best-practices)
+* [ルール環境のベストプラクティス](/docs/ja-jp/rules-best-practices/rules-environment-best-practices)
+* [ルールセキュリティのベストプラクティス](/docs/ja-jp/rules-best-practices/rules-security-best-practices)
+* [ルールのテストに関するベストプラクティス](/docs/ja-jp/rules-best-practices/rules-testing-best-practices)
+* [エラー処理のベストプラクティス](/docs/ja-jp/troubleshoot/error-handling-best-practices)
