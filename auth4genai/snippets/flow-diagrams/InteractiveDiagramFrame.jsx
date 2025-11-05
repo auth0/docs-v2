@@ -367,7 +367,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
                               color: isDark ? "#E5E5E5" : "#000000",
                             }}
                           >
-                            step {String(currentStep + 1).padStart(2, "0")} /{" "}
+                            STEP {String(currentStep + 1).padStart(2, "0")} /{" "}
                             {String(flowData.steps.length).padStart(2, "0")}
                           </span>
                         </div>
