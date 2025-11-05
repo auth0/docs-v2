@@ -65,6 +65,14 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
     };
   }, [isOpen]);
 
+  // Preload first step image on mount
+  useEffect(() => {
+    if (!flowData?.steps?.[0]) return;
+
+    const img = new Image();
+    img.src = `/img/diagrams/${flowData.steps[0].image}_${isDark ? "dark" : "light"}.svg`;
+  }, [isDark, flowData?.steps]);
+
   // Preload all step images when modal opens (only current theme)
   useEffect(() => {
     if (!isOpen || !flowData?.steps) return;
