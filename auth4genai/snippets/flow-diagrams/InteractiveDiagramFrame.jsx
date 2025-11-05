@@ -128,7 +128,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
   }
 
   return (
-    <div className="my-4">
+    <div>
       {/* Clickable static image - use background-image to avoid Mintlify Frame */}
       <div
         onClick={(e) => {
@@ -136,7 +136,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
           e.stopPropagation();
           setIsOpen(!isOpen);
         }}
-        className="cursor-pointer hover:opacity-90 transition-opacity w-full border border-gray-200 dark:border-gray-700 rounded overflow-hidden"
+        className="cursor-pointer hover:opacity-90 transition-opacity w-full"
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
@@ -146,7 +146,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
           }
         }}
         style={{
-          backgroundImage: `url(${flowData.staticImage?.light})`,
+          backgroundImage: `url(${isDark ? flowData.staticImage?.dark : flowData.staticImage?.light})`,
           backgroundSize: "contain",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
@@ -173,6 +173,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
             className="relative w-full max-w-[95vw] h-[95vh] flex flex-col"
             style={{
               backgroundColor: isDark ? "#191919" : "#E8E8E8",
+              borderRadius: "32px",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -231,19 +232,21 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
             >
               {/* Left side - Diagram (66.66%) */}
               <div
-                className="flex items-center justify-center p-8"
-                style={{ flex: "0 0 66.666%" }}
-              >
-                <img
-                  src={`/img/diagrams/${flowData.steps[currentStep]?.image}_${
+                style={{
+                  flex: "0 0 66.666%",
+                  height: "100%",
+                  backgroundImage: `url(/img/diagrams/${flowData.steps[currentStep]?.image}_${
                     isDark ? "dark" : "light"
-                  }.svg`}
-                  alt={flowData.steps[currentStep]?.title}
-                  className="max-w-full max-h-full object-contain"
-                  style={{ pointerEvents: "none", userSelect: "none" }}
-                  draggable={false}
-                />
-              </div>
+                  }.svg)`,
+                  backgroundSize: "contain",
+                  backgroundPosition: "center",
+                  backgroundRepeat: "no-repeat",
+                  pointerEvents: "none",
+                  userSelect: "none"
+                }}
+                role="img"
+                aria-label={flowData.steps[currentStep]?.title}
+              />
 
               {/* Right side - Sidebar (33.33%) */}
               <div style={{ flex: "0 0 33.333%", padding: "2rem" }}>
