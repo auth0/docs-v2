@@ -65,6 +65,16 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
     };
   }, [isOpen]);
 
+  // Preload all step images when modal opens (only current theme)
+  useEffect(() => {
+    if (!isOpen || !flowData?.steps) return;
+
+    flowData.steps.forEach((step) => {
+      const img = new Image();
+      img.src = `/img/diagrams/${step.image}_${isDark ? "dark" : "light"}.svg`;
+    });
+  }, [isOpen, isDark, flowData?.steps]);
+
   // Inline markdown renderer - convert markdown text to HTML
   const renderMarkdown = (text) => {
     if (!text) return null;
@@ -146,7 +156,9 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
           }
         }}
         style={{
-          backgroundImage: `url(${isDark ? flowData.staticImage?.dark : flowData.staticImage?.light})`,
+          backgroundImage: `url(${
+            isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
+          })`,
           backgroundSize: "contain",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
@@ -208,7 +220,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
                 aria-label="Close modal"
                 style={{
                   fontSize: "20px",
-                  color: isDark ? "rgba(204, 210, 220, 0.80)" : "#1a1a1a"
+                  color: isDark ? "rgba(204, 210, 220, 0.80)" : "#1a1a1a",
                 }}
               >
                 ✕
@@ -235,14 +247,14 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
                 style={{
                   flex: "0 0 66.666%",
                   height: "100%",
-                  backgroundImage: `url(/img/diagrams/${flowData.steps[currentStep]?.image}_${
-                    isDark ? "dark" : "light"
-                  }.svg)`,
+                  backgroundImage: `url(/img/diagrams/${
+                    flowData.steps[currentStep]?.image
+                  }_${isDark ? "dark" : "light"}.svg)`,
                   backgroundSize: "contain",
                   backgroundPosition: "center",
                   backgroundRepeat: "no-repeat",
                   pointerEvents: "none",
-                  userSelect: "none"
+                  userSelect: "none",
                 }}
                 role="img"
                 aria-label={flowData.steps[currentStep]?.title}
@@ -292,7 +304,11 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
                           <img
                             src="/img/chevron-right.svg"
                             alt=""
-                            style={{ margin: "0 8px", width: "16px", height: "16px" }}
+                            style={{
+                              margin: "0 8px",
+                              width: "16px",
+                              height: "16px",
+                            }}
                           />
                           <span
                             style={{
@@ -351,14 +367,26 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
                               background: isDark ? "#B59DF8" : "#9979F5",
                               fontFamily:
                                 "Inter, system-ui, -apple-system, sans-serif",
-                              fontSize: currentStep === flowData.steps.length - 1 ? "14px" : "16px",
-                              fontWeight: currentStep === flowData.steps.length - 1 ? 500 : 400,
+                              fontSize:
+                                currentStep === flowData.steps.length - 1
+                                  ? "14px"
+                                  : "16px",
+                              fontWeight:
+                                currentStep === flowData.steps.length - 1
+                                  ? 500
+                                  : 400,
                               lineHeight: "24px",
                               color: "#171717",
                             }}
-                            aria-label={currentStep === flowData.steps.length - 1 ? "Keep reading" : "Next step"}
+                            aria-label={
+                              currentStep === flowData.steps.length - 1
+                                ? "Keep reading"
+                                : "Next step"
+                            }
                           >
-                            {currentStep === flowData.steps.length - 1 ? "Keep reading →" : "→"}
+                            {currentStep === flowData.steps.length - 1
+                              ? "Keep reading →"
+                              : "→"}
                           </button>
                         </div>
                       </div>
