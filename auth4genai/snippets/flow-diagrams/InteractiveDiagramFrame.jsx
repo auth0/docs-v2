@@ -70,7 +70,9 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
     if (!flowData?.steps?.[0]) return;
 
     const img = new Image();
-    img.src = `/img/diagrams/${flowData.steps[0].image}_${isDark ? "dark" : "light"}.svg`;
+    img.src = `/img/diagrams/${flowData.steps[0].image}_${
+      isDark ? "dark" : "light"
+    }.svg`;
   }, [isDark, flowData?.steps]);
 
   // Preload all step images when modal opens (only current theme)
@@ -145,36 +147,74 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
     );
   }
 
+  // Check if mobile
+  const isMobile = () => {
+    return window.innerWidth < 768;
+  };
+
   return (
     <div>
-      {/* Clickable static image - use background-image to avoid Mintlify Frame */}
-      <div
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
-        className="cursor-pointer hover:opacity-90 transition-opacity w-full"
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setIsOpen(!isOpen);
-          }
-        }}
-        style={{
-          backgroundImage: `url(${
+      {/* Static image - on mobile use regular img (with Mintlify zoom), on desktop use overlay to intercept clicks */}
+      {isMobile() ? (
+        <img
+          src={
             isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
-          })`,
-          backgroundSize: "contain",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-          aspectRatio: "16/9",
-          minHeight: "300px",
-        }}
-        aria-label={`Click to explore ${flowData.name} interactive diagram`}
-      />
+          }
+          alt={`${flowData.name} diagram`}
+          style={{
+            width: "100%",
+            height: "auto",
+            display: "block",
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            position: "relative",
+            width: "100%",
+            display: "block",
+          }}
+        >
+          <img
+            src={
+              isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
+            }
+            alt={`${flowData.name} diagram`}
+            style={{
+              width: "100%",
+              height: "auto",
+              display: "block",
+            }}
+          />
+          {/* Transparent overlay to capture clicks before Mintlify */}
+          <div
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsOpen(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsOpen(true);
+              }
+            }}
+            className="cursor-pointer hover:opacity-90 transition-opacity"
+            role="button"
+            tabIndex={0}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 10,
+            }}
+            aria-label={`Click to explore ${flowData.name} interactive diagram`}
+          />
+        </div>
+      )}
 
       {/* Modal with Manhattan styling */}
       {isOpen && (
@@ -412,7 +452,7 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
                         <p
                           className="uppercase mb-2"
                           style={{
-                            fontFamily: '"Space Grotesk"',
+                            fontFamily: '"Aeonik"',
                             fontSize: "14px",
                             fontWeight: 600,
                             lineHeight: "24px",
