@@ -46,7 +46,7 @@ export const flows = {
     staticImage: {
       light:
         "https://cdn.auth0.com/website/auth0-ai/assets/diagrams/calling-apis-light.png",
-      dark: "https://cdn.auth0.com/website/auth0-ai/assets/diagrams/calling-apis-dark.png",
+      dark: "https://cdn.auth0.com/website/auth0-ai/assets/diagrams/calling-apis.png",
     },
     steps: [
       {
