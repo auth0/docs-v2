@@ -168,52 +168,107 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
           }}
         />
       ) : (
-        <div
-          style={{
-            position: "relative",
-            width: "100%",
-            display: "block",
-          }}
-        >
-          <img
-            src={
-              isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
-            }
-            alt={`${flowData.name} diagram`}
+        <>
+          <div
             style={{
+              position: "relative",
               width: "100%",
-              height: "auto",
               display: "block",
             }}
-          />
-          {/* Transparent overlay to capture clicks before Mintlify */}
-          <div
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setIsOpen(true);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
+          >
+            <img
+              src={
+                isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
+              }
+              alt={`${flowData.name} diagram`}
+              className="not-prose"
+              style={{
+                width: "100%",
+                height: "auto",
+                display: "block",
+                margin: 0,
+              }}
+            />
+            {/* Transparent overlay to capture clicks before Mintlify */}
+            <div
+              onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setIsOpen(true);
-              }
-            }}
-            className="cursor-pointer hover:opacity-90 transition-opacity"
-            role="button"
-            tabIndex={0}
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsOpen(true);
+                }
+              }}
+              className="cursor-pointer hover:opacity-90 transition-opacity"
+              role="button"
+              tabIndex={0}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+                zIndex: 10,
+              }}
+              aria-label={`Click to explore ${flowData.name} interactive diagram`}
+            />
+          </div>
+
+          {/* Description and CTA button */}
+          <div
             style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              height: "100%",
-              zIndex: 10,
+              display: "flex",
+              flex: "1 0 0",
+              alignItems: "center",
+              gap: "16px",
+              marginTop: "16px",
+              marginBottom: 0,
             }}
-            aria-label={`Click to explore ${flowData.name} interactive diagram`}
-          />
-        </div>
+          >
+            <p
+              style={{
+                color: isDark ? "#B8B3AD" : "#5D564F",
+                fontFamily: "Inter",
+                fontSize: "16px",
+                fontStyle: "normal",
+                fontWeight: 400,
+                lineHeight: "150%",
+                letterSpacing: "-0.176px",
+                flex: "1 0 0",
+                margin: 0,
+              }}
+            >
+              Open an interactive image that guides you through each step of the process, showing details and explanations as you go.
+            </p>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsOpen(true);
+              }}
+              style={{
+                display: "flex",
+                padding: "8px 14px",
+                alignItems: "center",
+                borderRadius: "16px",
+                border: isDark ? "1px solid #3D3A37" : "1px solid #CECDCA",
+                background: isDark ? "#1E1E1E" : "#FFF",
+                color: isDark ? "#FFFFFF" : "#000000",
+                fontFamily: "Inter",
+                fontSize: "14px",
+                fontWeight: 500,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Explore the Diagram
+            </button>
+          </div>
+        </>
       )}
 
       {/* Modal with Manhattan styling */}
