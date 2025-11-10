@@ -50,11 +50,11 @@ export const Prerequisites = ({
 
   return (
     <>
-      <Heading level={3} id="prerequisites">
-        Prerequisites
-      </Heading>
-      Before getting started, make sure you have completed the following steps:
-      <Steps>{steps}</Steps>
+      <Accordion title="Before you start">
+          Before getting started, make sure you have completed the following steps:
+
+          <Steps>{steps}</Steps>
+      </Accordion>
     </>
   );
 };

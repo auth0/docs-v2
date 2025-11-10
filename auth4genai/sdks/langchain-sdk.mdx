@@ -1,7 +1,7 @@
 ---
-title: LangChain SDKs & Samples
+title: LangChain SDKs
 description: Auth0 for AI Agents LangChain & LangGraph SDKs make it easy for developers to integrate with and secure AI agent workflows using LangChain and LangGraph.
-sidebarTitle: LangChain
+sidebarTitle: LangChain SDKs
 ---
 
 ## JavaScript & TypeScript
@@ -19,6 +19,189 @@ This SDK provides building blocks for using Auth0 for AI Agents with [LangChain]
 npm install @auth0/ai-langchain
 ```
 
+Below are examples that demonstrate how to integrate Auth0’s token vault and authorization flows with AI tools. You’ll see how to:
+
+- Use a token vault to call third-party APIs on behalf of the user
+- Use Client-Initiated Backchannel Authentication (CIBA) for consent flows
+- Apply Okta FGA authorization in Retrieval-Augmented Generation (RAG) scenarios
+
+For more examples, click [here](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-langchain).
+
+<AccordionGroup>
+<Accordion title="Calling 3rd Party APIs">
+Token Vault allows you to exchange refresh tokens for access tokens for third-party APIs. This is useful when you want to use a token vault (like Google, Facebook, etc.) to authenticate users and then use the access token to call the API on behalf of the user.
+
+First initialize the Token Vault Authorizer as follows:
+
+```javascript lines
+import { Auth0AI } from '@auth0/ai-langchain';
+
+const auth0AI = new Auth0AI();
+
+const withGoogleAccess = auth0AI.withTokenVault({
+  refreshToken: async (params, config) => {
+    return config?.configurable?._credentials?.refreshToken;
+  },
+  connection: "google-oauth2",
+  scopes: ["https://www.googleapis.com/auth/calendar.freebusy"],
+});
+```
+
+Then use the `withGoogleAccess` to wrap the tool and use `getAccessTokenFromTokenVault` from the SDK to get the access token.
+
+```javascript lines focus={2,3,9,17-24} expandable
+import { tool } from "@langchain/core/tools";
+import { getAccessTokenFromTokenVault } from "@auth0/ai-langchain";
+import { TokenVaultError } from "@auth0/ai/interrupts";
+import { addHours } from "date-fns";
+
+export const checkCalendarTool = withGoogleAccess(
+  tool(
+    async ({ date }) => {
+      const accessToken = getAccessTokenFromTokenVault();
+      const body = JSON.stringify({
+        timeMin: date,
+        timeMax: addHours(date, 1),
+        timeZone: "UTC",
+        items: [{ id: "primary" }],
+      });
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new TokenVaultError(
+            `Authorization required to access the Token Vault`
+          );
+        }
+        throw new Error(
+          `Invalid response from Google Calendar API: ${
+            response.status
+          } - ${await response.text()}`
+        );
+      }
+      const busyResp = await response.json();
+      return { available: busyResp.calendars.primary.busy.length === 0 };
+    },
+    {
+      name: "check_user_calendar",
+      description:
+        "Check user availability on a given date time on their calendar",
+      schema: z.object({
+        date: z.coerce.date(),
+      }),
+    }
+  )
+);
+```
+</Accordion>
+<Accordion title="Using Client-Initiated Backchannel Authentication">
+CIBA (Client-Initiated Backchannel Authentication) enables secure, user-in-the-loop authentication for sensitive operations. This flow allows you to request user authorization asynchronously and resume execution once authorization is granted.
+
+```javascript lines
+const buyStockAuthorizer = auth0AI.withAsyncAuthorization({
+  userID: (_params, config) => {
+    return config.configurable?.user_id;
+  },
+  bindingMessage: async ({ qty , ticker }) => {
+    return `Confirm the purchase of ${qty} ${ticker}`;
+  },
+  requestedExpiry: 300,
+  audience: process.env["AUDIENCE"],
+  scopes: ["stock:trade"]
+});
+```
+
+Then wrap the tool as follows:
+
+```javascript lines expandable
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+import { getAsyncAuthorizationCredentials } from "@auth0/ai-langchain";
+
+export const buyTool = buyStockAuthorizer(
+  tool(async ({ ticker, qty }) => {
+    const { accessToken } = getAsyncAuthorizationCredentials();
+    fetch("http://yourapi.com/buy", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ ticker, qty }),
+    });
+    return `Purchased ${qty} shares of ${ticker}`;
+  }, {
+    name: "buy_stock",
+    description: "Execute a stock purchase given stock ticker and quantity",
+    schema: z.object({
+      tradeID: z
+        .string()
+        .uuid()
+        .describe("The unique identifier for the trade provided by the user"),
+      userID: z
+        .string()
+        .describe("The user ID of the user who created the conditional trade"),
+      ticker: z.string().describe("The stock ticker to trade"),
+      qty: z
+        .number()
+        .int()
+        .positive()
+        .describe("The quantity of shares to trade"),
+    })
+  })
+);
+```
+</Accordion>
+<Accordion title="Using Authorization for RAG">
+Auth0AI can leverage OpenFGA to authorize RAG applications. The FGARetriever can be used to filter documents based on access control checks defined in Okta FGA. This retriever performs batch checks on retrieved documents, returning only the ones that pass the specified access criteria.
+
+Create a Retriever instance using the `FGARetriever.create` method.
+
+```javascript lines focus={1, 12-22}
+import { FGARetriever } from "@auth0/ai-langchain/RAG";
+import { MemoryStore, RetrievalChain } from "./helpers/memory-store";
+import { readDocuments } from "./helpers/read-documents";
+
+async function main() {
+  // UserID
+  const user = "user1";
+  const documents = await readDocuments();
+  // 1. Call helper function to load LangChain MemoryStore
+  const vectorStore = await MemoryStore.fromDocuments(documents);
+  // 2. Call helper function to create a LangChain retrieval chain.
+  const retrievalChain = await RetrievalChain.create({
+    // 3. Decorate the retriever with the FGARetriever to check permissions.
+    retriever: FGARetriever.create({
+      retriever: vectorStore.asRetriever(),
+      buildQuery: (doc) => ({
+        user: `user:${user}`,
+        object: `doc:${doc.metadata.id}`,
+        relation: "viewer",
+      }),
+    }),
+  });
+
+  // 4. Execute the query
+  const { answer } = await retrievalChain.query({
+    query: "Show me forecast for ZEKO?",
+  });
+
+  console.log(answer);
+}
+
+main().catch(console.error);
+```
+</Accordion>
+</AccordionGroup>
+
 ## Python
 
 ### [Auth0 AI for LangChain](https://github.com/auth0/auth0-ai-python/tree/main/packages/auth0-ai-langchain)
@@ -33,78 +216,150 @@ This SDK provides building blocks for using Auth0 for AI Agents with LangChain a
 pip install auth0-ai-langchain
 ```
 
-## Sample applications
+Below are examples showing how to integrate Auth0’s token vault and async authorization (e.g. CIBA) with LangGraph in Python. It demonstrates how to wrap tools so they can securely fetch external access tokens, prompt users when consent is needed, and continue execution once authorization is granted. For more examples, click [here](https://github.com/auth0/auth0-ai-python/tree/main/packages/auth0-ai-langchain).
 
-Checkout our sample applications built with LangChain and LangGraph.
+<AccordionGroup>
+<Accordion title="Calling 3rd Party APIs">
+The `Auth0AI.with_token_vault` function exchanges user's refresh token taken, by default, from the runnable configuration (`config.configurable._credentials.refresh_token`) for a Token Vault access token that is valid to call a third-party API.
 
-<Columns cols={2}>
-  <Card
-    title="Assistant0 (Next.js)"
-    href="https://github.com/auth0-samples/auth0-assistant0/tree/main/ts-langchain"
-  >
-    A fullstack AI personal assistant with pre-configured tools that demonstrate different Auth0 for AI Agents features like User Authentication, Calling APIs (Gmail, Google Calendar, etc) securely using Token Vault, Human-in-the-loop interactions using Asynchronous Authorization, and using Auth0 FGA for securing RAG tools.
-  </Card>
-  <Card
-    title="Assistant0 (FastAPI)"
-    href="https://github.com/auth0-samples/auth0-assistant0/tree/main/py-langchain"
-  >
-    A fullstack AI personal assistant with pre-configured tools that demonstrate different Auth0 for AI Agents features like User Authentication, Calling APIs (Gmail, Google Calendar, etc) securely using Token Vault, Human-in-the-loop interactions using Asynchronous Authorization, and using Auth0 FGA for securing RAG tools.
-  </Card>
-  <Card
-    title="AI Samples"
-    href="https://github.com/auth0-samples/auth0-ai-samples"
-  >
-    Explore our repository of standalone sample applications that showcase
-    Auth0's authentication and authorization capabilities in generative AI
-    applications. Each sample demonstrates a specific Auth0 for AI Agents feature.
-  </Card>
-  <Card
-    title="Auth0 AI SDK TypeScript Samples"
-    href="https://github.com/auth0/auth0-ai-js/tree/main/examples"
-  >
-    Explore example applications that accompany Auth0's JavaScript AI SDKs.
-    These demonstrate recommended implementation patterns for the SDKs.
-  </Card>
-  <Card
-    title="Auth0 AI SDK Python Samples"
-    href="https://github.com/auth0/auth0-ai-python/tree/main/examples"
-  >
-    Explore example applications that accompany Auth0's Python AI SDKs.
-    These demonstrate recommended implementation patterns for the SDKs.
-  </Card>
-</Columns>
+Define a tool with the proper authorizer:
 
-## Guides & Tutorials
+```python lines
+from auth0_ai_langchain.auth0_ai import Auth0AI
+from auth0_ai_langchain.token_vault import get_credentials_from_token_vault
+from langchain_core.tools import StructuredTool
 
-Checkout our guides for LangChain and LangGraph in TypeScript and Python.
+# If not provided, Auth0 settings will be read from env variables: `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_CLIENT_SECRET`
+auth0_ai = Auth0AI()
 
-<Columns cols={2}>
-  <Card
-    title="Build an AI Assistant with LangGraph, Vercel, and Next.js: Use Gmail as a Tool Securely"
-    href="https://auth0.com/blog/genai-tool-calling-build-agent-that-calls-gmail-securely-with-langgraph-vercelai-nextjs/"
-    icon="newspaper"
-    iconType="solid"
-    horizontal
-  />
-  <Card
-    title="Check Google Calendar Availability"
-    href="/how-tos/check-google-calendar-availability"
-    icon="google"
-    iconType="solid"
-    horizontal
-  />
-  <Card
-    title="List GitHub Repositories"
-    href="/how-tos/list-github-repositories"
-    icon="github"
-    iconType="solid"
-    horizontal
-  />
-  <Card
-    title="List Slack Channels"
-    href="/how-tos/list-slack-channels"
-    icon="slack"
-    iconType="solid"
-    horizontal
-  />
-</Columns>
+with_google_calendar_access = auth0_ai.with_token_vault(
+    connection="google-oauth2",
+    scopes=["https://www.googleapis.com/auth/calendar.freebusy"],
+    # Optional:
+    # refresh_token=lambda *_, **__: ensure_config().get("configurable", {}).get("_credentials", {}).get("refresh_token"),
+    # store=InMemoryStore(),
+)
+
+def tool_function(date: datetime):
+    credentials = get_credentials_from_token_vault()
+    # Call Google API using credentials["access_token"]
+
+check_calendar_tool = with_google_calendar_access(
+    StructuredTool(
+        name="check_user_calendar",
+        description="Use this function to check if the user is available on a certain date and time",
+        func=tool_function,
+        # ...
+    )
+)
+```
+
+Add a node to your graph for your tools:
+
+```python lines
+workflow = (
+    StateGraph(State)
+        .add_node(
+            "tools",
+            ToolNode(
+                [
+                    check_calendar_tool,
+                    # ...
+                ],
+                # The error handler should be disabled to allow interruptions to be triggered from within tools.
+                handle_tool_errors=False
+            )
+        )
+        # ...
+)
+```
+</Accordion>
+<Accordion title="Using Client-Initiated Backchannel Authentication">
+`Auth0AI` uses CIBA (Client-Initiated Backchannel Authentication) to handle user confirmation asynchronously. This is useful when you need to confirm a user action before proceeding with a tool execution.
+
+```python lines expandable
+from auth0_ai_langchain.auth0_ai import Auth0AI
+from auth0_ai_langchain.async_authorization import get_async_authorization_credentials
+from langchain_core.runnables import ensure_config
+from langchain_core.tools import StructuredTool
+
+# If not provided, Auth0 settings will be read from env variables: `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_CLIENT_SECRET`
+auth0_ai = Auth0AI()
+
+with_async_authorization = auth0_ai.with_async_authorization(
+    scopes=["stock:trade"],
+    audience=os.getenv("AUDIENCE"),
+    requested_expiry=os.getenv("REQUESTED_EXPIRY"),
+    binding_message=lambda ticker, qty: f"Authorize the purchase of {qty} {ticker}",
+    user_id=lambda *_, **__: ensure_config().get("configurable", {}).get("user_id"),
+    # Optional:
+    # store=InMemoryStore()
+)
+
+def tool_function(ticker: str, qty: int) -> str:
+    credentials = get_async_authorization_credentials()
+    headers = {
+        "Authorization": f"{credentials["token_type"]} {credentials["access_token"]}",
+        # ...
+    }
+    # Call API
+
+trade_tool = with_async_authorization(
+    StructuredTool(
+        name="trade_tool",
+        description="Use this function to trade a stock",
+        func=trade_tool_function,
+        # ...
+    )
+)
+```
+</Accordion>
+<Accordion title="Using Authorization for RAG">
+The `FGARetriever` can be used to filter documents based on access control checks defined in Okta FGA. This retriever performs batch checks on retrieved documents, returning only the ones that pass the specified access criteria.
+
+Create a Retriever instance using the `FGARetriever` method.
+
+```python lines focus={3,22-29,32-35} expandable
+from langchain.vectorstores import VectorStoreIndex
+from langchain.schema import Document
+from auth0_ai_langchain import FGARetriever
+from openfga_sdk.client.models import ClientCheckRequest
+from openfga_sdk import ClientConfiguration
+from openfga_sdk.credentials import CredentialConfiguration, Credentials
+
+# Define some docs:
+documents = [
+    Document(page_content="This is a public doc", metadata={"doc_id": "public-doc"}),
+    Document(page_content="This is a private doc", metadata={"doc_id": "private-doc"}),
+]
+
+# Create a vector store:
+vector_store = VectorStoreIndex.from_documents(documents)
+
+# Create a retriever:
+base_retriever = vector_store.as_retriever()
+
+# Create the FGA retriever wrapper.
+# If not provided, FGA settings will be read from env variables: `FGA_STORE_ID`, `FGA_CLIENT_ID`, `FGA_CLIENT_SECRET`, etc.
+retriever = FGARetriever(
+    base_retriever,
+    build_query=lambda node: ClientCheckRequest(
+        user=f'user:{user}',
+        object=f'doc:{node.metadata["doc_id"]}',
+        relation="viewer",
+    )
+)
+
+# Create a query engine:
+query_engine = RetrieverQueryEngine.from_args(
+    retriever=retriever,
+    llm=OpenAI()
+)
+
+# Query:
+response = query_engine.query("What is the forecast for ZEKO?")
+
+print(response)
+```
+</Accordion>
+</AccordionGroup>

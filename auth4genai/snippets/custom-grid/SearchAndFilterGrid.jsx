@@ -28,7 +28,7 @@ export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
     if (filter) {
       filtered = filtered.filter((item) => item.type === filter);
     }
-    
+
     return filtered;
   }, [searchTerm, filter]);
 
@@ -50,7 +50,8 @@ export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
               placeholder="Search..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="custom-grid-search-input"
+              className="w-full rounded-md ring-1 ring-gray-400/30 dark:text-white/50 dark:bg-background-dark"
+              style={{padding: "0.5rem 0.5rem 0.5rem 2.5rem"}}
             />
             <svg
               width="16"
@@ -66,7 +67,7 @@ export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
           <div className="custom-grid-filter-buttons">
             <button
               onClick={() => setFilter(null)}
-              className={`custom-grid-filter-button ${filter === null ? 'active' : ''}`}
+              className={`custom-grid-filter-button transition-all duration-300 border hover:!border-primary dark:hover:!border-primary-light rounded-md ring-1 ring-gray-400/30 dark:bg-background-dark ${filter === null ? 'border-primary dark:border-primary-light text-primary dark:text-primary-light' : 'border-gray-950/10 dark:text-white/50'}`}
             >
               All
             </button>
@@ -74,7 +75,7 @@ export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
               <button
                 key={filterOption}
                 onClick={() => setFilter(filterOption)}
-                className={`custom-grid-filter-button ${filter === filterOption ? 'active' : ''}`}
+                className={`custom-grid-filter-button transition-all duration-300 border hover:!border-primary dark:hover:!border-primary-light rounded-md ring-1 ring-gray-400/30 dark:bg-background-dark ${filter === filterOption ? 'border-primary dark:border-primary-light text-primary dark:text-primary-light' : 'border-gray-950/10 dark:text-white/50'}`}
               >
                 {filterOption}
               </button>
