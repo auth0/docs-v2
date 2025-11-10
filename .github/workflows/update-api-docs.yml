@@ -1,0 +1,83 @@
+name: 🔄 Automated OpenAPI Spec Update
+
+on:
+  # 1. Manually trigger the workflow from the GitHub UI
+  workflow_dispatch:
+  # 2. Trigger the workflow on a schedule (e.g., every day at midnight UTC)
+  schedule:
+    - cron: '0 0 * * *'
+  # 3. Optional: Trigger on push to a specific branch (e.g., 'main')
+  # push:
+  #   branches:
+  #     - main
+
+jobs:
+  generate_and_scrape:
+    # Use a standard Linux runner
+    runs-on: ubuntu-latest
+    
+    # Grant the default GITHUB_TOKEN permissions to write back to the repo
+    permissions:
+      contents: write
+
+    steps:
+    - name: ⬇️ Checkout docs-v2 (This) Repository
+      # This checks out the repository where the workflow file lives
+      uses: actions/checkout@v4
+      with:
+        path: docs-v2
+        # Fetch a deeper history, required for the auto-commit action
+        fetch-depth: 0
+
+    - name: ⬇️ Checkout api2 Source Repository
+      # Check out the external API repo into a separate directory
+      uses: actions/checkout@v4
+      with:
+        repository: atko-cic/api2 # <<< UPDATE THIS TO YOUR API REPO PATH
+        path: api2
+
+    - name: 🛠️ Setup Node.js (for both repos)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: 📦 Install dependencies in api2
+      # Installs dependencies needed to run the spec generation script
+      run: |
+        cd api2
+        npm ci
+
+    - name: ⚙️ Generate OAPI Spec
+      # Runs the command to generate the JSON spec file (e.g., api2.json)
+      run: |
+        cd api2
+        npm run spec:generate -w packages/main-api
+        # Assuming the generated file is named 'api2.json' in the api2 root after the run
+
+    - name: 📝 Copy and Modify OpenAPI Spec for Mintlify
+      # This block handles file transfer and the necessary tokenUrl replacement
+      run: |
+        # 1. Copy the generated file to the docs location
+        cp api2/api2.json docs-v2/main/docs/api2-3.1-internal.json
+        
+        # 2. Perform the tokenUrl replacement for OAPI3 compliance (using sed)
+        # Note: 'sed' is necessary to update the security block as you described
+        sed -i 's|"tokenUrl": "https://{tenantDomain}/oauth/token"|"tokenUrl": "https://your-tenant-domain.auth0.com/oauth/token"|g' docs-v2/main/docs/api2-3.1-internal.json
+        
+    - name: 🧹 Scrape OpenAPI to MDX files
+      # Run the Mintlify scraping command from the docs-v2 root
+      # This generates all the Markdown files in the 'api-reference' folder
+      run: |
+        cd docs-v2/main
+        npx @mintlify/scraping@latest openapi-file docs/api2-3.1-internal.json -o api-reference
+
+    - name: 💾 Commit and Push generated files
+      # This action automatically stages, commits, and pushes any file changes 
+      # (the new/updated MDX files) back to the docs-v2 repo.
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        # Crucial: Specify the repository path where changes happened
+        repository: docs-v2
+        commit_message: "Automated: Update API reference from latest api2 spec"
+        commit_user_name: 'GitHub Actions Bot'
+        commit_user_email: 'actions@github.com'
