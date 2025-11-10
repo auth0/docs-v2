@@ -156,17 +156,72 @@ export const InteractiveDiagramFrame = ({ flowId, flowData }) => {
     <div>
       {/* Static image - on mobile use regular img (with Mintlify zoom), on desktop use overlay to intercept clicks */}
       {isMobile() ? (
-        <img
-          src={
-            isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
-          }
-          alt={`${flowData.name} diagram`}
-          style={{
-            width: "100%",
-            height: "auto",
-            display: "block",
-          }}
-        />
+        <>
+          <img
+            src={
+              isDark ? flowData.staticImage?.dark : flowData.staticImage?.light
+            }
+            alt={`${flowData.name} diagram`}
+            style={{
+              width: "100%",
+              height: "auto",
+              display: "block",
+            }}
+          />
+          {/* Steps list on mobile - using same flowData */}
+          <div style={{ marginTop: "24px" }}>
+            {flowData.steps.map((step, index) => (
+              <div
+                key={step.id}
+                style={{
+                  marginBottom: "24px",
+                  paddingLeft: "40px",
+                  position: "relative",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: "2px",
+                    width: "28px",
+                    height: "28px",
+                    borderRadius: "50%",
+                    background: isDark ? "#2D2D2D" : "#E8E8E8",
+                    color: isDark ? "#FFFFFF" : "#000000",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                  }}
+                >
+                  {index + 1}
+                </div>
+                <h3
+                  style={{
+                    fontSize: "16px",
+                    fontWeight: 600,
+                    marginTop: 0,
+                    marginBottom: "8px",
+                    color: isDark ? "#FFFFFF" : "#000000",
+                  }}
+                >
+                  {step.title}
+                </h3>
+                <div
+                  style={{
+                    fontSize: "14px",
+                    lineHeight: "1.6",
+                    color: isDark ? "#B8B3AD" : "#5D564F",
+                  }}
+                >
+                  {renderMarkdown(step.description)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       ) : (
         <>
           <div
