@@ -19,7 +19,12 @@ export const TokenVaultConfigBlock = ({
 
 export const ${jsVariableName} = auth0AI.withTokenVault({
   connection: "${connectionName}",
-  scopes: [${formatScopes(scopes)}, ...],
+  scopes: [${scopes.length > 0 ? `
+    // Required scopes for Token Vault
+    ${formatScopes(scopes)},` : ''}
+    // Optional Scopes specific for your app
+    ...
+  ],
   refreshToken: getAuth0RefreshToken(),
 });`}
           </CodeBlock>
@@ -30,7 +35,12 @@ export const ${jsVariableName} = auth0AI.withTokenVault({
 
 ${pythonVariableName} = auth0_ai.with_token_vault(
     connection="${connectionName}",
-    scopes=[${formatScopes(scopes)}, ...],
+    scopes=[${scopes.length > 0 ? `
+        # Required scopes for Token Vault
+        ${formatScopes(scopes)},` : ''}
+        # Optional Scopes specific for your app
+        ...
+    ],
     refresh_token=get_auth0_refresh_token,
 )`}
           </CodeBlock>
