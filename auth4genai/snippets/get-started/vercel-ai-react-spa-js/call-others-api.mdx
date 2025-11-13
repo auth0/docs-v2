@@ -10,6 +10,7 @@ import { DownloadQuickstartButton } from "/snippets/download-quickstart/Download
     allowedWebOrigins: "http://localhost:5173",
     enableTokenVaultGrant: true,
     enableRefreshTokenGrant: true,
+    enableAllowRefreshTokenRotation: true,
   }}
   createAuth0ApiStep={{}}
   createResourceServerClientStep={{}}
@@ -25,7 +26,7 @@ This React SPA implementation differs from the <a href="/get-started/call-others
 1. **Token Vault Access Token Exchange**: Instead of using refresh tokens, the React SPA implementation exchanges the SPA's access token for a third-party access token.
 2. **Client-Side Authorization**: Client login and step-up authorization are handled client-side using `@auth0/auth0-spa-js`.
 3. **Resource Server Client**: Requires a special Resource Server Client configured for token exchange with Token Vault.
-4. **Interrupt Handling**: The React client manages tool access errors and step-up authorization using interrupts that trigger a pop-up for re-authorization.
+4. **Interrupt Handling**: The React client manages tool access errors and step-up authorization using interrupts that trigger a redirect for re-authorization.
 
 
 ### Download sample app
@@ -77,8 +78,8 @@ VITE_API_URL=http://localhost:3001
 ```bash .env wrap lines
 AUTH0_DOMAIN=your-auth0-domain
 AUTH0_AUDIENCE=your-api-identifier
-AUTH0_CLIENT_ID=your-resource-server-client-id
-AUTH0_CLIENT_SECRET=your-resource-server-client-secret
+AUTH0_CUSTOM_API_CLIENT_ID=your-resource-server-client-id
+AUTH0_CUSTOM_API_CLIENT_SECRET=your-resource-server-client-secret
 OPENAI_API_KEY=your-openai-api-key
 PORT=3001
 ```
@@ -90,11 +91,19 @@ Unlike the <a href="/get-started/call-others-apis-on-users-behalf#vercel-ai-%2B-
 Create `client/src/components/TokenVaultConsentPopup.tsx`:
 
 ```tsx client/src/components/TokenVaultConsentPopup.tsx wrap lines
+import { useCallback, useState } from "react";
+import type { Auth0InterruptionUI } from "@auth0/ai-vercel/react";
+
 import { getAuth0Client } from "../lib/auth0";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
-import type { Auth0InterruptionUI } from "@auth0/ai-vercel/react";
+/**
+ * Component for handling connection authorization popups.
+ * This component manages the connect account flow for Token Vault, allowing the
+ * user to authorize access to third-party providers.
+ */
+
 interface TokenVaultConsentPopupProps {
   interrupt: Auth0InterruptionUI;
 }
@@ -104,33 +113,29 @@ export function TokenVaultConsentPopup({
 }: TokenVaultConsentPopupProps) {
   const [isLoading, setIsLoading] = useState(false);
 
-  const { connection, requiredScopes, resume } = interrupt;
+  const { connection, requiredScopes, authorizationParams, resume } = interrupt;
 
-  // Use Auth0 SPA SDK to request additional connection/scopes
-  const startFederatedLogin = useCallback(async () => {
+  // Use Auth0 SPA SDK to connect a third-party account
+  const startConnectAccountFlow = useCallback(async () => {
     try {
       setIsLoading(true);
 
       // Filter out empty scopes
       const validScopes = requiredScopes.filter(
-        (scope: string) => scope && scope.trim() !== ""
+        (scope: string) => scope && scope.trim() !== "",
       );
 
       const auth0Client = getAuth0Client();
 
-      // Use getTokenWithPopup for step-up authorization to request additional scopes
-      await auth0Client.getTokenWithPopup({
-        authorizationParams: {
-          prompt: "consent", // Required for Google Calendar scopes
-          connection: connection, // e.g., "google-oauth2"
-          connection_scope: validScopes.join(" "), // Google-specific scopes
-          access_type: "offline",
-        },
+      // Use the connect account flow to request authorization+consent for the 3rd party API.
+      // This will redirect the browser away from the SPA.
+      await auth0Client.connectAccountWithRedirect({
+        connection,
+        scopes: validScopes,
+        ...(authorizationParams
+          ? { authorization_params: authorizationParams }
+          : {}),
       });
-
-      // The Auth0 client should automatically use the new token, but we should trigger
-      // a refresh to ensure the latest token is cached.
-      await auth0Client.getTokenSilently();
 
       setIsLoading(false);
 
@@ -139,13 +144,15 @@ export function TokenVaultConsentPopup({
         resume();
       }
     } catch (error) {
+      console.error("Connect account flow failed:", error);
       setIsLoading(false);
 
+      // Even if login fails, we should clear the interrupt
       if (typeof resume === "function") {
         resume();
       }
     }
-  }, [connection, requiredScopes, resume]);
+  }, [connection, requiredScopes, authorizationParams, resume]);
 
   if (isLoading) {
     return (
@@ -171,7 +178,8 @@ export function TokenVaultConsentPopup({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-yellow-700">
-          To access your {connection.replace("-", " ")} data, you need to authorize this application.
+          To access your {connection.replace("-", " ")} data, you need to
+          connect your account and authorize this application.
         </p>
         <p className="text-xs text-yellow-600">
           Required permissions:{" "}
@@ -179,8 +187,8 @@ export function TokenVaultConsentPopup({
             .filter((scope: string) => scope && scope.trim() !== "")
             .join(", ")}
         </p>
-        <Button onClick={startFederatedLogin} className="w-full">
-          Authorize {connection.replace("-", " ")}
+        <Button onClick={startConnectAccountFlow} className="w-full">
+          Connect &amp; Authorize {connection.replace("-", " ")}
         </Button>
       </CardContent>
     </Card>
@@ -272,6 +280,7 @@ export const createGoogleCalendarTool = (c: Context): ToolWrapper => {
     subjectTokenType: SUBJECT_TOKEN_TYPES.SUBJECT_TYPE_ACCESS_TOKEN,
     connection: process.env.GOOGLE_CONNECTION_NAME || "google-oauth2",
     scopes: [
+      "openid",
       "https://www.googleapis.com/auth/calendar.calendarlist.readonly", // Read-only access to calendar list
       "https://www.googleapis.com/auth/calendar.events.readonly", // Read-only access to events
     ],

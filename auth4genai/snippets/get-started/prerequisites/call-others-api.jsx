@@ -8,7 +8,7 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
  * @param {string} [props.createAuth0ApplicationStep.applicationType] - Type of Auth0 application (e.g., "Regular Web")
  * @param {string} [props.createAuth0ApplicationStep.callbackUrl] - Allowed callback URL for the application
  * @param {string} [props.createAuth0ApplicationStep.logoutUrl] - Allowed logout URL for the application
- * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application 
+ * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application
  * @param {boolean} [props.createAuth0ApplicationStep.enableTokenVaultGrant] - Enable Token Vault Grant for the application
  * @param {boolean} [props.createAuth0ApplicationStep.enableRefreshTokenGrant] - Enable Refresh Token Grant for the application
  *
@@ -27,6 +27,7 @@ export const Prerequisites = ({
     allowedWebOrigins: undefined,
     enableTokenVaultGrant: undefined,
     enableRefreshTokenGrant: undefined,
+    enableAllowRefreshTokenRotation: undefined,
   },
   createAuth0ApiStep = undefined,
   createResourceServerClientStep = undefined,
@@ -43,6 +44,7 @@ export const Prerequisites = ({
       allowedWebOrigins: createAuth0ApplicationStep.allowedWebOrigins,
       enableTokenVaultGrant: createAuth0ApplicationStep.enableTokenVaultGrant,
       enableRefreshTokenGrant: createAuth0ApplicationStep.enableRefreshTokenGrant,
+      enableAllowRefreshTokenRotation: createAuth0ApplicationStep.enableAllowRefreshTokenRotation,
     })
   );
 
@@ -132,6 +134,16 @@ export const Prerequisites = ({
       </ul>
     </Step>
   );
+
+  steps.push(<Step key="mrrt-policy" title="Define a Multi-Resource Refresh Token policy for your Application">
+      After your web application has been granted access to the My Account API, you will also need to leverage the <a href="https://auth0.com/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token" target="_blank">Multi-Resource Refresh Token</a> feature, which enables the refresh token delivered to your application to also obtain an access token to call the My Account API. <br/><br/>
+      You can quickly define a <a href="https://auth0.com/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token/configure-and-implement-multi-resource-refresh-token" target="_blank">refresh token policy</a> for your application to use when requesting access tokens for the My Account API by doing the following:
+      <ul>
+        <li>Navigate to <strong>Applications &gt; Applications</strong> and select your client application.</li>
+        <li>On the <strong>Settings</strong> tab, scroll down to the <strong>Multi-Resource Refresh Token</strong> section.</li>
+        <li>Select <strong>Edit Configuration</strong> and then enable the MRRT toggle for the <strong>Auth0 My Account API</strong>.</li>
+      </ul>
+  </Step>)
 
   steps.push(
     <Step key="google-connection" title="Configure Google Social Integration">
