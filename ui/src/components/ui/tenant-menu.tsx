@@ -66,7 +66,7 @@ function Tenant({
 }
 
 interface TenantMenuContentProps extends React.ComponentProps<'div'> {
-  selectedTenant: TenantData;
+  selectedTenant?: TenantData | null;
   tenants: TenantData[];
   onBack?: React.MouseEventHandler<HTMLButtonElement>;
   onSelectTenant?: (tenant: TenantData) => void;
@@ -112,7 +112,9 @@ function TenantMenuContent({
               name={tenant.name}
               flag={tenant.flag}
               locality={tenant.locality}
-              isSelected={tenant.name === selectedTenant.name}
+              isSelected={
+                selectedTenant ? tenant.name === selectedTenant.name : false
+              }
               loginUrl={tenant.loginUrl}
             />
           </DropdownMenuItem>
