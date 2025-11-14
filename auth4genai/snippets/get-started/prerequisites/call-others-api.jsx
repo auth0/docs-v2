@@ -11,6 +11,7 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
  * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application
  * @param {boolean} [props.createAuth0ApplicationStep.enableTokenVaultGrant] - Enable Token Vault Grant for the application
  * @param {boolean} [props.createAuth0ApplicationStep.enableRefreshTokenGrant] - Enable Refresh Token Grant for the application
+ * @param {boolean|undefined} [props.createAuth0ApplicationStep.enableAllowRefreshTokenRotation] - Enable or Disable Allow Refresh Token Rotation for the application (omitted if undefined)
  *
  * @param {Object|undefined} [props.createAuth0ApiStep] - Configuration for Auth0 API creation step
  *
