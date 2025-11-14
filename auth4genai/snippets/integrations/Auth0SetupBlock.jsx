@@ -39,11 +39,11 @@ export const Auth0SetupBlock = ({
           </ol>
         </li>
         <li>
-          In <b>Advanced</b>, <b>Enable Token Vault</b>. This lets the
-          connection retrieve and securely store access tokens for third‑party
+          In <b>Purpose</b>, toggle on <b>Use for Connected Accounts</b>. This lets the
+          connection retrieve and securely store access tokens for external
           APIs. Learn more in{" "}
-          <a href="https://auth0.com/docs/secure/tokens/token-vault/configure-token-vault">
-            Configure Token Vault
+          <a href="https://auth0.com/docs/secure/tokens/token-vault/connected-accounts-for-token-vault">
+            Connected Accounts for Token Vault
           </a>.
         </li>
         <li>Click <b>Create</b>.</li>
