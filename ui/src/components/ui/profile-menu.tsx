@@ -63,7 +63,7 @@ function UserDetails({
 
 interface ProfileMenuTriggerProps {
   className?: string;
-  selectedTenant: TenantData;
+  selectedTenant?: TenantData | null;
   user: UserData;
 }
 
@@ -81,13 +81,15 @@ function ProfileMenuTrigger({
         className,
       )}
     >
-      <ContentText
-        variant="button"
-        className="adu:hidden adu:text-foreground-bold adu:lg:block"
-        asChild
-      >
-        <span>{selectedTenant.name}</span>
-      </ContentText>
+      {selectedTenant && (
+        <ContentText
+          variant="button"
+          className="adu:hidden adu:text-foreground-bold adu:lg:block"
+          asChild
+        >
+          <span>{selectedTenant.name}</span>
+        </ContentText>
+      )}
       <Avatar className="adu:h-8 adu:w-8">
         <AvatarImage src={profilePicture} />
         <AvatarFallback>{initials}</AvatarFallback>
@@ -101,7 +103,7 @@ function ProfileMenuTrigger({
 }
 
 interface ProfileMenuContentProps extends React.ComponentProps<'div'> {
-  selectedTenant: TenantData;
+  selectedTenant?: TenantData | null;
   user: UserData;
   dashboardBaseUrl: string;
   onSwitchTenant?: MouseEventHandler<HTMLDivElement>;
@@ -120,44 +122,76 @@ function ProfileMenuContent({
   return (
     <div className={cn(className)} {...props}>
       <div className="adu:flex adu:shrink-0 adu:flex-col adu:gap-1 adu:py-2">
-        <DropdownMenuItem className="adu:p-0">
-          <Tenant
-            highlightName={true}
-            name={selectedTenant.name}
-            flag={selectedTenant.flag}
-            locality={selectedTenant.locality}
-            loginUrl={selectedTenant.loginUrl}
-          />
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <ContentText
-            className="adu:text-foreground-bold"
-            variant="text-sm-bold"
-            asChild
-          >
-            <a
-              className="no_external_icon"
-              href={`${dashboardBaseUrl}/dashboard/${selectedTenant.locality}/${selectedTenant.name}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <SvgIcon iconName="grid" className="adu:mr-2" />
-              Open Dashboard
-            </a>
-          </ContentText>
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onSwitchTenant}>
-          <SvgIcon iconName="refresh" className="adu:mr-2" />
-          <ContentText
-            className="adu:text-foreground-bold"
-            variant="text-sm-bold"
-          >
-            Switch Tenant
-          </ContentText>
-          <SvgIcon iconName="caret-right" className="adu:ml-auto" />
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        {selectedTenant ? (
+          <>
+            <DropdownMenuItem className="adu:p-0">
+              <Tenant
+                highlightName={true}
+                name={selectedTenant.name}
+                flag={selectedTenant.flag}
+                locality={selectedTenant.locality}
+                loginUrl={selectedTenant.loginUrl}
+              />
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <ContentText
+                className="adu:text-foreground-bold"
+                variant="text-sm-bold"
+                asChild
+              >
+                <a
+                  className="no_external_icon"
+                  href={`${dashboardBaseUrl}/dashboard/${selectedTenant.locality}/${selectedTenant.name}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <SvgIcon iconName="grid" className="adu:mr-2" />
+                  Open Dashboard
+                </a>
+              </ContentText>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onSwitchTenant}>
+              <SvgIcon iconName="refresh" className="adu:mr-2" />
+              <ContentText
+                className="adu:text-foreground-bold"
+                variant="text-sm-bold"
+              >
+                Switch Tenant
+              </ContentText>
+              <SvgIcon iconName="caret-right" className="adu:ml-auto" />
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : (
+          <>
+            <div className="adu:flex adu:flex-col adu:gap-2 adu:px-3 adu:py-2">
+              <ContentText
+                variant="text-sm-bold"
+                className="adu:text-foreground-bold"
+              >
+                No tenant available
+              </ContentText>
+              <ContentText variant="text-sm" className="adu:text-foreground">
+                You need a tenant to access the dashboard.
+              </ContentText>
+              <ContentText
+                variant="link-sm"
+                className="adu:text-foreground-bold adu:underline"
+                asChild
+              >
+                <a
+                  href={`${dashboardBaseUrl}/dashboard`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Create a tenant in the dashboard
+                </a>
+              </ContentText>
+            </div>
+            <DropdownMenuSeparator />
+          </>
+        )}
         {user && (
           <DropdownMenuItem className="adu:p-0">
             <UserDetails
