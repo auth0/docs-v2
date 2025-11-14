@@ -93,24 +93,13 @@ export const Prerequisites = ({
         <br />
         <ul>
               <li>
-                Navigate to{" "}
-                <strong>
-                  Applications &gt; APIs
-                </strong>
+               From the Settings page of the API that you just created, click the <strong>Add Application</strong> button in the right top corner. This will open a modal to create a new Custom API Client.
               </li>
               <li>
-                Click the{" "}
-                <strong>Create API</strong> button to create a new Custom API.
-              </li>
-              <li>
-                Go to the Custom API you created and click the <strong>Add Application</strong> button in the right top corner.
-              </li>
-              <li>
-                After that click the <strong>Configure Application</strong> button in the right top corner.
+                Give your Custom API Client a name in the Application Name field and click the <strong>Add</strong> button to create a new Custom API Client.
               </li>
           <li>
-            Note down the <code>client id</code> and <code>client secret</code>{" "}
-           for your environment variables.
+            After creation is successful, you should be redirected to the settings page for your newly created Custom API Client application. Note down the <code>client id</code> and <code>client secret</code>{" "}for your environment variables.
           </li>
         </ul>
       </Step>
