@@ -110,17 +110,18 @@ export const Prerequisites = ({
 
   steps.push(
     <Step key="my-account-api" title="Configure My Account API">
-      In the Auth0 Dashboard, configure the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a> to enable <a href="/intro/account-linking">account linking</a>:
+      In the Auth0 Dashboard, configure the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a>:
       <ul>
         <li>Navigate to <strong>Authentication &gt; APIs</strong>, locate the My Account API banner, and select <strong>Activate</strong> to activate the Auth0 My Account API.</li>
-        <li>To configure your client application to authorize the My Account API:
+        <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Applications</strong> tab.
           <ul>
-            <li>Navigate to <strong>Applications &gt; Applications</strong> and select your client application.</li>
+            <li>Toogle your client application to authorize it to access the My Account API.</li>
+            <li>In the dropdown menu, select the <strong>Connected Accounts scopes</strong> for the application, ensuring that at a minimum, the <code>create:me:connected_accounts</code> permission is selected.</li>
             <li>Under <strong>APIs</strong>, toggle on <strong>Auth0 My Account API</strong>.</li>
-            <li>Select the <a href="https://auth0.com/docs/manage-users/my-account-api#scope" target="_blank">Connected Accounts scopes</a> for the application in the dropdown, ensuring that at a minimum, the <code>create:me:connected_accounts</code> permission is selected.</li>
             <li>Select <strong>Update</strong>.</li>
           </ul>
         </li>
+        <li>If you&apos;re using Multi-Resource Refresh Tokens, navigate to the <strong>Settings</strong> tab. Under <strong>Access Settings</strong>, select <strong>Allow Skipping User Consent</strong>.</li>
       </ul>
     </Step>
   );
