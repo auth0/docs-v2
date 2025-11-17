@@ -117,7 +117,7 @@ export const Prerequisites = ({
           <ul>
             <li>Navigate to <strong>Applications &gt; Applications</strong> and select your client application.</li>
             <li>Under <strong>APIs</strong>, toggle on <strong>Auth0 My Account API</strong>.</li>
-            <li>Select the <a href="https://auth0.com/docs/manage-users/my-account-api#scope" target="_blank">Connected Accounts scopes</a> for the application in the dropdown, ensuring that the <code>create:me:connected_accounts</code> permission at least is selected.</li>
+            <li>Select the <a href="https://auth0.com/docs/manage-users/my-account-api#scope" target="_blank">Connected Accounts scopes</a> for the application in the dropdown, ensuring that at a minimum, the <code>create:me:connected_accounts</code> permission is selected.</li>
             <li>Select <strong>Update</strong>.</li>
           </ul>
         </li>
