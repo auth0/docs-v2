@@ -2,6 +2,15 @@
 
 This directory contains the Vale configuration used to lint and standardize the documentation in `auth4genai`. Vale helps ensure consistent terminology, brand usage, spelling, and overall prose quality.
 
+## Requirements
+
+To run Vale with MDX support, you must have:
+
+- **Vale 3.13.0 or newer**
+- **mdx2vast 0.3.0 or newer**
+- Node.js and npm installed
+- Both `vale` and `mdx2vast` available on your `$PATH`
+
 ## Installation
 
 Vale must be installed locally before running checks. MDX support additionally requires the external parser `mdx2vast`.
@@ -29,6 +38,15 @@ vale .
 A clean run should report zero errors. If you see unexpected output, refer to the [MDX behavior notes](https://vale.sh/docs/formats/mdx#behaviors) for details on what Vale ignores by default.
 
 ## How MDX content is interpreted
+
+> **Important:** MDX files do *not* support HTML comments (`<!-- vale off -->`).
+> Always use MDX comment syntax instead:
+>
+> ```mdx
+> {/* vale off */}
+> ...ignored content...
+> {/* vale on */}
+> ```
 
 Vale parses `.mdx` files using `mdx2vast`. The parser automatically ignores:
 
