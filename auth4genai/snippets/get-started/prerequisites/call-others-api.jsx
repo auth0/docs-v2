@@ -110,7 +110,8 @@ export const Prerequisites = ({
 
   steps.push(
     <Step key="my-account-api" title="Configure My Account API">
-      In the Auth0 Dashboard, configure the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a>:
+      The Connected Accounts flow uses the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a> to create and manage connected accounts for a user across supported external providers.<br/><br/>
+      In the Auth0 Dashboard, configure the My Account API:
       <ul>
         <li>Navigate to <strong>Authentication &gt; APIs</strong>, locate the My Account API banner, and select <strong>Activate</strong> to activate the Auth0 My Account API.</li>
         <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Applications</strong> tab.
