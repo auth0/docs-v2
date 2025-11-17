@@ -1,0 +1,120 @@
+---
+title: Registering your MCP Client Application
+description: Register MCP clients so AI Agents can safely connect to your resources using OAuth 2.1.
+sidebarTitle: Registering your MCP Client Application
+---
+
+Before your MCP client application can interact with a protected MCP server, it must be registered with an authorization server like Auth0. This registration process provides the client with a unique `client_id` and credentials, establishing a trusted identity for the OAuth 2.1 flow.
+
+You can register your client in two ways: statically or dynamically. For most scenarios, especially in production, we strongly recommend static client registration for its superior security and control.
+
+<Note>In the upcoming authorization specification from MCP, [Client ID Metadata Documents (CIMD)](https://modelcontextprotocol.io/specification/draft/basic/authorization#client-id-metadata-documents) will be introduced as the recommended method for client registration. Support for this new approach in Auth0 is planned and will be available soon.</Note>
+
+## Static client registration (recommended for production)
+
+**Static client registration** is a deliberate, manual process where you register your client application directly in the Auth0 Dashboard or via the Management API before your application is deployed. This approach gives you complete control over which clients can connect to your resources.
+
+This method is recommended because it offers several key advantages:
+
+* **Enhanced Security**: You explicitly approve every client, preventing unauthorized or malicious applications from registering themselves and accessing your system.
+* **Predictable Configuration**: The client_id and other settings are known in advance, simplifying deployment and configuration management.
+* **Clear Auditing**: There is a clear, auditable trail for every client created, linking it to a specific developer or team.
+* **Principle of Least Privilege**: You can precisely configure the exact permissions (scopes) and settings for each client from the outset.
+
+You can perform static registration by creating an application in the Auth0 Dashboard or by using the Auth0 Management API, as shown below:
+
+```shell wrap lines
+auth0 api post clients --data '{
+  "name": "MCP Inspector",
+  "app_type": "regular_web",
+  "is_first_party": false,
+  "callbacks": ["http://localhost:6274/oauth/callback"],
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "client_secret_post",
+  "oidc_conformant": true,
+  "jwt_configuration": { "alg": "RS256" },
+  "logo_uri": "https://avatars.githubusercontent.com/u/182288589"
+}'
+```
+
+## Dynamic Client Registration (DCR)
+
+**Dynamic Client Registration (DCR)** allows client applications to register themselves automatically by making an API request to a registration endpoint. While this offers flexibility for certain highly dynamic architectures, it introduces significant security risks if not properly secured.
+
+### The Dangers of an Open DCR Endpoint
+
+Auth0 supports an open DCR endpoint, which means that if you enable this feature without additional protections, **anyone on the internet can create applications in your tenant**. This exposes you to several threats:
+
+* **Resource Exhaustion**: A malicious actor could run a script to register millions of applications, potentially causing a denial-of-service by filling up your tenant's application limit.
+* **Unauthorized Access Attempts**: Attackers can register their own clients to probe your system for vulnerabilities or attempt to gain unauthorized access.
+* **Tenant Misconfiguration**: Unvetted, automated registrations can lead to clients being created with insecure settings, creating weak points in your security posture.
+* **Lack of Oversight**: Without strict monitoring, it becomes difficult to track who is registering clients and for what purpose.
+
+## Securing an Open DCR Endpoint
+
+Open Dynamic Client Registration (Open DCR) enables flexible MCP integrations but exposes your tenant to potential abuse if left unauthenticated. Without security controls, anyone can create applications in your tenant, potentially leading to resource exhaustion, unauthorized access attempts, or tenant misconfiguration.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+These security options are available to Enterprise customers only. To upgrade your plan, contact [Auth0 Sales](https://auth0.com/get-started).
+</Callout>
+
+There are two approaches you can implement to mitigate these risks:
+
+### Tenant Access Control List (Recommended)
+
+Restrict which IP address ranges or domains can access your tenant's DCR endpoints through Auth0's built-in [Tenant Access Control List (ACL)](https://auth0.com/docs/secure/tenant-access-control-list) feature. This approach protects both your custom domain and canonical Auth0 hostname (e.g., `tenant.auth0.com`), providing comprehensive protection.
+
+It's ideal when you know the IP ranges of legitimate clients (such as your internal network or specific cloud providers) and want to enforce network-based access control without managing additional infrastructure.
+
+### Reverse Proxy
+
+Place a [reverse proxy](https://auth0.com/docs/customize/custom-domains/self-managed-certificates/configure-cloudflare-for-use-as-reverse-proxy) (such as Cloudflare) in front of your custom domain to rate-limit, filter, and authenticate requests before they reach the DCR endpoint. This approach allows you to control request volume, implement custom authentication logic, and monitor traffic patterns.
+
+However, note that even with a reverse proxy on your custom domain, the DCR endpoint remains accessible via your canonical Auth0 hostname (e.g., `tenant.auth0.com`), which can bypass the proxy. For comprehensive protection, use this approach in combination with Tenant ACL.
+
+### Defense in Depth
+
+Both approaches can be used together for defense-in-depth security. Regardless of which approach you choose, monitor your [tenant logs](https://auth0.com/docs/deploy-monitor/logs) to detect suspicious registration patterns.
+
+### Monitoring DCR Activity
+
+Regularly review your tenant logs to identify suspicious patterns such as rapid application creation or registrations from unexpected sources.
+
+**To monitor client registrations:**
+
+1. Navigate to **Monitoring > Logs** in your Auth0 Dashboard
+2. Use the search query: `type:sapi AND description:"Dynamic client registration"`
+
+   This filters for successful Management API operations (`sapi`) specifically related to Dynamic Client Registration events.
+
+3. Review the log entries for:
+   - **Unusual volume**: Multiple clients created in a short time span
+   - **Unexpected sources**: Registrations from unfamiliar IP addresses or locations
+   - **Suspicious patterns**: Similar client names, callback URLs pointing to unexpected domains, or clients created outside business hours
+
+**Retrieve logs using the Auth0 CLI:**
+
+You can also retrieve DCR logs programmatically using the Auth0 CLI:
+
+```shell wrap lines
+# Get recent Dynamic Client Registration events
+auth0 logs list --filter "type:sapi AND description:\"Dynamic client registration\"" --number 100
+```
+
+Consider setting up [log streams](https://auth0.com/docs/customize/log-streams) to forward DCR events to your SIEM or monitoring platform for automated alerting on suspicious registration activity.
+
+## Authentication and Authorization for MCP Servers
+
+When an MCP server is exposed to the internet, it must be secured. The MCP specification recommends using [OAuth 2.1](https://oauth.net/2.1/) to secure these interactions. This allows an MCP server to delegate authentication to a dedicated authorization server and manage access control for different clients, users, and actions using scopes.
+
+### Mandatory Server Configuration
+
+For a client to interact with your server, the MCP specification requires you to announce your authorization configuration and use standard HTTP responses.
+
+1. **Use the `WWW-Authenticate` Header for 401 Errors**
+
+   When a client makes a request without a valid token, your server must return a `401 Unauthorized` status. Crucially, this response must include the `WWW-Authenticate` header, pointing to the metadata URL you configured above. This signals to the client that authentication is required and tells it exactly.
+
+2. **Announce Your Auth Server with Protected Resource Metadata ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728))**
+
+   Your MCP server must tell clients where to get authorized. To do this, you must expose a metadata endpoint. Create a `.well-known/oauth-protected-resource` endpoint on your server that returns a JSON object pointing to your Auth0 tenant. This allows MCP clients to automatically discover your authorization endpoints without manual configuration.
