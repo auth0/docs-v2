@@ -4,6 +4,7 @@ export const Auth0SetupBlock = ({
   clientSecretName = "Client Secret",
   scopesName = "Permissions",
   allowFreeFormScopes = false,
+  allowOfflineAccess = false,
 }) => {
   return (
     <>
@@ -30,6 +31,12 @@ export const Auth0SetupBlock = ({
               accessing basic profile details) or for API access (such as
               connecting to the provider's APIs).
             </li>
+            {allowOfflineAccess && (
+              <li>
+                Under <b>{scopesName}</b>, enable <b>Offline Access</b> for the connection.
+                This is required by Auth0 to obtain a refresh token from {providerName}.
+              </li>
+            )}
             {allowFreeFormScopes && (
               <li>
                 Add any additional scopes your application requires in the{" "}
