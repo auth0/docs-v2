@@ -1,14 +1,21 @@
 export const DocsBanner = () => {
   return (
-    <div className="gap-5 flex justify-center p-6 bg-[radial-gradient(1200px_600px_at_50%_-10%,rgba(180,160,255,.45)_0%,rgba(255,235,240,.35)_40%,rgba(255,245,235,.6)_100%)]">
+    <div className="gap-5 flex justify-center p-6 bg-[radial-gradient(1200px_600px_at_50%_-10%,rgba(180,160,255,0.45)_0%,rgba(255,235,240,0.35)_40%,rgba(255,245,235,0.6)_100%)]">
       <div className="w-[min(860px,90vw)] text-center px-0 py-2 md:px-6 md:py-12">
-        <h1 className="mb-5 font-inter font-semibold text-5xl text-center text-gray-900 dark:text-white">Auth0 Docs</h1>
-        <p className="mt-4 mb-10 font-inter font-normal text-body-l leading-body-l tracking-body-l text-center text-gray-600 max-w-2xl mx-auto dark:text-white">
+        <h1
+          className="mb-5 font-inter font-semibold text-[16rem] text-center text-gray-900 dark:text-white"
+          style={{
+            fontSize: "3.5rem",
+          }}
+        >
+          Auth0 Docs
+        </h1>
+        <p className="mt-4 mb-10 font-medium text-center text-gray-600 max-w-2xl mx-auto dark:text-white">
           Browse the latest sample code, articles, tutorials,
           <br /> and API reference.
         </p>
 
-        <div className="flex justify-center mt-5">
+        <div className="flex justify-center rounded-3xl overflow-hidden shadow-lg">
           {/* Mobile light banner (< 420px, light mode) */}
           <img
             noZoom
@@ -65,26 +72,30 @@ export const DocsFeatureCards = () => {
         <a
           key={i}
           href={f.link}
-          className="group flex flex-col items-start justify-between rounded-2xl px-6 py-6 
-                     bg-white dark:bg-neutral-900/60 
-                     border border-gray-200 dark:border-white/10 
-                     hover:border-black dark:hover:border-white 
-                     transition no_external_icon"
+          className="group flex flex-col items-start justify-between rounded-2xl px-6 py-6 bg-white dark:bg-neutral-900/60 border border-gray-200 dark:border-white/10 hover:border-neutral-300 shadow-sm dark:hover:border-white transition-all ease-out duration-200 no_external_icon"
         >
           <div className="flex flex-col items-start gap-3 w-full">
-            <div className="h-9 w-9 flex items-center justify-center rounded-md">
-              <img src={`${f.icon}.svg`} alt={f.title} className="block dark:hidden h-7 w-7" />
-              <img src={`${f.icon}-dark.svg`} alt={f.title} className="hidden dark:block h-7 w-7" />
+            <div className="size-10 flex items-start justify-start">
+              <img
+                src={`${f.icon}.svg`}
+                alt={f.title}
+                className="block dark:hidden h-7 w-7"
+              />
+              <img
+                src={`${f.icon}-dark.svg`}
+                alt={f.title}
+                className="hidden dark:block h-7 w-7"
+              />
             </div>
 
             <div className="flex items-center justify-between w-full">
-              <h3 className="font-inter font-medium text-gray-900 dark:text-gray-100 text-xl">{f.title}</h3>
-              <span
-                className="opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 
-                  transition-all duration-200 ease-out
-                  flex items-center justify-center h-7 w-7 rounded-full 
-                  bg-black dark:bg-white"
+              <h3
+                className="text-[var(--text)]"
+                style={{ fontSize: "1.25rem", marginBottom: 0 }}
               >
+                {f.title}
+              </h3>
+              <span className="opacity-0 translate-y-4 scale-50 blur-md group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:blur-none transition-all duration-200 ease-out flex items-center justify-center size-8 rounded-full bg-black dark:bg-white">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -158,12 +169,7 @@ export const LanguageGrid = () => {
           <a
             key={idx}
             href={lang.href}
-            className="flex flex-col items-center justify-center px-8 py-4 rounded-2xl 
-                      bg-white/60 dark:bg-neutral-900/60 
-                      border border-gray-200 dark:border-white/10 
-                      shadow-sm hover:shadow-md 
-                      hover:border-black dark:hover:border-white 
-                      transition"
+            className="flex flex-col items-center justify-center px-8 py-4 rounded-2xl bg-white/60 dark:bg-neutral-900/60 border border-gray-200 dark:border-white/10 shadow-sm hover:shadow-md hover:border-black dark:hover:border-white transition"
           >
             <img
               noZoom
@@ -177,7 +183,9 @@ export const LanguageGrid = () => {
               alt={lang.label}
               className="h-8 w-8 mb-4 hidden dark:block"
             />
-            <span className="font-inter text-base text-gray-900 dark:text-white">{lang.label}</span>
+            <span className="font-inter text-base text-gray-900 dark:text-white">
+              {lang.label}
+            </span>
           </a>
         ))}
       </div>
@@ -187,8 +195,14 @@ export const LanguageGrid = () => {
 
 export const ProductGrid = () => {
   const products = [
-    { label: "Authentication", href: "https://auth0.com/platform/authentication" },
-    { label: "Fine-Grained Authorization", href: "https://auth0.com/fine-grained-authorization" },
+    {
+      label: "Authentication",
+      href: "https://auth0.com/platform/authentication",
+    },
+    {
+      label: "Fine-Grained Authorization",
+      href: "https://auth0.com/fine-grained-authorization",
+    },
     { label: "Auth0 for AI Agents", href: "https://auth0.com/ai" },
   ];
 
@@ -272,14 +286,26 @@ export const LearnBasicsGrid = () => {
           >
             {/* Icon */}
             <div className="w-12 h-12 mb-4 overflow-hidden">
-              <img src={`${it.img}.svg`} alt={it.title} className="block dark:hidden w-full h-full object-cover" />
-              <img src={`${it.img}-dark.svg`} alt={it.title} className="hidden dark:block w-full h-full object-cover" />
+              <img
+                src={`${it.img}.svg`}
+                alt={it.title}
+                className="block dark:hidden w-full h-full object-cover"
+              />
+              <img
+                src={`${it.img}-dark.svg`}
+                alt={it.title}
+                className="hidden dark:block w-full h-full object-cover"
+              />
             </div>
 
             {/* Text */}
             <div>
-              <h3 className="font-inter font-medium text-lg text-gray-900 dark:text-white mb-2">{it.title}</h3>
-              <p className="text-[15px] leading-6 text-gray-600 dark:text-gray-400">{it.desc}</p>
+              <h3 className="font-inter font-medium text-lg text-gray-900 dark:text-white mb-2">
+                {it.title}
+              </h3>
+              <p className="text-[15px] leading-6 text-gray-600 dark:text-gray-400">
+                {it.desc}
+              </p>
             </div>
           </a>
         ))}
