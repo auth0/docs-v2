@@ -20,9 +20,7 @@ Please describe what this PR changes and why. If this touches multiple documenta
 
 ## 🔗 References
 
-Link to Jira issues, product specs, or related discussions:
-
-https://auth0team.atlassian.net/browse/<issue>
+Link to relevant GitHub issues, specifications, or related public discussions.
 
 ## 🎯 Testing
 
@@ -34,10 +32,8 @@ https://auth0team.atlassian.net/browse/<issue>
 
 **Style compliance:**
 - [ ] Follows the Contribution Guidelines (TBD)
-- [ ] Follows placeholder conventions (`YOUR_SOMETHING`, `<id-value>`)
 - [ ] Uses correct Auth0 terminology and sentence case for headings
 - [ ] Code blocks include language and filename where appropriate
-- [ ] All images wrapped in `<Frame>` components
 
 ## 🔄 Redirects
 
