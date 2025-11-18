@@ -121,6 +121,7 @@ export const Prerequisites = ({
             <li>Select <strong>Update</strong>.</li>
           </ul>
         </li>
+        <li>If you&apos;re using Multi-Resource Refresh Tokens, navigate to the <strong>Settings</strong> tab. Under <strong>Access Settings</strong>, select <strong>Allow Skipping User Consent</strong>.</li>
       </ul>
     </Step>
   );
