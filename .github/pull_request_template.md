@@ -49,6 +49,15 @@ If redirects are needed, please add them to the `redirects` array in the appropr
 }
 ```
 
+## 🌍 Internationalization
+
+**Localized content (main docs only):**
+- [ ] Not applicable - no English content changes
+- [ ] Changes apply to English content only (localized versions will be updated separately)
+- [ ] Changes include updates to localized versions (`fr-ca/`, `ja-jp/`)
+
+**Note:** Main docs support French Canadian (`main/docs/fr-ca/`) and Japanese (`main/docs/ja-jp/`). If you're updating existing pages, consider whether localized versions need corresponding updates.
+
 ## 📊 Impact
 
 **User-facing changes:**
