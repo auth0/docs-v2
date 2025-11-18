@@ -8,9 +8,10 @@ import { AccountAndAppSteps } from "/snippets/get-started/prerequisites/account-
  * @param {string} [props.createAuth0ApplicationStep.applicationType] - Type of Auth0 application (e.g., "Regular Web")
  * @param {string} [props.createAuth0ApplicationStep.callbackUrl] - Allowed callback URL for the application
  * @param {string} [props.createAuth0ApplicationStep.logoutUrl] - Allowed logout URL for the application
- * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application 
+ * @param {string|undefined} [props.createAuth0ApplicationStep.allowedWebOrigins] - Allowed web origins for the application
  * @param {boolean} [props.createAuth0ApplicationStep.enableTokenVaultGrant] - Enable Token Vault Grant for the application
  * @param {boolean} [props.createAuth0ApplicationStep.enableRefreshTokenGrant] - Enable Refresh Token Grant for the application
+ * @param {boolean|undefined} [props.createAuth0ApplicationStep.enableAllowRefreshTokenRotation] - Enable or Disable Allow Refresh Token Rotation for the application (omitted if undefined)
  *
  * @param {Object|undefined} [props.createAuth0ApiStep] - Configuration for Auth0 API creation step
  *
@@ -27,6 +28,7 @@ export const Prerequisites = ({
     allowedWebOrigins: undefined,
     enableTokenVaultGrant: undefined,
     enableRefreshTokenGrant: undefined,
+    enableAllowRefreshTokenRotation: undefined,
   },
   createAuth0ApiStep = undefined,
   createResourceServerClientStep = undefined,
@@ -43,6 +45,7 @@ export const Prerequisites = ({
       allowedWebOrigins: createAuth0ApplicationStep.allowedWebOrigins,
       enableTokenVaultGrant: createAuth0ApplicationStep.enableTokenVaultGrant,
       enableRefreshTokenGrant: createAuth0ApplicationStep.enableRefreshTokenGrant,
+      enableAllowRefreshTokenRotation: createAuth0ApplicationStep.enableAllowRefreshTokenRotation,
     })
   );
 
@@ -91,24 +94,13 @@ export const Prerequisites = ({
         <br />
         <ul>
               <li>
-                Navigate to{" "}
-                <strong>
-                  Applications &gt; APIs
-                </strong>
+               From the Settings page of the API that you just created, click the <strong>Add Application</strong> button in the right top corner. This will open a modal to create a new Custom API Client.
               </li>
               <li>
-                Click the{" "}
-                <strong>Create API</strong> button to create a new Custom API.
-              </li>
-              <li>
-                Go to the Custom API you created and click the <strong>Add Application</strong> button in the right top corner.
-              </li>
-              <li>
-                After that click the <strong>Configure Application</strong> button in the right top corner.
+                Give your Custom API Client a name in the Application Name field and click the <strong>Add</strong> button to create a new Custom API Client.
               </li>
           <li>
-            Note down the <code>client id</code> and <code>client secret</code>{" "}
-           for your environment variables.
+            After creation is successful, you should be redirected to the settings page for your newly created Custom API Client application. Note down the <code>client id</code> and <code>client secret</code>{" "}for your environment variables.
           </li>
         </ul>
       </Step>
@@ -118,20 +110,31 @@ export const Prerequisites = ({
 
   steps.push(
     <Step key="my-account-api" title="Configure My Account API">
-      In the Auth0 Dashboard, configure the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a> to enable <a href="/intro/account-linking">account linking</a>:
+      The Connected Accounts flow uses the <a href="https://auth0.com/docs/manage-users/my-account-api" target="_blank">My Account API</a> to create and manage connected accounts for a user across supported external providers.<br/><br/>
+      In the Auth0 Dashboard, configure the My Account API:
       <ul>
-        <li>Navigate to <strong>Authentication &gt; APIs</strong>, locate the My Account API banner, and select <strong>Activate</strong> to activate the My Account API.</li>
-        <li>To configure your client application to authorize the My Account API:
+        <li>Navigate to <strong>Authentication &gt; APIs</strong>, locate the My Account API banner, and select <strong>Activate</strong> to activate the Auth0 My Account API.</li>
+        <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Applications</strong> tab.
           <ul>
-            <li>Navigate to <strong>Applications &gt; Applications</strong> and select your client application.</li>
-            <li>Under <strong>APIs</strong>, toggle on <strong>Auth0 My Account API</strong>.</li>
-            <li>Select the <a href="https://auth0.com/docs/manage-users/my-account-api#scope" target="_blank">Connected Accounts scopes</a> for the application in the dropdown.</li>
+            <li>Toogle your client application to authorize it to access the My Account API.</li>
+            <li>In the dropdown menu, select the <strong>Connected Accounts scopes</strong> for the application, ensuring that at a minimum, the <code>create:me:connected_accounts</code> permission is selected.</li>
             <li>Select <strong>Update</strong>.</li>
           </ul>
         </li>
+        <li>If you&apos;re using Multi-Resource Refresh Tokens, navigate to the <strong>Settings</strong> tab. Under <strong>Access Settings</strong>, select <strong>Allow Skipping User Consent</strong>.</li>
       </ul>
     </Step>
   );
+
+  steps.push(<Step key="mrrt-policy" title="Define a Multi-Resource Refresh Token policy for your Application">
+      After your web application has been granted access to the My Account API, you will also need to leverage the <a href="https://auth0.com/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token" target="_blank">Multi-Resource Refresh Token</a> feature, which enables the refresh token delivered to your application to also obtain an access token to call the My Account API. <br/><br/>
+      You can quickly define a <a href="https://auth0.com/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token/configure-and-implement-multi-resource-refresh-token" target="_blank">refresh token policy</a> for your application to use when requesting access tokens for the My Account API by doing the following:
+      <ul>
+        <li>Navigate to <strong>Applications &gt; Applications</strong> and select your client application.</li>
+        <li>On the <strong>Settings</strong> tab, scroll down to the <strong>Multi-Resource Refresh Token</strong> section.</li>
+        <li>Select <strong>Edit Configuration</strong> and then enable the MRRT toggle for the <strong>Auth0 My Account API</strong>.</li>
+      </ul>
+  </Step>)
 
   steps.push(
     <Step key="google-connection" title="Configure Google Social Integration">
