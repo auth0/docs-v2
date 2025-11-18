@@ -118,11 +118,9 @@ export const Prerequisites = ({
           <ul>
             <li>Toogle your client application to authorize it to access the My Account API.</li>
             <li>In the dropdown menu, select the <strong>Connected Accounts scopes</strong> for the application, ensuring that at a minimum, the <code>create:me:connected_accounts</code> permission is selected.</li>
-            <li>Under <strong>APIs</strong>, toggle on <strong>Auth0 My Account API</strong>.</li>
             <li>Select <strong>Update</strong>.</li>
           </ul>
         </li>
-        <li>If you&apos;re using Multi-Resource Refresh Tokens, navigate to the <strong>Settings</strong> tab. Under <strong>Access Settings</strong>, select <strong>Allow Skipping User Consent</strong>.</li>
       </ul>
     </Step>
   );
