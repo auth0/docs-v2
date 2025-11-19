@@ -1,5 +1,34 @@
 To call your APIs on behalf of your users, the MCP server needs to exchange the Auth0 access token it received from the MCP client (with the audience set to the MCP server itself) for a new Auth0 access token with the audience set to your API. In Auth0, this is called Custom Token Exchange and uses [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html).
 
+### How tools use token exchange
+Here's how the `greet` tool performs token exchange and calls the upstream API:
+
+```python wrap lines highlight={10,11,12,13,14}
+@mcp.tool(name="greet")
+@require_scopes(["tool:greet"])
+async def greet(name: str, ctx: Context) -> str:
+    user_name = name.strip() if name else "there"
+    auth_info = ctx.request_context.request.state.auth
+    user_id = auth_info.get("extra", {}).get("sub")
+
+    logger.info(f"Greet tool invoked for user: {user_id}")
+
+    # Exchange token and call upstream API
+    exchange_result = await exchange_custom_token(
+        ctx.request_context.request.state.api_client,
+        auth_info["token"]
+    )
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{config.api_base_url}/api/private-scope",
+            headers={"authorization": f"Bearer {exchange_result['token']}"}
+        )
+        upstream_result = response.json()
+
+    return f"Hello, {user_name} ({user_id})!\nUpstream API Response: {json.dumps(upstream_result, indent=2)}"
+```
+
 ### The core logic: `exchange_custom_token`
 
 The Python implementation uses the `exchange_custom_token` function that handles the token exchange process.
@@ -31,38 +60,10 @@ self.client = ApiClient(ApiClientOptions(
 ))
 ```
 
-The client then gets attached to the request context, making it available to all tools:
+The configured client is then attached to the request context during middleware processing, making it available to all tools:
 
 ```python src/auth0/middleware.py wrap lines
 # In the Auth0Middleware dispatch method
 request.state.api_client = self.client
 ```
 
-### Using Token Exchange in MCP tools
-Here's how it's implemented in the `greet` tool:
-
-```python wrap lines highlight={10,11,12,13,14}
-@mcp.tool(name="greet")
-@require_scopes(["tool:greet"])
-async def greet(name: str, ctx: Context) -> str:
-    user_name = name.strip() if name else "there"
-    auth_info = ctx.request_context.request.state.auth
-    user_id = auth_info.get("extra", {}).get("sub")
-
-    logger.info(f"Greet tool invoked for user: {user_id}")
-
-    # Exchange token and call upstream API
-    exchange_result = await exchange_custom_token(
-        ctx.request_context.request.state.api_client,
-        auth_info["token"]
-    )
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{config.api_base_url}/api/private-scope",
-            headers={"authorization": f"Bearer {exchange_result['token']}"}
-        )
-        upstream_result = response.json()
-
-    return f"Hello, {user_name} ({user_id})!\nUpstream API Response: {json.dumps(upstream_result, indent=2)}"
-```
