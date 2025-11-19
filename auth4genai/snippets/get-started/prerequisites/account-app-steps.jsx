@@ -7,12 +7,13 @@ export const AccountAndAppSteps = ({
   copyDomain,
   enableTokenVaultGrant = false,
   enableRefreshTokenGrant = false,
+  enableAllowRefreshTokenRotation = undefined,
 }) => {
   const steps = [
     <Step title="Create an Auth0 Account">
       To continue with this quickstart, you need to have an{" "}
       <a
-        href="https://auth0.com/signup?onboard_app=genai&ocid=7014z000001NyoxAAC-aPA4z0000008OZeGAM"
+        href="https://auth0.com/signup?onboard_app=auth_for_aa&ocid=701KZ000000cXXxYAM-aPA4z0000008OZeGAM"
         target="_blank"
       >
         Auth0 account.
@@ -64,6 +65,11 @@ export const AccountAndAppSteps = ({
           {allowedWebOrigins && (
             <li>
               Set Allowed Web Origins as: <code>{allowedWebOrigins}</code>
+            </li>
+          )}
+          {enableAllowRefreshTokenRotation !== undefined && (
+            <li>
+              Scroll down to the <strong>Refresh Token Rotation</strong> section and {enableAllowRefreshTokenRotation === true ? "enable" : "disable"} the <strong>Allow Refresh Token Rotation</strong> option.
             </li>
           )}
           {enableTokenVaultGrant && !enableRefreshTokenGrant && (
