@@ -1,0 +1,97 @@
+# .github/workflows/link-check.yml
+name: Link Checker
+
+# Runs Lychee (link checker) on Markdown / MDX docs.
+#
+# What this workflow does:
+# - Triggers on:
+#   - pushes to main
+#   - all pull requests
+#   - manual runs via "Run workflow"
+# - Scans Markdown / MDX files under:
+#   - main/        (Mintlify site branded as "auth0")
+#   - auth4genai/  (Mintlify site branded as "auth0-genai")
+# - Respects .lycheeignore in the repo root
+# - Accepts 302 redirects and 429 rate limits as valid
+# - Currently warns on failures instead of failing CI
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  link-check:
+    # This name becomes the check name in the GitHub UI.
+    # Examples:
+    #   Link Checker (auth0) - link-rot
+    #   Link Checker (auth0-genai) - link-rot
+    name: Link Checker (${{ matrix.site.name }}) - link-rot
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        site:
+        # Main Auth0 docs (Mintlify project branded as "auth0")
+        - name: auth0
+          path: main
+        # Auth0 for AI Agents docs (Mintlify project branded as "auth0-genai")
+        - name: auth0-genai
+          path: auth4genai
+
+    steps:
+    # Fetch repository contents so Lychee can scan Markdown / MDX files
+    - name: Checkout repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+
+    # Run Lychee on the current docs tree from the matrix.
+    #
+    # Notes on args:
+    # - --scheme https
+    #     Only check HTTPS links. Other schemes (mailto:, file:, etc) are skipped.
+    # - --accept 200..=299,302,429
+    #     Treat 2xx, 302, and 429 as success.
+    #     - 302 is common for docs redirects.
+    #     - 429 is rate limiting that we do not want to treat as "broken".
+    #       Note: URLs returning 429 should be investigated separately to ensure
+    #       they are actually functional and not just silently rate-limited.
+    # - --exclude-path .vale
+    #     Skip the .vale directory used for prose linting (if present).
+    # - ${{ matrix.site.path }}/**/*.md / .mdx
+    #     Scope to the docs in the current tree:
+    #       - main/       when name == auth0
+    #       - auth4genai/ when name == auth0-genai
+    #
+    # Internal routing, API-only endpoints, and other noisy URLs are
+    # filtered via .lycheeignore in the repo root.
+    - name: Run Lychee on ${{ matrix.site.name }} docs
+      id: lychee
+      uses: lycheeverse/lychee-action@a8c4c7cb88f0c7386610c35eb25108e448569cb0  # v2.7.0
+      env:
+        # Used by Lychee for authenticated GitHub requests to reduce rate limiting.
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        args: >
+          --verbose
+          --no-progress
+          --scheme https
+          --accept 200..=299,302,429
+          --exclude-path .vale
+          ${{ matrix.site.path }}/**/*.md
+          ${{ matrix.site.path }}/**/*.mdx
+
+    # For now, only warn on failures so you can tune .lycheeignore and fix
+    # obvious issues without blocking merges.
+    #
+    # Once you are happy with the signal/noise ratio, delete this step so that
+    # Lychee's non-zero exit code will fail the job.
+    - name: Warn on failures instead of failing CI
+      if: steps.lychee.outputs.exit_code != 0
+      run: |
+        echo "Lychee found broken links in ${{ matrix.site.name }} docs."
+        echo "Exit code: ${{ steps.lychee.outputs.exit_code }}"
+        echo "Check the Lychee step logs above for details."
+        exit 0
