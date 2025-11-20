@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 
 import { NavActions } from '@/components';
+import { initFeedbackListeners } from '@/lib/feedback';
 import { overrideHistoryMethods } from '@/lib/history';
 import { initOneTrust } from '@/lib/one-trust';
 import { initRootStore } from '@/stores';
@@ -36,6 +37,9 @@ async function main() {
   // Initialize one-trust for cookie-consent management
   initOneTrust();
 
+  // Initialize feedback listeners for Mintlify documentation pages
+  initFeedbackListeners();
+
   // Mount the main application
   mountApp(root);
 }
@@ -49,4 +53,4 @@ export * from '@/components';
 export { initRootStore, rootStore } from '@/stores';
 export { autorun, observe, reaction } from 'mobx';
 export { observer } from 'mobx-react-lite';
-export { getSample, postSample } from '@/lib/api';
+export { getSample, postSample, postFeedback } from '@/lib/api';
