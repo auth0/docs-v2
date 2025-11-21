@@ -75,3 +75,23 @@ For example:
 ## Vale Linting
 
 We use [Vale](https://vale.sh/) to keep terminology and brand usage consistent across the docs. See the dedicated Vale guide in [`./.vale/README.md`](./.vale/README.md) for details on configuration structure, MDX support, and how to extend or adjust the rules.
+
+## Link Checking
+
+We use [Lychee](https://lychee.cli.rs/) to check for broken links in the documentation.
+
+Lychee runs in CI on pull requests and on pushes to `main`. It checks external HTTPS links only and uses `.lycheeignore` to exclude URLs that require authentication, block automated traffic, or represent API endpoints. Internal Mintlify routes (for example `/intro/...`, `/mcp/...`, `/img/...`) are not checked by Lychee because the Mintlify CLI already validates routing during `mint dev`.
+
+Local usage of Lychee is optional. If you want to test external links manually, you can run:
+
+```bash
+lychee --scheme https --format detailed --base-url https://auth0.com auth4genai/**/*.mdx auth4genai/**/*.md
+```
+
+To validate against a Mintlify preview deployment, substitute the base URL:
+
+```bash
+lychee --scheme https --format detailed --base-url https://your-branch-name.mintlify.app auth4genai/**/*.mdx auth4genai/**/*.md
+```
+
+All ignore rules for uncheckable URLs live in `.lycheeignore` in the repository root. If a link is consistently uncheckable, add a pattern there rather than passing flags on the command line.
