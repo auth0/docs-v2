@@ -179,7 +179,7 @@ export function useMenuAnimation(): [
     return () => {
       observer.disconnect();
     };
-  }, [selectedMenu, selectedTenant]);
+  }, [selectedMenu]);
 
   return [
     { selectedMenu, lastMenuAction, isOpen, height: menuHeight },

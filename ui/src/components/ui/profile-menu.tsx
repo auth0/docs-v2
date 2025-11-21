@@ -165,16 +165,22 @@ function ProfileMenuContent({
           </>
         ) : (
           <>
-            <div className="adu:flex adu:flex-col adu:gap-2 adu:px-3 adu:py-2">
+            <DropdownMenuItem
+             className="adu:gap-2 adu:px-3 adu:py-2 adu:pt-3">
               <ContentText
                 variant="text-sm-bold"
                 className="adu:text-foreground-bold"
               >
                 No tenant available
               </ContentText>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem>
               <ContentText variant="text-sm" className="adu:text-foreground">
                 You need a tenant to access the dashboard.
               </ContentText>
+            </DropdownMenuItem>
+            <DropdownMenuItem>
               <ContentText
                 variant="link-sm"
                 className="adu:text-foreground-bold adu:underline"
@@ -188,7 +194,7 @@ function ProfileMenuContent({
                   Create a tenant in the dashboard
                 </a>
               </ContentText>
-            </div>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
         )}
