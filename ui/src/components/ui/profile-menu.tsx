@@ -29,6 +29,9 @@ function UserDetails({
   profileUrl,
 }: UserDetailsProps) {
   const initials = getInitials(name);
+  // When a user has not created tenants, their profileUrl is "#"
+  // We do not want to show the View Profile link in that case
+  const validProfileUrl = profileUrl !== "#";
   return (
     <div
       className={cn(
@@ -47,7 +50,7 @@ function UserDetails({
         >
           {name}
         </ContentText>
-        <ContentText
+        {validProfileUrl ? <ContentText
           variant="link-sm"
           className="adu:text-foreground-bold adu:underline"
           asChild
@@ -55,7 +58,7 @@ function UserDetails({
           <a href={profileUrl} target="_blank" rel="noreferrer">
             View Profile
           </a>
-        </ContentText>
+        </ContentText> : null}
       </div>
     </div>
   );
@@ -166,7 +169,7 @@ function ProfileMenuContent({
         ) : (
           <>
             <DropdownMenuItem
-             className="adu:gap-2 adu:px-3 adu:py-2 adu:pt-3">
+             className="adu:gap-2 adu:px-3 adu:py-3 adu:pt-3">
               <ContentText
                 variant="text-sm-bold"
                 className="adu:text-foreground-bold"
