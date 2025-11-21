@@ -30,7 +30,6 @@ export function initOneTrust(): void {
   window.OptanonWrapper = () => {
     if (window.OnetrustActiveGroups) {
       const consents = window.OnetrustActiveGroups.split(',').filter((c) => c);
-      console.log('consents from OnetrustActiveGroups:', consents);
       // load allowed scripts based on consents
       loadAllowedScripts(new Set(consents.map((group) => `C000${group}`)));
     }
@@ -49,8 +48,6 @@ export function initOneTrust(): void {
     return;
   }
 
-  console.log('Preloading scripts based on existing consents:', consentsMap);
-
   loadAllowedScripts(consentsMap);
 }
 
@@ -60,7 +57,6 @@ function parseConsentCookie() {
   // If no OptanonConsent cookie is found, we cannot preload analytics
   // once the user gives consent, the OneTrust callback will handle loading
   if (!optanonConsent) {
-    console.log('No OptanonConsent cookie found on preload');
     return null;
   }
 
@@ -71,7 +67,6 @@ function parseConsentCookie() {
     .find((s) => s.includes('groups='));
 
   if (!groups) {
-    console.log('No consent groups found in OptanonConsent cookie on preload');
     return null;
   }
 
@@ -107,23 +102,14 @@ function loadAllowedScripts(consents: Set<string>) {
     const consentsRequired = s.className
       .replace('consent-required:', '')
       .split('-');
-    const hasConsented = consentsRequired.every((cr) => consents.has(cr));
 
-    if (!hasConsented) {
-      console.log(
-        `Script ${s.id} not loaded, requires consents:`,
-        consentsRequired,
-      );
-    }
-
-    return hasConsented;
+      return consentsRequired.every((cr) => consents.has(cr));
   });
 
   // Re-inject scripts now with js type
   scriptsWithConsent.forEach((s) => {
     s.remove(); // remove the text/plain script tag
     s.setAttribute('type', 'text/javascript');
-    console.log(`Loading script ${s.id}`);
     document.head.appendChild(s); // re-append to head to execute
   });
 }
