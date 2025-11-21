@@ -80,27 +80,35 @@ This is **not a managed monorepo** (no Lerna, pnpm workspaces, etc.). Each folde
 ### Documentation Organization
 
 **Content Structure:**
+
 - `.mdx` and `.md` files for documentation pages
 - YAML frontmatter for metadata (title, description, og/twitter tags)
 - `docs.json` defines navigation structure and Mintlify configuration
 
 **Reusable Components:**
+
 - `/snippets` directories contain reusable `.mdx` and `.jsx` components
 - Import snippets into documentation pages to avoid duplication
 - Commonly used for multi-language code examples in quickstart guides
 
 **Code Block Convention:**
-````markdown
-```[language] [filename] wrap lines highlight={lines}
+
+`````markdown
+````[language] [filename] wrap lines highlight={lines}
 Example: ```typescript ./src/auth0/app wrap lines highlight={1,7-10}
 ````
+`````
+
+`````
 
 **Localization:**
+
 - Main docs support French Canadian (`main/docs/fr-ca/`) and Japanese (`main/docs/ja-jp/`)
 
 ### UI Component Library Architecture
 
 **Technology Stack:**
+
 - React 19 + TypeScript
 - Vite 7 for building
 - TailwindCSS 4 for styling
@@ -108,28 +116,33 @@ Example: ```typescript ./src/auth0/app wrap lines highlight={1,7-10}
 - MobX 6 for state management
 
 **State Management:**
+
 - MobX stores pattern with `RootStore` as central container
 - Key stores: `SessionStore`, `ClientStore`, `TenantStore`, `ResourceServerStore`, `VariableStore`
 - Components use MobX `observer` wrapper for reactivity
 
 **Build Output:**
+
 - UMD bundle: `auth0-docs-ui-{version}.umd.js`
 - CSS: `auth0-docs-ui-{version}.css`
 - Exposed as `window.Auth0DocsUI` in browser
 - Exports: components, stores, and MobX utilities
 
 **Path Aliases:**
+
 - `@/*` maps to `/ui/src/*` for clean imports
 
 ### Theme Configuration
 
 **Main Docs (`main/docs.json`):**
+
 - Theme: "aspen"
 - Colors: Black primary (#000)
 - Breadcrumb navigation style
 - Traditional layout
 
 **Auth4GenAI Docs (`auth4genai/docs.json`):**
+
 - Theme: "mint"
 - Colors: Purple primary (#6742D5)
 - Dark mode by default
@@ -191,88 +204,105 @@ Mintlify supports several admonition types for highlighting important informatio
 #### When to Use Each Admonition
 
 **`<Warning>`** - ONLY for Early Access features requiring legal agreement acceptance:
+
 ```mdx
 <Warning>
-Native to Web SSO is currently available in Early Access. To use this feature, you must have an Enterprise plan. By using this feature, you agree to the applicable Free Trial terms in Okta's Master Subscription Agreement.
+  Native to Web SSO is currently available in Early Access. To use this feature,
+  you must have an Enterprise plan. By using this feature, you agree to the
+  applicable Free Trial terms in Okta's Master Subscription Agreement.
 </Warning>
 ```
+
 - Must include legal agreement links and Product Release Stages reference
 - Used when features require explicit Free Trial terms acceptance
 
 **`<Callout>`** - For plan-based restrictions, Enterprise features, and important context:
+
 ```mdx
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-These security options are available to Enterprise customers only. To upgrade your plan, contact Auth0 Sales.
+  These security options are available to Enterprise customers only. To upgrade
+  your plan, contact Auth0 Sales.
 </Callout>
 ```
+
 - Standard for Professional/Enterprise plan restrictions
 - Used for features like Tenant ACL, Self-Service SSO, etc.
 - Always use `icon="file-lines" color="#0EA5E9" iconType="regular"` for consistency
 
 **`<Note>`** - For supplementary information or clarifications:
+
 ```mdx
 <Note>
-Both approaches can be used together for defense-in-depth security. Monitor your tenant logs regularly to detect suspicious registration patterns.
+  Both approaches can be used together for defense-in-depth security. Monitor
+  your tenant logs regularly to detect suspicious registration patterns.
 </Note>
 ```
 
 For brief inline notes, you can also use markdown blockquote style:
+
 ```mdx
 > **Note:** These options are available to Enterprise customers only.
 ```
 
 **`<Info>`** - For helpful contextual information:
+
 ```mdx
 <Info>
-If you don't see tools listed on the consent screen that's because you are not logging in with the correct user
+  If you don't see tools listed on the consent screen that's because you are not
+  logging in with the correct user
 </Info>
 ```
 
 **`<Tip>`** - For helpful suggestions or shortcuts:
+
 ```mdx
 <Tip>
-To automatically connect VS Code to the Auth0 for AI Agents MCP Server, click the down arrow icon next to **Copy page** and select **Connect to VS Code**.
+  To automatically connect VS Code to the Auth0 for AI Agents MCP Server, click
+  the down arrow icon next to **Copy page** and select **Connect to VS Code**.
 </Tip>
 ```
 
 ### Structured Content Components
 
 **Steps** - For sequential instructions:
+
 ```mdx
 <Steps>
   <Step title="Install the Auth0 CLI">
-    Follow the [Auth0 CLI installation instructions](https://auth0.github.io/auth0-cli/).
+    Follow the [Auth0 CLI installation
+    instructions](https://auth0.github.io/auth0-cli/).
   </Step>
-  <Step title="Log in to your account">
-    Run: `auth0 login`
-  </Step>
+  <Step title="Log in to your account">Run: `auth0 login`</Step>
 </Steps>
 ```
 
 **Tabs** - For multi-language or multi-option content:
-```mdx
+
+````mdx
 <Tabs>
   <Tab title="Python" icon="python">
-    ```python
-    # Python code here
-    ```
+    ```python # Python code here ```
   </Tab>
-  <Tab title="JavaScript">
-    ```javascript
-    // JavaScript code here
-    ```
-  </Tab>
+  <Tab title="JavaScript">```javascript // JavaScript code here ```</Tab>
 </Tabs>
-```
+`````
 
 **Cards** - For navigation or feature highlights:
+
 ```mdx
-<Card title="User Authentication" icon="user" href="./user-authentication" iconType="solid" vertical>
+<Card
+  title="User Authentication"
+  icon="user"
+  href="./user-authentication"
+  iconType="solid"
+  vertical
+>
   Secure your application with Auth0 authentication.
 </Card>
 ```
 
 **Columns** - For side-by-side layouts:
+
 ```mdx
 <Columns cols={2}>
   <Card title="First Card" href="/path1">
@@ -285,6 +315,7 @@ To automatically connect VS Code to the Auth0 for AI Agents MCP Server, click th
 ```
 
 **Frame** - For images with optional captions:
+
 ```mdx
 <Frame caption="MCP Authorization flow with Auth0">
   <img src="/img/mcp/auth-flow.png" alt="Auth flow diagram" />
@@ -292,15 +323,17 @@ To automatically connect VS Code to the Auth0 for AI Agents MCP Server, click th
 ```
 
 **CodeGroup** - For showing multiple code examples:
-```mdx
+
+````mdx
 <CodeGroup>
   ```bash npm
   npm i -g mint
-  ```
+````
 
-  ```bash pnpm
-  pnpm add -g mint
-  ```
+```bash pnpm
+pnpm add -g mint
+```
+
 </CodeGroup>
 ```
 
@@ -315,6 +348,7 @@ Code blocks support language specification, file names, line wrapping, and highl
 ````
 
 Common attributes:
+
 - **Language**: `bash`, `javascript`, `typescript`, `python`, `json`, etc.
 - **Filename**: `./path/to/file` (optional)
 - **`wrap lines`**: Enable line wrapping for long lines
@@ -325,17 +359,21 @@ Common attributes:
 When including placeholders in code examples and commands, follow these consistent patterns:
 
 **`YOUR_SOMETHING`** - For general configuration values that users need to replace:
+
 ```bash
 auth0 api patch connections/YOUR_CONNECTION_ID --data '{"is_domain_connection": true}'
 ```
+
 - Examples: `YOUR_TENANT`, `YOUR_AUTH0_DOMAIN`, `YOUR_CONNECTION_ID`, `YOUR_MANAGEMENT_API_TOKEN`
 - Used for domains, tokens, API keys, and other configuration values
 - Always use uppercase with underscores
 
 **`<something>`** - For specific IDs or values extracted from previous commands:
+
 ```bash
 auth0 api patch clients/<client_id> --data '{...}'
 ```
+
 - Examples: `<client_id>`, `<your-action-id>`, `<resource-server-id>`
 - Used for IDs returned by API calls or CLI commands
 - Typically lowercase with hyphens
@@ -343,6 +381,7 @@ auth0 api patch clients/<client_id> --data '{...}'
 **DO NOT use** `{{VAR}}` syntax - This is not the established pattern in this repository.
 
 **Example combining both patterns:**
+
 ```bash
 curl --location 'https://YOUR_TENANT/api/v2/token-exchange-profiles' \
 --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
@@ -357,44 +396,41 @@ Always provide clear instructions before code blocks explaining what each placeh
 ### Accordion Groups
 
 For collapsible content sections:
+
 ```mdx
 <AccordionGroup>
-  <Accordion title="Question 1">
-    Answer to question 1
-  </Accordion>
-  <Accordion title="Question 2">
-    Answer to question 2
-  </Accordion>
+  <Accordion title="Question 1">Answer to question 1</Accordion>
+  <Accordion title="Question 2">Answer to question 2</Accordion>
 </AccordionGroup>
 ```
 
 ### Presenting Multiple Options
 
 **Use `<Tabs>` for:** Different implementation methods for the SAME action
+
 ```mdx
 <Tabs>
-<Tab title="Dashboard">
-1. Go to Dashboard > Settings
-2. Click the toggle
-</Tab>
-<Tab title="Management API">
-1. Get an access token
-2. Call the API endpoint
-</Tab>
+  <Tab title="Dashboard">1. Go to Dashboard > Settings 2. Click the toggle</Tab>
+  <Tab title="Management API">
+    1. Get an access token 2. Call the API endpoint
+  </Tab>
 </Tabs>
 ```
+
 - Dashboard vs API configuration
 - Different SDK implementations
 - Same outcome, different tools
 
 **Use bullet lists for:** Different approaches or solutions to a problem
+
 ```mdx
 There are two approaches you can implement:
 
-* **[Tenant Access Control List](link)** (Recommended) - Description of when to use, how it works, and any limitations or benefits.
+- **[Tenant Access Control List](link)** (Recommended) - Description of when to use, how it works, and any limitations or benefits.
 
-* **[Reverse Proxy](link)** - Description of when to use, how it works, and any limitations or benefits.
+- **[Reverse Proxy](link)** - Description of when to use, how it works, and any limitations or benefits.
 ```
+
 - Different security strategies
 - Alternative architectural patterns
 - Multiple remediation options for an issue
@@ -470,39 +506,37 @@ You are an AI writing assistant specialized in creating exceptional technical do
 
 ```mdx
 <Note>
-Supplementary information that supports the main content without interrupting flow
+  Supplementary information that supports the main content without interrupting
+  flow
 </Note>
 ```
 
 #### Tip - Best Practices and Pro Tips
 
 ```mdx
-<Tip>
-Expert advice, shortcuts, or best practices that enhance user success
-</Tip>
+<Tip>Expert advice, shortcuts, or best practices that enhance user success</Tip>
 ```
 
 #### Warning - Important Cautions
 
 ```mdx
 <Warning>
-Critical information about potential issues, breaking changes, or destructive actions
+  Critical information about potential issues, breaking changes, or destructive
+  actions
 </Warning>
 ```
 
 #### Info - Neutral Contextual Information
 
 ```mdx
-<Info>
-Background information, context, or neutral announcements
-</Info>
+<Info>Background information, context, or neutral announcements</Info>
 ```
 
 #### Check - Success Confirmations
 
 ```mdx
 <Check>
-Positive confirmations, successful completions, or achievement indicators
+  Positive confirmations, successful completions, or achievement indicators
 </Check>
 ```
 
@@ -515,11 +549,11 @@ Example of a single code block:
 ````mdx
 ```javascript config.js
 const apiConfig = {
-  baseURL: 'https://api.example.com',
+  baseURL: "https://api.example.com",
   timeout: 5000,
   headers: {
-    'Authorization': `Bearer ${process.env.API_TOKEN}`
-  }
+    Authorization: `Bearer ${process.env.API_TOKEN}`,
+  },
 };
 ```
 ````
@@ -546,6 +580,7 @@ response = requests.get('/api/endpoint',
 curl -X GET '/api/endpoint' \
   -H 'Authorization: Bearer YOUR_API_KEY'
 ```
+
 </CodeGroup>
 ````
 
@@ -580,7 +615,7 @@ curl -X POST 'https://api.example.com/users' \
 
 Example of step-by-step instructions:
 
-```mdx
+````mdx
 <Steps>
 <Step title="Install dependencies">
   Run `npm install` to install required packages.
@@ -593,9 +628,10 @@ Example of step-by-step instructions:
 <Step title="Configure environment">
   Create a `.env` file with your API credentials.
 
-  ```bash
-  API_KEY=your_api_key_here
-  ```
+```bash
+API_KEY=your_api_key_here
+```
+````
 
   <Warning>
   Never commit API keys to version control.
@@ -608,13 +644,14 @@ Example of step-by-step instructions:
 
 Example of tabbed content:
 
-```mdx
+````mdx
 <Tabs>
 <Tab title="macOS">
   ```bash
   brew install node
   npm install -g package-name
-  ```
+````
+
 </Tab>
 
 <Tab title="Windows">
@@ -637,7 +674,7 @@ Example of tabbed content:
 
 Example of accordion groups:
 
-```mdx
+````mdx
 <AccordionGroup>
 <Accordion title="Troubleshooting connection issues">
   - **Firewall blocking**: Ensure ports 80 and 443 are open
@@ -651,7 +688,8 @@ Example of accordion groups:
     performance: { cache: true, timeout: 30000 },
     security: { encryption: 'AES-256' }
   };
-  ```
+````
+
 </Accordion>
 </AccordionGroup>
 ```
@@ -662,7 +700,8 @@ Example of cards and card groups:
 
 ```mdx
 <Card title="Getting started guide" icon="rocket" href="/quickstart">
-Complete walkthrough from installation to your first API call in under 10 minutes.
+  Complete walkthrough from installation to your first API call in under 10
+  minutes.
 </Card>
 
 <CardGroup cols={2}>
@@ -684,19 +723,19 @@ Example of parameter documentation:
 
 ```mdx
 <ParamField path="user_id" type="string" required>
-Unique identifier for the user. Must be a valid UUID v4 format.
+  Unique identifier for the user. Must be a valid UUID v4 format.
 </ParamField>
 
 <ParamField body="email" type="string" required>
-User's email address. Must be valid and unique within the system.
+  User's email address. Must be valid and unique within the system.
 </ParamField>
 
 <ParamField query="limit" type="integer" default="10">
-Maximum number of results to return. Range: 1-100.
+  Maximum number of results to return. Range: 1-100.
 </ParamField>
 
 <ParamField header="Authorization" type="string" required>
-Bearer token for API authentication. Format: `Bearer YOUR_API_KEY`
+  Bearer token for API authentication. Format: `Bearer YOUR_API_KEY`
 </ParamField>
 ```
 
@@ -706,15 +745,15 @@ Example of response field documentation:
 
 ```mdx
 <ResponseField name="user_id" type="string" required>
-Unique identifier assigned to the newly created user.
+  Unique identifier assigned to the newly created user.
 </ResponseField>
 
 <ResponseField name="created_at" type="timestamp">
-ISO 8601 formatted timestamp of when the user was created.
+  ISO 8601 formatted timestamp of when the user was created.
 </ResponseField>
 
 <ResponseField name="permissions" type="array">
-List of permission strings assigned to this user.
+  List of permission strings assigned to this user.
 </ResponseField>
 ```
 
@@ -738,6 +777,7 @@ Complete user object with all associated data.
     <ResponseField name="avatar_url" type="string | null">
     URL to user's profile picture. Returns null if no avatar is set.
     </ResponseField>
+
   </Expandable>
   </ResponseField>
 </Expandable>
@@ -752,11 +792,14 @@ Wrap all images in frames:
 
 ```mdx
 <Frame>
-<img src="/images/dashboard.png" alt="Main dashboard showing analytics overview" />
+  <img
+    src="/images/dashboard.png"
+    alt="Main dashboard showing analytics overview"
+  />
 </Frame>
 
 <Frame caption="The analytics dashboard provides real-time insights">
-<img src="/images/analytics.png" alt="Analytics dashboard with charts" />
+  <img src="/images/analytics.png" alt="Analytics dashboard with charts" />
 </Frame>
 ```
 
@@ -767,7 +810,7 @@ Use the HTML video element for self-hosted video content:
 ```mdx
 <video
   controls
-  className="w-full aspect-video rounded-xl"
+  className="aspect-video object-cover w-full h-full"
   src="link-to-your-video.com"
 ></video>
 ```
@@ -776,7 +819,7 @@ Embed YouTube videos using iframe elements:
 
 ```mdx
 <iframe
-  className="w-full aspect-video rounded-xl"
+  className="aspect-video object-cover w-full h-full"
   src="https://www.youtube.com/embed/4KzFe50RQkQ"
   title="YouTube video player"
   frameBorder="0"
@@ -791,7 +834,7 @@ Example of tooltip usage:
 
 ```mdx
 <Tooltip tip="Application Programming Interface - protocols for building software">
-API
+  API
 </Tooltip>
 ```
 
@@ -806,9 +849,10 @@ Use updates for changelogs:
 - Improved error messages with actionable suggestions
 
 ## Bug fixes
+
 - Fixed pagination issue with large datasets
 - Resolved authentication timeout problems
-</Update>
+  </Update>
 ```
 
 ## Required Page Structure
