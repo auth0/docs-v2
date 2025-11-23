@@ -1,93 +1,148 @@
+## 📝 Before you begin
+
+By opening this PR, you agree to the terms of the [Auth0 Code of Conduct](https://github.com/auth0/open-source-template/blob/master/CODE-OF-CONDUCT.md). For guidance on creating a high-quality PR, see the [Contributing Guidelines](CONTRIBUTING.md).
+
 ## ✏️ Changes
 
-Please describe what this PR changes and why. If this touches multiple documentation sites (`main/` and `auth4genai/`), please call that out.
+Describe what this PR changes and why. Keep it brief.
+
+- What problem does it solve?
+- Which docs or UI areas are affected?
+- Does it span more than one docs site (`main/`, `auth4genai/`) or the shared UI library (`ui/`)?
 
 ## 📁 Documentation scope
 
-**Site(s) affected:**
-- [ ] `main/` - Auth0 main documentation
-- [ ] `auth4genai/` - Auth0 for AI Agents documentation
-- [ ] `ui/` - Shared component library
-- [ ] Infrastructure/tooling
+**Docs site(s) affected**
 
-**Type of change:**
-- [ ] New documentation
-- [ ] Update to existing documentation
-- [ ] Navigation/information architecture change
+- [ ] `main/`
+- [ ] `auth4genai/`
+
+**Other areas**
+
+- [ ] Shared UI library (`ui/`)
+- [ ] GitHub workflows (`.github/workflows/`)
+- [ ] Tooling or scripts (`tools/`)
+
+**Type of change**
+
+- [ ] New page or major section
+- [ ] Update to existing content
+- [ ] Navigation or structure change
 - [ ] Code examples or snippets
 - [ ] UI component or Mintlify configuration
-- [ ] Linting/tooling/workflows
+- [ ] GitHub workflows (`.github/workflows/`)
+- [ ] Scripts or tooling (`tools/`)
+
+Add paths or permalinks if it helps reviewers.
 
 ## 🔗 References
 
-Link to relevant GitHub issues, specifications, or related public discussions.
+Link any related issues, design docs, or connected PRs.
+
+- Issue(s): #
+- Related work:
 
 ## 🎯 Testing
 
-**Local validation:**
-- [ ] Ran `mint dev` in affected docs folder(s)
-- [ ] Checked for broken links with `mint broken-links` (if applicable)
-- [ ] Verified accessibility with `mint a11y` (if applicable)
-- [ ] Built UI library with `npm run build` (if UI changes)
+Mark what you validated and note anything skipped.  
+(Unit tests do not apply in this repo.)
 
-**Style compliance:**
-- [ ] Follows the Contribution Guidelines (TBD)
-- [ ] Uses correct Auth0 terminology and sentence case for headings
-- [ ] Code blocks include language and filename where appropriate
+**Local validation**
+
+- [ ] Content-only change (no build or navigation impact)
+- [ ] `mint dev` in affected folders
+- [ ] `mint broken-links` (when applicable)
+- [ ] `mint a11y` (when applicable)
+- [ ] `npm run build` in `ui/` (for UI changes)
+
+**Style and structure**
+
+- [ ] Follows the Contributing Guidelines
+- [ ] Uses correct Auth0 terminology
+- [ ] Code blocks include language and filenames when needed
+
+**Repo checks**
+
+- [ ] All required GitHub checks are passing
+- [ ] The correct base branch is used
+
+If something was not run or does not apply, note it here.
 
 ## 🔄 Redirects
 
-**Please add redirects if:**
-- [ ] Pages are being removed or URLs are changing
-- [ ] Navigation structure changes affect existing URLs
+Use this section only if URLs change.
 
-If redirects are needed, please add them to the `redirects` array in the appropriate `docs.json` file:
+- [ ] Pages removed or permalinks changed
+- [ ] Navigation changes that alter existing URLs
+
+If redirects are needed, update the relevant `docs.json` and list them here:
+
 ```json
-{
-  "source": "/docs/old-path",
-  "destination": "/docs/new-path"
-}
+[
+  {
+    "source": "/docs/old-path",
+    "destination": "/docs/new-path"
+  }
+]
 ```
 
-## 🌍 Internationalization
+## 🌍 Internationalization (main docs only)
 
-**Localized content (main docs only):**
-- [ ] Not applicable - no English content changes
-- [ ] Changes apply to English content only (localized versions will be updated separately)
-- [ ] Changes include updates to localized versions (`fr-ca/`, `ja-jp/`)
+* [ ] Not applicable - no English content changes in `main/`
+* [ ] English only; localization handled separately
+* [ ] Includes updates to localized content (for example, `main/docs/fr-ca/`, `main/docs/ja-jp/`)
 
-**Note:** Main docs support French Canadian (`main/docs/fr-ca/`) and Japanese (`main/docs/ja-jp/`). If you're updating existing pages, consider whether localized versions need corresponding updates.
+Add notes if something needs follow-up in localized folders.
 
-## 📊 Impact
+## 🧩 Impact and dependencies
 
-**User-facing changes:**
-Please describe any user-facing impact:
-- Does this introduce new pages, remove pages, or change URLs?
-- Does this document a new feature, Early Access capability, or breaking change?
-- Are there plan restrictions (Enterprise/Professional) that need callouts?
+**User-facing impact**
 
-**Dependencies:**
-Please note any dependencies or coordination needs:
-- Are there related PRs or release timing considerations?
-- Does this require coordination with Product, Legal, or Security teams?
+Summarize what readers will notice:
+
+* New or removed pages
+* URL changes
+* New feature, Early Access feature, or breaking change
+* Plan restrictions that need callouts
+
+**Dependencies**
+
+List anything this PR depends on or influences:
+
+* Product release timing
+* Related PRs or repos
+* Follow-up docs needed after merge
 
 ## 🚀 Deployment
 
-✅🚫 This can be deployed any time (Mintlify auto-deploys on merge to main)
+* [ ] Safe to deploy on merge
+* [ ] Do not merge until a condition is met
 
-<!--
-OR
-⚠️ This should not be merged until:
-- Other PR is merged because REASON
-- After date because REASON
-- Other condition: REASON
--->
+If blocked, state the condition:
+
+* Dependent PRs:
+* Date or window:
+* Other requirement:
 
 ## 📝 Follow-up
 
-- [ ] No follow-up needed
-- [ ] Follow-up issue/PR needed (describe below)
+* [ ] No follow-up needed
+* [ ] Follow-up work required
+
+Add links or describe next steps if needed.
 
 ## 💬 Additional context
 
-Please add any other context, screenshots, or preview links that would help reviewers.
+Optional. Add anything reviewers should know:
+
+* Specific pages in the Mintlify preview you want checked
+* Screenshots or diagrams (with alt text)
+* Notes for specific reviewers
+
+> [!TIP]
+> Useful references:
+>
+> * [Contributing Guidelines](CONTRIBUTING.md)
+> * Mintlify documentation: [https://www.mintlify.com/docs](https://www.mintlify.com/docs)
+> * [main README](main/README.md)
+> * [auth4genai README](auth4genai/README.md)
