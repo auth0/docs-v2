@@ -94,7 +94,7 @@ export const Prerequisites = ({
       If the user is not enrolled, you can send an enrollment request by email:
       <Frame>
         <img
-          src="/ai/docs/enroll_user_in_auth0_guardian.png"
+          src="/ai/docs/img/enroll_user_in_auth0_guardian.png"
           alt="Enable Guardian Push Screenshot"
         />
       </Frame>
