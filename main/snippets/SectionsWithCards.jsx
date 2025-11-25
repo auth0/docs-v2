@@ -1,5 +1,5 @@
 export const SectionCard = ({ item }) => {
-  const getLink = (item, label) => item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
+  const getLink = (item, label) => item?.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
   const github = getLink(item, "github");
   const sample = getLink(item, "sample app");
   const quickstart = getLink(item, "quickstart");
@@ -157,7 +157,7 @@ export const QuickstartCard = ({ item }) => {
     <a
       href={link}
       className="
-        libraries_card mb-[16px] block
+        border-b-0 libraries_card mb-[16px] block
         rounded-xl border bg-white shadow-sm hover:shadow-md transition-shadow
         border-gray-200 dark:border-gray-800 dark:bg-black
         !no-underline
