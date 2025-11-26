@@ -47,6 +47,22 @@ export const Prerequisites = ({
       type.
     </Step>,
 
+    <Step title="Configure Notification Channel settings">
+      Configure the notification channels (such as email or push notifications) for your Auth0 Application. Go to{" "}
+      <strong>
+        Applications &gt; [Your Application] &gt; Settings &gt; Client-Initiated Backchannel Authentication (CIBA) section &gt;
+      </strong>{" "}
+      and enable the{" "} notification channel(s) to use with the asynchronous authorization requests for this application.
+
+      To learn more about <strong>configuring notification channels</strong> and using the <strong>requested expiry</strong> setting, read the {" "}
+      <a
+        href="/ai/docs/intro/asynchronous-authorization#user-consent-and-notification-channel-selection"
+        target="_self"
+      >
+        Asynchronous Authorization
+      </a>
+      {" "} documentation.
+    </Step>,
     <Step title="Enable Guardian Push">
       Enable Mutli-factor authentication (MFA) with Guardian Push Notifications
       for your Auth0 tenant. To learn more about MFA with Guardian, read the{" "}
@@ -78,7 +94,7 @@ export const Prerequisites = ({
       If the user is not enrolled, you can send an enrollment request by email:
       <Frame>
         <img
-          src="/ai/docs/enroll_user_in_auth0_guardian.png"
+          src="/ai/docs/img/enroll_user_in_auth0_guardian.png"
           alt="Enable Guardian Push Screenshot"
         />
       </Frame>

@@ -4,6 +4,7 @@ export const Auth0SetupBlock = ({
   clientSecretName = "Client Secret",
   scopesName = "Permissions",
   allowFreeFormScopes = false,
+  allowOfflineAccess = false,
 }) => {
   return (
     <>
@@ -28,8 +29,16 @@ export const Auth0SetupBlock = ({
               application. These determine what permissions your application can
               request from {providerName}, whether for authentication (such as
               accessing basic profile details) or for API access (such as
-              connecting to the provider's APIs).
+              connecting to the provider's APIs).<br/><br/>For a Dropbox and Google social
+              connection, you must select <b>Offline Access</b> in the Auth0 Dashboard, enabling
+              the client application to obtain an Auth0 refresh token.
             </li>
+            {allowOfflineAccess && (
+              <li>
+                Under <b>{scopesName}</b>, enable <b>Offline Access</b> for the connection.
+                This is required by Auth0 to obtain a refresh token from {providerName}.
+              </li>
+            )}
             {allowFreeFormScopes && (
               <li>
                 Add any additional scopes your application requires in the{" "}
@@ -39,11 +48,11 @@ export const Auth0SetupBlock = ({
           </ol>
         </li>
         <li>
-          In <b>Advanced</b>, <b>Enable Token Vault</b>. This lets the
-          connection retrieve and securely store access tokens for third‑party
+          In <b>Purpose</b>, toggle on <b>Use for Connected Accounts for Token Vault</b>. This lets the
+          connection retrieve and securely store access tokens for external
           APIs. Learn more in{" "}
-          <a href="https://auth0.com/docs/secure/tokens/token-vault/configure-token-vault">
-            Configure Token Vault
+          <a href="https://auth0.com/docs/secure/tokens/token-vault/connected-accounts-for-token-vault">
+            Connected Accounts for Token Vault
           </a>.
         </li>
         <li>Click <b>Create</b>.</li>

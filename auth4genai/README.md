@@ -30,7 +30,7 @@ mint dev
 
 ### Publishing Changes
 
-Install our Github App to auto propagate changes from your repo to your deployment. Changes will be deployed to production automatically after pushing to the default branch. Find the link to install on your dashboard.
+Install our GitHub App to auto propagate changes from your repo to your deployment. Changes will be deployed to production automatically after pushing to the default branch. Find the link to install on your dashboard.
 
 #### Troubleshooting
 
@@ -40,7 +40,7 @@ Install our Github App to auto propagate changes from your repo to your deployme
 
 ## Custom React Components
 
-Use the `snippets` folder to hold content we want to reuse throughout the application; for example, custom React components or JSON-style data. 
+Use the `snippets` folder to hold content we want to reuse throughout the application; for example, custom React components or JSON-style data.
 Note that when importing a component into a `.mdx` file, we must include everything that component imports as well.
 For example: `SearchAndFilterGrid` imports `CustomCard`. When importing and using `SearchAndFilterGrid` in `/integrations/overview.mdx` file, we must also import `CustomCard`.
 
@@ -71,3 +71,7 @@ For example:
 ...
 
 ```
+
+## Vale Linting
+
+We use [Vale](https://vale.sh/) to keep terminology and brand usage consistent across the docs. See the dedicated Vale guide in [`./.vale/README.md`](./.vale/README.md) for details on configuration structure, MDX support, and how to extend or adjust the rules.
