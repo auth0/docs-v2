@@ -154,7 +154,7 @@ function ProfileMenuContent({
                 </a>
               </ContentText>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={onSwitchTenant}>
+            {onSwitchTenant && <DropdownMenuItem onClick={onSwitchTenant}>
               <SvgIcon iconName="refresh" className="adu:mr-2" />
               <ContentText
                 className="adu:text-foreground-bold"
@@ -163,7 +163,7 @@ function ProfileMenuContent({
                 Switch Tenant
               </ContentText>
               <SvgIcon iconName="caret-right" className="adu:ml-auto" />
-            </DropdownMenuItem>
+            </DropdownMenuItem>}
             <DropdownMenuSeparator />
           </>
         ) : (
