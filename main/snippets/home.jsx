@@ -1,21 +1,27 @@
 export const DocsBanner = () => {
   return (
-    <div className="gap-5 flex justify-center p-6 bg-[radial-gradient(1200px_600px_at_50%_-10%,rgba(180,160,255,0.45)_0%,rgba(255,235,240,0.35)_40%,rgba(255,245,235,0.6)_100%)]">
+    <div
+      className="gap-5 flex justify-center p-6"
+      style={{
+        background:
+          "radial-gradient(1200px 800px at 25% -25%, rgba(180, 160, 255, 0.45) 0%, rgba(255, 255, 255, 1) 50%)",
+      }}
+    >
       <div className="w-[min(860px,90vw)] text-center px-0 py-2 md:px-6 md:py-12">
         <h1
-          className="mb-5 font-inter font-semibold text-[16rem] text-center text-gray-900 dark:text-white"
+          className="mb-5 font-aeonik font-semibold text-[16rem] text-center text-gray-900 dark:text-white"
           style={{
-            fontSize: "3.5rem",
+            fontSize: "2.25rem",
           }}
         >
           Auth0 Docs
         </h1>
-        <p className="mt-4 mb-10 font-medium text-center text-gray-600 max-w-2xl mx-auto dark:text-white">
+        <span className="mt-4 mb-10 text-center text-black/50 max-w-2xl mx-auto dark:text-white text-xl tracking-tight">
           Browse the latest sample code, articles, tutorials,
           <br /> and API reference.
-        </p>
+        </span>
 
-        <div className="flex justify-center rounded-3xl overflow-hidden shadow-lg">
+        <div className="flex justify-center rounded-3xl overflow-hidden shadow-lg mt-4">
           {/* Mobile light banner (< 420px, light mode) */}
           <img
             noZoom
@@ -30,6 +36,9 @@ export const DocsBanner = () => {
             src="/docs/images/home/banner.svg"
             alt="Auth0 Docs Banner"
             className="hidden w-full h-auto sm:block dark:hidden"
+            style={{
+              objectViewBox: "inset(1px 1px)",
+            }}
           />
           {/* Desktop dark banner (>= 420px, dark mode) */}
           <img
@@ -37,6 +46,9 @@ export const DocsBanner = () => {
             src="/docs/images/home/banner-dark.svg"
             alt="Auth0 Docs Banner (dark)"
             className="hidden w-full h-auto sm:dark:block"
+            style={{
+              objectViewBox: "inset(1px 1px)",
+            }}
           />
         </div>
       </div>
@@ -72,7 +84,7 @@ export const DocsFeatureCards = () => {
         <a
           key={i}
           href={f.link}
-          className="group flex flex-col items-start justify-between rounded-2xl px-6 py-6 bg-white dark:bg-neutral-900/60 border border-gray-200 dark:border-white/10 hover:border-neutral-300 shadow-sm dark:hover:border-white transition-all ease-out duration-200 no_external_icon"
+          className="group flex flex-col items-start justify-between rounded-3xl px-6 py-6 bg-white dark:bg-neutral-900/60 border border-black/10 dark:border-white/10 hover:border-black/50 shadow-sm dark:hover:border-white transition-all ease-out duration-200 no_external_icon active:scale-95"
         >
           <div className="flex flex-col items-start gap-3 w-full">
             <div className="size-10 flex items-start justify-start">
@@ -95,7 +107,7 @@ export const DocsFeatureCards = () => {
               >
                 {f.title}
               </h3>
-              <span className="opacity-0 translate-y-4 scale-50 blur-md group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:blur-none transition-all duration-200 ease-out flex items-center justify-center size-8 rounded-full bg-black dark:bg-white">
+              <span className="opacity-0 translate-y-4 scale-50 blur-md group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:blur-none transition-all duration-200 ease-out flex items-center justify-center size-8 rounded-full bg-black dark:bg-white active:scale-95">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -169,7 +181,8 @@ export const LanguageGrid = () => {
           <a
             key={idx}
             href={lang.href}
-            className="flex flex-col items-center justify-center px-8 py-4 rounded-2xl bg-white/60 dark:bg-neutral-900/60 border border-gray-200 dark:border-white/10 shadow-sm hover:shadow-md hover:border-black dark:hover:border-white transition"
+            className="flex flex-col items-center justify-center px-8 py-4 rounded-3xl bg-white/60 dark:bg-neutral-900/60 border border-gray-200 dark:border-white/10 shadow-sm hover:border-black/50 dark:hover:border-white transition active:scale-95"
+            s
           >
             <img
               noZoom
@@ -221,17 +234,17 @@ export const ProductGrid = () => {
               no_external_icon
               group
               flex items-center justify-center
-              rounded-2xl
+              rounded-3xl
               min-h-[72px] md:min-h-[80px]
               px-6
               text-base md:text-lg font-inter font-medium
               bg-white/70 dark:bg-neutral-900/60
               border border-gray-200 dark:border-white/10
               shadow-sm
-              hover:shadow-md
-              hover:border-black dark:hover:border-white
+              hover:border-black/50 dark:hover:border-white
               transition
               focus:outline-none focus-visible:ring-2 focus-visible:ring-black/60 dark:focus-visible:ring-white/60
+              active:scale-95
             "
           >
             <span className="text-gray-900 dark:text-white">{p.label}</span>
@@ -282,7 +295,7 @@ export const LearnBasicsGrid = () => {
             key={it.title}
             href={it.href}
             target="_blank"
-            className="no_external_icon group block rounded-2xl border border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-black dark:hover:border-white hover:shadow-lg transition-all"
+            className="no_external_icon group block rounded-3xl border border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 hover:border-black/50 dark:hover:border-white transition-all"
           >
             {/* Icon */}
             <div className="w-12 h-12 mb-4 overflow-hidden">
