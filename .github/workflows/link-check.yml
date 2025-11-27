@@ -1,0 +1,95 @@
+name: Link Checker
+run-name: Link Checker (${{ github.event_name }} • ${{ github.ref_name }})
+
+on:
+  pull_request:
+    paths:
+    # Only run when docs files change in either site
+    - 'main/**/*.md'
+    - 'main/**/*.mdx'
+    - 'main/**/*.jsx'
+    - 'auth4genai/**/*.md'
+    - 'auth4genai/**/*.mdx'
+    - 'auth4genai/**/*.jsx'
+  workflow_dispatch: {} # Manual run (full scan for both sites)
+
+concurrency:
+  # One link-check run per ref; newer runs cancel older ones on the same branch/PR
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  link-check:
+    name: Link Checker (${{ matrix.site.name }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # required by checkout and changed-files
+
+    strategy:
+      # If one site fails (auth0 vs auth0-genai), do not cancel the other
+      fail-fast: false
+      matrix:
+        site:
+        - name: auth0
+          path: main
+        - name: auth0-genai
+          path: auth4genai
+
+    steps:
+    - name: Checkout repo
+      # https://github.com/actions/checkout
+      # Pin to v6.0.0 tag commit for supply-chain safety
+      uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+    - name: Get changed files
+      # Only needed on PRs; for manual runs we always scan everything
+      if: github.event_name == 'pull_request'
+      id: changed
+      # https://github.com/yumemi-inc/changed-files
+      # Pin to v3.2.0 tag commit for supply-chain safety
+      uses: yumemi-inc/changed-files@50f2544ad88b4f274eace9689431b7281132304c # v3.2.0
+      with:
+        # Only consider docs files in the current site (from the matrix)
+        patterns: |
+          ${{ matrix.site.path }}/**/*.md
+          ${{ matrix.site.path }}/**/*.mdx
+          ${{ matrix.site.path }}/**/*.jsx
+        # Ignore deletions; we care about content that still exists
+        statuses: 'added|modified|renamed'
+        # Plain space-separated list, easier to feed into lychee args
+        format: 'plain'
+
+    - name: Decide Lychee targets
+      id: targets
+      # Run if:
+      # - not a PR (manual full scan), OR
+      # - PR with at least one changed file in this site
+      if: >
+        github.event_name != 'pull_request' ||
+        steps.changed.outputs.files != ''
+      run: |
+        # On PRs, use the list of changed files from the previous step.
+        # On manual runs, scan the whole docs tree for that site.
+        echo "targets=${{ github.event_name == 'pull_request' && steps.changed.outputs.files || format('''{0}/**/*.md'' ''{0}/**/*.mdx'' ''{0}/**/*.jsx''', matrix.site.path) }}" >> "$GITHUB_OUTPUT"
+
+    - name: Run Lychee on target
+      id: lychee
+      # Skip if we somehow ended up with no targets
+      if: steps.targets.outputs.targets != ''
+      # https://github.com/lycheeverse/lychee-action
+      # Pin to v2.7.0 tag commit
+      uses: lycheeverse/lychee-action@a8c4c7cb88f0c7386610c35eb25108e448569cb0 # v2.7.0
+      continue-on-error: true # let the job finish and report even if links are broken
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # used for GitHub API calls (e.g. rate limits, private links)
+      with:
+        fail: false # FIXME: Once the config, links, and fixes have stabilized, we should enable for hard block. For now this is just informative
+        # Important bits:
+        # - --root-dir ties file:// URLs to the correct site root
+        # - --format detailed + --verbose for useful CI logs
+        # - ${targets} is either changed files (PR) or whole tree (manual run)
+        args: >
+          --root-dir "$(pwd)/${{ matrix.site.path }}"
+          --format detailed
+          --verbose
+          ${{ steps.targets.outputs.targets }}
