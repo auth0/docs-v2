@@ -1,0 +1,69 @@
+To call your APIs on behalf of your users, the MCP server needs to exchange the Auth0 access token it received from the MCP client (with the audience set to the MCP server itself) for a new Auth0 access token with the audience set to your API. In Auth0, this is called Custom Token Exchange and uses [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html).
+
+### How tools use token exchange
+Here's how the `greet` tool performs token exchange and calls the upstream API:
+
+```python wrap lines highlight={10,11,12,13,14,19}
+@mcp.tool(name="greet")
+@require_scopes(["tool:greet"])
+async def greet(name: str, ctx: Context) -> str:
+    user_name = name.strip() if name else "there"
+    auth_info = ctx.request_context.request.state.auth
+    user_id = auth_info.get("extra", {}).get("sub")
+
+    logger.info(f"Greet tool invoked for user: {user_id}")
+
+    # Exchange token and call upstream API
+    exchange_result = await exchange_custom_token(
+        ctx.request_context.request.state.api_client,
+        auth_info["token"]
+    )
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{config.api_base_url}/api/private-scope",
+            headers={"authorization": f"Bearer {exchange_result['token']}"}
+        )
+        upstream_result = response.json()
+
+    return f"Hello, {user_name} ({user_id})!\nUpstream API Response: {json.dumps(upstream_result, indent=2)}"
+```
+
+### The core logic: `exchange_custom_token`
+
+The Python implementation uses the `exchange_custom_token` function that handles the token exchange process.
+
+```python wrap lines highlight={3,4,5,6,7,8}
+async def exchange_custom_token(api_client, subject_token: str) -> dict:
+    """Exchange subject token for access token via Custom Token Exchange."""
+    result = await api_client.get_token_by_exchange_profile(
+        subject_token=subject_token,
+        subject_token_type=config.mcp_auth0_subject_token_type,
+        audience=config.api_auth0_audience,
+        scope=config.mcp_auth0_exchange_scope or None
+    )
+    return {"token": result["access_token"], "scopes": result.get("scope", "")}
+```
+
+This function uses the `get_token_by_exchange_profile` method of `ApiClient` from the `auth0-api-python` SDK and, on a successful exchange, returns the new access token and its associated scopes. This method implements the [Custom Token Exchange](https://auth0.com/docs/authenticate/custom-token-exchange) flow.
+
+### Client Configuration
+
+The `ApiClient` is initialized in the `Auth0Middleware` (located in `src/auth0/middleware.py`) with the credentials of the application performing the exchange:
+
+```python src/auth0/middleware.py wrap lines
+self.client = ApiClient(ApiClientOptions(
+    domain=domain, # AUTH0_DOMAIN env var
+    audience=audience, # API_AUTH0_AUDIENCE env var
+    client_id=client_id, # MCP_AUTH0_CLIENT_ID env var
+    client_secret=client_secret # MCP_AUTH0_CLIENT_SECRET env var
+))
+```
+
+The configured client is then attached to the request context during middleware processing, making it available to all tools:
+
+```python src/auth0/middleware.py wrap lines
+# In the Auth0Middleware dispatch method
+request.state.api_client = self.client
+```
+
