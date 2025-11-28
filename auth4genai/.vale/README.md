@@ -54,7 +54,7 @@ Vale parses `.mdx` files using `mdx2vast`. The parser automatically ignores:
 * JSX components and JSX blocks
 * fenced code blocks
 * inline backtick code
-* URLs (see [URL handling](https://vale.sh/docs/topics/urls))
+* URLs (see Vale’s URL handling notes: https://github.com/errata-ai/vale/issues/320)
 * single-line `{ ... }` JavaScript expressions
 
 These defaults help avoid false positives in pages that combine prose with examples, components, and structured metadata.
