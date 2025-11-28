@@ -58,39 +58,18 @@ if (foo bar) {
 }
 ```
 
-### Placeholders
+### Placeholders and template variables
 
-Use curly braces `{}` to indicate a variable that’s part of a URL path: `{yourDomain}`, `/api/v2/clients/{clientId}`
+Auth0 documentation uses several types of placeholders to represent values that vary by user, tenant, or context. For comprehensive guidance on choosing and formatting placeholders, read [Placeholders & Template Variables](placeholders-and-template-variables.md).
 
-Use angle brackets `<>` with capitalized letters separated by underscores to indicate a variable that’s a user-provided value: `<YOUR_MANAGEMENT_API_TOKEN>`
+**Quick reference:**
 
-Properly-formatted example:
+- Use `{{doubleCurly}}` for dynamic template variables that auto-populate: `{{yourDomain}}`, `{{yourClientId}}`
+- Use `{singleCurly}` for URL path variables: `{yourDomain}`, `/api/v2/clients/{clientId}`
+- Use `<ANGLE_BRACKETS>` for user-provided values: `<YOUR_MANAGEMENT_API_TOKEN>`
+- Use `${dollar}` for build-time document variables: `${manage_url}`, `${auth0js_url}`
 
-```java
-curl --request PATCH 'https://{yourDomain}/api/v2/clients/{clientId}' \
---header 'Content-Type: application/json' \
---header 'Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>' \
---data '{
-    "grant_types": [
-        "authorization_code"
-    ]
-}'
-```
-
-Example with code formatting that’s not recommended:
-
-```java
-curl --request PATCH 'https://{yourDomain}/api/v2/clients/<clientId>' \
---header 'Content-Type: application/json' \
---header 'Authorization: Bearer <your-management-api-token>' \
---data '{
-    "grant_types": [
-        "authorization_code"
-    ]
-}'
-```
-
-Reference: [Google Developer Style Guide](https://developers.google.com/style/placeholders)
+See also: [Google Developer Style Guide on Placeholders](https://developers.google.com/style/placeholders)
 
 ### Cross-references and links
 
