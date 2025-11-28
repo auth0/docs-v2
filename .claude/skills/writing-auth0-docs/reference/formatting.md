@@ -27,30 +27,15 @@ When giving only the month and year, don't use a comma.
 | --- |
 | She was hired in January 2017. |
 
-## Document variables
+## Document variables and placeholders
 
-When writing docs you can use the following variables instead of hard-coding these values. You can use `${variableName}` within any document to reference the value.
+Auth0 documentation uses several types of variables and placeholders to represent dynamic values. For complete guidance on all variable types, catalogs, and usage guidelines, read [Placeholders & Template Variables](placeholders-and-template-variables.md).
 
-### Common variables
+**Summary of variable types:**
 
-| **Variable** | **Description** | **Default Value** |
-| --- | --- | --- |
-| `manage_url` | The URL to the management portal. | `https://manage.auth0.com` |
-| `auth0js_url` | The URL to the auth0.js CDN location. |   |
-| `auth0js_urlv8` | The URL to the auth0.js v8 CDN location. |   |
-| `lock_url` | The URL to the Lock script CDN location. |   |
-| `env.DOMAIN_URL_SUPPORT` | Support Center URL | `https://support.auth0.com` |
-
-### User-specific variables
-
-| **Variable** | **Description** | **Default Value** |
-| --- | --- | --- |
-| `account.appName` | The name of the current Auth0 app. | `YOUR_APP_NAME` |
-| `account.tenant` | The name of the current Auth0 tenant. | `YOUR_TENANT` |
-| `account.namespace` | The name of the current Auth0 namespace. | `YOUR_NAMESPACE` |
-| `account.clientId` | The Client ID of the current Auth0 app. | `YOUR_CLIENT_ID` |
-| `account.clientSecret` | The Client Secret of the current Auth0 app. | `YOUR_CLIENT_SECRET` |
-| `account.callback` | The first callback URL of the current Auth0 app. | `http://YOUR_APP.auth0.com/callback` |
+1. **Dynamic Template Variables** (`{{doubleCurly}}`): Auto-populate from logged-in user's session
+2. **Build-time Document Variables** (`${dollar}`): Replaced during build process
+3. **Static Placeholders** (`{singleCurly}` or `<ANGLE>`): Manual replacement by users
 
 ## Endpoint names
 
@@ -100,5 +85,5 @@ Use the following guidelines:
 
 ## Variables
 
-We use generic variables in many code samples, but we are also able to create variables that auto-populate certain user or tenant values as long as the reader is logged in to the docs application.
+For comprehensive information on using variables and placeholders in code samples, including dynamic auto-population for logged-in users, read [Placeholders & Template Variables](placeholders-and-template-variables.md).
 

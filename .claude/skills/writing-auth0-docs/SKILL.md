@@ -29,7 +29,8 @@ Use this skill when actively authoring new public Auth0 product documentation or
 | Grammar, tense, pronouns, punctuation | [writing-mechanics.md](reference/writing-mechanics.md) |
 | Tables, notes, callouts, code blocks | [formatting.md](reference/formatting.md) |
 | Terminology, capitalization, UI wording | [word-lists.md](reference/word-lists.md) |
-| Links, images, code, placeholders, UI text | [other-conventions.md](reference/other-conventions.md) |
+| Links, images, code, UI text | [other-conventions.md](reference/other-conventions.md) |
+| Placeholders and template variables | [placeholders-and-template-variables.md](reference/placeholders-and-template-variables.md) |
 | Translation-ready writing | [writing-for-translation.md](reference/writing-for-translation.md) |
 | Deprecations, compliance, Early Access | [operational-policies-and-regulatory-articles.md](reference/operational-policies-and-regulatory-articles.md) |
 | Overview and external resources | [auth0-docs-style-guide.md](reference/auth0-docs-style-guide.md), [references-and-resources.md](reference/references-and-resources.md) |
@@ -43,6 +44,7 @@ Use this skill when actively authoring new public Auth0 product documentation or
 
 **While writing:**
 - Voice/tone: Clear, approachable, user-focused
+- Personalization: Use template variables (e.g., `{{yourDomain}}`) for tenant/client values
 - Grammar: Present tense, active voice, imperative mood for instructions
 - Headings: Sentence case (not title case)
 - Language: Inclusive, accessible, avoid idioms/jargon
