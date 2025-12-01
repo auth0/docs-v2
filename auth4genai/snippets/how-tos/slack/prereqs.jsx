@@ -68,9 +68,8 @@ export const SlackPrereqs = ({
     >
       <ul>
         <li>
-          Under the Purpose section, make sure to enable{" "}
-          <code>Use for Authentication</code> and{" "}
-          <code>Use for Connected Accounts with Token Vault</code> toggles.
+          Under the Purpose section, make sure to enable the{" "}
+          <code>Use for Connected Accounts with Token Vault</code> toggle.
         </li>
       </ul>
     </Step>,

@@ -4,7 +4,7 @@ export const SalesforcePrereqs = ({
 }) => {
   const languageSteps = [];
 
-    if (lang === "js") {
+  if (lang === "js") {
     languageSteps.push(
       <Step
         title={
@@ -12,7 +12,7 @@ export const SalesforcePrereqs = ({
             Install Node.js 20+ and <code>npm</code>
           </>
         }
-      />,
+      />
     );
   } else if (lang === "python") {
     languageSteps.push(
@@ -91,22 +91,32 @@ export const SalesforcePrereqs = ({
           >
             Configure a Salesforce OIDC connection
           </a>{" "}
-          in Auth0 with the following scopes
+          in Auth0.
         </>
       }
     >
       <ul>
         <li>
-          <code>openid</code>
+          Under the <strong>General</strong> section, ensure the following{" "}
+          <strong>Scopes</strong>:
+          <ul>
+            <li>
+              <code>openid</code>
+            </li>
+            <li>
+              <code>api</code>
+            </li>
+            <li>
+              <code>refresh_token</code>
+            </li>
+            <li>
+              <code>offline_access</code>
+            </li>
+          </ul>
         </li>
         <li>
-          <code>api</code>
-        </li>
-        <li>
-          <code>refresh_token</code>
-        </li>
-        <li>
-          <code>offline_access</code>
+          Under the Purpose section, make sure to enable the{" "}
+          <code>Use for Connected Accounts with Token Vault</code> toggle.
         </li>
       </ul>
     </Step>,
