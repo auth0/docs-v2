@@ -1,3 +1,5 @@
+import ConfigureCloudflareKvStore from "/snippets/common/configure-cloudflare-kv-store.mdx";
+
 ### 1. Configure Auth0 AI
 
 <Note>
@@ -19,30 +21,35 @@ npm install @auth0/ai-vercel @auth0/ai-cloudflare @auth0/ai
 
 Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required GitHub scopes.
 
-```typescript ./src/lib/auth0-ai.ts wrap lines
+```typescript ./src/agent/auth0-ai.ts wrap lines
 import { Auth0AI, setGlobalAIContext } from "@auth0/ai-vercel";
 import { getCurrentAgent } from "agents";
-import type { Chat } from "./chat";
+
+setGlobalAIContext(() => ({ threadID: getAgent().name }));
+
+const auth0AI = new Auth0AI({
+  store: () => {
+    return (getAgent() as any).auth0AIStore;
+  },
+});
 
 const getAgent = () => {
-  const { agent } = getCurrentAgent<Chat>();
+  const { agent } = getCurrentAgent();
   if (!agent) {
     throw new Error("No agent found");
   }
   return agent;
 };
 
-setGlobalAIContext(() => ({ threadID: getAgent().name }));
-
-const auth0AI = new Auth0AI();
+const refreshToken = async () => {
+  const credentials = getAgent().getCredentials();
+  return credentials?.refresh_token;
+};
 
 export const withGitHub = auth0AI.withTokenVault({
+  refreshToken,
   connection: "github",
   scopes: ["repo"],
-  refreshToken: async () => {
-    const credentials = getAgent().getCredentials();
-    return credentials?.refresh_token;
-  },
 });
 ```
 
@@ -50,19 +57,20 @@ export const withGitHub = auth0AI.withTokenVault({
 
 Wrap your tool using the Auth0 AI SDK to obtain an access token for the GitHub API.
 
-```typescript ./src/agent/tools/listRepositories.ts wrap lines highlight={2-4,9,15,19-21,31-33}
+```typescript ./src/agent/tools/listRepositories.ts wrap lines highlight={7-8,10,16,20-22,29-31}
+import { tool } from "ai";
+import { z } from "zod/v3";
+
 import { Octokit, RequestError } from "octokit";
 import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
 import { TokenVaultError } from "@auth0/ai/interrupts";
-import { withGitHub } from "@/lib/auth0-ai";
-import { tool } from "ai";
-import { z } from "zod";
-
+import { Octokit, RequestError } from "octokit";
+import { withGitHub } from "@/agent/auth0-ai";
 
 export const listRepositories = withGitHub(
   tool({
     description: "List respositories for the current user on GitHub",
-    parameters: z.object({}),
+    inputSchema: z.object({}),
     execute: async () => {
       // Get the access token from Auth0 AI
       const accessToken = getAccessTokenFromTokenVault();
@@ -72,17 +80,14 @@ export const listRepositories = withGitHub(
         const octokit = new Octokit({
           auth: accessToken,
         });
-
         const { data } = await octokit.rest.repos.listForAuthenticatedUser();
 
         return data.map((repo) => repo.name);
       } catch (error) {
-        console.log("Error", error);
-
         if (error instanceof RequestError) {
           if (error.status === 401) {
             throw new TokenVaultError(
-              `Authorization required to access the Token Vault connection`
+              `Authorization required to access the Token Vault`
             );
           }
         }
@@ -92,6 +97,7 @@ export const listRepositories = withGitHub(
     },
   })
 );
+
 ```
 
 ### 3. Handle authentication redirects
@@ -104,79 +110,129 @@ Interrupts are a way for the system to pause execution and prompt the user to ta
 
 On the Chat agent class, you need to set up the tool invocation and handle the interruption messaging via the `errorSerializer`.
 
-```typescript ./src/agent/chat.ts wrap lines highlight={1-2,52-54,63-66}
-import { setAIContext } from "@auth0/ai-vercel";
-import { errorSerializer, withInterruptions } from "@auth0/ai-vercel/interrupts";
-// Other dependencies
-import { AuthAgent, OwnedAgent } from "@auth0/auth0-cloudflare-agents-api";
+```typescript ./src/agent/chat.ts wrap lines highlight={4,6,46,70-84,95}
 import { openai } from "@ai-sdk/openai";
+import { CloudflareKVStore } from "@auth0/ai-cloudflare";
+import {
+  errorSerializer,
+  invokeTools,
+  withInterruptions,
+} from "@auth0/ai-vercel/interrupts";
 import { AIChatAgent } from "agents/ai-chat-agent";
+import {
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  generateId,
+  stepCountIs,
+  streamText,
+  type UIMessage,
+} from "ai";
+import { extend } from "flumix";
+import { executions, tools } from "./tools";
+import { processToolCalls } from "./utils";
 
-const SuperAgent = OwnedAgent(AuthAgent(AIChatAgent<Env>));
+import { AsyncUserConfirmationResumer } from "@auth0/ai-cloudflare";
+import { AuthAgent, OwnedAgent } from "@auth0/auth0-cloudflare-agents-api";
+
+const model = openai("gpt-4o-2024-11-20");
+
+const SuperAgent = extend(AIChatAgent<Env>)
+  .with(AuthAgent)
+  .with(OwnedAgent)
+  .with(AsyncUserConfirmationResumer)
+  .build();
 
 export class Chat extends SuperAgent {
- async onChatMessage(
-    onFinish: StreamTextOnFinishCallback<ToolSet>,
-    options?: { abortSignal?: AbortSignal }
-  ) {
-    // Collect all tools, including MCP tools
+  messages: UIMessage[] = [];
+
+  async onChatMessage() {
     const allTools = {
       ...tools,
-      ...this.mcp.unstable_getAITools(),
+      ...(this.mcp?.getAITools?.() ?? {}),
     };
-    const claims = this.getClaims();
-    // Create a streaming response that handles both text and tool outputs
-    const dataStreamResponse = createDataStreamResponse({
-      execute: withInterruptions(async (dataStream) => {
-        // Process any pending tool calls from previous messages
-        // This handles human-in-the-loop confirmations for tools
-        const processedMessages = await processToolCalls({
-          messages: this.messages,
-          dataStream,
-          tools: allTools,
-          executions,
-        });
 
-        // Stream the AI response using GPT-4
-        const result = streamText({
-          model,
-          system: `You are a helpful assistant that can do various tasks...
+    const claims = this.getClaims?.();
 
-${unstable_getSchedulePrompt({ date: new Date() })}
+    const stream = createUIMessageStream({
+      originalMessages: this.messages,
+      execute: withInterruptions(
+        async ({ writer }) => {
+          await invokeTools({
+            messages: convertToModelMessages(this.messages),
+            tools: allTools,
+          });
+
+          const processed = await processToolCalls({
+            messages: this.messages,
+            dataStream: writer,
+            tools: allTools,
+            executions,
+          });
+
+          const result = streamText({
+            model,
+            stopWhen: stepCountIs(10),
+            messages: convertToModelMessages(processed),
+            system: `You are a helpful assistant that can do various tasks...
 
 If the user asks to schedule a task, use the schedule tool to schedule the task.
 
-The name of the user is ${claims?.name ?? "unknown"}.
-`,
-          messages: processedMessages,
-          tools: allTools,
-          onFinish: async (args) => {
-            onFinish(
-              args as Parameters<StreamTextOnFinishCallback<ToolSet>>[0]
-            );
-          },
-          onError: (error) => {
-            if (!Auth0Interrupt.isInterrupt(error)) {
-              return;
-            }
-            console.error("Error while streaming:", error);
-          },
-          maxSteps: 10,
-        });
+The name of the user is ${claims?.name ?? "unknown"}.`,
+            tools: allTools,
+            onStepFinish: (output) => {
+              if (output.finishReason === "tool-calls") {
+                const last = output.content[output.content.length - 1];
+                if (last?.type === "tool-error") {
+                  const { toolName, toolCallId, error, input } = last;
+                  const serializableError = {
+                    cause: error,
+                    toolCallId,
+                    toolName,
+                    toolArgs: input,
+                  };
+                  throw serializableError;
+                }
+              }
+            },
+          });
 
-        // Merge the AI response stream with tool execution outputs
-        result.mergeIntoDataStream(dataStream);
-      }),
-      onError: errorSerializer((err) => {
-        console.log(err);
-        return "Oops, an error occured!";
-      }),
+          writer.merge(
+            result.toUIMessageStream({
+              sendReasoning: true,
+            })
+          );
+        },
+        { messages: this.messages, tools: allTools }
+      ),
+      onError: errorSerializer(),
     });
 
-    return dataStreamResponse;
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  async executeTask(description: string) {
+    await this.saveMessages([
+      ...this.messages,
+      {
+        id: generateId(),
+        role: "user",
+        parts: [
+          { type: "text", text: `Running scheduled task: ${description}` },
+        ],
+      },
+    ]);
+  }
+
+  get auth0AIStore() {
+    return new CloudflareKVStore({ kv: this.env.Session });
   }
 }
 ```
+
+**Note about CloudflareKVStore:**
+
+<ConfigureCloudflareKvStore />
 
 #### Client Side
 
@@ -188,7 +244,7 @@ npx @auth0/ai-components add TokenVault
 
 Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
 
-```tsx ./src/components/chat.tsx wrap lines highlight={4-6,17-18,33-42}
+```tsx ./src/client/app.tsx wrap lines highlight={4-6,14-17,24,48-71}
 "use client";
 
 import { useChat } from "@ai-sdk/react";
@@ -197,45 +253,80 @@ import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
 import { TokenVaultConsentPopup } from "@/components/auth0-ai/TokenVault/popup";
 
 export default function Chat() {
+  const agent = useAgent({
+    agent: "chat",
+    name: threadID ?? undefined,
+  });
 
-  const {
-    messages: agentMessages,
-    input: agentInput,
-    handleInputChange: handleAgentInputChange,
-    handleSubmit: handleAgentSubmit,
-    addToolResult,
-    clearHistory,
-    toolInterrupt,
-  } = useAgentChatInterruptions({
+  const chat = useAgentChatInterruptions({
     agent,
-    maxSteps: 5,
     id: threadID,
   });
 
-  return (
-    <div>
-      {messages.map((message) => (
-        <div key={message.id}>
-          {message.role === "user" ? "User: " : "AI: "}
-          {message.content}
-        </div>
-      ))}
+  const {
+    messages: agentMessages,
+    sendMessage: handleAgentSubmit,
+    addToolResult,
+    clearHistory,
+    toolInterrupt,
+  } = chat;
 
-      {TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
-        <TokenVaultConsentPopup
-          interrupt={toolInterrupt}
-          connectWidget={{
-            title: "Access to your GitHub repositories",
-            description:"description ...",
-            action: { label: "Check" },
-          }}
-        />
-      )}
+  return (
+    <Layout>
+      {agentMessages.map((m: UIMessage, index) => {
+        const isUser = m.role === "user";
+
+        return (
+          <div key={`${m.id}-${index}`}>
+            {showDebug && (
+              <pre className="text-xs text-muted-foreground overflow-scroll">
+                {JSON.stringify(m, null, 2)}
+              </pre>
+            )}
+            <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`flex gap-2 max-w-[85%] ${
+                  isUser ? "flex-row-reverse" : "flex-row"
+                }`}
+              >
+                <div>
+                  <div>
+                    {m.parts?.map((part: any, i) => {
+                      if (
+                        part?.type?.startsWith("tool-") &&
+                        toolInterrupt &&
+                        TokenVaultInterrupt.isInterrupt(toolInterrupt)
+                      ) {
+                        return (
+                          <TokenVaultConsentPopup
+                            key={toolInterrupt?.toolCall?.id}
+                            interrupt={toolInterrupt}
+                            auth={{ authorizePath: "/auth/login" }}
+                            connectWidget={{
+                              title: "Access to your GitHub repositories",
+                              description:
+                                "We need access to your GitHub repositories in order to call this tool...",
+                              action: { label: "Grant" },
+                            }}
+                          />
+                        );
+                      }
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
 
       <form onSubmit={handleSubmit}>
-        <input value={input} placeholder="Say something..." onChange={(e) => setInput(e.target.value)} />
+        <input
+          value={input}
+          placeholder="Say something..."
+          onChange={(e) => setInput(e.target.value)}
+        />
       </form>
-    </div>
+    </Layout>
   );
 }
 ```
