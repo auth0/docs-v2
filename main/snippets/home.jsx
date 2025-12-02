@@ -4,7 +4,7 @@ export const DocsBanner = () => {
       className="gap-5 flex justify-center p-6"
       style={{
         background:
-          "radial-gradient(1200px 800px at 25% -25%, rgba(180, 160, 255, 0.45) 0%, rgba(255, 255, 255, 1) 50%)",
+          "radial-gradient(1200px 800px at 25% -25%, rgba(180, 160, 255, 0.45) 0%, hsla(var(--bg) / 1) 50%)",
       }}
     >
       <div className="w-[min(860px,90vw)] text-center px-0 py-2 md:px-6 md:py-12">
