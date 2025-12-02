@@ -356,6 +356,7 @@ export const LibrariesCards = ({ cards }) => {
 };
 
 export const SectionCard = ({ item }) => {
+  if (!item) return null;
   const getLink = (item, label) => item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
   const github = getLink(item, "github");
   const sample = getLink(item, "sample app");
