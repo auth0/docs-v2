@@ -28,7 +28,7 @@ export const CustomApiClient = ({
           <strong>Add Application</strong> button in the right top corner.
         </li>
         <li>
-          After that click the <strong>Configure Application</strong> button
+          Once you've added the API as an application, click the <strong>Configure Application</strong> button
           in the right top corner.
         </li>
         <li>

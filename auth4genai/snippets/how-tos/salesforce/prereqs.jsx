@@ -115,7 +115,7 @@ export const SalesforcePrereqs = ({
           </ul>
         </li>
         <li>
-          Under the Purpose section, make sure to enable the{" "}
+          Under the <strong>Purpose</strong> section, make sure to enable the{" "}
           <code>Use for Connected Accounts with Token Vault</code> toggle.
         </li>
       </ul>

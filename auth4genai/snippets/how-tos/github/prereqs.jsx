@@ -83,11 +83,11 @@ export const GitHubPrereqs = ({
     >
       <ul>
         <li>
-          Under the Purpose section, make sure to enable the{" "}
+          Under the <strong>Purpose</strong> section, make sure to enable the{" "}
           <code>Use for Connected Accounts with Token Vault</code> toggle.
         </li>
         <li>
-          Under the Permissions section, enable the <code>Offline Access</code>{" "}
+          Under the <strong>Permissions</strong> section, enable the <code>Offline Access</code>{" "}
           scope.
         </li>
       </ul>
