@@ -1,13 +1,19 @@
+import ConfigureCloudflareKvStore from "/snippets/common/configure-cloudflare-kv-store.mdx";
+
 ### 1. Configure Auth0 AI
 
-<Note>If you started from the [Auth0 Cloudflare Agents starter kit](https://github.com/auth0-lab/cloudflare-agents-starter), you can skip this step as the Auth0 AI SDK is already configured.</Note>
+<Note>
+  If you started from the [Auth0 Cloudflare Agents starter
+  kit](https://github.com/auth0-lab/cloudflare-agents-starter), you can skip
+  this step as the Auth0 AI SDK is already configured.
+</Note>
 
 First, you must configure your Cloudflare Agent to use Auth0 and both in the Worker and in the Chat Agent itself. We recommend the following two sdks:
+
 - [Auth0 Hono Web SDK](https://github.com/auth0-lab/auth0-hono): for the Worker.
 - [Auth0 Cloudflare Agents API SDK](https://github.com/auth0-lab/auth0-cloudflare-agents-api) for the Chat Agent.
 
 You can also check our [Starter Kit](https://github.com/auth0-lab/cloudflare-agents-starter) to understand how to configure this.
-
 
 Then, you need to install the Auth0 AI SDK for Cloudflare Agents:
 
@@ -17,7 +23,7 @@ npm install @auth0/ai-vercel @auth0/ai-cloudflare @auth0/ai
 
 Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required Google Calendar scopes.
 
-```typescript ./src/lib/auth0-ai.ts wrap lines
+```typescript ./src/agent/auth0-ai.ts wrap lines
 import { Auth0AI, setGlobalAIContext } from "@auth0/ai-vercel";
 import { getCurrentAgent } from "agents";
 import type { Chat } from "./chat";
@@ -32,15 +38,21 @@ const getAgent = () => {
 
 setGlobalAIContext(() => ({ threadID: getAgent().name }));
 
-const auth0AI = new Auth0AI();
+const auth0AI = new Auth0AI({
+  store: () => {
+    return getAgent().auth0AIStore;
+  },
+});
+
+const refreshToken = async () => {
+  const credentials = getAgent().getCredentials();
+  return credentials?.refresh_token;
+};
 
 export const withGoogleCalendar = auth0AI.withTokenVault({
+  refreshToken,
   connection: "google-oauth2",
   scopes: ["https://www.googleapis.com/auth/calendar.freebusy"],
-  refreshToken: async () => {
-    const credentials = getAgent().getCredentials();
-    return credentials?.refresh_token;
-  },
 });
 ```
 
@@ -48,60 +60,57 @@ export const withGoogleCalendar = auth0AI.withTokenVault({
 
 Wrap your tool using the Auth0 AI SDK to obtain an access token for the Google Calendar API.
 
-```typescript ./src/agent/tools/checkUsersCalendar.ts wrap lines highlight={4-6,10,19,26-28.46-48}
-import { addHours, formatISO } from "date-fns";
-import { GaxiosError } from "gaxios";
-import { google } from "googleapis";
+```typescript ./src/agent/auth0-ai-sample-tools/check-user-calendar.ts wrap lines highlight={1-2,6,8,17,37-39}
 import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
 import { TokenVaultError } from "@auth0/ai/interrupts";
-import { withGoogleCalendar } from "@/lib/auth0-ai";
 import { tool } from "ai";
+import { addHours } from "date-fns";
 import { z } from "zod";
+import { withGoogleCalendar } from "../auth0-ai";
 
 export const checkUsersCalendar = withGoogleCalendar(
   tool({
     description:
       "Check user availability on a given date time on their calendar",
-    parameters: z.object({
+    inputSchema: z.object({
       date: z.coerce.date(),
     }),
     execute: async ({ date }) => {
       // Get the access token from Auth0 AI
       const accessToken = getAccessTokenFromTokenVault();
+      const url = "https://www.googleapis.com/calendar/v3/freeBusy";
+      const body = JSON.stringify({
+        timeMin: date,
+        timeMax: addHours(date, 1),
+        timeZone: "UTC",
+        items: [{ id: "primary" }],
+      });
 
-      // Google SDK
-      try {
-        const calendar = google.calendar("v3");
-        const auth = new google.auth.OAuth2();
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
 
-        auth.setCredentials({
-          access_token: accessToken,
-        });
-
-        const response = await calendar.freebusy.query({
-          auth,
-          requestBody: {
-            timeMin: formatISO(date),
-            timeMax: addHours(date, 1).toISOString(),
-            timeZone: "UTC",
-            items: [{ id: "primary" }],
-          },
-        });
-
-        return {
-          available: response.data?.calendars?.primary?.busy?.length === 0,
-        };
-      } catch (error) {
-        if (error instanceof GaxiosError) {
-          if (error.status === 401) {
-            throw new TokenVaultError(
-              `Authorization required to access the Token Vault connection`
-            );
-          }
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new TokenVaultError(
+            "Authorization required to access the Federated Connection"
+          );
         }
-
-        throw error;
+        throw new Error(
+          `Invalid response from Google Calendar API: ${
+            response.status
+          } - ${await response.text()}`
+        );
       }
+
+      const busyResp = await response.json();
+
+      return { available: busyResp.calendars.primary.busy.length === 0 };
     },
   })
 );
@@ -111,85 +120,139 @@ export const checkUsersCalendar = withGoogleCalendar(
 
 Interrupts are a way for the system to pause execution and prompt the user to take an action—such as authenticating or granting API access—before resuming the interaction. This ensures that any required access is granted dynamically and securely during the chat experience. In this context, Auth0-AI SDK manages authentication redirects in the Vercel AI SDK via these interrupts.
 
-<Note>If you started from the [Auth0 Cloudflare Agents starter kit](https://github.com/auth0-lab/cloudflare-agents-starter), you can skip this section as the Auth0 AI SDK is already configured to handle interrupts.</Note>
+<Note>
+  If you started from the [Auth0 Cloudflare Agents starter
+  kit](https://github.com/auth0-lab/cloudflare-agents-starter), you can skip
+  this section as the Auth0 AI SDK is already configured to handle interrupts.
+</Note>
 
 #### Server Side
 
 On the Chat agent class, you need to set up the tool invocation and handle the interruption messaging via the `errorSerializer`.
 
-```typescript ./src/agent/chat.ts wrap lines highlight={1-2,52-54,63-66}
-import { setAIContext } from "@auth0/ai-vercel";
-import { errorSerializer, withInterruptions } from "@auth0/ai-vercel/interrupts";
-// Other dependencies
-import { AuthAgent, OwnedAgent } from "@auth0/auth0-cloudflare-agents-api";
+```typescript ./src/agent/chat.ts wrap lines highlight={5-6,46,70-84,95}
 import { openai } from "@ai-sdk/openai";
+import { CloudflareKVStore } from "@auth0/ai-cloudflare";
+import {
+  errorSerializer,
+  invokeTools,
+  withInterruptions,
+} from "@auth0/ai-vercel/interrupts";
 import { AIChatAgent } from "agents/ai-chat-agent";
+import {
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  generateId,
+  stepCountIs,
+  streamText,
+  type UIMessage,
+} from "ai";
+import { extend } from "flumix";
+import { executions, tools } from "./tools";
+import { processToolCalls } from "./utils";
 
-const SuperAgent = OwnedAgent(AuthAgent(AIChatAgent<Env>));
+import { AsyncUserConfirmationResumer } from "@auth0/ai-cloudflare";
+import { AuthAgent, OwnedAgent } from "@auth0/auth0-cloudflare-agents-api";
+
+const model = openai("gpt-4o-2024-11-20");
+
+const SuperAgent = extend(AIChatAgent<Env>)
+  .with(AuthAgent)
+  .with(OwnedAgent)
+  .with(AsyncUserConfirmationResumer)
+  .build();
 
 export class Chat extends SuperAgent {
- async onChatMessage(
-    onFinish: StreamTextOnFinishCallback<ToolSet>,
-    options?: { abortSignal?: AbortSignal }
-  ) {
-    // Collect all tools, including MCP tools
+  messages: UIMessage[] = [];
+
+  async onChatMessage() {
     const allTools = {
       ...tools,
-      ...this.mcp.unstable_getAITools(),
+      ...(this.mcp?.getAITools?.() ?? {}),
     };
-    const claims = this.getClaims();
-    // Create a streaming response that handles both text and tool outputs
-    const dataStreamResponse = createDataStreamResponse({
-      execute: withInterruptions(async (dataStream) => {
-        // Process any pending tool calls from previous messages
-        // This handles human-in-the-loop confirmations for tools
-        const processedMessages = await processToolCalls({
-          messages: this.messages,
-          dataStream,
-          tools: allTools,
-          executions,
-        });
 
-        // Stream the AI response using GPT-4
-        const result = streamText({
-          model,
-          system: `You are a helpful assistant that can do various tasks...
+    const claims = this.getClaims?.();
 
-${unstable_getSchedulePrompt({ date: new Date() })}
+    const stream = createUIMessageStream({
+      originalMessages: this.messages,
+      execute: withInterruptions(
+        async ({ writer }) => {
+          await invokeTools({
+            messages: convertToModelMessages(this.messages),
+            tools: allTools,
+          });
+
+          const processed = await processToolCalls({
+            messages: this.messages,
+            dataStream: writer,
+            tools: allTools,
+            executions,
+          });
+
+          const result = streamText({
+            model,
+            stopWhen: stepCountIs(10),
+            messages: convertToModelMessages(processed),
+            system: `You are a helpful assistant that can do various tasks...
 
 If the user asks to schedule a task, use the schedule tool to schedule the task.
 
-The name of the user is ${claims?.name ?? "unknown"}.
-`,
-          messages: processedMessages,
-          tools: allTools,
-          onFinish: async (args) => {
-            onFinish(
-              args as Parameters<StreamTextOnFinishCallback<ToolSet>>[0]
-            );
-          },
-          onError: (error) => {
-            if (!Auth0Interrupt.isInterrupt(error)) {
-              return;
-            }
-            console.error("Error while streaming:", error);
-          },
-          maxSteps: 10,
-        });
+The name of the user is ${claims?.name ?? "unknown"}.`,
+            tools: allTools,
+            onStepFinish: (output) => {
+              if (output.finishReason === "tool-calls") {
+                const last = output.content[output.content.length - 1];
+                if (last?.type === "tool-error") {
+                  const { toolName, toolCallId, error, input } = last;
+                  const serializableError = {
+                    cause: error,
+                    toolCallId,
+                    toolName,
+                    toolArgs: input,
+                  };
+                  throw serializableError;
+                }
+              }
+            },
+          });
 
-        // Merge the AI response stream with tool execution outputs
-        result.mergeIntoDataStream(dataStream);
-      }),
-      onError: errorSerializer((err) => {
-        console.log(err);
-        return "Oops, an error occured!";
-      }),
+          writer.merge(
+            result.toUIMessageStream({
+              sendReasoning: true,
+            })
+          );
+        },
+        { messages: this.messages, tools: allTools }
+      ),
+      onError: errorSerializer(),
     });
 
-    return dataStreamResponse;
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  async executeTask(description: string) {
+    await this.saveMessages([
+      ...this.messages,
+      {
+        id: generateId(),
+        role: "user",
+        parts: [
+          { type: "text", text: `Running scheduled task: ${description}` },
+        ],
+      },
+    ]);
+  }
+
+  get auth0AIStore() {
+    return new CloudflareKVStore({ kv: this.env.Session });
   }
 }
 ```
+
+**Note about CloudflareKVStore:**
+
+<ConfigureCloudflareKvStore />
 
 #### Client Side
 
@@ -201,7 +264,7 @@ npx @auth0/ai-components add TokenVault
 
 Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
 
-```tsx ./src/components/chat.tsx wrap lines highlight={4-6,17-18,33-42}
+```tsx ./src/client/app.tsx wrap lines highlight={4-6,14-17,24,48-71}
 "use client";
 
 import { useChat } from "@ai-sdk/react";
@@ -210,45 +273,85 @@ import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
 import { TokenVaultConsentPopup } from "@/components/auth0-ai/TokenVault/popup";
 
 export default function Chat() {
+  const agent = useAgent({
+    agent: "chat",
+    name: threadID ?? undefined,
+  });
 
-  const {
-    messages: agentMessages,
-    input: agentInput,
-    handleInputChange: handleAgentInputChange,
-    handleSubmit: handleAgentSubmit,
-    addToolResult,
-    clearHistory,
-    toolInterrupt,
-  } = useAgentChatInterruptions({
+  const chat = useAgentChatInterruptions({
     agent,
-    maxSteps: 5,
     id: threadID,
   });
 
-  return (
-    <div>
-      {messages.map((message) => (
-        <div key={message.id}>
-          {message.role === "user" ? "User: " : "AI: "}
-          {message.content}
-        </div>
-      ))}
+  const {
+    messages: agentMessages,
+    sendMessage: handleAgentSubmit,
+    addToolResult,
+    clearHistory,
+    toolInterrupt,
+  } = chat;
 
-      {TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
-        <TokenVaultConsentPopup
-          interrupt={toolInterrupt}
-          connectWidget={{
-            title: "Check your availability in Google Calendar",
-            description:"description ...",
-            action: { label: "Check" },
-          }}
-        />
-      )}
+  return (
+    <Layout>
+      {agentMessages.map((m: UIMessage, index) => {
+        const isUser = m.role === "user";
+
+        return (
+          <div key={`${m.id}-${index}`}>
+            {showDebug && (
+              <pre className="text-xs text-muted-foreground overflow-scroll">
+                {JSON.stringify(m, null, 2)}
+              </pre>
+            )}
+            <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`flex gap-2 max-w-[85%] ${
+                  isUser ? "flex-row-reverse" : "flex-row"
+                }`}
+              >
+                <div>
+                  <div>
+                    {m.parts?.map((part: any, i) => {
+                      if (
+                        part?.type?.startsWith("tool-") &&
+                        toolInterrupt &&
+                        TokenVaultInterrupt.isInterrupt(toolInterrupt)
+                      ) {
+                        return (
+                          <TokenVaultConsentPopup
+                            key={toolInterrupt?.toolCall?.id}
+                            interrupt={toolInterrupt}
+                            auth={{ authorizePath: "/auth/login" }}
+                            connectWidget={{
+                              icon: (
+                                <div className="bg-gray-200 p-3 rounded-lg flex-wrap">
+                                  <GoogleCalendarIcon />
+                                </div>
+                              ),
+                              title: "Google Calendar Access",
+                              description:
+                                "We need access to your google Calendar in order to call this tool...",
+                              action: { label: "Grant" },
+                            }}
+                          />
+                        );
+                      }
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
 
       <form onSubmit={handleSubmit}>
-        <input value={input} placeholder="Say something..." onChange={(e) => setInput(e.target.value)} />
+        <input
+          value={input}
+          placeholder="Say something..."
+          onChange={(e) => setInput(e.target.value)}
+        />
       </form>
-    </div>
+    </Layout>
   );
 }
 ```
