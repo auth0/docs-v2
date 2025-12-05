@@ -13,23 +13,194 @@ title: Privileged Worker Token Exchange with Token Vault
 Privileged Worker Token Exchange with Token Vault is currently in Beta. To learn more about Auth0’s product release cycle, read [Product Release Stages](/docs/troubleshoot/product-lifecycle/product-release-stages). To participate in this program, contact [Auth0 Support](https://support.auth0.com/) or your Technical Account Manager.
 </Callout>
 
-Token Vault supports the [token exchange](/docs/secure/tokens/token-vault#supported-token-exchanges), which enables a client application to exchange a signed JWT (subject token) for an external provider’s access or refresh token (requested token).
+Token Vault supports the Privileged Worker Token Exchange, which enables a client application to exchange a signed JWT (subject token) for an external provider’s access or refresh token (requested token).
 
-When a privileged service worker (e.g. a backend application or service) needs a user’s access token to access an external provider, but the user is not present, that service worker cannot use a token exchange to access the Token Vault to call external APIs.
+After successful user authentication and authorization, a client application typically passes the user context, which contains the user's identity, permissions, and session state, as an access or refresh token to perform the token exchange with Token Vault. In service-to-service flows, a client application, such as a backend application or service worker, may need to access resources on the user’s behalf, but because the “user is not present” in an interactive session, the client application doesn’t have access to the user context.
 
-Instead, the privileged service worker can generate a signed JWT bearer token and use that as the subject token to perform the token exchange. This means the privileged worker can perform actions on the user’s behalf without an active user interaction or session.
+In these service-to-service scenarios, the client application can generate a signed JWT bearer token and use it as the subject token to perform the token exchange and receive the necessary tokens to call external APIs. This means the client application can perform actions on the user’s behalf without an active user interaction or session.
 
-The service worker is a highly privileged client that can also request the refresh token from the Token Vault. As a result, the privileged worker must authenticate strongly with the Token Vault using asymmetric cryptographic methods such as [Private Key JWT](/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) assertion or [mutual TLS authentication](/docs/get-started/authentication-and-authorization-flow/authenticate-with-mtls).
+To use the Privileged Worker Token Exchange with Token Vault, the client application must be a highly privileged client that can also request refresh tokens from external providers via Token Vault. It should authenticate with Token Vault using asymmetric cryptographic methods such as [Private Key JWT](/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) assertion or [mutual TLS authentication](/docs/get-started/authentication-and-authorization-flow/authenticate-with-mtls).
 
-## Retrieve an external provider-issued refresh token from Token Vault
+## Prerequisites
 
-### Prerequisites
+Only certain types of clients can use the Privileged Worker Token Exchange with Token Vault:
+- The client must be a first-party client, i.e. the `is_first_party property` is `true`.
+- The client must be a confidential client with a valid authentication mechanism, i.e. the `token_endpoint_auth_method` property must not be set to `none`.
+- The client must be OIDC conformant, i.e. the `oidc_conformant` must be `true`.
 
-Before using the Privileged Worker Token Exchange with Token Vault, make sure your client application is:
-* A first-party client. 
-* A confidential client.
-* Configured for Private Key JWT authentication or mutual TLS authentication.
+Before configuring Privileged Worker Token Exchange for your client application:
+1. [Enable the Token Vault grant type](/docs/secure/tokens/token-vault/configure-token-vault#configure-application) for your client application.
+2. Configure [Private Key JWT](/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) or [mutual TLS authentication](/docs/get-started/authentication-and-authorization-flow/authenticate-with-mtls) for your client application.
 
-### Configure client application
+## Configure client application
+
+To configure the client application’s privileged access to Token Vault, you need to provide a public key that will be used to verify a signed JWT as the subject token.
+
+Similar to [configuring JAR](/docs/get-started/applications/configure-jar#configure-jwt-secured-authorization-requests-jar), you can set the Token Vault privileged access public key when creating a new client:
+
+```bash lines
+POST https://{yourDomain}.auth0.com/api/v2/clients
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "name": "My App using JAR",
+   “grant_types”: [“urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token”],
+     “oidc_conformant”: true,
+           “is_first_party”: true,
+           “jwt_configuration”: {
+             “alg”: 'RS256',
+           },
+
+  "token_vault_privileged_access": {
+"credentials": [{
+        "name": "My credential for Token Vault Privileged Access",
+        "credential_type": "public_key",
+        "pem": "<YOUR PEM FILE CONTENT>",
+        "alg": "RS256"
+}]
+  },
+}
+```
+
+You can also update an existing client with the Token Vault privileged access public key:
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "token_vault_privileged_access": {
+    "credentials": [{"id": "<YOUR CREDENTIAL ID>"}]
+  }
+}
+```
+
+## Create signed JWT subject token
+
+After [configuring your client application with the public key](#configure-client-application), you need to create the subject token that will be exchanged for an access token for an external API. The subject token is a JSON Web Token (JWT) with the necessary claims. It is signed with the private key.
+
+The JWT has a standard format and claims, where:
+- Header’s `typ` is `token-vault-req+jwt`
+- Header’s `kid` is optional if you have only one public key configured
+- Payload’s `sub` is the user ID for whom you want to get the token for
+- Payload’s `aud` is your tenant host
+- Payload’s `iss` is your client ID making the request
+
+The following is an example JWT:
+
+```json lines
+{
+    alg: "RS256"  
+    typ: "token-vault-req+jwt"
+}
+.
+{
+    sub: "auth0|000012030101231",
+    aud: "https://{yourDomain}.auth0.com/",
+    iss: "<YOUR_CLIENT_ID>",
+    iat: 1758799540,
+    exp: 1758800540,
+    nbf: 1758799540
+}
+```
+
+The following code sample is a script that generates a signed JWT subject token:
+
+```tsx lines
+import * as jwt from 'jsonwebtoken';
+   const privateKey = ‘-----BEGIN RSA PRIVATE KEY-----........’;
+   const subjectToken = jwt.sign(
+     {
+       iss: CLIENT_ID,
+       aud: 'https://' + TENANT_DOMAIN + '/',
+       sub: USER_ID,
+     },
+     privateKey,
+     {
+       algorithm: 'RS256',
+       header: {
+         typ: 'token-vault-req+jwt',
+       },
+     }
+   );
+```
+
+## Request token for external API
+
+Once you have the signed JWT, you can make a request for the access token for the external API:
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/json' \
+--data '{
+  "client_id": "<YOUR_CLIENT_ID>",
+  "client_secret": "<YOUR_CLIENT_SECRET>",
+  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
+  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-access-token",
+  "connection": "google-oauth2"
+}'
+```
+
+<table class="table"><thead>
+<tr>
+<th><strong>Parameter</strong></th>
+<th><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grant_type</code></td>
+<td>The grant type. For Token Vault, set to <code>urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token</code></td>
+</tr>
+<tr>
+<td><code>client_id</code></td>
+<td>Client application ID</td>
+</tr>
+<tr>
+<td><code>client_secret</code></td>
+<td>Client secret. <strong>Note:</strong> For Privileged Worker Token Exchange, we recommend using Private Key JWT or mTLS authentication.</td>
+</tr>
+<tr>
+<td><code>subject_token_type</code></td>
+<td>Type of subject token. For Privileged Worker Token Exchange, set to JWT: <code>urn:ietf:params:oauth:token-type:jwt</code></td>
+</tr>
+<tr>
+<td><code>subject_token</code></td>
+<td>The signed JWT bearer token that the Auth0 Authorization Server validates to identify the user.</td>
+</tr>
+<tr>
+<td><code>requested_token_type</code></td>
+<td>The requested token type. For Privileged Worker Token Exchange, you can request an access or refresh token.</td>
+</tr>
+<tr>
+<td><code>connection</code></td>
+<td>The connection name, in this case, <code>google-oauth2</code>.</td>
+</tr>
+</tbody>
+</table>
+
+You should receive the access token stored in the Token Vault. You can similarly request the refresh token for the external API:
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/json' \
+--data '{
+  "client_id": "<YOUR_CLIENT_ID>",
+  "client_secret": "<YOUR_CLIENT_SECRET>",
+  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
+  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-refresh-token",
+  "connection": "google-oauth2"
+}'
+```
+
+
+
+
+
+
 
 
