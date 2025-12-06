@@ -25,7 +25,7 @@ const UnauthenticatedMenu = () => {
           variant="default"
           asChild
         >
-          <a href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D">
+          <a href="https://auth0.com/signup?&signUpData={%22category%22%3A%22docs%22%7D">
             Sign Up
           </a>
         </Button>
@@ -60,7 +60,7 @@ const UnauthenticatedMenu = () => {
         <DropdownMenuItem className="adu:text-foreground-bold" asChild>
           <a
             className="no_external_icon"
-            href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D"
+            href="https://auth0.com/signup?&signUpData={%22category%22%3A%22docs%22%7D"
           >
             Sign Up
           </a>
