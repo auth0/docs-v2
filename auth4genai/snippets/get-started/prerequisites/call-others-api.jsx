@@ -63,7 +63,7 @@ export const Prerequisites = ({
             <strong>Settings &gt; Access Settings</strong> and enable{" "}
             <strong>Allow Offline Access</strong>.
           </li>
-          <li>Note down the API identifier for your environment variables.</li>
+          <li>Note down the API identifier for your environment variables. You will use the API identifier as the audience parameter in token requests (<code>AUTH0_AUDIENCE</code>).</li>
         </ul>
         To learn more about Auth0 APIs, read{" "}
         <a
