@@ -8,7 +8,7 @@ export const QuickstartButtons = ({ githubLink, lang = "en" }) => {
       viewOnGithub: "Afficher sur GitHub",
       loginAndDownload: "Télécharger un exemple",
     },
-    "ja-jp": {
+    ja: {
       viewOnGithub: "Githubで表示",
       loginAndDownload: "サンプルをダウンロード",
     },
