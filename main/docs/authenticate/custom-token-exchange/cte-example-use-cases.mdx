@@ -1,0 +1,684 @@
+---
+description: Learn about Custom Token Exchange example use cases with code samples for implementation.
+'og:image': https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+'og:title': Example Use Cases
+'og:url': https://auth0.com/docs/
+permalink: cte-example-use-cases
+title: Example Use Cases
+'twitter:description': Learn about Custom Token Exchange example use cases with code samples for implementation.
+'twitter:title': Example Use Cases
+---
+
+<Warning>
+
+Custom Token Exchange is currently available in Early Access for all Auth0 Enterprise and B2B Pro customers. By using this feature, you agree to the applicable Free Trial terms in [Okta’s Master Subscription Agreement](https://www.okta.com/legal/). To learn more about Auth0’s product release cycle, read [Product Release Stages](/docs/troubleshoot/product-lifecycle/product-release-stages). To learn more about subscription types, review the Auth0 [pricing](https://auth0.com/pricing) page.
+
+</Warning>
+
+You can use Custom Token Exchange to solve advanced integration scenarios where normal federated login strategies based on redirecting the end user cannot be applied due to technical or user experience constraints. The code provided for the use cases is incomplete and only aims at showing the logical steps you can follow with your code to address the use case. Refer to [code samples](#code-samples) for more detailed code examples.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Auth0 recommends using normal, out-of-the-box federated login whenever possible. By allowing you to set the user for the transaction, Custom Token Exchange gives you more flexibility by taking on the additional responsibility of securely validating and handling the transaction.
+
+</Callout>
+
+## Use cases
+
+This section describes example use cases and specific code samples with recommendations for implementing your scenario. To illustrate the use cases, we will use GearUp, a fictional car rental service company.
+
+### Use Case: Seamless migration into Auth0
+
+GearUp has a mobile App used by millions of people and needs to modernize their Identity solution so they’ve decided to switch to Auth0. However, they want to avoid forcing users to re-authenticate as they migrate from their legacy identity provider, or IdP, as that adds friction to the user experience.
+
+To solve this, and to limit risks, GearUp is migrating incrementally. For each user, they wish to exchange the refresh token from their legacy IdP for an Auth0 access token, refresh token and <Tooltip tip="ID Token: Credential meant for the client itself, rather than for accessing a resource." cta="View Glossary" href="/docs/glossary?term=ID+token">ID token</Tooltip> set. This allows their app to seamlessly start using Auth0 as the IdP for this user, as well as consume GearUp APIs using Auth0-issued tokens. Once the exchange is done for all users, the app will be fully migrated and the old IdP can be disconnected–all without impacting end users and GearUp’s business.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/2Ke6p3yZl06KT4HHqtaVu9/5d9c5feb98d614d6d793fb01ccc03e92/Screenshot_2025-02-03_at_5.00.32_PM.png)</Frame>
+
+As a prerequisite, GearUp has done a [bulk user import](/docs/manage-users/user-migration/bulk-user-imports) into their Auth0 tenant and the mobile app has a valid legacy refresh token for each user to be migrated.
+
+1. The mobile app makes a request to Auth0 to exchange the legacy refresh token, setting it as the subject token.
+2. The corresponding Custom Token Exchange profile Action executes. It validates the refresh token with the legacy IdP and gets the external user ID from the user profile. It then applies the required authorization policy and finally sets the user.
+3. Auth0 responds with Auth0 access token, ID token, and refresh token.
+4. The mobile app can now use the Customer APIs using Auth0 tokens without the user having to re-authenticate.
+
+The following code sample shows how to implement this in the Custom Token Exchange Action. In this case, since user profiles were already imported into an Auth0 database connection:
+
+* We don’t want to create the user.
+* We don’t want to update the user profile.
+
+We use the external IdP user ID to set the user in the corresponding connection.
+
+```javascript lines expandable
+/**
+* Handler to be executed while executing a custom token exchange request
+* @param {Event} event - Details about the incoming token exchange request.
+* @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+*/
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+ // 1. VALIDATE the refresh_token received in the subject_token by using it to get
+ // the UserProfile from the external IdP
+ const { isValid, user } = await getUserProfile(
+   event.transaction.subject_token,
+   event.secrets.CLIENT_SECRET,
+ );
+
+ if (!isValid) {
+   // Mark the subject token as invalid and fail the transaction.
+   api.access.rejectInvalidSubjectToken("Invalid subject_token");
+ } else {
+   // 2. Apply your AUTHORIZATION POLICY as required to determine if the request is valid.
+   // Use api.access.deny() to reject the transaction in those cases.
+
+   // 3. When we have the profile, we SET THE USER in the target connection
+   api.authentication.setUserByConnection(
+     connectionName,
+     {
+       // only the user_id in the connection is needed, as we are not
+       // creating nor updating the user
+       user_id: user.sub,
+     },
+     {
+       creationBehavior: "none",
+       updateBehavior: "none",
+     },
+   );
+ }
+};
+
+/**
+* Exchange the refresh token and load the user profile from the legacy IdP
+* @param {string} refreshToken
+* @param {string} clientSecret
+* @returns {Promise<{ isValid: boolean, user?: object }>} If the refresh token was exchanged successfully, returns the user profile
+*/
+async function getUserProfile(refreshToken, clientSecret) {
+ // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+}
+```
+
+### Use Case: Re-use an external authentication provider
+
+Another use case involves GearUp partnering with Air0, a leading travel provider, to offer their car rental services directly within the Air0 single-page application. GearUp offers a JavaScript library that encapsulates the use of their APIs. This way GearUp’s APIs can easily be consumed by Air0’s website where car rental services are being offered.
+
+Once again, the solution needs to be invisible to end users by avoiding re-authentication to GearUp. To solve this problem, GearUp’s JavaScript library can perform a token exchange using the external Air0 ID token as the input. This results in an Auth0 access token that is generated and associated with the corresponding GearUp user based on their email address. Once the GearUp library gets the access token, it can start using GearUp’s APIs to offer car rental services directly within Air0’s website.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/34AVzwyYARK6fn2IEnLsQn/409082d736d8495b637626406977fb1f/Screenshot_2025-02-03_at_5.08.47_PM.png)</Frame>
+
+As a prerequisite, GearUp has set up Air0 IdP as a federated enterprise or social connection, so the user can authenticate via federate login or alternatively via Custom Token Exchange as follows:
+
+1. The Single Page App gets the ID token from the external IdP once the user authenticates.
+2. It then requests the exchanges of the ID token, setting it as the subject token.
+3. The corresponding Custom Token Exchange profile Action executes. It validates the ID token and gets the user ID and other profile attributes from the token. It then applies the required authorization policy and finally sets the user.
+4. Auth0 responds with Auth0 access token, ID token and refresh token.
+5. The javascript code running in the SPA can now use the Customer APIs using Auth0 tokens without the user having to re-authenticate.
+
+The following code exemplifies how to implement this in the Custom Token Exchange Action. In this case:
+
+* We use the external IdP user ID to set the user in the corresponding connection.
+* We want to create the user if they don’t yet exist.
+* We don’t want to replace the user profile if a more complete set of attributes is obtained via federated login, in case the user already exists.
+* We don't want to verify emails when users are created.
+
+```javascript lines expandable
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDATE the id_token received in the subject_token
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. Apply your AUTHORIZATION POLICY as required to determine if the request is valid.
+    // Use api.access.deny() to reject the transaction in those cases.
+
+    // 3. SET THE USER in the target connection.
+    // We don't want to verify emails when users are created
+    // This example assumes subject_token (id_token) contains standard OIDC claims. Other custom mappings
+    // are also possible.
+    api.authentication.setUserByConnection(
+      'Enterprise-OIDC',
+      {
+          user_id: formattedUserId,
+          email: subject_token.email,
+          email_verified: subject_token.email_verified,
+          phone_number: subject_token.phone_number,
+          phone_verified: subject_token.phone_number_verified,
+          username: subject_token.preferred_username,
+          name: subject_token.name,
+          given_name: subject_token.given_name,
+          family_name: subject_token.family_name,
+          nickname: subject_token.nickname,
+          verify_email: false
+      },
+      {
+          creationBehavior: 'create_if_not_exists',
+          updateBehavior: 'none'
+      }
+    );
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+};
+```
+
+
+
+
+
+
+Read [code samples](#code-samples) for a more detailed example on how to securely validate <Tooltip tip="JSON Web Token (JWT): Standard ID Token format (and often Access Token format) used to represent claims securely between two parties." cta="View Glossary" href="/docs/glossary?term=JWTs">JWTs</Tooltip>.
+
+### Use Case: Get Auth0 tokens for another audience
+
+GearUp wants to improve how it authorizes calls between its internal microservices to serve API requests. It wants a centralized policy controlling the resources that each service can consume. This can also be solved using Token Exchange.
+
+When the API request first arrives at service A, it exchanges the received access token for a new one that allows it to consume service B as the new audience. If the authorization policy governing the token exchange allows it, service A gets the new token back and can now consume service B. The user ID is kept unchanged in the new token, so the proper user context is retained throughout the process.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/5Zw7yaJGct9eHAl4rdf72D/42274a5896851a16bea402ac52037f52/Screenshot_2025-02-03_at_5.17.14_PM.png)</Frame>
+
+The GearUp application has initially obtained an access token to consume API A on behalf of a user:
+
+1. The app sends the request with the initial access token to API A.
+2. API A backend service validates the access token and requests to exchange by setting it as the subject token for a new access token to consume API B.
+3. The corresponding Custom Token Exchange profile Action executes. It validates the access token and gets the Auth0 user ID from the token. It then applies the required authorization policy and finally sets the user.
+4. Auth0 responds with an Auth0 access token to consume the API B audience.
+5. API A backend service calls API B using the new access token, which is still associated with the same user.
+
+The following code exemplifies how to implement this in the Custom Token Exchange Action. In this case:
+
+* We use the Auth0 user ID to set the user, so there is no need to set this in the scope of any connection.
+* We don’t want to create or update the user.
+
+Refer to [Validate JWTs signed with asymmetric keys](#validate-jwts-signed-with-asymmetric-keys) for expanded code samples on this use case.
+
+```javascript lines expandable
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // 1. VALIDATE the access_token received in the subject_token
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. Apply your AUTHORIZATION POLICY as required to determine if the request is valid.
+    // Use api.access.deny() to reject the transaction in those cases.
+
+    // 3. SET THE USER
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+};
+```
+
+Read [code samples](#code-samples) for a more detailed example on how to securely validate JWTs.
+
+### Use case: Perform MFA during Custom Token Exchange
+
+Building upon the [Use Case: Re-use an external authentication provider](#use-case%3A-re-use-an-external-authentication-provider), GearUp now wants to confirm user presence when a token from the external authentication provider is used. This is necessary to mitigate security risks such as token theft or scenarios where MFA is not supported by the external authenticator. GearUp has two options to achieve this: implement an organization-wide MFA policy or programmatically trigger MFA using a Post Login Action.
+
+The next example uses a PostLogin Action to trigger MFA authentication during the Custom Token Exchange transaction. For more details on using MFA grant over embedded APIs, please see the [documentation](/docs/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa) for using ROPG with MFA, as Custom Token Exchange follows the same model.
+
+First, define the Action, using `api.multifactor.enable()` to trigger an MFA challenge.  This function is described in [Post Login API documentation](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object).
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.multifactor.enable('any');
+};
+
+We can now send a token exchange request:
+
+curl --location 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+--data-urlencode 'audience=https://api.gearup.com' \
+--data-urlencode 'scopes=openid offline_access gearup-scope1 gearup-scope2' \
+--data-urlencode 'subject_token_type=urn:gearup:external-idp' \
+--data-urlencode 'subject_token=t8e7S2D9trQm73e .... iqBR3GjxDtbDVjpfQU' \
+--data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+--data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+```
+
+Resulting in an `mfa_required` error
+
+```json lines
+403 Forbidden
+{
+  "error": "mfa_required",
+  "error_description": "Multifactor authentication required",
+  "mfa_token": "{{MFA_TOKEN}}"
+}
+```
+
+With the `mfa_token` that is returned, the application can call the MFA API to challenge and verify a factor.
+
+First, return a list of authenticators:
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/mfa/authenticators' \
+--header 'Authorization: Bearer <YOUR_MFA_TOKEN>' \
+
+
+[
+    {
+        "id": "sms|dev_1MHoE3huPRB5dcDJ",
+        "authenticator_type": "oob",
+        "active": true,
+        "oob_channel": "sms",
+        "name": "XXXXXXXX6220"
+    },
+    {
+        "id": "email|dev_QLGL8cGsvFFnOloK",
+        "authenticator_type": "oob",
+        "active": true,
+        "oob_channel": "email",
+        "name": "dloz********@gmai*****"
+    }
+]
+```
+
+Second, use the authenticator ID to trigger a challenge
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/mfa/challenge' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+--data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+--data-urlencode 'mfa_token=<YOUR_MFA_TOKEN>' \
+--data-urlencode 'authenticator_id=sms|dev_1MHoE3huPRB5dcDJ' \
+--data-urlencode 'challenge_type=oob'
+```
+
+Which generates the following response
+
+```json lines
+{
+  "challenge_type": "oob",
+  "oob_code": "<YOUR_OOB_CODE>",
+  "binding_method": "prompt"
+}
+```
+
+Use the `mfa_token` and `oob_code` (if returned) to complete the verification process using the token endpoint and receive tokens:
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=http://auth0.com/oauth/grant-type/mfa-oob' \
+--data-urlencode 'mfa_token=<YOUR_MFA_TOKEN>' \
+--data-urlencode 'oob_code=<YOUR_OOB_CODE>' \
+--data-urlencode 'binding_code=<YOUR_USER_CODE>'
+```
+
+Read [code samples](#code-samples) for a more detailed example on how to validate opaque refresh token with the legacy IdP.
+
+## Code samples
+
+The following code samples show best practices for common scenarios for validating incoming subject tokens in a secure and performant way.
+
+Use asymmetric algorithms and keys whenever you can as you don’t need to share any secret with Auth0. This also simplifies key rotation, such as when exposing a JWKS URI endpoint to advertise applicable public keys.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+It is your responsibility to ensure that subject tokens are protected with a strong algorithm and keys/secrets with enough entropy.
+
+</Callout>
+
+### Validate JWTs signed with asymmetric keys
+
+Consider the following recommendations:
+
+* Use Actions [api.cache](#api-cache) methods to avoid having to fetch the signing keys for each transaction.
+* Adhere to [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt) best practices
+* Use RS\*, PS\*, ES\* or Ed25519 algorithms
+* Do not use or accept the none algorithm
+* Use RSA with a minimum length of 2048 bits.
+
+```javascript lines expandable
+const { jwtVerify } = require("jose");
+
+const jwksUri = "https://example.com/.well-known/jwks.json";
+const fetchTimeout = 5000; // 5 seconds
+
+const validIssuer = "urn:my-issuer"; // Replace with your issuer
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Set the user in the current request as authenticated, using the user ID from the subject token.
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    try {
+      const { payload, protectedHeader } = await jwtVerify(
+        subjectToken,
+        async (header) => await getPublicKey(header.kid),
+        {
+          issuer: validIssuer,
+        },
+      );
+
+      // Perform additional validation on the token payload as required
+
+      return { isValid: true, payload };
+    } catch (/** @type {any} */ error) {
+      if (error.message === "Error fetching JWKS") {
+        throw new Error("Internal error - retry later");
+      } else {
+        console.log("Token validation failed:", error.message);
+        return { isValid: false };
+      }
+    }
+  }
+
+  /**
+   * Get the public key to use for key verification. Load from the actions cache if available, otherwise
+   * fetch the key from the JWKS endpoint and store in the cache.
+   * @param {string} kid - kid (Key ID) of the key to be used for verification
+   * @returns {Promise<Object>}
+   */
+  async function getPublicKey(kid) {
+    const cachedKey = api.cache.get(kid);
+    if (!cachedKey) {
+      console.log(`Key ${kid} not found in cache`);
+      const key = await fetchKeyFromJWKS(kid);
+      api.cache.set(kid, JSON.stringify(key), { ttl: 600000 });
+      return key;
+    } else {
+      return JSON.parse(cachedKey.value);
+    }
+  }
+
+  /**
+   * Fetch public signing key from the provided JWKS endpoint, to use for token verification
+   * @param {string} kid - kid (Key ID) of the key to be used for verification
+   * @returns {Promise<object>}
+   */
+  async function fetchKeyFromJWKS(kid) {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), fetchTimeout);
+
+    /** @type {any} */
+    const response = await fetch(jwksUri);
+
+    if (!response.ok) {
+      console.log(`Error fetching JWKS. Response status: ${response.status}`);
+      throw new Error("Error fetching JWKS");
+    }
+    const jwks = await response.json();
+    const key = jwks.keys.find((key) => key.kid === kid);
+    if (!key) {
+      throw new Error("Key not found in JWKS");
+    }
+    return key;
+  }
+};
+```
+
+
+
+
+
+
+### Validate JWTs signed with symmetric keys
+
+Consider the following recommendations:
+
+* Use [Actions Secrets](/docs/customize/actions/write-your-first-action#add-a-secret) to securely store your symmetric secrets.
+* Adhere to [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt) best practices
+* Use secure algorithms such as HS256, along with high entropy random secrets (e.g. of at least 256 bits long)
+
+```javascript lines expandable
+const { jwtVerify } = require("jose");
+
+const validIssuer = "urn:my-issuer"; // Replace with your issuer
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // Initialize the shared symmetric key from Actions Secrets
+  const encoder = new TextEncoder();
+  const symmetricKey = encoder.encode(event.secrets.SHARED_SECRET);
+
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+    symmetricKey,
+  );
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Set the user in the current request as authenticated, using the user ID from the subject token.
+    api.authentication.setUserById(payload.sub);
+  }
+};
+
+/**
+ * Validate the subject token
+ * @param {string} subjectToken
+ * @param {Uint8Array} symmetricKey
+ * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+ */
+async function validateToken(subjectToken, symmetricKey) {
+  try {
+    // Validate token is correctly signed with the shared symmetric key
+    // It also checks it is not expired as long as it includes an 'exp' attribute.
+    const { payload, protectedHeader } = await jwtVerify(
+      subjectToken,
+      symmetricKey,
+      {
+        issuer: validIssuer,
+      },
+    );
+
+    return { isValid: true, payload };
+  } catch (/** @type {any} */ error) {
+    console.log("Token validation failed:", error.message);
+    return { isValid: false };
+  }
+}
+```
+
+
+
+
+
+
+### Validate opaque token with an external service
+
+Use [Action Secrets](/docs/customize/actions/write-your-first-action#add-a-secret) to securely store your external IdP <Tooltip tip="Client Secret: Secret used by a client (application) to authenticate with the Authorization Server; it should be known to only the client and the Authorization Server and must be sufficiently random to not be guessable." cta="View Glossary" href="/docs/glossary?term=client+secret">client secret</Tooltip>.
+
+```javascript lines expandable
+const tokenEndpoint = "EXTERNAL_TOKEN_ ENDPOINT";
+const userInfoEndpoint = "EXTERNAL_USER_INFO_ENDPOINT";
+const clientId = "EXTERNAL_CLIENT_ID";
+const connectionName = "YOUR_CONNECTION_NAME";
+const fetchTimeout = 5000; // 5 seconds
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, user } = await getUserProfile(
+    event.transaction.subject_token,
+    event.secrets.CLIENT_SECRET,
+  );
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  // When we have the profile, we set the user in the target connection
+  api.authentication.setUserByConnection(
+    connectionName,
+    {
+      // only the user_id in the connection is needed, as we are not
+      // creating nor updating the user
+      user_id: user.sub,
+    },
+    {
+      creationBehavior: "none",
+      updateBehavior: "none",
+    },
+  );
+};
+
+/**
+ * Exchange the refresh token and load the user profile from the legacy IdP
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, user?: object }>} If the refresh token was exchanged successfully, returns the user profile
+ */
+async function getUserProfile(refreshToken, clientSecret) {
+  const { isValid, accessToken } = await refreshAccessToken(
+    refreshToken,
+    clientSecret,
+  );
+  if (!isValid) {
+    return { isValid: false };
+  }
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  const response = await fetch(userInfoEndpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    console.log(`Failed to fetch user info. Status: ${response.status}`);
+    throw new Error("Error fetching user info");
+  }
+
+  const userProfile = await response.json();
+
+  return { isValid: true, user: userProfile };
+}
+
+/**
+ * Use the Refresh Token with the legacy IdP to validate it and get an access token
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, accessToken?: string }>} If the refresh token was exchanged successfully, returns the access token
+ */
+async function refreshAccessToken(refreshToken, clientSecret) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  let response;
+
+  try {
+    response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+  } catch (error) {
+    console.error("Error refreshing token");
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json();
+    console.error("Error refreshing token:", errorBody.error);
+
+    // If we receive an error indicating the refresh token is invalid (for example, an invalid_grant error),
+    // then we should explicitly indicate an invalid token using api.access.rejectInvalidSubjectToken
+    // to prevent against brute force attacks on the refresh token by activating Suspicious IP Throttling.
+    // For other errors which indicate a generic error making the request to the IdP, we should throw
+    // an error to indicate a transient failure.
+    if (errorBody.error === "invalid_grant") {
+      return { isValid: false };
+    } else {
+      throw new Error("Error refreshing token");
+    }
+  }
+
+  // Parse the response, in the form { access_token: "...", expires_in: ..., }
+  const data = await response.json();
+  console.log("Successfully exchanged refresh token");
+  return { isValid: true, accessToken: data.access_token };
+}
+```
