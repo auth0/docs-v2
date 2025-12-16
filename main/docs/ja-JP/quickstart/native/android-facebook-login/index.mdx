@@ -1,0 +1,374 @@
+---
+title: "Android - Facebook ログイン"
+permalink: "00-login-facebook"
+---
+
+<div id="by-luciano-balmaceda">
+  ##### Luciano Balmaceda による
+</div>
+
+このチュートリアルでは、ネイティブ Facebook ログインを使用して Android アプリケーションにユーザーのログイン機能を追加する方法を説明します。ご自身のアカウント向けに構成されたサンプルを使ってこのクイックスタートを進められるよう、あらかじめログインしておくことをおすすめします。
+
+{/* <Card title="GitHub で表示" href="https://github.com/auth0-samples/auth0-android-native-social-sample/tree/master/00-login-facebook" icon="github">
+  システム要件: Android Studio 3.6.1 | Android ソフトウェア開発キット (SDK) 25 | エミュレータ - Nexus 5X - Android 6.0
+  </Card> */}
+
+このチュートリアルでは、[Facebook SDK](https://developers.facebook.com/docs/) を使ってログイン機能を実装する方法について説明します。
+
+<div id="before-you-start">
+  ## 始める前に
+</div>
+
+* [Facebook Login SDK](https://developers.facebook.com/docs/facebook-login/) をインストールして設定します。あわせて、https://developers.facebook.com で Facebook アプリを作成します。**このステップが完了すると、Facebook Login が統合されたモバイルアプリが動作しているはずです。**
+* ダッシュボードで Auth0 アプリケーションを設定し、Facebook Native Sign In を使用できるようにします。詳しくは、[Add Facebook Login to Native Apps](/docs/ja-JP/authenticate/identity-providers/social-identity-providers/facebook-native) を参照してください。**このステップが完了すると、アプリケーションで Facebook Native Login を実装できるようになります。**
+
+<div id="set-up-the-continue-with-facebook-button">
+  ## 「Facebook で続行」ボタンを設定する
+</div>
+
+このガイドでは、最初の手順で作成したアプリケーションに Auth0 を使った認証機能を追加する方法を説明します。
+
+<div id="request-facebook-permissions">
+  ### Facebook の権限をリクエストする
+</div>
+
+アプリケーションはすでに Facebook を使ってログインできる状態です。ただし、より充実したユーザー プロファイルを取得するには、Facebook Login Button を設定した際の権限を更新する必要があります。
+
+リクエストする権限を `public_profile` と `email` に設定します。こうすることで、ユーザーがアクセス リクエストを承認した場合、レスポンスにユーザーのメール アドレスも含まれるようになります。
+
+```
+loginButton.setPermissions(Arrays.asList("public_profile", "email"));
+```
+
+まず Auth0 を使って認証プロセスを開始するために、送信するペイロードを準備する新しいメソッドを作成します。
+
+内部コールバックを処理するために、簡単なインターフェースを使用します。
+
+サンプルでは、このメソッドは `performLogin`、インターフェースは `SimpleCallback` という名前になっています。両方を追加してください。
+
+```
+private void performLogin(@NonNull final AccessToken accessToken) {
+  // TODO
+}
+
+private interface SimpleCallback<T> {
+    void onResult(@NonNull T result);
+
+    void onError(@NonNull Throwable cause);
+}
+```
+
+次に、Facebook ログインコールバックの `onSuccess` メソッドから、先ほどのメソッドを呼び出します。
+
+```
+@Override
+public void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+
+    setContentView(R.layout.activity_login);
+
+    Auth0 account = new Auth0(getString(R.string.com_auth0_client_id), getString(R.string.com_auth0_domain));
+    auth0Client = new AuthenticationAPIClient(account);
+
+    fbCallbackManager = CallbackManager.Factory.create();
+
+    LoginButton loginButton = findViewById(R.id.login_button);
+    loginButton.setPermissions(FACEBOOK_PERMISSIONS);
+    loginButton.registerCallback(fbCallbackManager, new FacebookCallback<LoginResult>() {
+        @Override
+        public void onSuccess(LoginResult result) {
+            //1. Facebookへのログインが完了
+            AccessToken accessToken = result.getAccessToken();
+            performLogin(accessToken);
+        }
+
+        @Override
+        public void onCancel() {
+            //ユーザーがダイアログを閉じました。無視して問題ありません
+        }
+
+        @Override
+        public void onError(FacebookException error) {
+            //Facebook認証エラーを処理します
+        }
+    });
+}
+```
+
+<div id="integrate-facebook">
+  ## Facebook を統合する
+</div>
+
+Auth0 で Facebook にサインインすると、バックエンドはユーザーが本人であることを確認するために、バックグラウンドでいくつかの検証を行います。そのためには、Session Access Token をバックエンドに渡す必要があります。
+
+さらに、この Facebook ユーザーに対応するユーザーを Auth0 上に作成する必要がある場合、バックエンドは、そのユーザーの名前、姓、メールなどの情報を必要とします。メールが提供された場合は、Auth0 のユーザープロファイル上で **未検証としてマーク** されます。
+
+Session Access Token とユーザープロファイルを取得するには、Facebook API に対して追加で 2 つのリクエストを行う必要があります。
+
+<div id="fetch-facebook-session-access-token">
+  ### Facebook セッション用 Access Token を取得する
+</div>
+
+Facebook API の `/oauth/access_token` エンドポイントに対して新しい GET リクエストを送信します。
+次のクエリパラメーターを使用します：
+
+* `grant_type`: `fb_attenuate_token`
+* `fb_exchange_token`: ログイン時に受信したアクセストークン
+* `client_id`: App ID。Facebook Developers ダッシュボードに表示される値で、Facebook ログインを正常に統合できていれば、すでにアプリケーション内で使用しているはずです。
+
+このステップで実装する処理は、専用のメソッドとして切り出してください。前の手順で追加したメソッドから、後でこのメソッドを呼び出します。
+
+サンプルコードでは、このリクエストを実行するために Facebook SDK の `GraphRequest` クラスを使用しています。
+
+```
+private void fetchSessionToken(String token, final SimpleCallback<String> callback) {
+    Bundle params = new Bundle();
+    params.putString("grant_type", "fb_attenuate_token");
+    params.putString("fb_exchange_token", token);
+    params.putString("client_id", getString(R.string.facebook_app_id));
+
+    GraphRequest request = new GraphRequest();
+    request.setParameters(params);
+    request.setGraphPath("oauth/access_token");
+    request.setCallback(new GraphRequest.Callback() {
+        @Override
+        public void onCompleted(GraphResponse response) {
+            FacebookRequestError error = response.getError();
+            if (error != null) {
+                //セッショントークンの取得に失敗
+                callback.onError(error.getException());
+                return;
+            }
+            try {
+                String fbSessionToken = response.getJSONObject().getString("access_token");
+                callback.onResult(fbSessionToken);
+            } catch (JSONException e) {
+                //セッショントークンの解析に失敗
+                callback.onError(e);
+            }
+        }
+    });
+    request.executeAsync();
+}
+```
+
+<div id="fetch-facebook-user-profile">
+  ### Facebook ユーザープロファイルを取得する
+</div>
+
+先ほどのステップと同様に、もう一度 GET リクエストを送信します。エンドポイントパスには、Facebook ログイン結果に含まれる User ID の値を使用します（例: `/904636746222815`）。
+次のパラメーターを使用します。
+
+* `access_token`: ログイン時に受け取ったアクセストークン。
+* `fields`: レスポンスで取得したいユーザープロファイルのフィールド。これらは、最初に設定した Facebook ログインボタンの権限に直接対応しています。権限が任意の場合、ユーザーはまずその権限へのアクセスを許可することに同意する必要があります。Auth0 でユーザーをサインアップする目的であれば、氏名（フルネーム）とメールだけで十分です。
+
+```
+private void fetchUserProfile(String token, String userId, final SimpleCallback<String> callback) {
+    Bundle params = new Bundle();
+    params.putString("access_token", token);
+    params.putString("fields", "first_name,last_name,email");
+
+    GraphRequest request = new GraphRequest();
+    request.setParameters(params);
+    request.setGraphPath(userId);
+    request.setCallback(new GraphRequest.Callback() {
+        @Override
+        public void onCompleted(GraphResponse response) {
+            FacebookRequestError error = response.getError();
+            if (error != null) {
+                //ユーザープロファイルの取得に失敗
+                callback.onError(error.getException());
+                return;
+            }
+            //受信したプロファイルを返す
+            callback.onResult(response.getRawResponse());
+        }
+    });
+    request.executeAsync();
+}
+```
+
+<div id="integrate-auth0">
+  ## Auth0 を統合する
+</div>
+
+必要なアーティファクトを取得できたので、それらと引き換えに ID やアクセストークンなどの Auth0 ユーザー資格情報を取得する準備ができました。その前に、その最後のリクエストを送信できるように Auth0 ソフトウェア開発キット (SDK) をセットアップする必要があります。
+
+<div id="get-your-application-keys">
+  ### アプリケーションキーを取得する
+</div>
+
+[Auth0 Dashboard](https://manage.auth0.com/) の **Applications** セクションに移動し、**Sign in with Facebook** を有効にした既存のアプリケーションを選択します。手順が不明な場合は、この記事の先頭にある「要件」セクションを参照してください。
+
+アプリケーションの設定ページから **Domain** と **Client ID** の値をコピーします。これらはソフトウェア開発キット (SDK) で必要になります。
+
+これらを保存するために、Android アプリケーションの `strings.xml` ファイルに 2 つの新しいリソースを作成します。キー名は、以下で使用しているものと一致している必要があります。
+
+```
+<resources>
+    <string name="com_auth0_domain">{TENANT}</string>
+    <string name="com_auth0_client_id">{CLIENT_ID}</string>
+</resources>
+```
+
+<div id="install-the-auth0-sdk">
+  ### Auth0 ソフトウェア開発キット (SDK) をインストールする
+</div>
+
+Android アプリケーションで、次の行を `app/build.gradle` ファイルに追加します。
+
+```
+dependencies {
+    implementation 'com.auth0.android:auth0:1.+'
+}
+```
+
+Gradle Sync タスクを実行して、プロジェクトとその依存関係を最新の状態に更新します。
+
+<Note>
+  ### Web認証
+
+  アプリケーションでソフトウェア開発キット (SDK) が提供する Web 認証モジュールを使用しない場合は、`AndroidManifest.xml` ファイルから未使用のアクティビティを削除して、Manifest Placeholder に関する問題を防ぐ必要があります。これは、アクティビティ宣言を追加し、`tools:node="remove"` を指定することで実行できます。
+
+  ```xml
+  <application>
+    <!-- 下にアクティビティ宣言行を追加します -->
+     <activity
+      android:name="com.auth0.android.provider.AuthenticationActivity"
+      tools:node="remove" />
+    
+  </application>
+  ```
+
+  一方、Web 認証をサポートする場合は、Manifest Placeholder の宣言方法について学ぶために[こちら](/docs/ja-JP/libraries/auth0-android#authentication-via-universal-login)を参照してください。
+</Note>
+
+<div id="exchange-the-received-data-for-auth0-tokens">
+  ### 受信したデータを Auth0 トークンと交換する
+</div>
+
+ソフトウェア開発キット (SDK) は、使用前にインスタンス化する必要があります。クラスレベルでフィールドを定義し、`onCreate` メソッド内で初期化します。上の手順で定義したクレデンシャルが `Auth0` コンストラクターに渡され、その後それを使って `AuthenticationAPIClient` の新しいインスタンスが作成される点に注意してください。
+
+```
+private AuthenticationAPIClient auth0Client;
+
+@Override
+public void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+
+    setContentView(R.layout.activity_login);
+
+    Auth0 account = new Auth0(getString(R.string.com_auth0_client_id), getString(R.string.com_auth0_domain));
+    auth0Client = new AuthenticationAPIClient(account);
+
+    //...
+}
+```
+
+取得した 2 つのアーティファクトを Auth0 のユーザー認証情報と交換するロジックを保持するメソッドを作成します。サンプルでは、このメソッドは `exchangeTokens` という名前になっています。
+
+API クライアントは、トークンと subject のタイプを受け取る `loginWithNativeSocialToken` メソッドを宣言します。前者はセッショントークンに対応し、後者はバックエンドがどの種類の接続を使って認証を行うかを示します。ネイティブ Facebook ログインの場合、次の値を使用します。
+
+```
+"http://auth0.com/oauth/token-type/facebook-info-session-access-token"
+```
+
+他に設定が必要な値としては、`user_profile` キーを使用して指定するユーザープロファイルと、Auth0 トークンに含めるよう要求するスコープがあります。
+
+```
+private void exchangeTokens(@NonNull String sessionToken, @NonNull String userProfile, @NonNull final SimpleCallback<Credentials> callback) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("user_profile", userProfile);
+
+    auth0Client.loginWithNativeSocialToken(sessionToken, "http://auth0.com/oauth/token-type/facebook-info-session-access-token")
+            .setScope("openid email profile offline_access")
+            .addAuthenticationParameters(params)
+            .start(new BaseCallback<Credentials, AuthenticationException>() {
+                @Override
+                public void onSuccess(Credentials credentials) {
+                    callback.onResult(credentials);
+                }
+
+                @Override
+                public void onFailure(AuthenticationException error) {
+                    callback.onError(error);
+                }
+            });
+}
+```
+
+<Info>
+  変更されないことがわかっている値は、クラスの先頭で定数として定義しておくのがベストプラクティスです。サンプルでは、サブジェクトトークンのタイプ、Facebook のパーミッション、Auth0 のスコープに定数を使用しています。
+  Auth0 のスコープの詳細については、専用の[記事](/docs/ja-JP/get-started/apis/scopes/openid-connect-scopes)を参照してください。
+</Info>
+
+すべてのステップをそれぞれのメソッドとして定義できたので、あとは `performLogin` メソッドの中でそれらをまとめます。
+
+```
+private void performLogin(@NonNull final AccessToken accessToken) {
+    final String token = accessToken.getToken();
+    fetchSessionToken(token, new SimpleCallback<String>() {
+        @Override
+        public void onResult(@NonNull final String sessionToken) {
+            //2. Facebookセッショントークンを取得
+            fetchUserProfile(token, accessToken.getUserId(), new SimpleCallback<String>() {
+
+                @Override
+                public void onResult(@NonNull String jsonProfile) {
+                    //3. Facebookユーザープロファイルを取得
+                    exchangeTokens(sessionToken, jsonProfile, new SimpleCallback<Credentials>() {
+
+                        @Override
+                        public void onResult(@NonNull Credentials credentials) {
+                            /*
+                            *  4. ログイン完了!
+                            *     アクセストークンを使用してAPIを呼び出すか、
+                            *     IDトークンをローカルで使用
+                            */
+                        }
+
+                        @Override
+                        public void onError(@NonNull Throwable cause) {
+                            //トークン交換エラーを処理
+                        }
+                    });
+                }
+
+                @Override
+                public void onError(@NonNull Throwable cause) {
+                    //プロファイルリクエストエラーを処理
+                }
+            });
+        }
+
+        @Override
+        public void onError(@NonNull Throwable cause) {
+            //セッショントークンリクエストエラーを処理
+        }
+    });
+}
+```
+
+ここまでの手順が問題なく完了していれば、Facebook Login ソフトウェア開発キット (SDK) を使用してネイティブに認証できるようになっているはずです。これは、デバイスに Facebook アプリがインストールされている場合、ブラウザーアプリではなく、その Facebook アプリ経由で認証が行われることを意味します。
+
+<Info>
+  ##### 次にできることは？
+
+  <table>
+    <tr>
+      <td><a href="/docs/ja-JP/libraries/lock-android/lock-android-refresh-jwt">攻撃対策について学ぶ</a></td>
+      <td><a href="/docs/ja-JP/quickstart/native/android/01-user-metadata">Rules について学ぶ</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/ja-JP/authenticate/identity-providers">他のアイデンティティ プロバイダーを設定する</a></td>
+      <td><a href="/docs/ja-JP/libraries/auth0-android">Android ソフトウェア開発キット (SDK) について詳しく学ぶ</a></td>
+    </tr>
+  </table>
+
+  [GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***
+
+[GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/native/android-facebook-login/00-login-facebook.md)

@@ -1,0 +1,358 @@
+---
+title: "Ruby on Rails API: 認可"
+permalink: "01-authorization"
+---
+
+<div id="by-josh-cunningham">
+  ##### 執筆: Josh Cunningham
+</div>
+
+このチュートリアルでは、Ruby on Rails の API に認可機能を追加する方法を説明します。アカウント用に構成されたサンプルを使ってこのクイックスタートを進められるよう、ログインすることをおすすめします。
+
+{/* <Card title="GitHub で表示" href="https://github.com/auth0-samples/auth0-rubyonrails-api-samples/tree/master/01-Authentication-RS256" icon="github">
+  システム要件: Ruby 2.1.8 | Rails 4.2.5
+  </Card> */}
+
+<Info>
+  **Auth0 を初めて利用する方は、** [Auth0 の仕組み](/docs/ja-JP/get-started/auth0-overview)を確認し、OAuth 2.0 フレームワークを使用した[API 認証と認可の実装方法](/docs/ja-JP/get-started/authentication-and-authorization-flow)について学んでください。
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Auth0 の API を設定する
+</div>
+
+<div id="create-an-api">
+  ### API を作成する
+</div>
+
+Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションで **Create API** をクリックします。API の名前と識別子を指定します。たとえば `https://quickstarts/api` のようにします。この識別子は、後でアクセストークンの検証を設定するときに `audience`（オーディエンス）として使用します。**Signing Algorithm** は **RS256** のままにしておきます。
+
+<Frame>![API を作成する](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+デフォルトでは、API はトークンの署名アルゴリズムとして RS256 を使用します。RS256 は秘密鍵/公開鍵ペアを使用するため、Auth0 アカウントの公開鍵に対してトークンを検証します。公開鍵は [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) 形式で提供されており、[こちら](https://\{yourDomain}/.well-known/jwks.json) からアクセスできます。
+
+<Info>
+  API には、デフォルトの RS256 [署名アルゴリズム](/docs/ja-JP/get-started/applications/signing-algorithms) を使用することを推奨します。HS256 アルゴリズムを使用する必要がある場合は、[HS256 integration sample](https://github.com/auth0-samples/auth0-rubyonrails-api-samples/tree/OIDC/02-Authentication-HS256) を参照してください。
+</Info>
+
+<div id="define-permissions">
+  ### 権限を定義する
+</div>
+
+権限を使用すると、特定のアクセストークンを使ってユーザーの代わりにリソースへどのようにアクセスできるかを定義できます。たとえば、ユーザーがマネージャーのアクセスレベルを持っている場合には `messages` リソースへの読み取り権限を付与し、管理者のアクセスレベルを持っている場合にはそのリソースへの書き込み権限を付与する、といった設定が可能です。
+
+許可する権限は、Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションにある **Permissions** ビューで定義できます。
+
+<Frame>![権限の構成](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  この例では `read:messages` スコープを使用します。
+</Info>
+
+この例では次の内容を扱います。
+
+* 受信した HTTP リクエストの `Authorization` ヘッダー内に JSON Web Token (JWT) があるかどうかを確認する方法。
+* Auth0 アカウントの [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) を使用してトークンが有効かどうかを確認する方法。アクセストークンの検証について詳しくは、[アクセストークンの検証](/docs/ja-JP/secure/tokens/access-tokens/validate-access-tokens) を参照してください。
+
+<div id="validate-access-tokens">
+  ## アクセストークンの検証
+</div>
+
+<div id="install-dependencies">
+  ### 依存関係をインストールする
+</div>
+
+このチュートリアルでは、カスタム `Auth0Client` クラス内で [**jwt**](https://github.com/jwt/ruby-jwt) Gem を使用してアクセストークンの検証を行います。Concern「`Secured`」を使用して、受信したアクセストークンによる認証が必要なエンドポイントを認可します。
+
+**jwt** Gem をインストールします。
+
+```bash lines
+gem 'jwt'
+bundle install
+```
+
+<div id="create-an-auth0client-class">
+  ### Auth0Client クラスを作成する
+</div>
+
+リクエストの `Authorization` ヘッダーから取得した受信したアクセストークンをデコードして検証する、`Auth0Client` というクラスを作成します。トークンの検証には、Auth0 テナントの公開鍵を取得して使用します。
+
+```rb lines
+# app/lib/auth0_client.rb
+
+# frozen_string_literal: true
+
+require 'jwt'
+require 'net/http'
+
+class Auth0Client 
+
+  # Auth0 クライアントオブジェクト 
+  Error = Struct.new(:message, :status)
+  Response = Struct.new(:decoded_token, :error)
+
+  # ヘルパー関数 
+  def self.domain_url
+    "https://#{Rails.configuration.auth0.domain}/"
+  end
+
+  def self.decode_token(token, jwks_hash)
+    JWT.decode(token, nil, true, {
+                 algorithm: 'RS256',
+                 iss: domain_url,
+                 verify_iss: true,
+                 aud: Rails.configuration.auth0.audience,
+                 verify_aud: true,
+                 jwks: { keys: jwks_hash[:keys] }
+               })
+  end
+
+  def self.get_jwks
+    jwks_uri = URI("#{domain_url}.well-known/jwks.json")
+    Net::HTTP.get_response jwks_uri
+  end
+
+  # トークンの検証 
+  def self.validate_token(token)
+    jwks_response = get_jwks
+
+    unless jwks_response.is_a? Net::HTTPSuccess
+      error = Error.new(message: '認証情報を検証できません', status: :internal_server_error)
+      return Response.new(nil, error)
+    end
+
+    jwks_hash = JSON.parse(jwks_response.body).deep_symbolize_keys
+
+    decoded_token = decode_token(token, jwks_hash)
+
+    Response.new(decoded_token, nil)
+  rescue JWT::VerificationError, JWT::DecodeError => e
+    error = Error.new('認証情報が無効です', :unauthorized)
+    Response.new(nil, error)
+  end
+end
+```
+
+<div id="define-a-secured-concern">
+  ### Secured concern を定義する
+</div>
+
+受信リクエストの `Authorization` ヘッダーからアクセストークンを取得する `Secured` という Concern を作成します。トークンが存在する場合は、それを `Auth0Client.validate_token` に渡します。
+
+```rb lines
+# app/controllers/concerns/secured.rb
+
+# frozen_string_literal: true
+
+module Secured
+  extend ActiveSupport::Concern
+
+  REQUIRES_AUTHENTICATION = { message: '認証が必要です' }.freeze
+  BAD_CREDENTIALS = {
+    message: '認証情報が正しくありません'
+  }.freeze
+  MALFORMED_AUTHORIZATION_HEADER = {
+    error: 'invalid_request',
+    error_description: 'Authorization ヘッダーの値は次の形式に従う必要があります: Bearer access-token',
+    message: 'Bad credentials'
+  }.freeze
+
+  def authorize
+    token = token_from_request
+
+    return if performed?
+    
+    validation_response = Auth0Client.validate_token(token)
+    
+    return unless (error = validation_response.error)
+    
+    render json: { message: error.message }, status: error.status
+  end
+
+  private
+
+  def token_from_request
+    authorization_header_elements = request.headers['Authorization']&.split
+
+    render json: REQUIRES_AUTHENTICATION, status: :unauthorized and return unless authorization_header_elements
+
+    unless authorization_header_elements.length == 2
+      render json: MALFORMED_AUTHORIZATION_HEADER, status: :unauthorized and return
+    end
+
+    scheme, token = authorization_header_elements
+
+    render json: BAD_CREDENTIALS, status: :unauthorized and return unless scheme.downcase == 'bearer'
+
+    token
+  end
+end
+```
+
+<div id="validate-scopes">
+  ### スコープを検証する
+</div>
+
+上記の `Auth0Client.validate_token` メソッドは、リクエストに含まれているアクセストークンが有効であることは検証しますが、トークンが要求されたリソースへアクセスするのに十分な **スコープ** を持っているかどうかを確認する仕組みは、まだ組み込まれていません。
+
+アクセストークン内の特定の `scope` を確認するには、`Auth0Client` クラス内に `Token` という新しい struct を作成し、その中に新しいメソッド `validate_permissions` を定義します。このメソッドは、必要なスコープの配列を受け取り、それらがトークンのペイロード内に含まれているかどうかをチェックします。
+
+`Auth0Client` クラスに移動します。新しい `Token` struct を追加し、`validate_token` メソッドの戻り値を次のように更新します。
+
+```rb lines
+# app/lib/auth0_client.rb
+
+# frozen_string_literal: true
+
+require 'jwt'
+require 'net/http'
+
+class Auth0Client 
+
+  # Auth0 クライアントオブジェクト 
+  Error = Struct.new(:message, :status)
+  Response = Struct.new(:decoded_token, :error)
+
+  Token = Struct.new(:token) do
+    def validate_permissions(permissions)
+      required_permissions = Set.new permissions
+      scopes = token[0]['scope']
+      token_permissions = scopes.present? ? Set.new(scopes.split(" ")) : Set.new
+      required_permissions <= token_permissions
+    end
+  end
+
+  # ... 
+
+  # トークンの検証 
+  def self.validate_token(token)
+    jwks_response = get_jwks
+
+    unless jwks_response.is_a? Net::HTTPSuccess
+      error = Error.new(message: '認証情報を検証できません', status: :internal_server_error)
+      return Response.new(nil, error)
+    end
+
+    jwks_hash = JSON.parse(jwks_response.body).deep_symbolize_keys
+
+    decoded_token = decode_token(token, jwks_hash)
+
+    Response.new(Token.new(decoded_token), nil)
+  rescue JWT::VerificationError, JWT::DecodeError => e
+    error = Error.new('認証情報が無効です', :unauthorized)
+    Response.new(nil, error)
+  end
+end
+```
+
+次に、`Secured` concern 内で新しいエラー定数 `INSUFFICIENT_PERMISSIONS` を定義し、適切な権限がない状態でリソースをリクエストしようとした場合に、適切なエラーメッセージを返すようにします。続いて、`Auth0Client.validate_token` 呼び出しの戻り値を更新し、最後に新しいメソッド `validate_permissions` を作成して、トークンに必要な権限が含まれているかを検証し、そうでない場合は `INSUFFICIENT_PERMISSIONS` エラーメッセージとともに `403 FORBIDDEN` ステータスコードを返すようにします。
+
+`Secured` concern に次のコードを追加して、これらの変更を適用します。
+
+```rb lines
+# app/controllers/concerns/secured.rb
+
+# frozen_string_literal: true
+
+module Secured
+  extend ActiveSupport::Concern
+
+  # ... 
+
+  INSUFFICIENT_PERMISSIONS = {
+    error: 'insufficient_permissions',
+    error_description: 'アクセストークンに必要な権限が含まれていません',
+    message: '権限が拒否されました'
+  }.freeze
+
+  def authorize
+    token = token_from_request
+
+    return if performed?
+
+    validation_response = Auth0Client.validate_token(token)
+
+    @decoded_token = validation_response.decoded_token # この行を追加してください
+
+    return unless (error = validation_response.error)
+
+    render json: { message: error.message }, status: error.status
+  end
+
+  def validate_permissions(permissions)
+    raise 'validate_permissions はブロックを指定して呼び出す必要があります' unless block_given?
+    return yield if @decoded_token.validate_permissions(permissions)
+
+    render json: INSUFFICIENT_PERMISSIONS, status: :forbidden
+  end
+
+  private
+  # ... 
+end
+```
+
+<div id="protect-api-endpoints">
+  ## API エンドポイントを保護する
+</div>
+
+次のルートは、以下のリクエストで利用できます。
+
+* `GET /api/public`: 認証されていないリクエストで利用可能
+* `GET /api/private`: 追加のスコープを持たないアクセストークンを含む認証済みリクエストで利用可能
+* `GET /api/private-scoped`: `read:messages` スコープが付与されたアクセストークンを含む認証済みリクエストで利用可能
+
+`Secured` Concern を `ApplicationController` に追加します。
+
+```rb lines
+class ApplicationController < ActionController::API
+  include Secured
+end
+```
+
+保護が必要なのは `PrivateController` だけで、次のように設定します。
+
+```rb lines
+class PrivateController < ApplicationController
+  before_action :authorize
+
+  # ...
+end
+```
+
+アクセストークンが適切な権限を持っているか確認するには、`private-scoped` Action 内で次のように `validate_permissions` メソッドを呼び出します。
+
+```rb lines
+class PrivateController < ApplicationController
+  before_action :authorize
+
+  def private
+    render json: { message: 'Hello from a private endpoint! You need to be authenticated to see this.' }
+  end
+
+  def private_scoped
+    validate_permissions ['read:messages'] do
+      render json: { message: 'Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this.' }
+    end
+  end
+end
+```
+
+<Info>
+  ##### 次のステップ
+
+  <table>
+    <tr>
+      <td><a href="/docs/ja-JP/authenticate/identity-providers">他のアイデンティティ プロバイダーを設定する</a></td>
+      <td><a href="/docs/ja-JP/secure/multi-factor-authentication">多要素認証を有効にする</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/ja-JP/secure/attack-protection">攻撃保護機能について学ぶ</a></td>
+      <td><a href="/docs/ja-JP/customize/rules">Rules について学ぶ</a></td>
+    </tr>
+  </table>
+
+  [GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

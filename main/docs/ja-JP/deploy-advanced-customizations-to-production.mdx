@@ -1,0 +1,335 @@
+---
+description: Universal Login の高度なカスタマイズのためのコードと手順
+'og:image': https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+'og:title': 高度なカスタマイズをデプロイしてホストする
+'og:url': https://auth0.com/docs/
+permalink: deploy-advanced-customizations-to-production
+title: 高度なカスタマイズをデプロイしてホストする
+'twitter:description': Universal Login の高度なカスタマイズのためのコードと手順
+'twitter:title': 高度なカスタマイズをデプロイしてホストする
+---
+
+このガイドでは、カスタマイズした <Tooltip tip="" cta="用語集を表示" href="/docs/ja-JP/glossary?term=Universal+Login">Universal Login</Tooltip> 画面を本番環境にデプロイし、継続的インテグレーション (CI) と継続的デリバリー (CD) のパイプラインを作成する方法を説明します。
+
+<div id="set-up-your-project">
+  ## プロジェクトをセットアップする
+</div>
+
+アップロードするすべての画面を用意し、ACUL プロジェクトでは次のファイル構造を使用してください。
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/2Di2r84kXDTwYAgLOfd96E5a2b2dfd9f2/ACUL_file_structure_diagram.png)</Frame>
+
+<div id="create-a-new-vite-configuration">
+  ### 新しい Vite の設定を作成する
+</div>
+
+次の内容を `vite.config.ts` という名前の新しいファイルに追加します：
+
+<Accordion title="vite.config.ts の設定">
+  ```jsx lines expandable
+  import { defineConfig } from 'vite';
+  import react from '@vitejs/plugin-react';
+  import { resolve } from 'path';
+
+  // 画面の定義
+  const screens = [
+    {
+      name: 'login-id',
+      prompt: 'login-id',
+      screen: 'login-id'
+    },
+    {
+      name: 'login-password',
+      prompt: 'login-password',
+      screen: 'login-password'
+    },
+    {
+      name: 'mfa',
+      prompt: 'mfa-otp',
+      screen: 'mfa'
+    }
+  ];
+
+  // すべての画面用の input オブジェクトを生成
+  const input = Object.fromEntries(
+    screens.map(screen => [
+      screen.name,
+      resolve(__dirname, `src/${screen.name}/main.tsx`)
+    ])
+  );
+  export default defineConfig({
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        input,
+        output: {
+          // 各画面ごとに専用のディレクトリを作成する
+          dir: 'dist',
+          entryFileNames: '[name]/index.js',
+          assetFileNames: '[name]/[name][extname]',
+          chunkFileNames: '[name]/chunks/[name]-[hash].js',
+          manualChunks: {
+            // React を vendor チャンクに分割
+            'vendor-react': ['react', 'react-dom'],
+            // Auth0 SDK を vendor チャンクに分割
+            'vendor-auth0': ['@auth0/auth0-acul-js']
+          }
+        }
+      },
+      // 本番環境でのデバッグ用にソースマップを生成
+      sourcemap: true,
+      // 出力を圧縮する
+      minify: 'terser'
+    }
+  });
+  ```
+</Accordion>
+
+<div id="set-up-build-scripts">
+  ### ビルドスクリプトを設定する
+</div>
+
+Vite のビルドを実行するための `scripts/build.ts` を作成します:
+
+<Accordion title="Vite ビルドを実行する scripts/build.ts">
+  ```jsx lines
+  import { build } from 'vite';
+  async function buildScreens() {
+    try {
+      await build();
+      console.log('Build completed successfully');
+    } catch (err) {
+      console.error('Build failed:', err);
+      process.exit(1);
+    }
+  }
+  buildScreens();
+  ```
+</Accordion>
+
+<div id="build-your-aws-infrastructure">
+  ### AWS インフラストラクチャを構築する
+</div>
+
+S3 バケットと CloudFront ディストリビューションを作成します：
+
+<Accordion title="AWS S3 バケットを作成する">
+  ```bash lines
+  # バケットを作成
+
+  aws s3 mb s3://your-acul-assets --region us-east-1
+
+  # バージョニングを有効にする
+
+  aws s3api put-bucket-versioning \
+    --bucket your-acul-assets \
+    --versioning-configuration Status=Enabled
+
+  # CloudFront ディストリビューションを作成
+
+  aws cloudfront create-distribution \
+    --origin-domain-name your-acul-assets.s3.amazonaws.com \
+    --default-root-object index.html \
+    --default-cache-behavior '{"TargetOriginId":"S3Origin","ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":{"Quantity":2,"Items":["GET","HEAD"]},"CachePolicyId":"658327ea-f89d-4fab-a63d-7e88639e58f6"}'
+  ```
+</Accordion>
+
+<div id="configure-cors-for-auth0">
+  ### Auth0 用の CORS を設定する
+</div>
+
+<Accordion title="Auth0 用の CORS を設定する">
+  ```json lines
+  {
+    "CORSRules": [{
+      "AllowedHeaders": ["*"],
+      "AllowedMethods": ["GET"],
+      "AllowedOrigins": [
+        "https://*.auth0.com",
+        "https://your-custom-domain.com"
+      ],
+      "MaxAgeSeconds": 3000
+    }]
+  }
+  ```
+</Accordion>
+
+<div id="create-a-deployment-script">
+  ### デプロイスクリプトを作成する
+</div>
+
+AWS へのデプロイ用に `scripts/deploy.ts` を作成します:
+
+<Accordion title="scripts/deploy.ts を作成">
+  ```jsx lines expandable
+  import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+  import { CloudFrontClient, CreateInvalidationCommand } from '@aws-sdk/client-cloudfront';
+  import { readFileSync } from 'fs';
+  import { resolve } from 'path';
+
+  // 画面の定義（vite.config.ts と同期させる）
+  const screens = [
+    'login-id',
+    'login-password',
+    'mfa'
+  ];
+
+  async function deploy() {
+    const s3 = new S3Client({ region: 'us-east-1' });
+    const cloudfront = new CloudFrontClient({ region: 'us-east-1' });
+
+    const bucket = process.env.S3_BUCKET;
+    const distributionId = process.env.CLOUDFRONT_ID;
+
+    for (const screen of screens) {
+      const distPath = resolve(__dirname, `../dist/${screen}`);
+
+      // アセットをアップロード
+      const files = ['index.js', 'index.css', 'vendor-react.js', 'vendor-auth0.js'];
+      for (const file of files) {
+        try {
+          const content = readFileSync(`${distPath}/${file}`);
+          await s3.send(new PutObjectCommand({
+            Bucket: bucket,
+            Key: `${screen}/${file}`,
+            Body: content,
+            ContentType: file.endsWith('.js') ? 'application/javascript' : 'text/css',
+            CacheControl: 'max-age=31536000'
+          }));
+        } catch (err) {
+          console.warn(`Skipping ${file} for ${screen}: ${err.message}`);
+        }
+      }
+    }
+
+    // キャッシュを無効化
+    await cloudfront.send(new CreateInvalidationCommand({
+      DistributionId: distributionId,
+      InvalidationBatch: {
+        CallerReference: Date.now().toString(),
+        Paths: { Quantity: 1, Items: ['/*'] }
+      }
+    }));
+  }
+
+  deploy().catch(console.error);
+  ```
+</Accordion>
+
+<div id="set-up-github-actions-workflow">
+  ### GitHub Actions ワークフローを設定する
+</div>
+
+`.github/workflows/deploy.yml` を作成します:
+
+<Accordion title="GitHub Actions ワークフローを設定する">
+  ```yaml lines expandable
+  name: Deploy ACUL Screens
+
+  on:
+    push:
+      branches: [ main ]
+    workflow_dispatch:
+
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Screens
+        run: npm run build
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to CloudFront
+        run: npm run deploy
+        env:
+          S3_BUCKET: your-acul-assets
+          CLOUDFRONT_ID: ${{ secrets.CLOUDFRONT_ID }}
+          CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
+
+      - name: Setup Auth0 CLI
+        run: npm install -g auth0-cli
+
+      - name: Configure Auth0 Screens
+        run: |
+          # Auth0 にログイン
+          auth0 login --token ${{ secrets.AUTH0_DEPLOY_TOKEN }}
+
+          # 各画面を設定
+          for screen in login-id login-password mfa; do
+            # 設定ファイルを生成
+            cat > settings.json << EOF
+            {
+              "rendering_mode": "advanced",
+              "context_configuration": [
+                "screen.texts",
+                "branding.settings",
+                "organization.branding",
+                "tenant.name",
+                "tenant.friendly_name"
+              ],
+              "head_tags": [
+                {
+                  "tag": "script",
+                  "attributes": {
+                    "src": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/vendor-react.js",
+                    "defer": true
+                  }
+                },
+                {
+                  "tag": "script",
+                  "attributes": {
+                    "src": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/vendor-auth0.js",
+                    "defer": true
+                  }
+                },
+                {
+                  "tag": "script",
+                  "attributes": {
+                    "src": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/index.js",
+                    "defer": true
+                  }
+                },
+                {
+                  "tag": "link",
+                  "attributes": {
+                    "rel": "stylesheet",
+                    "href": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/index.css"
+                  }
+                }
+              ]
+            }
+            EOF
+
+            # 画面を設定
+            auth0 ul customize \
+              --rendering-mode advanced \
+              --prompt ${screen} \
+              --screen ${screen} \
+              --settings-file settings.json
+          done
+  ```
+</Accordion>
+
+最後に、次のシークレットを GitHub リポジトリに追加してください:
+
+* `AWS_ACCESS_KEY_ID`
+* `AWS_SECRET_ACCESS_KEY`
+* `CLOUDFRONT_ID`
+* `CLOUDFRONT_DOMAIN`
+* `AUTH0_DEPLOY_TOKEN`

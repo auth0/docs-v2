@@ -1,0 +1,271 @@
+---
+title: "ASP.NET Web API (OWIN): 認可"
+permalink: "01-authorization"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-damien-guard">
+  ##### Damien Guard による解説
+</div>
+
+このチュートリアルでは、標準的な JWT ミドルウェアを使用して ASP.NET OWIN API に認可機能を追加する方法を説明します。このクイックスタートを進める際は、ご自分のアカウント用に設定されたサンプルを利用できるよう、ログインすることをお勧めします。
+
+{/* <Card title="GitHub で表示" href="https://github.com/auth0-samples/auth0-aspnet-owin-webapi-samples/tree/master/Quickstart/Sample" icon="github">
+  システム要件: Microsoft Visual Studio 2015 Update 3 | System.IdentityModel.Tokens.Jwt NuGet パッケージ v5.2.2 | Microsoft.Owin.Security.Jwt NuGet パッケージ V4.0.0
+  </Card> */}
+
+<Info>
+  **Auth0 を初めて利用しますか？** Auth0 の[仕組み](/docs/ja-JP/get-started/auth0-overview)を学び、OAuth 2.0 フレームワークを使用した [API 認証と認可の実装方法](/docs/ja-JP/get-started/authentication-and-authorization-flow)を確認してください。
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Auth0 の API を設定する
+</div>
+
+<div id="create-an-api">
+  ### API を作成する
+</div>
+
+Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションで **Create API** をクリックします。API の名前と識別子を入力します（例: `https://quickstarts/api`）。この識別子は、後でアクセストークン検証を設定するときに `audience` として使用します。**Signing Algorithm** は **RS256** のままにしておきます。
+
+<Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+デフォルトでは、API はトークンの署名アルゴリズムとして RS256 を使用します。RS256 は秘密鍵/公開鍵ペアを使用するため、Auth0 アカウントの公開鍵を使ってトークンを検証します。公開鍵は [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) 形式で提供されており、[次の URL](https://\{yourDomain}/.well-known/jwks.json) から取得できます。
+
+<div id="define-permissions">
+  ### パーミッションを定義する
+</div>
+
+パーミッションを使用すると、特定のアクセストークンを使用してユーザーに代わってリソースへどのようにアクセスさせるかを定義できます。たとえば、ユーザーがマネージャーのアクセスレベルを持っている場合は `messages` リソースへの読み取りアクセスを付与し、管理者のアクセスレベルを持っている場合はそのリソースへの書き込みアクセスを付与するといったことが可能です。
+
+許可されるパーミッションは、Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションにある **Permissions** ビューで定義できます。
+
+<Frame>![Configure Permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  この例では `read:messages` というスコープを使用します。
+</Info>
+
+この例では次の内容を示します。
+
+* 受信 HTTP リクエストの `Authorization` ヘッダー内に JSON Web Token (JWT) が含まれているかどうかを確認する方法。
+* Auth0 アカウント用の [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) を使用して、そのトークンが有効かどうかを確認する方法。アクセストークンの検証の詳細については、[Validate Access Tokens](/docs/ja-JP/secure/tokens/access-tokens/validate-access-tokens) を参照してください。
+
+<div id="configure-the-sample-project">
+  ## サンプルプロジェクトの設定
+</div>
+
+サンプルコードには、`Web.config` 内に `appsettings` セクションがあり、そこで Auth0 の正しい **ドメイン** と、API 用の **API Identifier** を使用するように設定します。このページからコードをダウンロードした場合は、これらの値は自動的に設定されています。GitHub のサンプルを使用する場合は、自分で値を入力する必要があります。
+
+export const codeExample = `// web.config
+
+<appSettings>
+  <add key="Auth0Domain" value="{yourDomain}" />
+  <add key="Auth0ApiIdentifier" value="{yourApiIdentifier}" />
+</appSettings>`;
+
+<AuthCodeBlock children={codeExample} language="config" />
+
+<div id="validate-access-tokens">
+  ## アクセストークンの検証
+</div>
+
+<div id="install-dependencies">
+  ### 依存関係をインストールする
+</div>
+
+ASP.NET で Auth0 アクセストークンを使用するには、`Microsoft.Owin.Security.Jwt` NuGet パッケージで提供されている OWIN JWT ミドルウェアを使用する必要があります。
+
+```bash lines
+Install-Package Microsoft.Owin.Security.Jwt
+```
+
+<div id="verifying-the-token-signature">
+  ### トークン署名の検証
+</div>
+
+OWIN JWT ミドルウェアは既定では OpenID Connect Discovery を使用しないため、カスタムの `IssuerSigningKeyResolver` を指定する必要があります。これを行うには、次の内容を `Support/OpenIdConnectSigningKeyResolver.cs` ファイルに追加します。
+
+<Info>
+  このようなカスタムリゾルバーは、以前は NuGet を通じて `Auth0.OpenIdConnectSigningKeyResolver` パッケージの一部として公開されていましたが、[このパッケージは現在利用できないため](https://github.com/auth0/auth0-aspnet-owin/blob/master/SECURITY-NOTICE.md)、ご自身で用意する必要があります。
+</Info>
+
+```cs lines
+public class OpenIdConnectSigningKeyResolver
+{
+    private readonly OpenIdConnectConfiguration openIdConfig;
+
+    public OpenIdConnectSigningKeyResolver(string authority)
+    {
+        var cm = new ConfigurationManager<OpenIdConnectConfiguration>($"{authority.TrimEnd('/')}/.well-known/openid-configuration", new OpenIdConnectConfigurationRetriever());
+        openIdConfig = AsyncHelper.RunSync(async () => await cm.GetConfigurationAsync());
+    }
+
+    public SecurityKey[] GetSigningKey(string kid)
+    {
+        return new[] { openIdConfig.JsonWebKeySet.GetSigningKeys().FirstOrDefault(t => t.KeyId == kid) };
+    }
+}
+```
+
+`OpenIdConnectSigningKeyResolver` は、OpenID Connect の構成エンドポイント（`/.well-known/openid-configuration`）から、RS256 トークンに署名するために使用される JSON Web Key Set を自動的にダウンロードします。次に、以下の JWT 登録コードで示すように、そのキーセットを使って Issuer Signing Key を特定できます。
+
+<div id="configuration">
+  ### 設定
+</div>
+
+`Startup` クラスの `Configuration` メソッドを開き、構成済みの `JwtBearerAuthenticationOptions` を引数として渡す `UseJwtBearerAuthentication` の呼び出しを追加します。
+
+`JwtBearerAuthenticationOptions` では、`ValidAudience` プロパティに Auth0 の API Identifier を指定し、`ValidIssuer` には Auth0 ドメインへの完全な URL を指定する必要があります。また、署名キーを解決するために `OpenIdConnectSigningKeyResolver` のインスタンスを使用するように、`IssuerSigningKeyResolver` を構成する必要があります。
+
+```cs lines
+// Startup.cs
+
+public void Configuration(IAppBuilder app)
+{
+    var domain = $"https://{ConfigurationManager.AppSettings["Auth0Domain"]}/";
+    var apiIdentifier = ConfigurationManager.AppSettings["Auth0ApiIdentifier"];
+    var keyResolver = new OpenIdConnectSigningKeyResolver(domain);
+
+    app.UseJwtBearerAuthentication(
+        new JwtBearerAuthenticationOptions
+        {
+            AuthenticationMode = AuthenticationMode.Active,
+            TokenValidationParameters = new TokenValidationParameters()
+            {
+                ValidAudience = apiIdentifier,
+                ValidIssuer = domain,
+                IssuerSigningKeyResolver = (token, securityToken, kid, parameters) => keyResolver.GetSigningKey(kid)
+            }
+        });
+
+    // Web API を構成
+    WebApiConfig.Configure(app);
+}
+```
+
+<Warning>
+  ### 最後のバックスラッシュを忘れないでください
+
+  `ValidIssuer` に指定する URL には、必ず末尾にバックスラッシュ（\）を含めてください。JWT の issuer クレームと完全に一致している必要があるためです。ここを誤って設定すると、API 呼び出しが正しく認証されない一般的な原因となります。
+</Warning>
+
+<div id="validate-scopes">
+  ### スコープを検証する
+</div>
+
+上記の JWT ミドルウェアは、リクエストに含まれるアクセストークンが有効であることを検証しますが、トークンが要求されたリソースにアクセスするのに十分な **スコープ** を持っているかどうかを確認する仕組みは、まだ含まれていません。
+
+`System.Web.Http.AuthorizeAttribute` を継承する `ScopeAuthorizeAttribute` というクラスを作成します。この Authorization 属性は、Auth0 テナントによって発行された `scope` クレームが存在するかを確認し、存在する場合には、その `scope` クレームに要求されたスコープが含まれていることを検証します。
+
+```cs lines
+// Controllers/ScopeAuthorizeAttribute.cs
+
+public class ScopeAuthorizeAttribute : AuthorizeAttribute
+{
+    private readonly string scope;
+
+    public ScopeAuthorizeAttribute(string scope)
+    {
+        this.scope = scope;
+    }
+
+    public override void OnAuthorization(HttpActionContext actionContext)
+    {
+        base.OnAuthorization(actionContext);
+
+        // 発行者を検証するため、Auth0ドメインを取得
+        var domain = $"https://{ConfigurationManager.AppSettings["Auth0Domain"]}/";
+
+        // クレームプリンシパルを取得
+        ClaimsPrincipal principal = actionContext.ControllerContext.RequestContext.Principal as ClaimsPrincipal;
+
+        // スコープクレームを取得。発行者が正しいAuth0ドメインであることを確認
+        var scopeClaim = principal?.Claims.FirstOrDefault(c => c.Type == "scope" && c.Issuer == domain);
+        if (scopeClaim != null)
+        {
+            // スコープを分割
+            var scopes = scopeClaim.Value.Split(' ');
+
+            // 必要なスコープがスコープ配列に含まれている場合は成功
+            if (scopes.Any(s => s == scope))
+                return;
+        }
+
+        HandleUnauthorizedRequest(actionContext);
+    }
+}
+```
+
+<div id="protect-api-endpoints">
+  ## API エンドポイントを保護する
+</div>
+
+次に示すルートには、以下のリクエストでアクセスできます。
+
+* `GET /api/public`: 認証されていないリクエストで利用可能
+* `GET /api/private`: 追加のスコープを持たないアクセストークンを含む認証済みリクエストで利用可能
+* `GET /api/private-scoped`: `read:messages` スコープが付与されたアクセストークンを含む認証済みリクエストで利用可能
+
+JWT ミドルウェアは標準の ASP.NET の認証および認可メカニズムと統合されているため、エンドポイントを保護するには、コントローラーのアクションに `[Authorize]` 属性を付与するだけです。
+
+```cs lines
+// Controllers/ApiController.cs
+
+[RoutePrefix("api")]
+public class ApiController : ApiController
+{
+    [HttpGet]
+    [Route("private")]
+    [Authorize]
+    public IHttpActionResult Private()
+    {
+        return Json(new
+        {
+            Message = "Hello from a private endpoint! You need to be authenticated to see this."
+        });
+    }
+}
+```
+
+特定の API エンドポイントを呼び出すために必要なスコープが含まれるようにするには、`ScopeAuthorize` 属性でアクションをデコレートし、`scope` パラメータに必要な `scope` の名前を渡すだけです。
+
+```cs lines
+// Controllers/ApiController.cs
+
+[RoutePrefix("api")]
+public class ApiController : ApiController
+{
+    [HttpGet]
+    [Route("private-scoped")]
+    [ScopeAuthorize("read:messages")]
+    public IHttpActionResult Scoped()
+    {
+        return Json(new
+        {
+            Message = "プライベートエンドポイントからこんにちは！これを表示するには、認証され、read:messages のスコープを持っている必要があります。"
+        });
+    }
+}
+```
+
+<Info>
+  ##### 次のステップ
+
+  <table>
+    <tr>
+      <td><a href="/docs/ja-JP/authenticate/identity-providers">他のアイデンティティ プロバイダーを設定する</a></td>
+      <td><a href="/docs/ja-JP/secure/multi-factor-authentication">多要素認証を有効化する</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/ja-JP/secure/attack-protection">攻撃対策について学ぶ</a></td>
+      <td><a href="/docs/ja-JP/customize/rules">Rules について学ぶ</a></td>
+    </tr>
+  </table>
+
+  [GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

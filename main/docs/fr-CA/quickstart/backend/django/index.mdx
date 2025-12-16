@@ -1,0 +1,351 @@
+---
+title: "API Django : autorisation"
+permalink: "01-authorization"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-luciano-balmaceda">
+  ##### Par Luciano Balmaceda
+</div>
+
+Ce tutoriel montre comment ajouter la prise en charge de l’autorisation à une API Django REST Framework. Nous vous recommandons de vous connecter pour suivre ce démarrage rapide avec des exemples configurés pour votre compte.
+
+{/* <Card title="Voir sur GitHub" href="https://github.com/auth0-samples/auth0-django-api/tree/master/01-Authorization" icon="github">
+  Configuration système requise : Python 3.5 ou version ultérieure | Django 2.2.\* | djangorestframework 3.10.\* | drf-jwt 1.13.\*
+  </Card> */}
+
+<Info>
+  **Nouveau sur Auth0 ?** Découvrez [le fonctionnement d’Auth0](/docs/fr-CA/get-started/auth0-overview) et comment [mettre en œuvre l’authentification et l’autorisation d’API](/docs/fr-CA/get-started/authentication-and-authorization-flow) à l’aide du cadre OAuth 2.0.
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Configurer les API d’Auth0
+</div>
+
+<div id="create-an-api">
+  ### Créer une API
+</div>
+
+Dans la section [APIs](https://manage.auth0.com/#/apis) de l&#39;Auth0 Dashboard, cliquez sur **Create API**. Indiquez un nom et un identifiant pour votre API, par exemple `https://quickstarts/api`. Vous utiliserez cet identifiant comme `audience` plus tard, lorsque vous configurerez la vérification du jeton d&#39;accès. Laissez **Signing Algorithm** défini sur **RS256**.
+
+<Frame>![Créer une API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+Par défaut, votre API utilise RS256 comme algorithme de signature des jetons. Puisque RS256 utilise une paire de clés privée/publique, il vérifie les jetons à l&#39;aide de la clé publique de votre compte Auth0. La clé publique est au format [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) et est accessible [ici](https://\{yourDomain}/.well-known/jwks.json).
+
+<div id="define-permissions">
+  ### Définir les permissions
+</div>
+
+Les permissions vous permettent de définir les modalités d’accès aux ressources au nom de l’utilisateur à l’aide d’un jeton d’accès donné. Par exemple, vous pourriez choisir d’accorder un accès en lecture à la ressource `messages` si les utilisateurs ont le niveau d’accès gestionnaire, et un accès en écriture à cette ressource s’ils ont le niveau d’accès administrateur.
+
+Vous pouvez définir les permissions autorisées dans la vue **Permissions** de la section [APIs](https://manage.auth0.com/#/apis) de l’Auth0 Dashboard.
+
+<Frame>![Configure Permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  Cet exemple utilise la portée `read:messages`.
+</Info>
+
+Cet exemple montre :
+
+* Comment vérifier la présence d’un JSON Web Token (JWT) dans l’en-tête `Authorization` d’une requête HTTP entrante.
+* Comment vérifier si le jeton est valide, en utilisant le [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) de votre compte Auth0. Pour en savoir plus sur la validation des jetons d’accès, consultez [Validate Access Tokens](/docs/fr-CA/secure/tokens/access-tokens/validate-access-tokens).
+
+<div id="setup-the-django-application">
+  ## Configurer l’application Django
+</div>
+
+<div id="install-dependencies">
+  ### Installer les dépendances
+</div>
+
+Ajoutez les dépendances suivantes à votre fichier `requirements.txt`, puis exécutez `pip install -r requirements.txt`.
+
+```txt lines
+cryptography~=2.8
+django~=2.2.7
+djangorestframework~=3.10.31
+django-cors-headers~=3.1.1
+drf-jwt~=1.13.3
+pyjwt~=1.7.1
+requests~=2.22.0
+```
+
+<div id="create-a-django-project">
+  ### Créer un projet Django
+</div>
+
+Ce guide part du principe que vous avez déjà une application Django configurée. Si ce n’est pas le cas, suivez les étapes du [tutoriel Django](https://docs.djangoproject.com/en/2.2/intro/tutorial01/).
+
+Le projet d’exemple a été créé avec les commandes suivantes :
+
+```bash lines
+django-admin startproject apiexample
+cd apiexample
+python manage.py startapp auth0authorization
+```
+
+<div id="add-a-django-remote-user">
+  ### Ajouter un utilisateur distant dans Django
+</div>
+
+Vous devez définir une méthode pour faire correspondre le nom d&#39;utilisateur présent dans la charge utile du jeton d’accès au système d&#39;authentification de Django.
+
+Ajoutez le composant middleware [`RemoteUserMiddleware`](https://docs.djangoproject.com/en/2.2/ref/middleware/#django.contrib.auth.middleware.RemoteUserMiddleware) à la liste des middlewares, après `AuthenticationMiddleware`.
+
+```py lines
+# apiexample/settings.py
+
+MIDDLEWARE = [
+    # ...
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.auth.middleware.RemoteUserMiddleware',
+]
+```
+
+Ajoutez `ModelBackend` et `RemoteUserBackend` aux backends d’authentification.
+
+```py lines
+# apiexample/settings.py
+
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'django.contrib.auth.backends.RemoteUserBackend',
+]
+```
+
+Créez un fichier `utils.py` dans le dossier de votre application et définissez une fonction qui associe le champ `sub` de l’`access_token` au nom d’utilisateur. Ensuite, la méthode [authenticate](https://docs.djangoproject.com/en/2.2/ref/contrib/auth/#django.contrib.auth.backends.RemoteUserBackend.authenticate) de [RemoteUserBackend](https://docs.djangoproject.com/en/2.2/ref/contrib/auth/#django.contrib.auth.backends.RemoteUserBackend) créera un utilisateur distant dans le système d’authentification Django et renverra un objet User correspondant à ce nom d’utilisateur.
+
+```py lines
+# auth0authorization/utils.py
+
+from django.contrib.auth import authenticate
+
+def jwt_get_username_from_payload_handler(payload):
+    username = payload.get('sub').replace('|', '.')
+    authenticate(remote_user=username)
+    return username
+```
+
+<div id="validate-access-tokens">
+  ## Valider les jetons d’accès
+</div>
+
+Le fichier `settings.py` contient la configuration du projet Django.
+
+Ajoutez l’application `rest_framework` à la liste `INSTALLED_APPS`.
+
+```py lines
+# apiexample/settings.py
+
+INSTALLED_APPS = [
+    # ...
+    'rest_framework'
+]
+```
+
+Ajoutez `JSONWebTokenAuthentication` à `DEFAULT_AUTHENTICATION_CLASSES` du framework Django REST.
+
+```py lines
+# apiexample/settings.py
+
+REST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_jwt.authentication.JSONWebTokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+    ),
+}
+```
+
+Configurez le [Django REST Framework JWK](https://github.com/Styria-Digital/django-rest-framework-jwt/) en définissant la variable `JWT_AUTH`.
+
+Définissez `JWT_AUDIENCE` à l’identifiant de votre API et `JWT_ISSUER` à votre domaine Auth0. Par défaut, ces valeurs sont lues dans le fichier `.env`.
+
+export const codeExample1 = `# apiexample/settings.py
+
+JWT_AUTH = {
+    'JWT_PAYLOAD_GET_USERNAME_HANDLER':
+        'auth0authorization.utils.jwt_get_username_from_payload_handler',
+    'JWT_DECODE_HANDLER':
+        'auth0authorization.utils.jwt_decode_token',
+    'JWT_ALGORITHM': 'RS256',
+    'JWT_AUDIENCE': '{yourApiIdentifier}',
+    'JWT_ISSUER': 'https://{yourDomain}/',
+    'JWT_AUTH_HEADER_PREFIX': 'Bearer',
+}`;
+
+<AuthCodeBlock children={codeExample1} language="py" />
+
+Créez la fonction qui récupère le JWKS à partir de votre compte Auth0 afin de vérifier et de décoder le jeton d’accès reçu.
+
+export const codeExample2 = `# auth0authorization/utils.py
+
+import json
+
+import jwt
+import requests
+
+def jwt_decode_token(token):
+    header = jwt.get_unverified_header(token)
+    jwks = requests.get('https://{}/.well-known/jwks.json'.format('{yourDomain}')).json()
+    public_key = None
+    for jwk in jwks['keys']:
+        if jwk['kid'] == header['kid']:
+            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+
+    if public_key is None:
+        raise Exception('Clé publique introuvable.');
+
+    issuer = 'https://{}/'.format('{yourDomain}')
+    return jwt.decode(token, public_key, audience='{yourApiIdentifier}', issuer=issuer, algorithms=['RS256'])`;
+
+<AuthCodeBlock children={codeExample2} language="py" />
+
+<div id="validate-scopes">
+  ### Valider les scopes
+</div>
+
+Ajoutez les méthodes suivantes au fichier `views.py` pour créer un décorateur qui vérifiera les scopes accordés dans l’`access_token`.
+
+```py lines
+# auth0authorization/views.py
+
+from functools import wraps
+import jwt
+
+from django.http import JsonResponse
+
+def get_token_auth_header(request):
+    """Obtient le jeton d'accès de l'en-tête Authorization
+    """
+    auth = request.META.get("HTTP_AUTHORIZATION", None)
+    parts = auth.split()
+    token = parts[1]
+
+    return token
+
+def requires_scope(required_scope):
+    """Détermine si la portée requise est présente dans le jeton d'accès
+    Args:
+        required_scope (str): La portée requise pour accéder à la ressource
+    """
+    def require_scope(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            token = get_token_auth_header(args[0])
+            decoded = jwt.decode(token, verify=False)
+            if decoded.get("scope"):
+                token_scopes = decoded["scope"].split()
+                for token_scope in token_scopes:
+                    if token_scope == required_scope:
+                        return f(*args, **kwargs)
+            response = JsonResponse({'message': 'Vous n'avez pas accès à cette ressource'})
+            response.status_code = 403
+            return response
+        return decorated
+    return require_scope
+```
+
+<div id="protect-api-endpoints">
+  ## Protéger les endpoints d’API
+</div>
+
+Les routes ci-dessous sont disponibles pour les requêtes suivantes :
+
+* `GET /api/public` : disponible pour les requêtes non authentifiées
+* `GET /api/private` : disponible pour les requêtes authentifiées contenant un jeton d’accès sans scopes supplémentaires
+* `GET /api/private-scoped` : disponible pour les requêtes authentifiées contenant un jeton d’accès avec la portée `read:messages` accordée
+
+Dans le fichier `views.py`, ajoutez les endpoints `public` et `private`. Ajoutez le décorateur `@api_view` à tous les endpoints pour indiquer que la méthode nécessite une authentification. Enfin, ajoutez le décorateur `@permission_classes([AllowAny])` à l’endpoint `public` pour accepter les requêtes non authentifiées.
+
+```py lines
+# auth0authorization/views.py
+
+from django.http import JsonResponse
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public(request):
+    return JsonResponse({'message': 'Hello from a public endpoint! You don\'t need to be authenticated to see this.'})
+
+
+@api_view(['GET'])
+def private(request):
+    return JsonResponse({'message': 'Hello from a private endpoint! You need to be authenticated to see this.'})
+```
+
+Utilisez le décorateur `requires_scope` pour les méthodes qui nécessitent des scopes spécifiques. La méthode ci-dessous requiert le scope `read:messages`.
+
+```py lines
+# auth0authorization/views.py
+
+@api_view(['GET'])
+@requires_scope('read:messages')
+def private_scoped(request):
+    return JsonResponse({'message': 'Bonjour depuis un point de terminaison privé! Vous devez être authentifié et disposer de la portée read:messages pour voir ceci.'})
+```
+
+<div id="add-url-mappings">
+  ### Ajouter des correspondances d’URL
+</div>
+
+Dans les étapes précédentes, nous avons ajouté des méthodes au fichier `views.py`. Nous devons associer ces méthodes à des URL.
+
+Django possède un [dispatcheur d’URL](https://docs.djangoproject.com/en/2.2/topics/http/urls/) qui vous permet d’associer des modèles d’URL à des vues.
+
+Créez le fichier `urls.py` dans le dossier de votre application. Ajoutez les modèles d’URL.
+
+```py lines
+# auth0authorization/urls.py
+
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path('api/public', views.public),
+    path('api/private', views.private),
+    path('api/private-scoped', views.private_scoped),
+]
+```
+
+Le projet Django comporte aussi un fichier `urls.py`. Ajoutez une référence au fichier `urls.py` de votre application.
+
+```py lines
+# apiexample/urls.py
+
+from django.contrib import admin
+from django.urls import include, path
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('', include('auth0authorization.urls'))
+]
+```
+
+<Info>
+  ##### Que pouvez-vous faire ensuite?
+
+  <table>
+    <tr>
+      <td><a href="/docs/fr-CA/authenticate/identity-providers">Configurer d&#39;autres fournisseurs d&#39;identité</a></td>
+      <td><a href="/docs/fr-CA/secure/multi-factor-authentication">Activer l’authentification multifacteur</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/fr-CA/secure/attack-protection">En savoir plus sur la protection contre les attaques</a></td>
+      <td><a href="/docs/fr-CA/customize/rules">En savoir plus sur Rules</a></td>
+    </tr>
+  </table>
+
+  [Modifier sur GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

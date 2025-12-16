@@ -1,0 +1,485 @@
+---
+description: Découvrez comment utiliser des quotas de jetons M2M granulaires pour les applications
+  et les organisations associées à votre tenant.
+'og:image': https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+'og:title': Quotas de jetons Machine-to-Machine granulaires
+'og:url': https://auth0.com/docs/
+permalink: fine-grained-m2m-token-quotas
+title: Quotas de jetons Machine-to-Machine granulaires - Accès anticipé
+'twitter:description': Découvrez comment utiliser des quotas de jetons M2M granulaires pour les applications
+  et les organisations associées à votre tenant.
+'twitter:title': Quotas de jetons Machine-to-Machine granulaires
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les quotas granulaires de jetons M2M sont actuellement en accès anticipé (Early Access). Communiquez avec votre contact Auth0 pour demander l’accès. Pour en savoir plus sur le cycle de publication des produits Auth0, consultez la page [Étapes de publication des produits](/docs/fr-CA/troubleshoot/product-lifecycle/product-release-stages).
+</Callout>
+
+Le [flux Client Credentials](/docs/fr-CA/get-started/authentication-and-authorization-flow/client-credentials-flow) permet aux applications Machine-to-Machine (M2M), telles que les CLI, les démons ou les services backend, d’obtenir des <Tooltip tip="Jeton d’accès : justificatif d’autorisation, sous la forme d’une chaîne opaque ou d’un JWT, utilisé pour accéder à une API." cta="Afficher le glossaire" href="/docs/fr-CA/glossary?term=access+tokens">jetons d’accès</Tooltip> en leur propre nom, sans aucune interaction de l’utilisateur.
+
+L’application des meilleures pratiques de mise en cache des jetons d’accès peut réduire au minimum les allers-retours vers Auth0 et contrôler le volume d’émission de jetons. Toutefois, certaines applications, comme les systèmes tiers ou celles utilisées dans de grands déploiements complexes, peuvent ne pas mettre en place une mise en cache adéquate et présenter un comportement en rafales. Cela peut amener Auth0 à générer un grand volume de jetons M2M sur de courtes périodes, ce qui a une incidence sur le quota global de jetons M2M de votre locataire et peut entraîner un comportement de service inattendu.
+
+Les quotas granulaires de jetons M2M d’Auth0 vous permettent de définir des limites horaires et quotidiennes de jetons d’accès M2M pour les applications et les organisations Auth0. Cela offre un contrôle opérationnel précis sur l’émission de jetons afin de prévenir une consommation excessive de jetons.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les quotas granulaires de jetons M2M sont distincts de l’allocation mensuelle globale de jetons M2M de votre locataire. Vous pouvez utiliser les quotas granulaires de jetons comme mécanisme de protection contre les demandes rapides de jetons.
+</Callout>
+
+<div id="use-cases">
+  ## Cas d’utilisation
+</div>
+
+* **Contrôler les applications hors de contrôle** : Appliquez des quotas au niveau de l’application pour empêcher les applications M2M de demander des jetons trop fréquemment (à cause de bogues, de l’absence de mise en cache, etc.) sans affecter le quota global de jetons M2M de votre tenant.
+* **Assurer une utilisation équitable en environnement multi-tenant** : Attribuez des quotas au niveau de l’organisation à différents clients (organisations Auth0) pour empêcher l’un d’eux de réduire le quota des autres.
+* **Définir des garde-fous à l’échelle du tenant** : Utilisez des quotas par défaut au niveau du tenant comme seuil de base contre les demandes excessives de jetons M2M provenant des applications et des organisations.
+* **Surveiller avant d’appliquer les limites** : Déployez des quotas avec `enforce: false` pour observer la consommation de jetons via les [journaux d’avertissement de consommation](#consumption-warning-logs) et les [en-têtes de quotas Auth0](#auth0-quota-headers). Ensuite, définissez des limites éclairées avant de bloquer activement.
+
+<div id="how-it-works">
+  ## Fonctionnement
+</div>
+
+Vous pouvez appliquer des quotas de jetons M2M granulaires aux entités suivantes :
+
+* **Application** : Limite les jetons générés pour un client afin de contrôler le comportement de chaque application.
+* **Organisation** : Limite les jetons pour les requêtes effectuées avec une organisation afin d’aider à gérer l’activité M2M du client SaaS ou de l’unité d’affaires pour l’ensemble des applications qui utilisent des jetons associés à un `org_id`.
+
+Auth0 prend en charge deux types de quotas de jetons M2M granulaires :
+
+* **Horaire :** Nombre maximal de jetons pouvant être obtenus en une heure. Le quota est réinitialisé au début de chaque heure UTC.
+* **Quotidien :** Nombre maximal de jetons pouvant être obtenus sur une période de 24 heures. Le quota est réinitialisé au début de chaque jour UTC.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Le mécanisme de comptage des jetons d’Auth0 est basé sur une cohérence éventuelle, ce qui peut entraîner de légers dépassements de courte durée avant que la limite ne soit appliquée aux requêtes suivantes.
+</Callout>
+
+<div id="quota-evaluation-and-enforcement-rules">
+  ### Règles d’évaluation et d’application des quotas
+</div>
+
+Auth0 détermine et applique des quotas granulaires de jetons M2M pour les applications et les organisations associées à votre tenant :
+
+1. **Quota au niveau du client :**
+
+   * Si vous avez configuré un **quota spécifique à l’Application** pour le `client_id`, Auth0 applique le quota au client.
+   * Sinon, Auth0 applique le **quota par défaut du tenant pour les clients** au client. Si vous n’avez pas configuré de quota par défaut au niveau du tenant pour les clients, Auth0 n’applique pas de quota granulaire au client.
+2. **Quota au niveau de l’organisation :**
+
+   * Si vous avez configuré un **quota spécifique à l’organisation** pour le `org_id` associé à la demande de jeton, Auth0 applique le quota à l’organisation.
+   * Sinon, Auth0 applique le **quota par défaut du tenant pour les organisations** au `org_id` associé à la demande de jeton. Si vous n’avez pas configuré de quota par défaut au niveau du tenant pour les organisations, Auth0 n’applique pas de quota granulaire pour le `org_id` associé à la demande de jeton.
+3. Selon que la demande de jeton a ou non une organisation associée, Auth0 vérifie s’il existe un quota applicable :
+
+   * Si la demande de jeton a une organisation associée définie explicitement ou via les paramètres d’organisation par défaut, Auth0 vérifie simultanément les quotas au niveau du client et au niveau de l’organisation.
+   * Si la demande de jeton n’a pas d’organisation associée, Auth0 vérifie uniquement le quota au niveau du client.
+
+Auth0 évalue en parallèle tous les quotas applicables à la transaction et applique ceux pour lesquels l’indicateur `enforce` est défini sur `true` dans la configuration du quota :
+
+* **Lorsqu’un quota est appliqué (**`enforce: true`**):** Si un quota appliqué est dépassé, la demande de jeton est **rejetée** avec une erreur HTTP 429 Too Many Requests. Pour en savoir plus, consultez [Réponses d’erreur pour quotas dépassés](#error-responses-for-exceeded-quotas).
+* **Lorsqu’un quota n’est pas appliqué (**`enforce: false`**):** Les demandes de jeton **ne sont pas rejetées** par ce quota, même si sa limite est dépassée. Auth0 continue de compter les jetons et génère des [journaux d’avertissement de consommation](#consumption-warning-logs) à certains seuils, ce qui permet une surveillance avant d’activer l’application du quota.
+
+<div id="observability">
+  ### Observabilité
+</div>
+
+Pour assurer une visibilité sur la consommation des quotas, Auth0 génère des [journaux d’avertissement de consommation](#consumption-warning-logs). Ces journaux sont déclenchés lorsqu’un quota atteint 60 %, 80 % et 100 % de sa limite. Vous pouvez utiliser ces journaux pour surveiller de façon proactive l’utilisation des jetons et repérer les problèmes potentiels.
+
+Les applications peuvent aussi déterminer leur quota restant par programmation à l’aide des [en-têtes de quota Auth0](#auth0-quota-headers). Ces en-têtes HTTP sont inclus à la fois dans les réponses réussies et les réponses en erreur aux requêtes du flux Client Credentials, et fournissent des informations en temps réel sur l’utilisation des quotas.
+
+<div id="configure-m2m-token-quotas">
+  ## Configurer les quotas de jetons M2M
+</div>
+
+Vous pouvez configurer des quotas détaillés de jetons M2M à l&#39;aide de la [Management API](https://auth0.com/docs/api/management/v2).
+
+<div id="tenant-level-default-quotas">
+  ### Quotas par défaut au niveau du tenant
+</div>
+
+Les quotas au niveau du tenant servent de paramètres par défaut pour toutes les applications et organisations au sein de votre tenant Auth0. Vous pouvez utiliser les quotas au niveau du tenant pour définir des limites de base pour l’utilisation des jetons M2M. Ces quotas sont remplacés par les quotas spécifiques aux applications et aux organisations.
+
+Vous pouvez spécifier des quotas de jetons par défaut pour les applications et/ou les organisations associées à votre tenant. Pour configurer les quotas au niveau du tenant, utilisez le point de terminaison [Mettre à jour un tenant](https://auth0.com/docs/api/management/v2/tenants/patch-settings) :
+
+```bash lines
+curl --request PATCH 'https://YOUR_DOMAIN/api/v2/tenants/settings' \
+  --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "default_token_quota": {
+      "clients": {
+        "client_credentials": {
+          "per_hour": 100,
+          "per_day": 1000,
+          "enforce": true
+        }
+      },
+      "organizations": {
+        "client_credentials": {
+          "per_hour": 500,
+          "per_day": 5000,
+          "enforce": false
+        }
+      }
+    }
+  }'
+```
+
+L’objet `default_token_quota` contient les configurations de quotas de jetons suivantes au niveau de l’Application et au niveau de l’organisation :
+
+* `clients.client_credentials` : (Facultatif) Définit les quotas de jetons M2M pour chaque Application.
+* `organizations.client_credentials` : (Facultatif) Définit les quotas de jetons M2M pour les organisations.
+* `per_hour` : (Facultatif) Définit le quota horaire de jetons.
+* `per_day` : (Facultatif) Définit le quota quotidien de jetons.
+* `enforce` : (Facultatif) Détermine si les requêtes de jetons sont rejetées lorsque le quota est dépassé. La valeur par défaut est true.
+
+Dans l’exemple, toutes les Applications du tenant sont par défaut limitées à 100 jetons M2M par heure et 1000 par jour. Pour les organisations, la valeur par défaut est de 500 jetons par heure et 5000 par jour, mais l’application des limites est actuellement désactivée (`enforce: false`). Cela vous permet de surveiller l’utilisation des jetons des organisations avant d’appliquer les limites.
+
+<div id="application-specific-quotas">
+  ### Quotas propres à une application
+</div>
+
+Vous pouvez configurer des quotas pour des applications précises, en remplaçant les valeurs par défaut au niveau du tenant. Cela est utile pour contrôler plus finement le comportement de chaque application.
+
+Vous pouvez définir des quotas propres à une application lors de la création ou de la mise à jour de celle-ci.
+
+Pour créer une application avec un quota de jetons, utilisez le point de terminaison [Create a client](https://auth0.com/docs/api/management/v2/clients/post-clients) :
+
+```bash lines
+curl --location 'https://YOUR_DOMAIN/api/v2/clients' \
+--header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+--header 'Content-Type: application/json' \
+--data '{
+    "name": "APP_NAME",
+    "app_type": "non_interactive",
+    "token_quota": {
+      "client_credentials": {
+        "per_hour": 10,
+        "per_day": 50,
+        "enforce": true
+      }
+    }
+}'
+```
+
+Pour mettre à jour le quota de jetons pour une application, utilisez le point de terminaison [Mettre à jour un client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) :
+
+```bash lines
+curl --location --request PATCH 'https://YOUR_DOMAIN/api/v2/clients/a01FUMJHEtb0q8jcXm7y2k9EAGe5fcxZ' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+--data '{
+    "token_quota": {
+        "client_credentials": {
+            "per_hour": 5,
+            "enforce": true
+        }
+    }
+}'
+```
+
+L&#39;objet `token_quota` contient la configuration des quotas de jetons pour l&#39;application :
+
+* `client_credentials` : Définit les quotas de jetons M2M.
+* `per_hour` : Définit le quota horaire de jetons.
+* `per_day` : Définit le quota quotidien de jetons.
+* `enforce` : Détermine si les requêtes de jetons sont rejetées lorsque le quota est dépassé. La valeur par défaut est `true`.
+
+Dans cet exemple, l&#39;application avec `{yourClientId}` est limitée à 10 jetons M2M par heure et 50 par jour, ce qui a préséance sur tout paramètre au niveau du locataire.
+
+Vous pouvez récupérer la configuration de quotas de jetons d&#39;une application à l&#39;aide du point de terminaison [Get a client by ID](https://auth0.com/docs/api/management/v2/clients/get-clients-by-id).
+
+<div id="organization-specific-quotas">
+  ### Quotas propres à une organisation
+</div>
+
+Vous pouvez aussi configurer des quotas pour des organisations spécifiques, en remplaçant les valeurs par défaut au niveau du tenant. Cela vous permet de gérer l’utilisation des jetons M2M pour chaque client SaaS ou partenaire.
+
+Vous pouvez définir des quotas propres à une organisation lors de la création ou de la mise à jour de celle-ci.
+
+Pour créer une organisation avec un quota de jetons, utilisez le point de terminaison [Create an organization](https://auth0.com/docs/api/management/v2/organizations/post-organizations) :
+
+```bash lines
+curl --location 'https://YOUR_DOMAIN/api/v2/organizations' \
+--header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+--header 'Content-Type: application/json' \
+--data '{
+    "name": "acme",
+    "display_name": "Acme", 
+    "token_quota": {
+      "client_credentials": {
+        "per_hour": 50,
+        "per_day": 250,
+        "enforce": true
+      }
+    }
+}'
+```
+
+Pour mettre à jour le quota de jetons d&#39;une organisation, utilisez le point de terminaison [Mettre à jour une organisation](https://auth0.com/docs/api/management/v2/organizations/patch-organizations-by-id) :
+
+```bash lines
+curl --request PATCH 'https://YOUR_DOMAIN/api/v2/organizations/YOUR_ORG_ID' \
+--header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+--header 'Content-Type: application/json' \
+--data '{
+    "token_quota": {
+        "client_credentials": {
+            "per_hour": 50,
+            "per_day": 250,
+            "enforce": false
+        }
+    }
+}'
+```
+
+L’objet `token_quota` contient la configuration du quota de jetons pour l’organisation :
+
+* `client_credentials` : Définit les quotas de jetons M2M.
+* `per_hour` : Définit le quota horaire de jetons.
+* `per_day` : Définit le quota quotidien de jetons.
+* `enforce` : Détermine si les demandes de jetons sont rejetées lorsque le quota est dépassé. La valeur par défaut est `true`.
+
+Dans cet exemple, l’organisation avec `YOUR_ORG_ID` est limitée à 50 jetons M2M par heure et 250 par jour.
+
+Vous pouvez obtenir la configuration du quota de jetons d’une organisation à l’aide du point de terminaison [Get an organization](https://auth0.com/docs/api/management/v2/organizations/get-organizations-by-id).
+
+<div id="monitor-token-quota-consumption">
+  ## Surveiller l’utilisation du quota de jetons
+</div>
+
+<div id="auth0-quota-headers">
+  ### En-têtes de quota Auth0
+</div>
+
+Auth0 inclut des en-têtes HTTP dans les réponses du Client Credentials Flow (réussies et avec l’erreur 429) pour fournir des renseignements en temps réel sur la consommation des quotas :
+
+* `Auth0-Client-Quota-Limit` : Fournit des renseignements sur le quota de l’application.
+* `Auth0-Organization-Quota-Limit` : Fournit des renseignements sur le quota de l’organisation.
+
+Auth0 inclut uniquement dans la réponse les en-têtes correspondant aux quotas liés à la requête de jeton.
+
+L’exemple de code suivant illustre un en-tête de quota Auth0 :
+
+```http lines
+Auth0-Client-Quota-Limit: b=per_hour;q=10;r=7;t=3540,b=per_day;q=50;r=47;t=43200
+Auth0-Organization-Quota-Limit: b=per_hour;q=50;r=47;t=3540,b=per_day;q=250;r=247;t=43200
+```
+
+Les valeurs des en-têtes sont des listes de compartiments de quota séparées par des virgules. Chaque compartiment est représenté comme une liste de paires clé-valeur séparées par des points-virgules :
+
+* `b` (bucket&#95;name) : le nom du compartiment de quota (`per_hour` ou `per_day`).
+* `q` (quota) : la limite de quota configurée pour le compartiment.
+* r (remaining) : le nombre de jetons restants dans le compartiment.
+* `t` (time) : le nombre de secondes avant la réinitialisation du compartiment.
+
+Dans l&#39;exemple `Auth0-Client-Quota-Limit` :
+
+* L&#39;application a un quota horaire (`b=per_hour`) de 10 jetons (`q=10`). Il lui reste 7 jetons (`r=7`), et le quota est réinitialisé dans 3540 secondes (`t=3540`).
+* L&#39;application a aussi un quota quotidien (`b=per_day`) de 50 jetons (`q=50`). Il lui reste 47 jetons (`r=47`), et le quota est réinitialisé dans 43200 secondes (`t=43200`).
+
+Les trousses de développement logiciel (SDK) Auth0 fournissent des utilitaires intégrés pour lire et analyser les en-têtes de quota, ce qui permet aux applications d’utiliser l’information de quota en temps réel pour le débogage, la mise en œuvre de stratégies de ralentissement et plus encore. Voici un exemple utilisant Node.js et le SDK [node-auth0](https://github.com/auth0/node-auth0) :
+
+export const codeExample1 = `const {
+    AuthenticationClient,
+    HttpResponseHeadersUtils,
+  } = require("auth0");
+
+const auth0 = new AuthenticationClient({
+    domain: '{{yourDomain}}',
+    clientId: '{{yourClientId}}',
+    clientSecret: '{{yourSecret}}'
+});
+
+async function getAccessToken() {
+    try {
+        // Obtenir le jeton
+        const response = await auth0.oauth.clientCredentialsGrant({
+            audience: '{{yourAudience}}'
+        });
+
+        // Exposer l’information sur le quota des jetons M2M à votre application pour en assurer la surveillance
+        const clientQuota = HttpResponseHeadersUtils.getClientQuotaLimit(response.headers);
+        console.log("quotaClient ", clientQuota);
+        console.log("quotaClient par jour - quota :", clientQuota?.perDay?.quota);
+        console.log("quotaClient par jour - restant :", clientQuota?.perDay?.remaining);
+        console.log("quotaClient par jour - réinitialisé après :", clientQuota?.perDay?.resetAfter);
+        console.log("quotaClient par heure - quota :", clientQuota?.perHour?.quota);
+        console.log("quotaClient par heure - restant :", clientQuota?.perHour?.remaining);
+        console.log("quotaClient par heure - réinitialisé après :", clientQuota?.perHour?.resetAfter);
+
+        return response.data.access_token;
+
+    } catch (error) {
+
+        // Gérer l’erreur ici
+
+    }
+}
+
+getAccessToken();`;
+
+<AuthCodeBlock children={codeExample1} language="javascript" />
+
+<div id="error-responses-for-exceeded-quotas">
+  ### Réponses d&#39;erreur pour les quotas dépassés
+</div>
+
+Lorsqu’un quota appliqué est dépassé, l’Authentication API d’Auth0 renvoie une erreur `HTTP 429 Too Many Requests`. Dans le corps de la réponse, Auth0 renvoie le code d’erreur avec une description plus détaillée. Auth0 génère également un journal d’événements de type `feccft` (pour échec de l’échange d’un jeton d’accès dans le cadre d’un Client Credentials Grant).
+
+L’exemple de code suivant montre une réponse d’erreur pour un quota dépassé :
+
+```json lines
+{
+  "error": "too_many_requests",
+  "error_description": "Quota du client dépassée"
+}
+```
+
+En plus du corps de la réponse, Auth0 renvoie les en-têtes suivants :
+
+* `Auth0-Client-Quota-Limit` ou `Auth0-Organization-Quota-Limit` : l&#39;en-tête de quota Auth0 correspondant au quota consommé pour l&#39;application ou l&#39;organisation. Pour en savoir plus sur le format de l&#39;en-tête, consultez [En-têtes de quota Auth0](#auth0-quota-headers).
+* `X-RateLimit-Limit` : la limite configurée pour le quota qui a été consommé.
+* `X-RateLimit-Remaining` : dont la valeur est zéro, ce qui indique que le quota a été entièrement consommé.
+* `X-RateLimit-Reset` : un horodatage UNIX (en secondes) représentant le moment où le quota devrait être réinitialisé et où d&#39;autres requêtes seront autorisées.
+* `Retry-After` : le nombre de secondes avant que le quota soit réinitialisé et que d&#39;autres requêtes puissent réussir.
+
+Pour en savoir plus sur les en-têtes de limitation de débit, consultez [Prédire à quel moment les requêtes vers un tenant seront soumises à la limitation de débit](/docs/fr-CA/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-use-cases#predict-when-requests-to-a-tenant-will-be-rate-limited-).
+
+Utilisez l&#39;en-tête `Retry-After` pour déterminer le temps d&#39;attente nécessaire pour obtenir un nouveau jeton M2M, ce qui permet à votre application de décider si elle doit réessayer ou générer une erreur. C’est également important pour éviter de consommer la limite de débit de votre tenant.
+
+L&#39;exemple de code suivant en Node.js tente d&#39;obtenir un nouveau jeton M2M, reçoit une erreur 429 et réessaie si le temps d&#39;attente est inférieur à 60 secondes. Sinon, il génère une erreur :
+
+export const codeExample2 = `const {
+    AuthenticationClient,
+    HttpResponseHeadersUtils,
+  } = require("auth0");
+
+const auth0 = new AuthenticationClient({
+    domain: '{{yourDomain}}',
+    clientId: '{{yourClientId}}',
+    clientSecret: '{{yourSecret}}'
+});
+
+const MAX_RETRY_AFTER = 60;
+
+async function sleep(seconds) {
+    return new Promise(resolve => setTimeout(resolve, seconds * 1000));
+}
+
+async function getAccessToken(retry = true) {
+    try {
+        // Obtenir le jeton
+        const response = await auth0.oauth.clientCredentialsGrant({
+            audience: '{{yourAudience}}'
+        });
+
+        return response.data.access_token;
+
+    } catch (error) {
+
+        if (error.statusCode === 429 && retry) {
+            // S'il y a une erreur 429, calculer le temps d'attente nécessaire pour obtenir un nouveau jeton
+            const retryAfter = parseInt(error.headers.get('retry-after'), 10);
+            if (retryAfter < MAX_RETRY_AFTER) {
+                // Le délai avant la nouvelle tentative est inférieur au nombre maximal de secondes
+                console.warn(\`Limite de débit atteinte. Nouvelle tentative dans \${retryAfter} secondes...\`);
+                await sleep(retryAfter);
+                return getAccessToken(false); // Nouvelle tentative une seule fois
+            }
+        }
+
+        console.error('Erreur lors de la récupération du jeton d\'accès :', error.response?.data || error.message);
+    }
+}
+
+getAccessToken();`;
+
+<AuthCodeBlock children={codeExample2} language="javascript" />
+
+<div id="consumption-warning-logs">
+  ## Journaux d’avertissement de consommation
+</div>
+
+Auth0 génère des événements de journal `token_quota_consumption_warning` lorsque la consommation d’un quota atteint 60 %, 80 % et 100 %. Vous pouvez analyser ces journaux pour surveiller les tendances d’utilisation des jetons, repérer les problèmes potentiels avant que les limites ne soient strictement appliquées et déterminer des valeurs de quota appropriées.
+
+L’exemple de code suivant illustre un journal d’avertissement de consommation sous forme d’entrée de journal JSON :
+
+```json lines expandable
+{
+  "date": "2025-05-08T08:39:10.838Z",
+  "type": "token_quota_consumption_warning",
+  "description": "60 % du quota per_day du client consommé",
+  "connection_id": "",
+  "client_id": "QAxE5Z8LrvmQ2jxlzzEACeo39hO3xjFV",
+  "client_name": "My_M2M_App",
+  "ip": "xxxx",
+  "client_ip": "xxxxx",
+  "user_agent": "Other 0.0.0 / Other 0.0.0",
+  "details": {
+    "bucket": "per_day",
+    "entity_type": "client",
+    "entity_id": "QAxE5Z8LrvmQ2jxlzzEACeo39hO3xjFV",
+    "quota": 15,
+    "quota_consumption_percentage": 60,
+    "quota_consumption": 11
+  },
+  "hostname": "xxxxx",
+  "user_id": "",
+  "user_name": "",
+  "$event_schema": {
+    "version": "1.0.0"
+  },
+  "log_id": "90020250508083910862978000000000000001223372036854918178",
+  "tenant_name": "lozano",
+  "_id": "90020250508083910862978000000000000001223372036854918178",
+  "isMobile": false,
+  "id": "90020250508083910862978000000000000001223372036854918178"
+}
+```
+
+L’exemple de journal d’avertissement de consommation contient les champs suivants :
+
+* **type**: `token_quota_consumption_warning`. Identifie l’avertissement pour la consommation de jetons M2M qui atteint un seuil.
+* **description**: (String) Résumé lisible au format `<percent>% <entity_type> <bucket>` du quota consommé. Par exemple, &quot;60% of client per day quota consumed.&quot;
+* **details**: (Object) Fournit des précisions sur le quota et sa consommation :
+
+  * `bucket`: (String) `per_day` ou `per_hour`.
+  * `entity_type`: (String) client ou organisation.
+  * `entity_id`: (String) id du client ou de l’organisation.
+  * `quota`: (Integer) Limite configurée pour ce bucket.
+  * `quota_consumption_percentage`: (Integer) Pourcentage consommé (p. ex., 60, 80, 100).
+  * `quota_consumption`: (Integer) Nombre réel de jetons consommés.
+
+D’autres champs comme `date`, `client_name`, `ip` et `log_id` sont des champs standard des journaux Auth0.
+
+<div id="best-practices">
+  ## Bonnes pratiques
+</div>
+
+* **Donner la priorité à la mise en cache des jetons** : Mettez l’accent sur une mise en cache adéquate des jetons d’accès dans les applications M2M. Les quotas sont des mécanismes de protection, pas un substitut à une gestion efficace des jetons.
+* **Niveaux de quotas appropriés** : Définissez des quotas en fonction des profils de trafic légitime et d’une capacité de pointe raisonnable.
+* **Surveiller avant d’appliquer** : Commencez avec `enforce: false` pour observer l’utilisation via les journaux et les en-têtes, puis définissez des limites éclairées avant d’activer `enforce: true`.
+* **Gestion côté client** : Les applications doivent gérer les erreurs 429 de façon appropriée en utilisant `Retry-After` pour leurs stratégies de temporisation.
+* **Vérifier de façon proactive les en-têtes de quota** : Surveillez l’utilisation des jetons pour identifier les problèmes potentiels.
+* **Examiner régulièrement les journaux** : Surveillez les journaux `token_quota_consumption_warning` afin d’ajuster les quotas de manière proactive.
+
+<div id="limitations">
+  ## Limitations
+</div>
+
+* **Il ne s’agit pas de limites d’appels d’API** : les quotas de jetons M2M à granularité fine s’appliquent au nombre de jetons d’accès obtenus via le flux Client Credentials, et non aux appels effectués à vos API à l’aide de ces jetons.
+* **Cohérence éventuelle :** le comptage des jetons repose sur une cohérence éventuelle; de légers dépassements temporaires sont possibles avant l’application de la limite sur les requêtes suivantes.
+* Les requêtes qui entraînent une réponse `429` sont prises en compte dans la limite de débit de l’Auth0 Authentication API pour votre tenant. Pour en savoir plus, consultez la [Politique de limitation du débit](/docs/fr-CA/troubleshoot/customer-support/operational-policies/rate-limit-policy).
+
+<div id="troubleshoot">
+  ## Dépannage
+</div>
+
+* **Blocage du trafic légitime :**
+
+  * Envisagez de définir `enforce: false`.
+  * Vérifiez les journaux du tenant Auth0 pour `token_quota_consumption_warning` et les événements d’échec d’échange (`feccft`).
+  * Examinez les en-têtes `Auth0-...-Quota-Limit` dans les réponses.
+  * Passez en revue les schémas de requêtes de jetons de l’application et la mise en cache.
+  * Déterminez si la limite de quota doit être ajustée.
+* **Interpréter les erreurs 429** : Utilisez `X-RateLimit-*`, `Retry-After`, et les en-têtes `Auth0-...-Quota-Limit` spécifiques pour identifier la limite consommée et le délai de réinitialisation.

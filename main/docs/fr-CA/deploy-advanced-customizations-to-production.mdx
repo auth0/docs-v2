@@ -1,0 +1,336 @@
+---
+description: Code et instructions pour la personnalisation avancée d’Universal Login
+'og:image': https://cdn2.auth0.com/docs/1.14553.0/img/share-image.png
+'og:title': Déployer et héberger des personnalisations avancées
+'og:url': https://auth0.com/docs/
+permalink: deploy-advanced-customizations-to-production
+title: Déployer et héberger des personnalisations avancées
+'twitter:description': Code et instructions pour la personnalisation avancée d’Universal
+  Login
+'twitter:title': Déployer et héberger des personnalisations avancées
+---
+
+Le présent guide vous aidera à déployer vos écrans <Tooltip tip="" cta="Voir le glossaire" href="/docs/fr-CA/glossary?term=Universal+Login">Universal Login</Tooltip> personnalisés en production et à créer un pipeline d’intégration continue et de livraison continue.
+
+<div id="set-up-your-project">
+  ## Configurez votre projet
+</div>
+
+Préparez tous vos écrans pour les téléverser et utilisez la structure de fichiers suivante pour votre projet ACUL :
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/2Di2r84kXDTwYAgLOfd96T/caa1654e6c20fc09d766e5a2b2dfd9f2/ACUL_file_structure_diagram.png)</Frame>
+
+<div id="create-a-new-vite-configuration">
+  ### Créer une nouvelle configuration Vite
+</div>
+
+Ajoutez ce qui suit à un nouveau fichier nommé `vite.config.ts` :
+
+<Accordion title="Configuration de vite.config.ts">
+  ```jsx lines expandable
+  import { defineConfig } from 'vite';
+  import react from '@vitejs/plugin-react';
+  import { resolve } from 'path';
+
+  // Définitions d'écrans
+  const screens = [
+    {
+      name: 'login-id',
+      prompt: 'login-id',
+      screen: 'login-id'
+    },
+    {
+      name: 'login-password',
+      prompt: 'login-password',
+      screen: 'login-password'
+    },
+    {
+      name: 'mfa',
+      prompt: 'mfa-otp',
+      screen: 'mfa'
+    }
+  ];
+
+  // Générer l'objet d'entrée pour tous les écrans
+  const input = Object.fromEntries(
+    screens.map(screen => [
+      screen.name,
+      resolve(__dirname, `src/${screen.name}/main.tsx`)
+    ])
+  );
+  export default defineConfig({
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        input,
+        output: {
+          // S'assurer que chaque écran a son propre répertoire
+          dir: 'dist',
+          entryFileNames: '[name]/index.js',
+          assetFileNames: '[name]/[name][extname]',
+          chunkFileNames: '[name]/chunks/[name]-[hash].js',
+          manualChunks: {
+            // Séparer React dans un fragment vendor (fournisseur)
+            'vendor-react': ['react', 'react-dom'],
+            // Séparer le SDK Auth0 dans un fragment vendor (fournisseur)
+            'vendor-auth0': ['@auth0/auth0-acul-js']
+          }
+        }
+      },
+      // Générer des sourcemaps pour le débogage en production
+      sourcemap: true,
+      // Minifier la sortie
+      minify: 'terser'
+    }
+  });
+  ```
+</Accordion>
+
+<div id="set-up-build-scripts">
+  ### Configurez les scripts de build
+</div>
+
+Créez `scripts/build.ts` pour exécuter votre build Vite :
+
+<Accordion title="scripts/build.ts pour exécuter Vite">
+  ```jsx lines
+  import { build } from 'vite';
+  async function buildScreens() {
+    try {
+      await build();
+      console.log('Build completed successfully');
+    } catch (err) {
+      console.error('Build failed:', err);
+      process.exit(1);
+    }
+  }
+  buildScreens();
+  ```
+</Accordion>
+
+<div id="build-your-aws-infrastructure">
+  ### Créez votre infrastructure AWS
+</div>
+
+Créez un bucket S3 et une distribution CloudFront :
+
+<Accordion title="Créer un bucket AWS S3">
+  ```bash lines
+  # Créer le bucket
+
+  aws s3 mb s3://your-acul-assets --region us-east-1
+
+  # Activer la gestion des versions
+
+  aws s3api put-bucket-versioning \
+    --bucket your-acul-assets \
+    --versioning-configuration Status=Enabled
+
+  # Créer la distribution CloudFront
+
+  aws cloudfront create-distribution \
+    --origin-domain-name your-acul-assets.s3.amazonaws.com \
+    --default-root-object index.html \
+    --default-cache-behavior '{"TargetOriginId":"S3Origin","ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":{"Quantity":2,"Items":["GET","HEAD"]},"CachePolicyId":"658327ea-f89d-4fab-a63d-7e88639e58f6"}'
+  ```
+</Accordion>
+
+<div id="configure-cors-for-auth0">
+  ### Configurer CORS pour Auth0
+</div>
+
+<Accordion title="Configurer CORS pour Auth0">
+  ```json lines
+  {
+    "CORSRules": [{
+      "AllowedHeaders": ["*"],
+      "AllowedMethods": ["GET"],
+      "AllowedOrigins": [
+        "https://*.auth0.com",
+        "https://your-custom-domain.com"
+      ],
+      "MaxAgeSeconds": 3000
+    }]
+  }
+  ```
+</Accordion>
+
+<div id="create-a-deployment-script">
+  ### Créer un script de déploiement
+</div>
+
+Créez `scripts/deploy.ts` pour le déploiement AWS :
+
+<Accordion title="Créer scripts/deploy.ts">
+  ```jsx lines expandable
+  import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+  import { CloudFrontClient, CreateInvalidationCommand } from '@aws-sdk/client-cloudfront';
+  import { readFileSync } from 'fs';
+  import { resolve } from 'path';
+
+  // Définitions d'écrans (à synchroniser avec vite.config.ts)
+  const screens = [
+    'login-id',
+    'login-password',
+    'mfa'
+  ];
+
+  async function deploy() {
+    const s3 = new S3Client({ region: 'us-east-1' });
+    const cloudfront = new CloudFrontClient({ region: 'us-east-1' });
+
+    const bucket = process.env.S3_BUCKET;
+    const distributionId = process.env.CLOUDFRONT_ID;
+
+    for (const screen of screens) {
+      const distPath = resolve(__dirname, `../dist/${screen}`);
+
+      // Téléverser les ressources
+      const files = ['index.js', 'index.css', 'vendor-react.js', 'vendor-auth0.js'];
+      for (const file of files) {
+        try {
+          const content = readFileSync(`${distPath}/${file}`);
+          await s3.send(new PutObjectCommand({
+            Bucket: bucket,
+            Key: `${screen}/${file}`,
+            Body: content,
+            ContentType: file.endsWith('.js') ? 'application/javascript' : 'text/css',
+            CacheControl: 'max-age=31536000'
+          }));
+        } catch (err) {
+          console.warn(`Ignorer ${file} pour ${screen} : ${err.message}`);
+        }
+      }
+    }
+
+    // Invalider le cache
+    await cloudfront.send(new CreateInvalidationCommand({
+      DistributionId: distributionId,
+      InvalidationBatch: {
+        CallerReference: Date.now().toString(),
+        Paths: { Quantity: 1, Items: ['/*'] }
+      }
+    }));
+  }
+
+  deploy().catch(console.error);
+  ```
+</Accordion>
+
+<div id="set-up-github-actions-workflow">
+  ### Configurer le workflow GitHub Actions
+</div>
+
+Créez `.github/workflows/deploy.yml` :
+
+<Accordion title="Configurer le workflow GitHub Actions">
+  ```yaml lines expandable
+  name: Deploy ACUL Screens
+
+  on:
+    push:
+      branches: [ main ]
+    workflow_dispatch:
+
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Screens
+        run: npm run build
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to CloudFront
+        run: npm run deploy
+        env:
+          S3_BUCKET: your-acul-assets
+          CLOUDFRONT_ID: ${{ secrets.CLOUDFRONT_ID }}
+          CLOUDFRONT_DOMAIN: ${{ secrets.CLOUDFRONT_DOMAIN }}
+
+      - name: Setup Auth0 CLI
+        run: npm install -g auth0-cli
+
+      - name: Configure Auth0 Screens
+        run: |
+          # Se connecter à Auth0
+          auth0 login --token ${{ secrets.AUTH0_DEPLOY_TOKEN }}
+
+          # Configurer chaque écran
+          for screen in login-id login-password mfa; do
+            # Générer le fichier de paramètres
+            cat > settings.json << EOF
+            {
+              "rendering_mode": "advanced",
+              "context_configuration": [
+                "screen.texts",
+                "branding.settings",
+                "organization.branding",
+                "tenant.name",
+                "tenant.friendly_name"
+              ],
+              "head_tags": [
+                {
+                  "tag": "script",
+                  "attributes": {
+                    "src": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/vendor-react.js",
+                    "defer": true
+                  }
+                },
+                {
+                  "tag": "script",
+                  "attributes": {
+                    "src": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/vendor-auth0.js",
+                    "defer": true
+                  }
+                },
+                {
+                  "tag": "script",
+                  "attributes": {
+                    "src": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/index.js",
+                    "defer": true
+                  }
+                },
+                {
+                  "tag": "link",
+                  "attributes": {
+                    "rel": "stylesheet",
+                    "href": "https://${{ secrets.CLOUDFRONT_DOMAIN }}/${screen}/index.css"
+                  }
+                }
+              ]
+            }
+            EOF
+
+            # Configurer l'écran
+            auth0 ul customize \
+              --rendering-mode advanced \
+              --prompt ${screen} \
+              --screen ${screen} \
+              --settings-file settings.json
+          done
+  ```
+</Accordion>
+
+Enfin, ajoutez ces secrets à votre dépôt GitHub :
+
+* `AWS_ACCESS_KEY_ID`
+* `AWS_SECRET_ACCESS_KEY`
+* `CLOUDFRONT_ID`
+* `CLOUDFRONT_DOMAIN`
+* `AUTH0_DEPLOY_TOKEN`

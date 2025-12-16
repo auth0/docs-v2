@@ -1,0 +1,249 @@
+---
+title: "PHP API"
+permalink: "01-authorization"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-evan-sims">
+  ##### Evan Sims による
+</div>
+
+このガイドでは、Auth0 PHP ソフトウェア開発キット (SDK) を使用して、PHP バックエンド API と Auth0 を統合する方法を説明します。アカウント用に設定されたサンプルを使ってこのクイックスタートに沿って進められるよう、ログインすることをお勧めします。
+
+{/* <Card title="GitHub で表示" href="https://github.com/auth0-samples/auth0-php-api-samples/tree/main/app" icon="github">
+  システム要件: PHP 7.4 以上（8.0 推奨） | Auth0-PHP 8.0 | Composer
+  </Card> */}
+
+<Info>
+  **Auth0 を初めて利用しますか？** [Auth0 の仕組み](/docs/ja-JP/get-started/auth0-overview) を学び、OAuth 2.0 フレームワークを使用した [API 認証と認可の実装方法](/docs/ja-JP/get-started/authentication-and-authorization-flow) を読んでください。
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Auth0 の API を設定する
+</div>
+
+<div id="create-an-api">
+  ### API を作成する
+</div>
+
+Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションで **Create API** をクリックします。API の名前と識別子を指定します（例: `https://quickstarts/api`）。この識別子は、後でアクセストークンの検証を設定するときに `audience` として使用します。**Signing Algorithm** は **RS256** のままにしておきます。
+
+<Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+デフォルトでは、API はトークン署名のアルゴリズムとして RS256 を使用します。RS256 は秘密鍵/公開鍵ペアを使用するため、Auth0 アカウントの公開鍵を使ってトークンを検証します。公開鍵は [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) 形式で提供されており、[次の URL](https://\{yourDomain}/.well-known/jwks.json) からアクセスできます。
+
+<div id="define-permissions">
+  ### パーミッションを定義する
+</div>
+
+パーミッションを使用すると、特定のアクセストークンを用いてユーザーの代わりにリソースへどのようにアクセスさせるかを定義できます。たとえば、ユーザーがマネージャーのアクセスレベルを持っている場合は `messages` リソースへの読み取りアクセスを付与し、管理者のアクセスレベルを持っている場合はそのリソースへの書き込みアクセスを付与するといったことができます。
+
+許可するパーミッションは、Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションにある **Permissions** ビューで定義できます。
+
+<Frame>![Configure Permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  この例では `read:messages` スコープを使用しています。
+</Info>
+
+この例では、次の内容を示します。
+
+* 受信した HTTP リクエストの `Authorization` ヘッダーに JSON Web Token (JWT) が含まれているかを確認する方法
+* Auth0 アカウントの [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) を使用して、そのトークンが有効かどうかを確認する方法。アクセストークンの検証の詳細については、[Validate Access Tokens](/docs/ja-JP/secure/tokens/access-tokens/validate-access-tokens) を参照してください。
+
+<div id="integrating-your-php-backend-api">
+  ## PHP バックエンド API の統合
+</div>
+
+Auth0 によって署名されたトークンを、PHP で実装したバックエンド API で検証して認可するサンプルアプリケーションを作成してみましょう。ここでは、ドキュメントの形式に合わせてシンプルなアプローチを取りますが、より堅牢な例については、併せて提供している [GitHub 上のクイックスタートアプリ](https://github.com/auth0-samples/auth0-php-api-samples/) も参照してください。
+
+<div id="installing-http-client-and-messaging-factories">
+  ### HTTP クライアントとメッセージングファクトリのインストール
+</div>
+
+Auth0 PHP SDK は、プロジェクトのアーキテクチャとの最大限の相互運用性を提供するために多くの PHP-FIG 規格をサポートしていますが、とりわけ重要なのが [PSR-17](https://www.php-fig.org/psr/psr-17/) と [PSR-18](https://www.php-fig.org/psr/psr-18/) です。これらの規格により、メッセージングやリクエスト処理を行うための任意のネットワーキングコンポーネントを「差し替えて」利用できるようになります。SDK が利用できるようにするには、プロジェクトに互換性のあるライブラリをインストールする必要があります。
+
+PHP 向けのネットワーキングライブラリとして最も広く使われているのは Guzzle ですが、PHP コミュニティには他にも多くの選択肢があります。このサンプルアプリケーションでは Guzzle を使用します。
+
+```bash
+composer require guzzlehttp/guzzle guzzlehttp/psr7 http-interop/http-factory-guzzle
+```
+
+<div id="installing-the-php-sdk">
+  ### PHP ソフトウェア開発キット (SDK) のインストール
+</div>
+
+Auth0 PHP ソフトウェア開発キット (SDK) を使用するには、PHP の依存関係管理ツールである [Composer](https://getcomposer.org/doc/00-intro.md#installation-linux-unix-macos) が必要です。Composer を使用すると、プロジェクトに必要な依存ライブラリを宣言し、自動的にインストールできます。続行する前に、Composer がインストールされており、シェルから利用できることを確認してください。
+
+プロジェクトディレクトリ内で、次のシェルコマンドを実行して Auth0 PHP ソフトウェア開発キット (SDK) をインストールします。
+
+```bash
+composer require auth0/auth0-php
+```
+
+これにより、プロジェクト内に `vendor` フォルダが作成され、Auth0 PHP ソフトウェア開発キット (SDK) を使用するために必要なすべての依存関係がダウンロードされます。また、サンプルで使用されている `vendor/autoload.php` ファイルも作成され、アプリケーションが動作するために必要なすべてのクラスを読み込めるようになります。SDK が正しく動作するように、この autoload ファイルをプロジェクトで必ず `require` してください。
+
+<div id="configure-the-sdk">
+  ### SDK を設定する
+</div>
+
+まず、サンプルアプリケーションの設定を格納するために、プロジェクトディレクトリのルートに `.env` ファイルを作成し、環境変数を設定します。
+
+export const codeExample = `# Auth0 テナントのドメイン URL。
+# カスタムドメインを使用している場合は、そちらの値を設定してください。
+AUTH0_DOMAIN='https://{yourDomain}'
+
+# Auth0 アプリケーションのクライアントID。
+AUTH0_CLIENT_ID='{yourClientId}'
+
+# Auth0 アプリケーションのクライアントシークレット。
+AUTH0_CLIENT_SECRET='{yourClientSecret}'
+
+# Auth0 API の識別子。
+AUTH0_AUDIENCE='YOUR_API_IDENTIFIER'`;
+
+<AuthCodeBlock children={codeExample} language="env" />
+
+PHP は単体では `.env` ファイルを読み込めないため、それを扱うためのライブラリをインストールする必要があります。このサンプルアプリケーションでは特定のライブラリを使用しますが、実際のアプリケーションでは任意の「dotenv」ローダーを使用できます。プロジェクトディレクトリで、ライブラリをインストールするために次のシェルコマンドを実行します。
+
+```bash lines
+composer require vlucas/phpdotenv
+```
+
+次に、これらのコードサンプルで使用する PHP ソースファイル `index.php` を作成し、サンプルアプリケーション向けに Auth0 PHP ソフトウェア開発キット (SDK) のインスタンスを設定します。
+
+```php lines
+<?php
+
+// Composer オートローダーをインポートして SDK クラスにアクセスできるようにします:
+require 'vendor/autoload.php';
+
+// .env ファイルから環境変数を読み込みます:
+(Dotenv\Dotenv::createImmutable(__DIR__))->load();
+
+// 次に、設定を使用して Auth0 クラスをインスタンス化します:
+$auth0 = new \Auth0\SDK\Auth0([
+    'strategy' => \Auth0\SDK\Configuration\SdkConfiguration::STRATEGY_API,
+    'domain' => $_ENV['AUTH0_DOMAIN'],
+    'clientId' => $_ENV['AUTH0_CLIENT_ID'],
+    'clientSecret' => $_ENV['AUTH0_CLIENT_SECRET'],
+    'audience' => ($_ENV['AUTH0_AUDIENCE'] ?? null) !== null ? [trim($_ENV['AUTH0_AUDIENCE'])] : null,
+]);
+```
+
+<div id="authenticating-the-user">
+  ### ユーザーの認証
+</div>
+
+このサンプルアプリケーションでは、[認可](https://auth0.com/intro-to-iam/authentication-vs-authorization/)に焦点を当てています。バックエンドの API で認可を行う前にユーザーを認証する方法としては、[Auth0 の SPA.js ライブラリ](https://github.com/auth0/auth0-spa-js) を使用するなど、さまざまな方法があります。このアプローチは、[このクイックスタートアプリに付随する GitHub プロジェクト](https://github.com/auth0-samples/auth0-php-api-samples/)で示されています。どのアプローチを取る場合でも、このサンプルアプリケーションは、リクエストパラメータまたはヘッダー経由でアクセストークンを渡すことを前提としています。
+
+<div id="authorizing-an-access-token">
+  ### アクセストークンの認可
+</div>
+
+まず、受信した HTTP リクエストから JSON Web Token (JWT) を取り出します。GET リクエストの `?token` パラメータ、または `HTTP_AUTHORIZATION` ヘッダーもしくは `Authorization` ヘッダーを探します。
+
+```php lines
+// 👆 上記の手順から続けています。このコードをindex.phpファイルに追加してください。
+
+$jwt = $_GET['token'] ?? $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['Authorization'] ?? null;
+```
+
+次に、トークンが存在する場合はそれをデコードします。
+
+```php lines
+// 👆 上記の手順から続けています。これを index.php ファイルに追加してください。
+
+// トークンが存在する場合は処理します。
+if ($jwt !== null) {
+    // トークン文字列から空白文字を削除します。
+    $jwt = trim($jwt);
+
+    // Authorization ヘッダーから取得している場合、'Bearer ' プレフィックスが存在すれば削除します。
+    if (substr($jwt, 0, 7) === 'Bearer ') {
+        $jwt = substr($jwt, 7);
+    }
+
+    // トークンのデコードを試みます:
+    try {
+        $token = $auth0->decode($jwt, null, null, null, null, null, null, \Auth0\SDK\Token::TYPE_TOKEN);
+        define('ENDPOINT_AUTHORIZED', true);
+    } catch (\Auth0\SDK\Exception\InvalidTokenException $exception) {
+        // トークンが無効でした。Auth0 SDK からのエラーメッセージを表示します。
+        // 実際のアプリケーションでは、ここでカスタムエラーを表示することが望ましいでしょう。
+        die($exception->getMessage());
+    }
+}
+```
+
+API のルーティングをどのように設定するかによって、これらのチェックの組み込み方は多少異なる場合がありますが、原則は同じです。トークンを検証し、API エンドポイントに認可が必要な場合は、トークンが無効または受け入れ可能でないときにアクセスを拒否します。
+
+```php lines
+// 👆 上記の手順から続けています。これを index.php ファイルに追加してください。
+
+// Is the request authorized?
+if (defined('ENDPOINT_AUTHORIZED')) {
+    // Respond with a JSON response:
+    echo json_encode([
+        'authorized' => true,
+        'data' => $token->toArray()
+    ], JSON_PRETTY_PRINT);
+
+    exit;
+}
+
+// Issue a HTTP 401 Unauthorized status:
+http_response_code(401);
+
+// Respond with a JSON response:
+echo json_encode([
+    'authorized' => false,
+    'error' => [
+        'message' => 'You are NOT authorized to be here!'
+    ]
+], JSON_PRETTY_PRINT);
+```
+
+<div id="caching">
+  ### キャッシュ
+</div>
+
+このままでも動作しますが、実際のアプリケーションでは、Auth0 のレート制限に抵触したり、不要なネットワークリクエストによってアプリケーションが遅くなったりしないように、キャッシュを利用する必要があります。Auth0 PHP ソフトウェア開発キット (SDK) は [PSR-6](https://www.php-fig.org/psr/psr-6) と呼ばれるキャッシュインターフェースをサポートしており、[任意の互換性のあるキャッシュライブラリ](https://packagist.org/providers/psr/cache-implementation) を組み合わせて利用することで、SDK を既存のアーキテクチャに自然に組み込めます。
+
+このサンプルでは、[Symfony Cache コンポーネント](https://symfony.com/doc/current/components/cache.html) ライブラリを使用します。プロジェクトのルートディレクトリから、次のシェルコマンドを実行します。
+
+```bash lines
+composer require symfony/cache
+```
+
+次に、SdkConfiguration を更新し、ソフトウェア開発キット (SDK) にそのキャッシュを使用するよう指定します。
+
+```php lines
+// ✋ SDK がキャッシュを使用できるように、上記の手順で追加したトークン処理よりも前にこれを挿入してください。
+
+$tokenCache = new \Symfony\Component\Cache\Adapter\FilesystemAdapter();
+$auth0->configuration()->setTokenCache($tokenCache);
+```
+
+サンプルアプリケーションは、トークン関連のネットワークリクエストをキャッシュするようになりました。
+
+<Info>
+  ##### 次にできること
+
+  <table>
+    <tr>
+      <td><a href="/docs/ja-JP/authenticate/identity-providers">他のアイデンティティ プロバイダーを設定する</a></td>
+      <td><a href="/docs/ja-JP/secure/multi-factor-authentication">多要素認証を有効にする</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/ja-JP/secure/attack-protection">攻撃保護について学ぶ</a></td>
+      <td><a href="/docs/ja-JP/customize/rules">Rules について学ぶ</a></td>
+    </tr>
+  </table>
+
+  [GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

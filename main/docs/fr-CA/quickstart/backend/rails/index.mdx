@@ -1,0 +1,358 @@
+---
+title: "API Ruby on Rails : autorisation"
+permalink: "01-authorization"
+---
+
+<div id="by-josh-cunningham">
+  ##### Par Josh Cunningham
+</div>
+
+Ce tutoriel montre comment ajouter des fonctionnalités d’autorisation à une API Ruby on Rails. Nous vous recommandons de vous connecter pour suivre ce démarrage rapide avec des exemples configurés pour votre compte.
+
+{/* <Card title="Voir sur GitHub" href="https://github.com/auth0-samples/auth0-rubyonrails-api-samples/tree/master/01-Authentication-RS256" icon="github">
+  Configuration système requise : Ruby 2.1.8 | Rails 4.2.5
+  </Card> */}
+
+<Info>
+  **Vous débutez avec Auth0?** Découvrez [comment fonctionne Auth0](/docs/fr-CA/get-started/auth0-overview) et comment [implémenter l’authentification et l’autorisation pour les API](/docs/fr-CA/get-started/authentication-and-authorization-flow) à l’aide du framework OAuth 2.0.
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Configurer les API d’Auth0
+</div>
+
+<div id="create-an-api">
+  ### Créer une API
+</div>
+
+Dans la section [APIs](https://manage.auth0.com/#/apis) de l’Auth0 Dashboard, cliquez sur **Create API**. Indiquez un nom et un identifiant pour votre API, par exemple `https://quickstarts/api`. Vous utiliserez cet identifiant comme `audience` plus tard, lors de la configuration de la vérification du jeton d’accès. Laissez **Signing Algorithm** sur **RS256**.
+
+<Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+Par défaut, votre API utilise RS256 comme algorithme de signature pour les jetons. Étant donné que RS256 utilise une paire de clés privée/publique, il vérifie les jetons à l’aide de la clé publique de votre compte Auth0. La clé publique est au format [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) et est accessible [ici](https://\{yourDomain}/.well-known/jwks.json).
+
+<Info>
+  Nous recommandons d’utiliser l’algorithme de signature RS256 par défaut pour votre API. Pour en savoir plus sur les [algorithmes de signature](/docs/fr-CA/get-started/applications/signing-algorithms). Si vous devez utiliser l’algorithme HS256, consultez l’[exemple d’intégration HS256](https://github.com/auth0-samples/auth0-rubyonrails-api-samples/tree/OIDC/02-Authentication-HS256).
+</Info>
+
+<div id="define-permissions">
+  ### Définir les permissions
+</div>
+
+Les permissions vous permettent de définir la manière dont les ressources peuvent être consultées au nom de l’utilisateur à l’aide d’un jeton d’accès donné. Par exemple, vous pouvez choisir d’accorder un accès en lecture à la ressource `messages` si les utilisateurs ont un niveau d’accès de gestionnaire, et un accès en écriture à cette ressource s’ils ont un niveau d’accès d’administrateur.
+
+Vous pouvez définir les permissions autorisées dans la vue **Permissions** de la section [APIs](https://manage.auth0.com/#/apis) de l’Auth0 Dashboard.
+
+<Frame>![Configure Permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  Cet exemple utilise la portée `read:messages`.
+</Info>
+
+Cet exemple illustre :
+
+* Comment vérifier la présence d’un JSON Web Token (JWT) dans l’en-tête `Authorization` d’une requête HTTP entrante.
+* Comment vérifier si le jeton est valide, en utilisant le [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) pour votre compte Auth0. Pour en savoir plus sur la validation des jetons d’accès, consultez [Valider les jetons d’accès](/docs/fr-CA/secure/tokens/access-tokens/validate-access-tokens).
+
+<div id="validate-access-tokens">
+  ## Valider les jetons d’accès
+</div>
+
+<div id="install-dependencies">
+  ### Installer les dépendances
+</div>
+
+Ce tutoriel effectue la validation du jeton d’accès à l’aide de la gem [**jwt**](https://github.com/jwt/ruby-jwt) dans une classe personnalisée `Auth0Client`. Un `Concern` nommé `Secured` est utilisé pour autoriser les points de terminaison qui nécessitent une authentification à l’aide d’un jeton d’accès entrant.
+
+Installez la gem **jwt**.
+
+```bash lines
+gem 'jwt'
+bundle install
+```
+
+<div id="create-an-auth0client-class">
+  ### Créer une classe Auth0Client
+</div>
+
+Créez une classe appelée `Auth0Client` qui décode et vérifie le jeton d’accès entrant provenant de l’en-tête `Authorization` de la requête. La clé publique de votre locataire Auth0 peut être obtenue pour vérifier le jeton.
+
+```rb lines
+# app/lib/auth0_client.rb
+
+# frozen_string_literal: true
+
+require 'jwt'
+require 'net/http'
+
+class Auth0Client 
+
+  # Objets du client Auth0 
+  Error = Struct.new(:message, :status)
+  Response = Struct.new(:decoded_token, :error)
+
+  # Fonctions d'assistance 
+  def self.domain_url
+    "https://#{Rails.configuration.auth0.domain}/"
+  end
+
+  def self.decode_token(token, jwks_hash)
+    JWT.decode(token, nil, true, {
+                 algorithm: 'RS256',
+                 iss: domain_url,
+                 verify_iss: true,
+                 aud: Rails.configuration.auth0.audience,
+                 verify_aud: true,
+                 jwks: { keys: jwks_hash[:keys] }
+               })
+  end
+
+  def self.get_jwks
+    jwks_uri = URI("#{domain_url}.well-known/jwks.json")
+    Net::HTTP.get_response jwks_uri
+  end
+
+  # Validation du jeton 
+  def self.validate_token(token)
+    jwks_response = get_jwks
+
+    unless jwks_response.is_a? Net::HTTPSuccess
+      error = Error.new(message: 'Impossible de vérifier les identifiants', status: :internal_server_error)
+      return Response.new(nil, error)
+    end
+
+    jwks_hash = JSON.parse(jwks_response.body).deep_symbolize_keys
+
+    decoded_token = decode_token(token, jwks_hash)
+
+    Response.new(decoded_token, nil)
+  rescue JWT::VerificationError, JWT::DecodeError => e
+    error = Error.new('Identifiants incorrects', :unauthorized)
+    Response.new(nil, error)
+  end
+end
+```
+
+<div id="define-a-secured-concern">
+  ### Définir un Concern `Secured`
+</div>
+
+Créez un Concern appelé `Secured` qui recherche le jeton d’accès dans l’en-tête `Authorization` d’une requête entrante. Si le jeton est présent, il doit être transmis à `Auth0Client.validate_token`.
+
+```rb lines
+# app/controllers/concerns/secured.rb
+
+# frozen_string_literal: true
+
+module Secured
+  extend ActiveSupport::Concern
+
+  REQUIRES_AUTHENTICATION = { message: 'Authentification requise' }.freeze
+  BAD_CREDENTIALS = {
+    message: 'Identifiants non valides'
+  }.freeze
+  MALFORMED_AUTHORIZATION_HEADER = {
+    error: 'invalid_request',
+    error_description: 'La valeur de l'en-tête Authorization doit respecter ce format : Bearer access-token',
+    message: 'Bad credentials'
+  }.freeze
+
+  def authorize
+    token = token_from_request
+
+    return if performed?
+    
+    validation_response = Auth0Client.validate_token(token)
+    
+    return unless (error = validation_response.error)
+    
+    render json: { message: error.message }, status: error.status
+  end
+
+  private
+
+  def token_from_request
+    authorization_header_elements = request.headers['Authorization']&.split
+
+    render json: REQUIRES_AUTHENTICATION, status: :unauthorized and return unless authorization_header_elements
+
+    unless authorization_header_elements.length == 2
+      render json: MALFORMED_AUTHORIZATION_HEADER, status: :unauthorized and return
+    end
+
+    scheme, token = authorization_header_elements
+
+    render json: BAD_CREDENTIALS, status: :unauthorized and return unless scheme.downcase == 'bearer'
+
+    token
+  end
+end
+```
+
+<div id="validate-scopes">
+  ### Valider les scopes
+</div>
+
+La méthode `Auth0Client.validate_token` ci-dessus vérifie que le jeton d’accès inclus dans la requête est valide ; toutefois, elle n’inclut pas encore de mécanisme pour vérifier que le jeton possède une **portée** suffisante pour accéder aux ressources demandées.
+
+Pour rechercher un `scope` particulier dans un jeton d’accès, créez une nouvelle struct dans votre classe `Auth0Client` appelée `Token` et définissez une nouvelle méthode à l’intérieur, `validate_permissions`, qui, étant donné un tableau de scopes requis, vérifiera s’ils sont présents dans le payload du jeton.
+
+Allez à la classe `Auth0Client`. Ajoutez la nouvelle struct `Token` et mettez à jour la valeur de retour de la méthode `validate_token` comme suit :
+
+```rb lines
+# app/lib/auth0_client.rb
+
+# frozen_string_literal: true
+
+require 'jwt'
+require 'net/http'
+
+class Auth0Client 
+
+  # Objets client Auth0 
+  Error = Struct.new(:message, :status)
+  Response = Struct.new(:decoded_token, :error)
+
+  Token = Struct.new(:token) do
+    def validate_permissions(permissions)
+      required_permissions = Set.new permissions
+      scopes = token[0]['scope']
+      token_permissions = scopes.present? ? Set.new(scopes.split(" ")) : Set.new
+      required_permissions <= token_permissions
+    end
+  end
+
+  # ... 
+
+  # Validation du jeton 
+  def self.validate_token(token)
+    jwks_response = get_jwks
+
+    unless jwks_response.is_a? Net::HTTPSuccess
+      error = Error.new(message: 'Impossible de vérifier les informations d'identification', status: :internal_server_error)
+      return Response.new(nil, error)
+    end
+
+    jwks_hash = JSON.parse(jwks_response.body).deep_symbolize_keys
+
+    decoded_token = decode_token(token, jwks_hash)
+
+    Response.new(Token.new(decoded_token), nil)
+  rescue JWT::VerificationError, JWT::DecodeError => e
+    error = Error.new('Informations d'identification non valides', :unauthorized)
+    Response.new(nil, error)
+  end
+end
+```
+
+Ensuite, dans le concern `Secured`, définissez une nouvelle constante d’erreur `INSUFFICIENT_PERMISSIONS` pour retourner un message d’erreur approprié lorsqu’une tentative est faite pour demander une ressource sans les bonnes autorisations. Mettez ensuite à jour la valeur de retour de l’appel `Auth0Client.validate_token` et créez finalement une nouvelle méthode `validate_permissions` pour vérifier si le jeton possède les bonnes autorisations, ou retourner un code d’état HTTP `403 FORBIDDEN` avec le message d’erreur `INSUFFICIENT_PERMISSIONS` dans le cas contraire.
+
+Appliquez ces changements dans votre concern `Secured` en ajoutant le code suivant :
+
+```rb lines
+# app/controllers/concerns/secured.rb
+
+# frozen_string_literal: true
+
+module Secured
+  extend ActiveSupport::Concern
+
+  # ... 
+
+  INSUFFICIENT_PERMISSIONS = {
+    error: 'insufficient_permissions',
+    error_description: 'Le jeton d'accès ne contient pas les permissions requises',
+    message: 'Permission refusée'
+  }.freeze
+
+  def authorize
+    token = token_from_request
+
+    return if performed?
+
+    validation_response = Auth0Client.validate_token(token)
+
+    @decoded_token = validation_response.decoded_token # Ajouter cette ligne
+
+    return unless (error = validation_response.error)
+
+    render json: { message: error.message }, status: error.status
+  end
+
+  def validate_permissions(permissions)
+    raise 'validate_permissions doit être appelée avec un bloc' unless block_given?
+    return yield if @decoded_token.validate_permissions(permissions)
+
+    render json: INSUFFICIENT_PERMISSIONS, status: :forbidden
+  end
+
+  private
+  # ... 
+end
+```
+
+<div id="protect-api-endpoints">
+  ## Protéger les points de terminaison d&#39;API
+</div>
+
+Les routes ci-dessous sont disponibles pour les types de requêtes suivants :
+
+* `GET /api/public` : disponible pour les requêtes non authentifiées
+* `GET /api/private` : disponible pour les requêtes authentifiées contenant un jeton d’accès sans scopes supplémentaires
+* `GET /api/private-scoped` : disponible pour les requêtes authentifiées contenant un jeton d’accès pour lequel la portée `read:messages` a été accordée
+
+Ajoutez le concern `Secured` au contrôleur `ApplicationController` :
+
+```rb lines
+class ApplicationController < ActionController::API
+  include Secured
+end
+```
+
+Vous n&#39;avez qu&#39;à protéger le `PrivateController` comme suit :
+
+```rb lines
+class PrivateController < ApplicationController
+  before_action :authorize
+
+  # ...
+end
+```
+
+Pour vérifier que votre jeton d’accès possède les bonnes autorisations, appelez la méthode `validate_permissions` comme suit dans l’Action `private-scoped` :
+
+```rb lines
+class PrivateController < ApplicationController
+  before_action :authorize
+
+  def private
+    render json: { message: 'Hello from a private endpoint! You need to be authenticated to see this.' }
+  end
+
+  def private_scoped
+    validate_permissions ['read:messages'] do
+      render json: { message: 'Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this.' }
+    end
+  end
+end
+```
+
+<Info>
+  ##### Que pouvez-vous faire ensuite ?
+
+  <table>
+    <tr>
+      <td><a href="/docs/fr-CA/authenticate/identity-providers">Configurer d&#39;autres fournisseurs d&#39;identité</a></td>
+      <td><a href="/docs/fr-CA/secure/multi-factor-authentication">Activer l&#39;authentification multifacteur</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/fr-CA/secure/attack-protection">En savoir plus sur la protection contre les attaques</a></td>
+      <td><a href="/docs/fr-CA/customize/rules">En savoir plus sur les Rules</a></td>
+    </tr>
+  </table>
+
+  [Modifier sur GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

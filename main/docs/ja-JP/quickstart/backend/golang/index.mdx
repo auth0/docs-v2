@@ -1,0 +1,317 @@
+---
+title: "Go API：認可"
+permalink: "01-authorization"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-sergiu-ghitea">
+  ##### By Sergiu Ghitea
+</div>
+
+このチュートリアルでは、Go API に認可を追加する方法を説明します。ご自分のアカウント向けに構成されたサンプルを使ってこのクイックスタートを進められるよう、ログインすることをおすすめします。
+
+{/* <Card title="View on Github" href="https://github.com/auth0-samples/auth0-golang-api-samples/tree/master/01-Authorization-RS256" icon="github">
+  System requirements: Go 1.21 以降
+  </Card> */}
+
+<Info>
+  **Auth0 は初めてですか？** [Auth0 の仕組み](/docs/ja-JP/get-started/auth0-overview) や、OAuth 2.0 フレームワークを使用した [API 認証と認可の実装方法](/docs/ja-JP/get-started/authentication-and-authorization-flow) を参照してください。
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Auth0 の API を設定する
+</div>
+
+<div id="create-an-api">
+  ### API を作成する
+</div>
+
+Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションで **Create API** をクリックします。API の名前と識別子を入力します（例: `https://quickstarts/api`）。この識別子は、後でアクセストークンの検証を設定するときに `audience` パラメータとして使用します。**Signing Algorithm** は **RS256** のままにしておきます。
+
+<Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+デフォルトでは、API はトークン署名アルゴリズムとして RS256 を使用します。RS256 は秘密鍵/公開鍵ペアを使用するため、Auth0 アカウントの公開鍵に対してトークンを検証します。公開鍵は [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) 形式で提供されており、[こちら](https://\{yourDomain}/.well-known/jwks.json) からアクセスできます。
+
+<div id="define-permissions">
+  ### パーミッションを定義する
+</div>
+
+パーミッションを使用すると、特定のアクセストークンを用いてユーザーに代わってリソースへどのようにアクセスできるかを定義できます。たとえば、ユーザーがマネージャーのアクセスレベルを持つ場合は `messages` リソースへの読み取り権限を付与し、管理者のアクセスレベルを持つ場合はそのリソースへの書き込み権限を付与するといったことができます。
+
+許可するパーミッションは、Auth0 Dashboard の [APIs](https://manage.auth0.com/#/apis) セクションにある **Permissions** ビューで定義できます。
+
+<Frame>![Configure Permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  この例では `read:messages` スコープを使用します。
+</Info>
+
+この例では次の点を示します。
+
+* 受信した HTTP リクエストの `Authorization` ヘッダー内に JSON Web Token (JWT) があるかどうかを確認する方法。
+* Auth0 アカウントの [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) を使用して、トークンが有効かどうかを確認する方法。アクセストークンの検証の詳細については、[アクセストークンを検証する](/docs/ja-JP/secure/tokens/access-tokens/validate-access-tokens)を参照してください。
+
+<div id="validate-access-tokens">
+  ## アクセストークンを検証する
+</div>
+
+<div id="download-dependencies">
+  ### 依存関係のダウンロード
+</div>
+
+使用するすべての依存関係を定義するために、`go.mod` ファイルを追加します。
+
+```go Go lines
+// go.mod
+
+module 01-Authorization-RS256
+
+go 1.21
+
+require (
+	github.com/auth0/go-jwt-middleware/v2 v2.2.0
+	github.com/joho/godotenv v1.5.1
+)
+```
+
+次のシェルコマンドを実行して依存関係をインストールします。
+
+```bash lines
+go mod download
+```
+
+<div id="configure-your-application">
+  ### アプリケーションを設定する
+</div>
+
+アプリケーションの設定を保存するために、プロジェクトディレクトリのルートに `.env` ファイルを作成し、環境変数を設定します。
+
+export const codeExample = `# Auth0 テナントドメインの URL。
+# カスタムドメインを使用している場合は、その値をここに設定してください。
+AUTH0_DOMAIN='{yourDomain}'
+
+# Auth0 API の識別子。
+AUTH0_AUDIENCE='YOUR_API_IDENTIFIER'`;
+
+<AuthCodeBlock children={codeExample} language="bash" />
+
+<div id="create-a-middleware-to-validate-access-tokens">
+  ### アクセストークンを検証するミドルウェアを作成する
+</div>
+
+アクセストークンの検証は、保護したい任意のエンドポイントに適用できる `EnsureValidToken` ミドルウェア関数内で行います。トークンが有効な場合は、そのエンドポイントが提供するリソースをクライアントに返し、無効な場合は `401 Authorization` エラーを返します。
+
+受信リクエストに含まれるアクセストークンを検証するために、**go-jwt-middleware** を設定します。
+
+```go Go lines
+// middleware/jwt.go
+
+package middleware
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+
+	jwtmiddleware "github.com/auth0/go-jwt-middleware/v2"
+	"github.com/auth0/go-jwt-middleware/v2/jwks"
+	"github.com/auth0/go-jwt-middleware/v2/validator"
+)
+
+// CustomClaims はトークンから取得したいカスタムデータを格納します。
+type CustomClaims struct {
+	Scope string `json:"scope"`
+}
+
+// Validate はこの例では何も行いませんが、validator.CustomClaims インターフェースを満たすために必要です。
+func (c CustomClaims) Validate(ctx context.Context) error {
+	return nil
+}
+
+// EnsureValidToken は JWT の有効性を検証するミドルウェアです。
+func EnsureValidToken() func(next http.Handler) http.Handler {
+	issuerURL, err := url.Parse("https://" + os.Getenv("AUTH0_DOMAIN") + "/")
+	if err != nil {
+		log.Fatalf("発行者 URL の解析に失敗しました: %v", err)
+	}
+
+	provider := jwks.NewCachingProvider(issuerURL, 5*time.Minute)
+
+	jwtValidator, err := validator.New(
+		provider.KeyFunc,
+		validator.RS256,
+		issuerURL.String(),
+		[]string{os.Getenv("AUTH0_AUDIENCE")},
+		validator.WithCustomClaims(
+			func() validator.CustomClaims {
+				return &CustomClaims{}
+			},
+		),
+		validator.WithAllowedClockSkew(time.Minute),
+	)
+	if err != nil {
+		log.Fatalf("JWT バリデーターのセットアップに失敗しました")
+	}
+
+	errorHandler := func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("JWT の検証中にエラーが発生しました: %v", err)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"JWT の検証に失敗しました。"}`))
+	}
+
+	middleware := jwtmiddleware.New(
+		jwtValidator.ValidateToken,
+		jwtmiddleware.WithErrorHandler(errorHandler),
+	)
+
+	return func(next http.Handler) http.Handler {
+		return middleware.CheckJWT(next)
+	}
+}
+```
+
+デフォルトでは、API はトークンに署名するアルゴリズムとして RS256 を使用します。RS256 は秘密鍵/公開鍵ペアを使用するため、Auth0 アカウントの公開鍵に対してトークンの検証を行います。公開鍵は [JSON Web Key Set (JWKS)](/docs/ja-JP/secure/tokens/json-web-tokens/json-web-key-sets) 形式で提供されており、[こちら](https://\{yourDomain}/.well-known/jwks.json) からアクセスできます。
+
+<div id="protect-api-endpoints">
+  ## API エンドポイントを保護する
+</div>
+
+個々のルートを保護するには、上で定義した `middleware` を HTTP ルートに渡します。
+
+```go Go lines
+// main.go
+
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/joho/godotenv"
+
+	"01-Authorization-RS256/middleware"
+)
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("Error loading the .env file: %v", err)
+	}
+
+	router := http.NewServeMux()
+
+	// このルートは常にアクセス可能です。
+	router.Handle("/api/public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"message":"公開エンドポイントからこんにちは!これを表示するために認証する必要はありません。"}`))
+	}))
+
+	// このルートは、ユーザーが有効な access_token を持っている場合のみアクセス可能です。
+	router.Handle("/api/private", middleware.EnsureValidToken()(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// CORS ヘッダー。
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message":"プライベートエンドポイントからこんにちは!これを表示するには認証が必要です。"}`))
+		}),
+	))
+
+	log.Print("Server listening on http://localhost:3010")
+	if err := http.ListenAndServe("0.0.0.0:3010", router); err != nil {
+		log.Fatalf("There was an error with the http server: %v", err)
+	}
+}
+```
+
+<div id="validate-scopes">
+  ### スコープを検証する
+</div>
+
+上記の `middleware` は、リクエストに含まれるアクセストークンが有効であることは検証しますが、そのトークンが要求されたリソースへアクセスするのに十分な**スコープ**を持っているかどうかを確認する仕組みは、まだ用意されていません。
+
+正常なレスポンスを返す前に、アクセストークンが正しいスコープを持っていることを確認する関数を作成します。
+
+```go Go lines
+// 👆 上記の手順からの続きです。これを middleware/jwt.go ファイルに追加してください。
+
+// HasScope は、クレームに特定のスコープが含まれているかどうかを確認します。
+func (c CustomClaims) HasScope(expectedScope string) bool {
+    result := strings.Split(c.Scope, " ")
+    for i := range result {
+        if result[i] == expectedScope {
+            return true
+        }
+    }
+
+    return false
+}
+```
+
+この関数は、スコープ `read:messages` を必要とするエンドポイントで使用します。
+
+```go Go lines
+// 👆 We're continuing from the steps above. Append this to your main.go file.
+
+func main() {
+    // ...
+    
+    // このルートは、ユーザーが read:messages スコープを持つ
+    // 有効な access_token を持っている場合にのみアクセス可能です。
+	router.Handle("/api/private-scoped", middleware.EnsureValidToken()(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// CORS Headers.
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+
+			w.Header().Set("Content-Type", "application/json")
+
+			token := r.Context().Value(jwtmiddleware.ContextKey{}).(*validator.ValidatedClaims)
+
+			claims := token.CustomClaims.(*middleware.CustomClaims)
+			if !claims.HasScope("read:messages") {
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"message":"Insufficient scope."}`))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message":"Hello from a private endpoint! You need to be authenticated to see this."}`))
+		}),
+	))
+    
+    // ...
+}
+```
+
+この例では、`read:messages` スコープだけがチェックされています。ユースケースに合わせて、`HasScope` 関数を拡張するか、複数のスコープを受け取ることができるスタンドアロンのミドルウェアにすることもできます。
+
+<Info>
+  ##### 次にできること
+
+  <table>
+    <tr>
+      <td><a href="/docs/ja-JP/authenticate/identity-providers">他のアイデンティティ プロバイダーを設定する</a></td>
+      <td><a href="/docs/ja-JP/secure/multi-factor-authentication">多要素認証を有効にする</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/ja-JP/secure/attack-protection">攻撃保護について学ぶ</a></td>
+      <td><a href="/docs/ja-JP/customize/rules">Rules の詳細を確認する</a></td>
+    </tr>
+  </table>
+
+  [GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

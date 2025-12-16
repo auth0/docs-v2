@@ -1,0 +1,271 @@
+---
+title: "Laravel API"
+permalink: "01-authorization"
+---
+
+<div id="by-evan-sims">
+  ##### Evan Sims 著
+</div>
+
+Auth0 の Laravel 向けソフトウェア開発キット（SDK）を使用すると、Laravel アプリケーションにトークンベースの認可とルートのアクセス制御をすばやく追加できます。このガイドでは、新規または既存の Laravel 9 または 10 アプリケーションに Auth0 を統合する方法を説明します。このクイックスタートに従う際は、ご自身のアカウント用に構成されたサンプルを利用できるよう、ログインすることをお勧めします。
+
+{/* <Card title="GitHub で表示" href="https://github.com/auth0-samples/laravel/tree/7.x/sample" icon="github">
+  システム要件: Laravel 9 / 10 | PHP 8.0 以上 | Composer
+  </Card> */}
+
+**バックエンドアプリケーションは、ユーザー認証やユーザーインターフェースを扱わないという点で、従来のウェブアプリケーションとは異なります。バックエンドアプリケーションは、他のアプリケーションがやり取りできる API を提供します。リクエストの `Authorization` ヘッダーに含まれる [アクセストークン](https://auth0.com/docs/secure/tokens/access-tokens) を受け取り、それを使ってルートへのアクセスを制御します。**
+
+このようなバックエンドと連携するために、別のフロントエンドアプリケーションを構築するのが一般的です。これには、[シングルページアプリケーション](https://auth0.com/docs/quickstart/spa) や [ネイティブまたはモバイルアプリ](https://auth0.com/docs/quickstart/native) など、さまざまなものが含まれます（これらすべてに対して Auth0 は SDK も提供しています！）。
+
+ユーザーがバックエンドアプリケーションとやり取りする必要がある場合、まずフロントエンドアプリケーションを使って Auth0 で認証を行います。フロントエンドアプリケーションは Auth0 からアクセストークンを取得し、そのトークンを使用して、ユーザーに代わってバックエンドアプリケーションへリクエストを送信します。
+
+名前が示すとおり、[アクセストークン](https://auth0.com/docs/secure/tokens/access-tokens) はアクセス制御（認可）に関する処理を行うために設計されており、ユーザーに関する情報は含まれていません。**バックエンドアプリケーションはアクセストークンのみを扱います。** トークンに紐づくユーザーに関する情報は、[Management API](https://auth0.com/docs/api/management/v2) を使用して取得できます。これについては後ほど実際の例を示します。
+
+
+<div id="laravel-installation">
+  ## Laravel のインストール
+</div>
+
+**まだ Laravel アプリケーションを用意していない場合は**、新しいプロジェクト用の適切なディレクトリでシェルを開き、次のコマンドを実行します。
+
+```bash lines
+composer create-project --prefer-dist laravel/laravel auth0-laravel-api ^9.0
+```
+
+このガイド内のすべてのコマンドは、Laravel プロジェクトのルートディレクトリで実行することを想定しているため、まずは新しいプロジェクトディレクトリに `cd` コマンドで移動してください。
+
+```bash lines
+cd auth0-laravel-api
+```
+
+
+<div id="sdk-installation">
+  ## SDK のインストール
+</div>
+
+プロジェクトディレクトリ内で次のコマンドを実行して、[Auth0 Laravel SDK](https://github.com/auth0/laravel-auth0) をインストールします。
+
+```bash lines
+composer require auth0/login:^7.8 --update-with-all-dependencies
+```
+
+次に、アプリケーション用の SDK 構成ファイルを生成します。
+
+```bash lines
+php artisan vendor:publish --tag auth0
+```
+
+
+<div id="sdk-configuration">
+  ## ソフトウェア開発キット (SDK) の構成
+</div>
+
+プロジェクトディレクトリから次のコマンドを実行して、[Auth0 CLI](https://github.com/auth0/auth0-cli) をダウンロードします。
+
+```bash lines
+curl -sSfL https://raw.githubusercontent.com/auth0/auth0-cli/main/install.sh | sh -s -- -b .
+```
+
+次に、CLI を Auth0 アカウントで認証します。プロンプトが表示されたら「as a user（ユーザーとして）」を選択します。
+
+```bash lines
+./auth0 login
+```
+
+次に、Auth0 で新しいアプリケーションを作成します。
+
+```bash lines
+./auth0 apps create \
+  --name "My Laravel Backend" \
+  --type "regular" \
+  --auth-method "post" \
+  --callbacks "http://localhost:8000/callback" \
+  --logout-urls "http://localhost:8000" \
+  --reveal-secrets \
+  --no-input \
+  --json > .auth0.app.json
+```
+
+新しい API も作成してください。
+
+```bash lines
+./auth0 apis create \
+  --name "私のLaravel バックエンドAPI" \
+  --identifier "https://github.com/auth0/laravel-auth0" \
+  --offline-access \
+  --no-input \
+  --json > .auth0.api.json
+```
+
+これにより、ソフトウェア開発キット (SDK) を設定するための 2 つのファイルがプロジェクト ディレクトリ内に作成されます。
+
+これらのファイルにはクレデンシャルが含まれるため、機密情報として扱う必要があります。バージョン管理システムにコミットしないようにしてください。Git を使用している場合は、`.gitignore` ファイルに追加してください。
+
+```bash lines
+echo ".auth0.*.json" >> .gitignore
+```
+
+
+<div id="access-control">
+  ## アクセス制御
+</div>
+
+Auth0 のソフトウェア開発キット (SDK) に含まれる authorization guard を使用すると、アプリケーションのルートへのアクセスを制限できます。
+
+`Authorization` ヘッダーに有効なアクセストークンが含まれていないリクエストを拒否するには、Laravel の `auth` ミドルウェアを使用できます。
+
+```php lines
+Route::get('/private', function () {
+  return response()->json([
+    'message' => 'Your token is valid; you are authorized.',
+  ]);
+})->middleware('auth');
+```
+
+Laravel の `can` ミドルウェアと組み合わせることで、提供されたトークンが特定の[パーミッション](https://auth0.com/docs/manage-users/access-control/rbac)を持っていることを必須にすることもできます。
+
+```php lines
+Route::get('/scope', function () {
+    return response()->json([
+      'message' => 'Your token is valid and has the `read:messages` permission; you are authorized.',
+    ]);
+})->middleware('auth')->can('read:messages');
+```
+
+
+<div id="token-information">
+  ## トークン情報
+</div>
+
+提供されたアクセストークンに関する情報は、Laravel の `Auth` ファサード、または `auth()` ヘルパー関数を通じて取得できます。
+
+例えば、ユーザー ID とメールアドレスを取得するには、次のようにします。
+
+```php lines
+Route::get('/', function () {
+  if (! auth()->check()) {
+    return response()->json([
+      'message' => 'You did not provide a valid token.',
+    ]);
+  }
+
+  return response()->json([
+    'message' => 'Your token is valid; you are authorized.',
+    'id' => auth()->id(),
+    'token' => auth()?->user()?->getAttributes(),
+  ]);
+});
+```
+
+
+<div id="retrieve-user-information">
+  ## ユーザー情報を取得する
+</div>
+
+アクセストークンを作成したユーザーに関する情報は、[Auth0 Management API](https://github.com/auth0/laravel-auth0/blob/main/docs/Management.md) を使用して Auth0 から取得できます。SDK には、この API を利用しやすくするラッパーが用意されており、SDK の `management()` メソッドから利用できます。
+
+**Management API を呼び出す前に、アプリケーションが Management API と連携できるように設定する必要があります。** これは、[Auth0 Dashboard の APIs ページ](https://manage.auth0.com/#/apis/) で `Auth0 Management API` を選択し、「Machine to Machine Applications」タブを開くことで行えます。Laravel アプリケーションを認可し、下向き矢印をクリックして、付与したいスコープを選択します。
+
+以下の例では、`read:users` スコープを付与する必要があります。API エンドポイントの一覧と、それぞれに必要なスコープは、[Management API のドキュメント](https://auth0.com/docs/api/management/v2)に記載されています。
+
+```php lines
+use Auth0\Laravel\Facade\Auth0;
+
+Route::get('/me', function () {
+  $user = auth()->id();
+  $profile = cache()->get($user);
+
+  if (null === $profile) {
+    $endpoint = Auth0::management()->users();
+    $profile = $endpoint->get($user);
+    $profile = Auth0::json($profile);
+
+    cache()->put($user, $profile, 120);
+  }
+
+  $name = $profile['name'] ?? 'Unknown';
+  $email = $profile['email'] ?? 'Unknown';
+
+  return response()->json([
+    'name' => $name,
+    'email' => $email,
+  ]);
+})->middleware('auth');
+```
+
+<Info>
+  **アプリケーション内ではユーザー情報を短時間だけキャッシュすることを推奨します。** これにより、アプリケーションが Auth0 へ送信するリクエスト数が減り、パフォーマンスが向上します。ユーザー情報を長時間保存すると古いデータを扱うことになる可能性があるため、避けてください。また、永続的なデータベースには、ユーザー識別子以外のユーザー情報は保存しないようにしてください。
+</Info>
+
+
+<div id="run-the-application">
+  ## アプリケーションを起動する
+</div>
+
+これで Laravel アプリケーションを起動して、リクエストを受け付けられるようにする準備が整いました。
+
+```bash lines
+php artisan serve
+```
+
+
+<div id="retrieve-a-test-token">
+  ## テストトークンを取得する
+</div>
+
+[アクセストークンの取得方法の詳細はこちら](https://auth0.com/docs/secure/tokens/access-tokens/get-access-tokens)を参照してください。ただし、このクイックスタートでは、[API 設定の「test」ビュー](https://manage.auth0.com/#/apis)から取得できるアクセストークンをそのまま使用できます。
+
+<Info>
+上で作成した `/me` ルートは、実際のユーザーが紐づいていないため、テストトークンでは動作しません。
+</Info>
+
+<div id="checkpoint">
+  ## チェックポイント
+</div>
+
+シェルを開き、アプリケーションにリクエストを送信してみてください。
+
+まずは公開ルートへのリクエストから始めます。
+
+```bash lines
+curl --request GET \
+  --url http://localhost:8000/api \
+  --header 'Accept: application/json'
+```
+
+次に、保護されたルートにアクセスするために、`Authorization` ヘッダーでアクセストークンを送信します。
+
+```bash lines
+curl --request GET \
+  --url http://localhost:8000/api/private \
+  --header 'Accept: application/json' \
+  --header 'Authorization: Bearer YOUR_ACCESS_TOKEN'
+```
+
+最後に、スコープで保護されたルートにリクエストを送信してみてください。アクセストークンに `read:messages` スコープが付与されている場合にのみ成功します。
+
+```bash lines
+curl --request GET \
+  --url http://localhost:8000/api/scope \
+  --header 'Accept: application/json' \
+  --header 'Authorization: Bearer YOUR_ACCESS_TOKEN'
+```
+
+問題が発生した場合は、次の点を試してみてください。
+
+* Laravel のキャッシュをクリアするために `php artisan optimize:clear` を実行してみてください。
+* `.auth0.app.json` と `.auth0.api.json` ファイルがプロジェクトのルートに配置されていることを確認してください。
+* Laravel アプリケーションが Machine-to-Machine アプリケーションとして有効化されており、[Auth0 Dashboard](https://manage.auth0.com/#/apis/) から `Auth0 Management API` に対して必要なすべてのスコープが付与されていることを確認してください。
+
+問題が解決しない場合は、SDK の[ドキュメント](https://github.com/auth0/laravel-auth0)または[ドキュメントハブ](https://auth0.com/docs)を確認してください。また、[コミュニティ](https://community.auth0.com)もご覧ください。Auth0 のチームや他のコミュニティメンバーが、あなたの質問に対する回答をお手伝いします。
+
+
+<div id="additional-reading">
+  ### 追加の参考資料
+</div>
+
+* [User Repositories and Models](https://github.com/auth0/laravel-auth0/blob/main/docs/Users.md) では、カスタムユーザーモデルを使用するために Auth0 Laravel ソフトウェア開発キット (SDK) を拡張する方法と、データベースにユーザーを保存およびデータベースから取得する方法を説明します。
+* [Hooking Events](https://github.com/auth0/laravel-auth0/blob/main/docs/Events.md) では、統合の動作を完全にカスタマイズできるように、Auth0 Laravel ソフトウェア開発キット (SDK) によって発行されるイベントを待ち受ける方法を説明します。
+* [Management API](https://github.com/auth0/laravel-auth0/blob/main/docs/Management.md) のサポートは Auth0 Laravel ソフトウェア開発キット (SDK) に組み込まれており、Laravel アプリケーションから Management API を利用できます。
+
+[GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/laravel/01-authorization.md)

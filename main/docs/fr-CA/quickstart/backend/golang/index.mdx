@@ -1,0 +1,319 @@
+---
+title: "API Go : autorisation"
+permalink: "01-authorization"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-sergiu-ghitea">
+  ##### Par Sergiu Ghitea
+</div>
+
+Ce tutoriel montre comment ajouter l’autorisation à une API Go. Nous vous recommandons d’ouvrir une session pour suivre ce démarrage rapide avec des exemples configurés pour votre compte.
+
+{/* <Card title="Voir sur GitHub" href="https://github.com/auth0-samples/auth0-golang-api-samples/tree/master/01-Authorization-RS256" icon="github">
+  Exigences système : Go 1.21+
+  </Card> */}
+
+<Info>
+  **Vous débutez avec Auth0?** Découvrez [comment fonctionne Auth0](/docs/fr-CA/get-started/auth0-overview) et informez-vous sur [l’implémentation de l’authentification et de l’autorisation d’API](/docs/fr-CA/get-started/authentication-and-authorization-flow) à l’aide du cadre OAuth 2.0.
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Configurer les API d&#39;Auth0
+</div>
+
+<div id="create-an-api">
+  ### Créer une API
+</div>
+
+Dans la section [APIs](https://manage.auth0.com/#/apis) de l’Auth0 Dashboard, cliquez sur **Create API**. Indiquez un nom et un identifiant pour votre API, par exemple `https://quickstarts/api`. Vous utiliserez cet identifiant comme `audience` plus tard, lorsque vous configurerez la vérification du jeton d’accès. Laissez **Signing Algorithm** sur **RS256**.
+
+<Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+Par défaut, votre API utilise RS256 comme algorithme de signature des jetons. Comme RS256 repose sur une paire de clés publique/privée, il vérifie les jetons à l’aide de la clé publique de votre compte Auth0. La clé publique est au format [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) et est accessible [ici](https://\{yourDomain}/.well-known/jwks.json).
+
+<div id="define-permissions">
+  ### Définir des permissions
+</div>
+
+Les permissions vous permettent de définir comment les ressources peuvent être consultées au nom de l’utilisateur avec un jeton d’accès donné. Par exemple, vous pouvez choisir d’accorder un accès en lecture à la ressource `messages` si les utilisateurs disposent du niveau d’accès gestionnaire, et un accès en écriture à cette ressource s’ils disposent du niveau d’accès administrateur.
+
+Vous pouvez définir les permissions autorisées dans la vue **Permissions** de la section [APIs](https://manage.auth0.com/#/apis) de l’Auth0 Dashboard.
+
+<Frame>![Configurer les permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  Cet exemple utilise la portée `read:messages`.
+</Info>
+
+Cet exemple montre :
+
+* Comment vérifier la présence d’un JSON Web Token (JWT) dans l’en-tête `Authorization` d’une requête HTTP entrante.
+* Comment vérifier si le jeton est valide à l’aide de l’ensemble de clés JSON Web (JWKS) ([JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets)) pour votre compte Auth0. Pour en savoir plus sur la validation des jetons d’accès, consultez [Valider les jetons d’accès](/docs/fr-CA/secure/tokens/access-tokens/validate-access-tokens).
+
+<div id="validate-access-tokens">
+  ## Valider les jetons d&#39;accès
+</div>
+
+<div id="download-dependencies">
+  ### Télécharger les dépendances
+</div>
+
+Ajoutez un fichier `go.mod` pour lister toutes les dépendances requises.
+
+```go Go lines
+// go.mod
+
+module 01-Authorization-RS256
+
+go 1.21
+
+require (
+	github.com/auth0/go-jwt-middleware/v2 v2.2.0
+	github.com/joho/godotenv v1.5.1
+)
+```
+
+Installez les dépendances en exécutant la commande suivante dans votre terminal :
+
+```bash lines
+go mod download
+```
+
+<div id="configure-your-application">
+  ### Configurer votre application
+</div>
+
+Créez un fichier `.env` à la racine du répertoire de votre projet pour stocker la configuration de l&#39;application, puis définissez les variables d&#39;environnement :
+
+export const codeExample = `# L'URL du domaine de notre tenant Auth0.
+# Si vous utilisez un Domaine personnalisé, assurez-vous plutôt de définir cette variable avec ce domaine.
+AUTH0_DOMAIN='{yourDomain}'
+
+# L'identifiant de notre API Auth0.
+AUTH0_AUDIENCE='YOUR_API_IDENTIFIER'`;
+
+<AuthCodeBlock children={codeExample} language="bash" />
+
+<div id="create-a-middleware-to-validate-access-tokens">
+  ### Créer un middleware pour valider les jetons d&#39;accès
+</div>
+
+La validation des jetons d&#39;accès sera effectuée dans la fonction middleware `EnsureValidToken`, qui peut être appliquée aux endpoints que vous souhaitez protéger. Si le jeton est valide, les ressources servies par l&#39;endpoint peuvent être renvoyées, sinon une erreur `401 Authorization` sera retournée.
+
+Configurez le middleware **go-jwt-middleware** pour vérifier les jetons d&#39;accès des requêtes entrantes.
+
+```go Go lines
+// middleware/jwt.go
+
+package middleware
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+
+	jwtmiddleware "github.com/auth0/go-jwt-middleware/v2"
+	"github.com/auth0/go-jwt-middleware/v2/jwks"
+	"github.com/auth0/go-jwt-middleware/v2/validator"
+)
+
+// CustomClaims contient les données personnalisées que nous souhaitons obtenir du jeton.
+type CustomClaims struct {
+	Scope string `json:"scope"`
+}
+
+// Validate ne fait rien dans cet exemple, mais nous en avons besoin
+// pour satisfaire l'interface validator.CustomClaims.
+func (c CustomClaims) Validate(ctx context.Context) error {
+	return nil
+}
+
+// EnsureValidToken est un intergiciel qui vérifie la validité de notre JWT.
+func EnsureValidToken() func(next http.Handler) http.Handler {
+	issuerURL, err := url.Parse("https://" + os.Getenv("AUTH0_DOMAIN") + "/")
+	if err != nil {
+		log.Fatalf("Échec de l'analyse de l'URL de l'émetteur : %v", err)
+	}
+
+	provider := jwks.NewCachingProvider(issuerURL, 5*time.Minute)
+
+	jwtValidator, err := validator.New(
+		provider.KeyFunc,
+		validator.RS256,
+		issuerURL.String(),
+		[]string{os.Getenv("AUTH0_AUDIENCE")},
+		validator.WithCustomClaims(
+			func() validator.CustomClaims {
+				return &CustomClaims{}
+			},
+		),
+		validator.WithAllowedClockSkew(time.Minute),
+	)
+	if err != nil {
+		log.Fatalf("Échec de la configuration du validateur JWT")
+	}
+
+	errorHandler := func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("Erreur rencontrée lors de la validation du JWT : %v", err)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"Échec de la validation du JWT."}`))
+	}
+
+	middleware := jwtmiddleware.New(
+		jwtValidator.ValidateToken,
+		jwtmiddleware.WithErrorHandler(errorHandler),
+	)
+
+	return func(next http.Handler) http.Handler {
+		return middleware.CheckJWT(next)
+	}
+}
+```
+
+Par défaut, votre API utilise RS256 comme algorithme de signature des jetons. Étant donné que RS256 repose sur une paire de clés privée/publique, les jetons sont vérifiés à l&#39;aide de la clé publique de votre compte Auth0. La clé publique est au format [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) et peut être consultée [ici](https://\{yourDomain}/.well-known/jwks.json).
+
+<div id="protect-api-endpoints">
+  ## Protéger les points de terminaison de l’API
+</div>
+
+Pour protéger des routes individuelles, passez le `middleware` (défini ci-dessus) à la route HTTP.
+
+```go Go lines
+// main.go
+
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/joho/godotenv"
+
+	"01-Authorization-RS256/middleware"
+)
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("Erreur lors du chargement du fichier .env : %v", err)
+	}
+
+	router := http.NewServeMux()
+
+	// Cette route est toujours accessible.
+	router.Handle("/api/public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"message":"Bonjour d'un point de terminaison public! Vous n'avez pas besoin d'être authentifié pour voir ceci."}`))
+	}))
+
+	// Cette route est accessible uniquement si l'utilisateur possède un access_token valide.
+	router.Handle("/api/private", middleware.EnsureValidToken()(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// En-têtes CORS.
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message":"Bonjour d'un point de terminaison privé! Vous devez être authentifié pour voir ceci."}`))
+		}),
+	))
+
+	log.Print("Serveur en écoute sur http://localhost:3010")
+	if err := http.ListenAndServe("0.0.0.0:3010", router); err != nil {
+		log.Fatalf("Une erreur s'est produite avec le serveur http : %v", err)
+	}
+}
+```
+
+<div id="validate-scopes">
+  ### Valider les scopes
+</div>
+
+Le `middleware` ci-dessus vérifie que le jeton d’accès inclus dans la requête est valide ; cependant, il n’inclut pas encore
+de mécanisme pour vérifier que le jeton possède la **portée** suffisante pour accéder aux ressources demandées.
+
+Créez une fonction pour vérifier et vous assurer que le jeton d’accès a la portée appropriée avant de renvoyer une réponse réussie.
+
+```go Go lines
+// 👆 Nous poursuivons à partir des étapes ci-dessus. Ajoutez ceci à votre fichier middleware/jwt.go.
+
+// HasScope vérifie si nos revendications contiennent une portée spécifique.
+func (c CustomClaims) HasScope(expectedScope string) bool {
+    result := strings.Split(c.Scope, " ")
+    for i := range result {
+        if result[i] == expectedScope {
+            return true
+        }
+    }
+
+    return false
+}
+```
+
+Utilisez cette fonction dans le point de terminaison d’API qui requiert la portée `read:messages`.
+
+```go Go lines
+// 👆 Nous poursuivons à partir des étapes ci-dessus. Ajoutez ceci à votre fichier main.go.
+
+func main() {
+    // ...
+    
+    // Cette route n'est accessible que si l'utilisateur possède un
+    // access_token valide avec la portée read:messages.
+	router.Handle("/api/private-scoped", middleware.EnsureValidToken()(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// En-têtes CORS.
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+
+			w.Header().Set("Content-Type", "application/json")
+
+			token := r.Context().Value(jwtmiddleware.ContextKey{}).(*validator.ValidatedClaims)
+
+			claims := token.CustomClaims.(*middleware.CustomClaims)
+			if !claims.HasScope("read:messages") {
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"message":"Insufficient scope."}`))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message":"Hello from a private endpoint! You need to be authenticated to see this."}`))
+		}),
+	))
+    
+    // ...
+}
+```
+
+Dans cet exemple, seule la portée `read:messages` est vérifiée. Vous pouvez choisir d&#39;étendre la fonction `HasScope` ou d&#39;en faire un middleware autonome qui accepte plusieurs scopes afin qu&#39;elle s&#39;adapte à votre cas d&#39;utilisation.
+
+<Info>
+  ##### Que pouvez-vous faire ensuite ?
+
+  <table>
+    <tr>
+      <td><a href="/docs/fr-CA/authenticate/identity-providers">Configurer d&#39;autres fournisseurs d&#39;identité</a></td>
+      <td><a href="/docs/fr-CA/secure/multi-factor-authentication">Activer l&#39;authentification multifactorielle</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/fr-CA/secure/attack-protection">En savoir plus sur la protection contre les attaques</a></td>
+      <td><a href="/docs/fr-CA/customize/rules">En savoir plus sur Rules</a></td>
+    </tr>
+  </table>
+
+  [Modifier sur GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

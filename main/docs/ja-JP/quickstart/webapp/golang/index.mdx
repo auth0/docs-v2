@@ -1,0 +1,582 @@
+---
+title: "Go"
+permalink: "01-login"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-sergiu-ghitea">
+  ##### Sergiu Ghitea による執筆
+</div>
+
+このチュートリアルでは、Auth0 を使用して、Go で実装された Web アプリケーションにユーザーのログイン機能を追加する方法を説明します。ご利用のアカウントに合わせて設定されたサンプルを使いながらこのクイックスタートを進められるよう、事前にログインしておくことをおすすめします。
+
+{/* <Card title="GitHub で表示" href="https://github.com/auth0-samples/auth0-golang-web-app/tree/master/01-Login" icon="github">
+  システム要件: Go 1.21 以降
+  </Card> */}
+
+<Info>
+  **認証は初めてですか？** [Auth0の仕組み](/docs/ja-JP/get-started/auth0-overview)、[通常の Web アプリケーションとの統合方法](/docs/ja-JP/get-started/architecture-scenarios/sso-for-regular-web-apps)、および使用される[プロトコル](/docs/ja-JP/get-started/authentication-and-authorization-flow)について学びましょう。
+</Info>
+
+<div id="configure-auth0">
+  ## Auth0 を設定する
+</div>
+
+<div id="get-your-application-keys">
+  ### アプリケーションキーの取得
+</div>
+
+Auth0 にサインアップしたときに、自動的に新しいアプリケーションが 1 つ作成されているか、ご自身で新しく作成しているはずです。Auth0 とやり取りするには、そのアプリケーションに関するいくつかの情報が必要です。これらの情報は Auth0 Dashboard の [Application Settings](https://manage.auth0.com/#/applications) セクションから取得できます。
+
+<Frame>![App Dashboard](https://cdn2.auth0.com/docs/1.14550.0/media/articles/dashboard/client_settings.png)</Frame>
+
+次の情報が必要です。
+
+* **Domain**
+* **Client ID**
+* **Client Secret**
+
+<Info>
+  このページ上部からサンプルをダウンロードすると、これらの情報はあらかじめ設定されています。
+</Info>
+
+<div id="configure-callback-urls">
+  ### コールバックURLの設定
+</div>
+
+コールバックURLは、ユーザーが認証を完了した後に Auth0 がリダイレクトする、アプリケーション内のURLです。アプリケーションのコールバックURLは、[Application Settings](https://manage.auth0.com/#/applications) の **Allowed Callback URLs** フィールドに追加する必要があります。このフィールドが設定されていない場合、ユーザーはアプリケーションにログインできず、エラーが発生します。
+
+<Info>
+  このページの先頭からダウンロードしたサンプルプロジェクトを使用している場合、**Allowed Callback URLs** フィールドに追加する必要があるコールバックURLは `http://localhost:3000/callback` です。
+</Info>
+
+<div id="configure-logout-urls">
+  ### ログアウトURLを設定する
+</div>
+
+ログアウトURLは、ユーザーが認可サーバーからログアウトされた後に、Auth0がアプリケーションへリダイレクトするためのURLです。これは `returnTo` クエリパラメーターで指定します。アプリのログアウトURLは、[Application Settings](https://manage.auth0.com/#/applications) の **許可されたログアウトURL** フィールドに追加する必要があります。このフィールドが設定されていない場合、ユーザーはアプリケーションからログアウトできず、エラーが発生します。
+
+<Info>
+  このページの上部からダウンロードしたサンプルプロジェクトに沿って進めている場合、**許可されたログアウトURL** フィールドに追加する必要があるログアウトURLは `http://localhost:3000` です。
+</Info>
+
+<div id="configure-go-to-use-auth0">
+  ## Go で Auth0 を使用するように設定する
+</div>
+
+<div id="download-dependencies">
+  ### 依存関係のダウンロード
+</div>
+
+使用する依存関係を定義するために、まず `go.mod` ファイルを追加します。
+
+```go lines
+// go.mod
+
+module 01-Login
+
+go 1.21
+
+require (
+	github.com/coreos/go-oidc/v3 v3.8.0
+	github.com/gin-contrib/sessions v0.0.5
+	github.com/gin-gonic/gin v1.9.1
+	github.com/joho/godotenv v1.5.1
+	golang.org/x/oauth2 v0.15.0
+)
+```
+
+次のシェルコマンドを実行して、依存関係を利用できるようにします。
+
+```bash lines
+go mod download
+```
+
+<Info>
+  この例ではルーティングに `gin` を使用していますが、どのルーターを使用してもかまいません。
+</Info>
+
+<div id="configure-your-application">
+  ### アプリケーションを設定する
+</div>
+
+アプリケーションの設定を保存するために、プロジェクトのルートディレクトリに `.env` ファイルを作成し、環境変数を設定します。
+
+export const codeExample = `# Auth0 テナントのドメイン URL。
+# Custom Domain を使用している場合は、そのドメインをここに設定してください。
+AUTH0_DOMAIN='{yourDomain}'
+
+# Auth0 アプリケーションのクライアントID。
+AUTH0_CLIENT_ID='{yourClientId}'
+
+# Auth0 アプリケーションのクライアントシークレット。
+AUTH0_CLIENT_SECRET='{yourClientSecret}'
+
+# アプリケーションのコールバック URL。
+AUTH0_CALLBACK_URL='http://localhost:3000/callback'`;
+
+<AuthCodeBlock children={codeExample} language="env" />
+
+<div id="configure-oauth2-and-openid-connect-packages">
+  ### OAuth2 と OpenID Connect パッケージを構成する
+</div>
+
+`platform/authenticator` フォルダに `auth.go` という名前のファイルを作成します。このパッケージ内で、
+[OAuth2](https://godoc.org/golang.org/x/oauth2) と
+[oidc](https://godoc.org/github.com/coreos/go-oidc) のクライアントを構成して返すメソッドと、IDトークンを検証するメソッドを作成します。
+
+```go lines
+// platform/authenticator/auth.go
+
+package authenticator
+
+import (
+	"context"
+	"errors"
+	"os"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+)
+
+// Authenticator はユーザーの認証に使用されます。
+type Authenticator struct {
+	*oidc.Provider
+	oauth2.Config
+}
+
+// New は *Authenticator をインスタンス化します。
+func New() (*Authenticator, error) {
+	provider, err := oidc.NewProvider(
+		context.Background(),
+		"https://"+os.Getenv("AUTH0_DOMAIN")+"/",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	conf := oauth2.Config{
+		ClientID:     os.Getenv("AUTH0_CLIENT_ID"),
+		ClientSecret: os.Getenv("AUTH0_CLIENT_SECRET"),
+		RedirectURL:  os.Getenv("AUTH0_CALLBACK_URL"),
+		Endpoint:     provider.Endpoint(),
+		Scopes:       []string{oidc.ScopeOpenID, "profile"},
+	}
+
+	return &Authenticator{
+		Provider: provider,
+		Config:   conf,
+	}, nil
+}
+
+// VerifyIDToken は *oauth2.Token が有効な *oidc.IDToken であることを検証します。
+func (a *Authenticator) VerifyIDToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
+	rawIDToken, ok := token.Extra("id_token").(string)
+	if !ok {
+		return nil, errors.New("oauth2 トークンに id_token フィールドがありません")
+	}
+
+	oidcConfig := &oidc.Config{
+		ClientID: a.ClientID,
+	}
+
+	return a.Verifier(oidcConfig).Verify(ctx, rawIDToken)
+}
+```
+
+<div id="setting-up-your-application-routes">
+  ### アプリケーションのルートを設定する
+</div>
+
+`platform/router` フォルダーに `router.go` というファイルを作成します。このパッケージでは、[github.com/gin-gonic/gin](https://github.com/gin-gonic/gin) を使用してルートを設定し、それを返すメソッドを作成します。`login` および `callback` ハンドラー内で使用できるように、そのメソッドには `Authenticator` のインスタンスを渡します。
+
+```go lines
+// platform/router/router.go
+
+package router
+
+import (
+	"encoding/gob"
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
+	"github.com/gin-gonic/gin"
+
+	"01-Login/platform/authenticator"
+	"01-Login/platform/middleware"
+	"01-Login/web/app/callback"
+	"01-Login/web/app/login"
+	"01-Login/web/app/logout"
+	"01-Login/web/app/user"
+)
+
+// New はルートを登録してルーターを返します。
+func New(auth *authenticator.Authenticator) *gin.Engine {
+	router := gin.Default()
+
+	// カスタム型を Cookie に保存するには、
+	// まず gob.Register を使用して登録する必要があります
+	gob.Register(map[string]interface{}{})
+
+	store := cookie.NewStore([]byte("secret"))
+	router.Use(sessions.Sessions("auth-session", store))
+
+	router.Static("/public", "web/static")
+	router.LoadHTMLGlob("web/template/*")
+
+	router.GET("/", func(ctx *gin.Context) {
+		ctx.HTML(http.StatusOK, "home.html", nil)
+	})
+	router.GET("/login", login.Handler(auth))
+	router.GET("/callback", callback.Handler(auth))
+	router.GET("/user", user.Handler)
+	router.GET("/logout", logout.Handler)
+
+	return router
+}
+```
+
+<Info>
+  このルーターでは、Cookie ベースのセッションを管理するために [github.com/gin-contrib/sessions](https://github.com/gin-contrib/sessions) のミドルウェアを使用します。
+</Info>
+
+<div id="serving-your-application">
+  ### アプリケーションを起動する
+</div>
+
+次に、アプリケーションのエントリポイントである `main.go` を作成し、全体をつなげます。
+
+```go lines
+// main.go
+
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/joho/godotenv"
+
+	"01-Login/platform/authenticator"
+	"01-Login/platform/router"
+)
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("環境変数の読み込みに失敗しました: %v", err)
+	}
+
+	auth, err := authenticator.New()
+	if err != nil {
+		log.Fatalf("認証機能の初期化に失敗しました: %v", err)
+	}
+
+	rtr := router.New(auth)
+
+	log.Print("サーバーが http://localhost:3000/ でリッスンしています")
+	if err := http.ListenAndServe("0.0.0.0:3000", rtr); err != nil {
+		log.Fatalf("HTTP サーバーでエラーが発生しました: %v", err)
+	}
+}
+```
+
+<div id="logging-in">
+  ## ログイン
+</div>
+
+`web/app/login` フォルダに `login.go` ファイルを作成し、`/login` ルートを処理する `Handler` 関数を追加します。
+
+```go lines
+// web/app/login/login.go
+
+package login
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+
+	"01-Login/platform/authenticator"
+)
+
+// ログインのハンドラー
+func Handler(auth *authenticator.Authenticator) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		state, err := generateRandomState()
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		// セッション内に state を保存
+		session := sessions.Default(ctx)
+		session.Set("state", state)
+		if err := session.Save(); err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		ctx.Redirect(http.StatusTemporaryRedirect, auth.AuthCodeURL(state))
+	}
+}
+
+func generateRandomState() (string, error) {
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+
+	state := base64.StdEncoding.EncodeToString(b)
+
+	return state, nil
+}
+```
+
+`home.html` テンプレートに `/login` ルートへのリンクを追加します。
+
+```html lines
+<!-- web/template/home.html -->
+
+<div>
+    <h3>Auth0 Example</h3>
+    <p>Zero friction identity infrastructure, built for developers</p>
+    <a href="/docs/login">SignIn</a>
+</div>
+```
+
+<div id="handling-authentication-callback">
+  ## 認証コールバックの処理
+</div>
+
+ユーザーが Auth0 の Universal Login ページを使用して認証を行うと、`/callback`
+ルートでアプリに戻り、そのリクエストは次の `Handler` 関数で処理されます。
+
+```go lines
+// web/app/callback/callback.go
+
+package callback
+
+import (
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+
+	"01-Login/platform/authenticator"
+)
+
+// コールバックのハンドラー
+func Handler(auth *authenticator.Authenticator) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		session := sessions.Default(ctx)
+		if ctx.Query("state") != session.Get("state") {
+			ctx.String(http.StatusBadRequest, "Invalid state parameter.")
+			return
+		}
+
+		// 認可コードをトークンと交換します。
+		token, err := auth.Exchange(ctx.Request.Context(), ctx.Query("code"))
+		if err != nil {
+			ctx.String(http.StatusUnauthorized, "Failed to exchange an authorization code for a token.")
+			return
+		}
+
+		idToken, err := auth.VerifyIDToken(ctx.Request.Context(), token)
+		if err != nil {
+			ctx.String(http.StatusInternalServerError, "Failed to verify ID Token.")
+			return
+		}
+
+		var profile map[string]interface{}
+		if err := idToken.Claims(&profile); err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		session.Set("access_token", token.AccessToken)
+		session.Set("profile", profile)
+		if err := session.Save(); err != nil {
+			ctx.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		// ログインページにリダイレクトします。
+		ctx.Redirect(http.StatusTemporaryRedirect, "/user")
+	}
+}
+```
+
+<div id="displaying-user-information">
+  ## ユーザー情報の表示
+</div>
+
+以前にセッションに保存しておいた `profile` からユーザー情報にアクセスできます。
+
+```go lines
+// web/app/user/user.go
+
+package user
+
+import (
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+)
+
+// ログイン済みユーザーページ用のハンドラー
+func Handler(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+	profile := session.Get("profile")
+
+	ctx.HTML(http.StatusOK, "user.html", profile)
+}
+```
+
+```html lines
+<!-- web/template/user.html -->
+
+<div>
+    <Frame><img class="avatar" src="{{ .picture }}"/></Frame>
+    <h2>Welcome {{.nickname}}</h2>
+</div>
+```
+
+userinfo ハッシュの詳細は、[ユーザープロファイル](/docs/ja-JP/manage-users/user-accounts/user-profiles) を参照してください。
+
+<div id="logging-out">
+  ## ログアウト
+</div>
+
+ユーザーをログアウトさせるには、セッションからデータを削除し、ユーザーを Auth0 のログアウトエンドポイントにリダイレクトします。詳細については、[ログアウトに関するドキュメント](/docs/ja-JP/authenticate/login/logout)を参照してください。
+
+`web/app/logout/logout.go` ディレクトリに `logout.go` というファイルを作成し、ユーザーを Auth0 のログアウトエンドポイントにリダイレクトする `Handler` 関数を追加します。
+
+```go lines
+// web/app/logout/logout.go
+
+package logout
+
+import (
+	"net/http"
+	"net/url"
+	"os"
+
+	"github.com/gin-gonic/gin"
+)
+
+// ログアウトのハンドラー
+func Handler(ctx *gin.Context) {
+	logoutUrl, err := url.Parse("https://" + os.Getenv("AUTH0_DOMAIN") + "/v2/logout")
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	scheme := "http"
+	if ctx.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	returnTo, err := url.Parse(scheme + "://" + ctx.Request.Host)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	parameters := url.Values{}
+	parameters.Add("returnTo", returnTo.String())
+	parameters.Add("client_id", os.Getenv("AUTH0_CLIENT_ID"))
+	logoutUrl.RawQuery = parameters.Encode()
+
+	ctx.Redirect(http.StatusTemporaryRedirect, logoutUrl.String())
+}
+```
+
+<Info>
+  リダイレクトURLは、アプリケーションの設定セクションにある「許可されたログアウトURL」の一覧に含まれている必要があります。詳細については、「[ログアウト後にユーザーをリダイレクトする](/docs/ja-JP/authenticate/login/logout/guides/redirect-users-after-logout)」を参照してください。
+</Info>
+
+`web/static/js` フォルダーに `user.js` という名前のファイルを作成し、ログイン中のユーザーからクッキーを削除するコードを追加します。
+
+```js lines
+$(document).ready(function () {
+    $('.btn-logout').click(function (e) {
+        Cookies.remove('auth-session');
+    });
+});
+```
+
+<Info>
+  このサンプルでは、Cookie の処理に [js.cookie](https://github.com/js-cookie/js-cookie/tree/latest#readme) を使用しています。
+  js.cookie を使用するには、`js.cookie.js` ファイルを `web/static/js` フォルダに追加する必要があります。
+</Info>
+
+<div id="optional-steps">
+  ## 任意の手順
+</div>
+
+<div id="checking-if-the-user-is-authenticated">
+  ### ユーザーが認証されているかを確認する
+</div>
+
+`profile` セッションキーに基づいて、ユーザーが認証されているかどうかを確認するミドルウェアを作成します。
+
+```go lines
+// platform/middleware/isAuthenticated.go
+
+package middleware
+
+import (
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+)
+
+// IsAuthenticated は、ユーザーが既に認証されているかどうかを
+// チェックするミドルウェアです。
+func IsAuthenticated(ctx *gin.Context) {
+	if sessions.Default(ctx).Get("profile") == nil {
+		ctx.Redirect(http.StatusSeeOther, "/")
+	} else {
+		ctx.Next()
+	}
+}
+```
+
+最後に、認証が必要なルートでこのミドルウェアが使われるよう、ルーターに追加します。
+
+```go lines
+// platform/router/router.go
+
+router.GET("/user", middleware.IsAuthenticated, user.Handler)
+```
+
+<div id="what-can-you-do-next">
+  ##### 次にできること
+</div>
+
+<Note>
+  ##### 次にできること
+
+  <table>
+    <tr>
+      <td><a href="/docs/ja-JP/authenticate/identity-providers">他のアイデンティティ プロバイダーを設定する</a></td>
+      <td><a href="/docs/ja-JP/secure/multi-factor-authentication">多要素認証を有効にする</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/ja-JP/secure/attack-protection">攻撃対策について学ぶ</a></td>
+      <td><a href="/docs/ja-JP/customize/rules">Rules について学ぶ</a></td>
+    </tr>
+  </table>
+
+  [GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/native/flutter/01-login.md)
+</Note>

@@ -1,0 +1,283 @@
+---
+title: "API Python : autorisation"
+permalink: "01-authorization"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+<div id="by-luciano-balmaceda">
+  ##### Par Luciano Balmaceda
+</div>
+
+Ce tutoriel montre comment ajouter une couche d’autorisation à une API Python créée avec Flask. Nous vous recommandons de vous connecter pour suivre ce démarrage rapide avec des exemples configurés pour votre compte.
+
+{/* <Card title="Afficher sur GitHub" href="https://github.com/auth0-samples/auth0-python-api-samples/tree/master/00-Starter-Seed" icon="github">
+  Configuration système requise : Python 3.6 ou version ultérieure | Flask 2.0 | Authlib 1.0
+  </Card> */}
+
+<Info>
+  **Vous débutez avec Auth0 ?** Découvrez [comment fonctionne Auth0](/docs/fr-CA/get-started/auth0-overview) et apprenez comment [implémenter l’authentification et l’autorisation d’API](/docs/fr-CA/get-started/authentication-and-authorization-flow) à l’aide du cadre OAuth 2.0.
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Configurer les API d’Auth0
+</div>
+
+<div id="create-an-api">
+  ### Créer une API
+</div>
+
+Dans la section [APIs](https://manage.auth0.com/#/apis) du Auth0 Dashboard, cliquez sur **Create API**. Indiquez un nom et un identifiant pour votre API, par exemple `https://quickstarts/api`. Vous utiliserez cet identifiant comme `audience` plus tard, lors de la configuration de la vérification du jeton d&#39;accès. Conservez **RS256** comme **Signing Algorithm**.
+
+<Frame>![Créer une API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+Par défaut, votre API utilise RS256 comme algorithme pour signer les jetons. Puisque RS256 utilise une paire de clés privée/publique, il vérifie les jetons à l&#39;aide de la clé publique de votre compte Auth0. La clé publique est au format [JSON Web Key Set (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) et est accessible [ici](https://\{yourDomain}/.well-known/jwks.json).
+
+<div id="define-permissions">
+  ### Définir les autorisations
+</div>
+
+Les autorisations vous permettent de définir comment les ressources peuvent être accessibles au nom de l’utilisateur avec un jeton d’accès donné. Par exemple, vous pouvez choisir d’accorder un accès en lecture à la ressource `messages` si les utilisateurs ont le niveau d’accès gestionnaire, et un accès en écriture à cette ressource s’ils ont le niveau d’accès administrateur.
+
+Vous pouvez définir les autorisations dans la vue **Permissions** de la section [APIs](https://manage.auth0.com/#/apis) de l’Auth0 Dashboard.
+
+<Frame>![Configurer les autorisations](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  Cet exemple utilise la portée `read:messages`.
+</Info>
+
+Cet exemple montre :
+
+* Comment vérifier la présence d’un JSON Web Token (JWT) dans l’en-tête `Authorization` d’une requête HTTP entrante.
+* Comment vérifier si le jeton est valide en utilisant l’[ensemble de clés JSON Web (JWKS)](/docs/fr-CA/secure/tokens/json-web-tokens/json-web-key-sets) de votre compte Auth0. Pour en savoir plus sur la validation des jetons d’accès, consultez [Valider les jetons d’accès](/docs/fr-CA/secure/tokens/access-tokens/validate-access-tokens).
+
+<div id="validate-access-tokens">
+  ## Valider les jetons d’accès
+</div>
+
+<div id="install-dependencies">
+  ### Installer les dépendances
+</div>
+
+Ajoutez les dépendances suivantes à votre fichier `requirements.txt` :
+
+```txt lines
+# /requirements.txt
+
+flask==2.3.3
+python-dotenv
+pyjwt
+flask-cors
+six
+```
+
+<div id="create-a-flask-application">
+  ### Créer une application Flask
+</div>
+
+Créez un fichier `server.py` et initialisez l’application [Flask](http://flask.pocoo.org/). Configurez le domaine, l’audience et la gestion des erreurs.
+
+export const codeExample = `# /server.py
+
+import json
+from six.moves.urllib.request import urlopen
+from functools import wraps
+
+from flask import Flask, request, jsonify, _request_ctx_stack
+from flask_cors import cross_origin
+import jwt
+
+AUTH0_DOMAIN = '{yourDomain}'
+API_AUDIENCE = YOUR_API_AUDIENCE
+ALGORITHMS = ["RS256"]
+
+APP = Flask(__name__)
+
+# Gestionnaire d'erreur
+class AuthError(Exception):
+    def __init__(self, error, status_code):
+        self.error = error
+        self.status_code = status_code
+
+@APP.errorhandler(AuthError)
+def handle_auth_error(ex):
+    response = jsonify(ex.error)
+    response.status_code = ex.status_code
+    return response`;
+
+<AuthCodeBlock children={codeExample} language="py" filename="Python" />
+
+<div id="create-the-jwt-validation-decorator">
+  ### Créez le décorateur de validation de JWT
+</div>
+
+Ajoutez un décorateur qui vérifie le jeton d’accès à l’aide de votre JWKS.
+
+```py Python lines
+# /server.py
+
+# Format error response and append status code
+def get_token_auth_header():
+    """Obtains the Access Token from the Authorization Header
+    """
+    auth = request.headers.get("Authorization", None)
+    if not auth:
+        raise AuthError({"code": "authorization_header_missing",
+                        "description":
+                            "Authorization header is expected"}, 401)
+
+    parts = auth.split()
+
+    if parts[0].lower() != "bearer":
+        raise AuthError({"code": "invalid_header",
+                        "description":
+                            "Authorization header must start with"
+                            " Bearer"}, 401)
+    elif len(parts) == 1:
+        raise AuthError({"code": "invalid_header",
+                        "description": "Token not found"}, 401)
+    elif len(parts) > 2:
+        raise AuthError({"code": "invalid_header",
+                        "description":
+                            "Authorization header must be"
+                            " Bearer token"}, 401)
+
+    token = parts[1]
+    return token
+
+def requires_auth(f):
+    """Determines if the Access Token is valid
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = get_token_auth_header()
+        jsonurl = urlopen("https://"+AUTH0_DOMAIN+"/.well-known/jwks.json")
+        jwks = json.loads(jsonurl.read())
+        unverified_header = jwt.get_unverified_header(token)
+        public_key = None
+        for key in jwks["keys"]:
+            if key["kid"] == unverified_header["kid"]:
+                public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+        if public_key:
+            try:
+                payload = jwt.decode(
+                    token,
+                    public_key,
+                    algorithms=ALGORITHMS,
+                    audience=API_AUDIENCE,
+                    issuer="https://"+AUTH0_DOMAIN+"/"
+                )
+            except jwt.ExpiredSignatureError:
+                raise AuthError({"code": "token_expired",
+                                "description": "token is expired"}, 401)
+            except jwt.InvalidAudienceError:
+                raise AuthError({"code": "invalid_audience",
+                                "description":
+                                    "audience incorrecte,"
+                                    " veuillez vérifier l'audience"}, 401)
+            except jwt.InvalidIssuerError
+                raise AuthError({"code": "invalid_issuer",
+                                "description":
+                                    "incorrect issuer,"
+                                    " please check the issuer"}, 401)
+            except Exception:
+                raise AuthError({"code": "invalid_header",
+                                "description":
+                                    "Unable to parse authentication"
+                                    " token."}, 401)
+
+            _request_ctx_stack.top.current_user = payload
+            return f(*args, **kwargs)
+        raise AuthError({"code": "invalid_header",
+                        "description": "Unable to find appropriate key"}, 401)
+    return decorated
+```
+
+<div id="validate-scopes">
+  ### Valider les scopes
+</div>
+
+Vous pouvez configurer des routes individuelles pour vérifier la présence d’un scope particulier dans le jeton d’accès en utilisant ce qui suit :
+
+```py Python lines
+# /server.py
+
+def requires_scope(required_scope):
+    """Détermine si la portée requise est présente dans le jeton d'accès
+    Args:
+        required_scope (str): La portée requise pour accéder à la ressource
+    """
+    token = get_token_auth_header()
+    unverified_claims = jwt.decode(token, options={"verify_signature": False})
+    if unverified_claims.get("scope"):
+            token_scopes = unverified_claims["scope"].split()
+            for token_scope in token_scopes:
+                if token_scope == required_scope:
+                    return True
+    return False
+```
+
+<div id="protect-api-endpoints">
+  ## Protéger les points de terminaison d’API
+</div>
+
+Les routes ci-dessous sont disponibles pour les types de requêtes suivants :
+
+* `GET /api/public` : disponible pour les requêtes non authentifiées
+* `GET /api/private` : disponible pour les requêtes authentifiées contenant un jeton d’accès sans scopes supplémentaires
+* `GET /api/private-scoped` : disponible pour les requêtes authentifiées contenant un jeton d’accès pour lequel la portée `read:messages` a été accordée
+
+Vous pouvez utiliser les décorateurs et les fonctions définis ci-dessus dans les points de terminaison correspondants.
+
+```py Python lines
+# API des contrôleurs
+
+# Ceci ne nécessite pas d'authentification
+@APP.route("/api/public")
+@cross_origin(headers=["Content-Type", "Authorization"])
+def public():
+    response = "Hello from a public endpoint! You don't need to be authenticated to see this."
+    return jsonify(message=response)
+
+# Ceci nécessite une authentification
+@APP.route("/api/private")
+@cross_origin(headers=["Content-Type", "Authorization"])
+@requires_auth
+def private():
+    response = "Hello from a private endpoint! You need to be authenticated to see this."
+    return jsonify(message=response)
+
+# Ceci nécessite une autorisation
+@APP.route("/api/private-scoped")
+@cross_origin(headers=["Content-Type", "Authorization"])
+@requires_auth
+def private_scoped():
+    if requires_scope("read:messages"):
+        response = "Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this."
+        return jsonify(message=response)
+    raise AuthError({
+        "code": "Unauthorized",
+        "description": "You don't have access to this resource"
+    }, 403)
+```
+
+<Info>
+  ##### Que pouvez-vous faire ensuite?
+
+  <table>
+    <tr>
+      <td><a href="/docs/fr-CA/authenticate/identity-providers">Configurer d&#39;autres fournisseurs d&#39;identité</a></td>
+      <td><a href="/docs/fr-CA/secure/multi-factor-authentication">Activer l&#39;authentification multifacteur</a></td>
+    </tr>
+
+    <tr>
+      <td><a href="/docs/fr-CA/secure/attack-protection">En savoir plus sur la protection contre les attaques</a></td>
+      <td><a href="/docs/fr-CA/customize/rules">En savoir plus sur Rules</a></td>
+    </tr>
+  </table>
+
+  [Modifier sur GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+
+***

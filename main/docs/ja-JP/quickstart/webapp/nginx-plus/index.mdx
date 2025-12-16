@@ -1,0 +1,164 @@
+---
+title: "NGINX Plus"
+permalink: "01-login"
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+
+<div id="by-amin-abbaspour">
+  ##### Amin Abbaspour による
+</div>
+
+このチュートリアルでは、`nginx-openid-connect` モジュールを使用して NGINX サーバーに認証と認可を追加する方法を説明します。アカウントに合わせて設定されたサンプルを使ってこのクイックスタートに沿って進められるように、事前にログインすることを推奨します。
+
+<Note>
+<div id="system-requirements">
+  ### システム要件
+</div>
+
+このチュートリアルとシードプロジェクトは、次の環境でテストされています。
+
+* NGINX Plus R24
+</Note>
+
+**以下の手順に従って、[**NGINX Plus**](https://www.nginx.com/products/nginx/) を使用するアプリケーションを Auth0 および OpenID Connect と連携するように構成してください。**
+
+<div id="install-and-enable-nginx-plus-module-njs-module">
+  ## nginx-plus-module-njs モジュールのインストールと有効化
+</div>
+
+まず、NGINX Plus 用の nginx-plus-module-njs モジュールをインストールする必要があります。ホスト OS 上にパッケージをインストールするには、[Dynamic Module Installation Guide](https://docs.nginx.com/nginx/admin-guide/dynamic-modules/nginscript) に従ってください。
+`yum` パッケージマネージャーを使用する Linux ディストリビューションでは、次のようにインストールします。
+
+```bash lines
+sudo yum install nginx-plus-module-njs jq
+```
+
+インストールが完了したら、NGINX で有効化するために、`/etc/nginx/nginx.conf` ファイルの先頭付近に次の行を追加します。
+
+```bash lines
+load_module modules/ngx_http_js_module.so;
+```
+
+
+<div id="checkout-nginx-openid-connect-template-repository">
+  ## nginx-openid-connect テンプレートリポジトリをクローンする
+</div>
+
+[`nginx-openid-connect` GitHub リポジトリ](https://github.com/nginxinc/nginx-openid-connect) をクローンします。このリポジトリにはテンプレートとなる設定が含まれています。
+
+```bash lines
+git clone https://github.com/nginxinc/nginx-openid-connect
+```
+
+
+<div id="configure-with-your-auth0-application-information">
+  ## Auth0 Application 情報を使用して設定する
+</div>
+
+`nginx-openid-connect` フォルダ内で `configure.sh` スクリプトを実行して、Auth0 Application 用のテンプレート設定に情報を反映します。
+
+export const codeExample1 = `./configure.sh --auth_jwt_key request \
+  --client_id {yourClientId} \
+  --pkce_enable \
+  https://{yourDomain}/.well-known/openid-configuration`;
+
+<AuthCodeBlock children={codeExample1} language="bash" />
+
+次に、`openid_connect_configuration.conf` ファイルにテナントのログアウト URL を追加します
+
+export const codeExample2 = `# openid_connect_configuration.conf
+map $host $oidc_logout_redirect {
+    default "https://{yourDomain}/v2/logout";
+}`;
+
+<AuthCodeBlock children={codeExample2} language="conf" />
+
+
+<div id="set-accept-encoding-type-for-token-and-jwks-endpoints">
+  ## Token および JWKS エンドポイント向けの Accept-Encoding 設定
+</div>
+
+`openid_connect.server_conf` に `Accept-Encoding` ヘッダーを追加します
+
+```conf lines
+# openid_connect.server_conf
+location = /_jwks_uri {
+    internal;
+    ...
+    proxy_set_header    Content-Length "";           
+    proxy_set_header    Accept-Encoding "gzip";          # 必須
+    ...
+}
+
+location = /_token {
+    internal;
+    ...
+    proxy_set_header    Content-Type "application/x-www-form-urlencoded";
+    proxy_set_header    Accept-Encoding "gzip";          # 必須
+    ...
+}
+```
+
+
+<div id="copy-openid-connect-config-files-to-nginx-server">
+  ## OpenID Connect の設定ファイルを NGINX サーバーにコピーする
+</div>
+
+NGINX サーバーマシン上の config フォルダーに 4 つのファイルをコピーする必要があります。
+
+```sh lines
+sudo cp openid_connect.js \ 
+   frontend.conf \
+   openid_connect_configuration.conf \
+   openid_connect.server_conf /etc/nginx/conf.d
+```
+
+
+<div id="configuring-auth0-settings">
+  ## Auth0 設定の構成
+</div>
+
+アプリケーションの設定で、新しい「Allowed Callback URLs」を追加し、その値として `https://server-fqdn/_codexch` を指定します。
+
+次に、Auth0 の対象アプリケーションの設定で「Token Endpoint Authentication Method」を「None」に変更します。これは PKCE 認可コードフローに必須です。
+
+<div id="passing-headers-to-upstream-application">
+  ## アップストリームアプリケーションへのヘッダーの転送
+</div>
+
+`/etc/nginx/conf.d/frontend.conf` を編集し、`id_token` の情報をアップストリームのターゲットに渡すための追加ヘッダーを設定します。
+
+```conf lines
+# frontend.conf
+# auth_jwt_claim_set $claim_name https://namespace/key;
+
+server {
+    include conf.d/openid_connect.server_conf; # 認可コードフローおよびリライングパーティ処理
+    error_log /var/log/nginx/error.log debug;  # 必要に応じて重大度レベルを下げてください
+
+    listen 8010; # 本番環境ではSSL/TLSを使用してください
+    
+    location / {
+        # このサイトはOpenID Connect (OIDC)で保護されています
+        auth_jwt "" token=$session_jwt;
+        error_page 401 = @do_oidc_flow;
+
+        #auth_jwt_key_file $oidc_jwt_keyfile; # ファイル名を使用する場合に有効化してください
+        auth_jwt_key_request /_jwks_uri; # URLを使用する場合に有効化してください
+
+        # 認証に成功したユーザーはバックエンドにプロキシされ、
+        # subクレームがHTTPヘッダーとして渡されます
+        proxy_set_header username $jwt_claim_sub;
+        proxy_set_header x-email $jwt_claim_email;
+        #proxy_set_header x-custom $claim_name;             # 名前空間付きクレーム
+
+        proxy_pass http://my_backend; # バックエンドサイト/アプリケーション
+
+        access_log /var/log/nginx/access.log main_jwt;
+    }
+}
+```
+
+[GitHubで編集する](https://github.com/auth0/docs/edit/master/articles/quickstart/webapp/nginx-plus/01-login.md)
