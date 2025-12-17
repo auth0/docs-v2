@@ -51,7 +51,8 @@ export const Prerequisites = ({
 
   if (createAuth0ApiStep) {
     steps.push(
-      <Step key="auth0-api" title="Create an Auth0 API">
+      <Step key="auth0-api" title="Create a Custom API">
+        A Custom API is an API you own that you want to secure using Auth0.
         <ul>
           <li>
             In your Auth0 Dashboard, go to{" "}
