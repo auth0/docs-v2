@@ -58,7 +58,7 @@ export const Prerequisites = ({
             In your Auth0 Dashboard, go to{" "}
             <a href="https://manage.auth0.com/#/apis" target="_blank"><strong>Applications &gt; APIs</strong></a>.
           </li>
-          <li>Create a new API with an identifier (audience), for example, <code>https://your.domain.us.langgraph.app</code>.</li>
+          <li>Create a new API with an identifier (audience), for example, <code>https://my-custom-api.com</code>.</li>
           <li>
             Once API is created, go to the APIs{" "}
             <strong>Settings &gt; Access Settings</strong> and enable{" "}
