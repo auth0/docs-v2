@@ -66,14 +66,6 @@ export const Prerequisites = ({
           </li>
           <li>Note down the API identifier for your environment variables. You will use the API identifier as the audience parameter in token requests (<code>AUTH0_AUDIENCE</code>).</li>
         </ul>
-        To learn more about Auth0 APIs, read{" "}
-        <a
-          href="https://auth0.com/docs/get-started/auth0-overview/set-up-apis"
-          target="_blank"
-        >
-          APIs
-        </a>
-        .
       </Step>
     );
   }
