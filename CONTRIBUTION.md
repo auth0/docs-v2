@@ -7,10 +7,9 @@ The Auth0 Product Documentation team has internal documentation to review before
 Auth0 documentation, https://www.auth0.com/docs is located at https://github.com/auth0/docs-v2/. If you are not in the Auth0 organization, report inconsistencies and bugs under the [Issues](https://github.com/auth0/docs-v2/issues) section.
 
 For contributors in the Auth0 organization:
-* Use your Auth0 GitHub account.
-* Review the [Mintlify documentation](https://www.mintlify.com/docs).
-* Review the [READ.ME](main/README.md) to set up your local environment and contribution workflow.
-* Contact your Product Docs liaison. All PRs must be approved by Auth0 Product Documentation.
+* Use your personal GitHub account.
+* Review the [README](main/README.md) to set up your local environment and contribution workflow.
+* Contact your Auth0 Product Docs liaison. All PRs must be approved by Auth0 Product Documentation.
 
 ### File standards
 
@@ -21,7 +20,7 @@ Mintlify’s articles files are a form of Markdown, so all your article files sh
 | `configure-identity-provider.mdx` | `ConfigureIdentityProviders.mdx` |
 | `customize-ul-templates.mdx` | `customize_ul_templates.mdx` |
 
-### File headings
+### File metadata
 
 | **Field name** | **Description** | **Example** |
 | ------ | -------- | ------ |
@@ -37,27 +36,12 @@ Mintlify’s articles files are a form of Markdown, so all your article files sh
 
 ### Format text
 
-Use the [Mintlify guide](https://www.mintlify.com/docs/create/text) for a general tutorial of how to format text with Markdown. You should note:
+Use the [Markdown Guide](https://www.markdownguide.org/) for a general tutorial of how to format text with Markdown.
+
+Some special considerations:
 
 * We do **not** use italics in docs due to issues with screen readers and accessibility.
 * Avoid using underline. We use this for linking and additional underline can clutter the UI.
-
-To learn about UI elements, such as Notes, Code blocks, Tabs, and Warning labels, review Embedded Content Types.
-
-### Media
-
-Upload images or other files to the `/images` folders in the repository. Remember to add description for each image, which will be translated into alternate text for the image. For screenshots of Auth0 Dashboard, provide the directions to the screenshot. Review the example below.
-
-**Example**
-> 1. Navigate to your application’s settings, [Auth0 Dashboard > Applications > Settings](https://manage.auth0.com/application/settings).
->
->   <Frame>![Auth0 Dashboard > Applications > Settings](/relative-link-to-the-image)</Frame>
-
-<Warning>
-Do not store images in external locations like Dropbox, CloudUp, or the Auth0 CDN.
-</Warning>
-
-Auth0 organization members should review the Screenshot policy.
 
 ## Embedded content types
 
@@ -80,12 +64,12 @@ Sub-level steps:
 1. Navigate to Auth0 Dashboard > Applications. <p></p>
     A. Select the application you want to configure. <p></p>
     B. Select the **Authentication** tab.<p></p>
-2. Scroll down the 
+2. Scroll down to the correct setting.
 <Note>
 Try to keep sub-bullets even. If you have an A, try to also have a B.
 </Note>
 
-Use the astricks (*) for unordered lists and bullet points:
+Use the asterisks (*) for unordered lists and bullet points:
 
 The following options are available:
 * Bot Detection
@@ -95,7 +79,7 @@ The following options are available:
 
 ### Components
 
-We use component in technical documentation to draw attention to important information customers need to know. Review the following components and when best to use them. To learn more, read [Components](https://www.mintlify.com/docs/components).
+We use components in technical documentation to draw attention to important information customers need to know. Review the following components and when best to use them. To learn more, read [Components](https://www.mintlify.com/docs/components).
 
 **Tip: Try to use the following components sparingly. These component can take the reader out of the doc if overly used.**
 
@@ -103,55 +87,20 @@ We use component in technical documentation to draw attention to important infor
 
 Use accordions when you have a list of **four or more** items and you need to reduce content. To review an Accordion in Auth0 docs, review [Prompt Values on Customize Universal Login Text Elements](https://auth0.com/docs/customize/login-pages/universal-login/customize-text-elements#prompt-values).
 
-```
 <AccordionGroup>
 <Accordion title=”Label for the Accordion element”>
-Use Markdown to draft your content for each accordion. You can add tables:
-| Parameter | Description |
-| --------- | ----------- |
-| `code` | The Authorization Code received from the initial `/authorize` call.|
-| `scope` | The scopes which you want to request authorization for. These must be separated by a space. |
+Add content for this option.
 </Accordion>
-<Accordion title=”Label for the Accordion element”>
-You can add other UI elements:
-You can use Rules, Hooks, or Actions.
-<Warning>
-Auth0 Rules and Hooks will be deprecated by September 17, 2087. Probably.
-</Warning>
+<Accordion title=”Label for the second Accordion element”>
+Add content for this option.
 </Accordion>
-<Accordion title=”Label for the Accordion element”>
-Add code samples to an accordion element:
-To create a new application, make a `POST` call to the [Create a Client](https://auth0.com/docs/api/management/v2/clients/post-clients) endpoint:
-```json
-{
-  "session_transfer": {
-    "can_create_session_transfer_token": false,
-    "allowed_authentication_methods": ["cookie", "query"],
-    "enforce_device_binding": "ip", // also "none" or "asn",
-    "allow_refresh_token": false,
-    "enforce_cascade_revocation": true,
-    "enforce_online_refresh_tokens": true
-  }
-}
-```
+<Accordion title=”Label for the third Accordion element”>
+Add content for this option.
 </Accordion>
-<Accordion title=”Label for the Accordion element”>
-Add a numbered or bulleted list to an accordion element:
-Auth0 allows you to create connections and scripts for most of the commonly-used databases, including:
-* ASP.NET Membership Provider
-* MongoDB
-* MySQL
-* PostgreSQL
-* SQLServer
-* Windows Azure SQL Database
-* Web services accessed via Basic Auth
-Create the connection in the Auth0 Dashboard
-1. Navigate to [Auth0 Dashboard > Authentication > Database](https://manage.auth0.com/#/connections/database), and select **Create DB Connection**.
-2. Configure the connection's settings, and choose **Create**:
+<Accordion title=”Label for the fourth Accordion element”>
+Add content for this option.
 </Accordion>
 </AccordionGroup>
-
-```
 
 #### Asides/Cards
 
@@ -277,31 +226,46 @@ Words in our [Identity Glossary](https://auth0.com/docs/glossary) require a tool
 Use the same short description to maintain consistency across Auth0 documentation.
 </Note>
 
-```
 <Tooltip tip="Security Assertion Markup Language (SAML): Standardized protocol allowing two parties to exchange authentication information without a password." cta="View Glossary" href="/docs/glossary?term=SAML">SAML</Tooltip>
 
-```
+
 
 ## Reference links
  
- The Learn More section at the bottom of each page indicates a list of associated articles to read.
+The Learn More section at the bottom of each page indicates a list of associated articles to read.
 
 Use the following format:
-```
+
 ## Learn More
 - [Access Tokens](https://auth0.com/docs/secure/tokens/access-tokens)
 - [ID Token](https://auth0.com/docs/secure/tokens/id-tokens)
-```
 
-## Screenshots
+
+## Media
+
+Upload images or other files to the `/images` folders in the repository. Remember to add description for each image, which will be translated into alternate text for the image. For screenshots of Auth0 Dashboard, provide the directions to the screenshot. Review the example below.
+
+**Example**
+> 1. Navigate to your application’s settings, [Auth0 Dashboard > Applications > Settings](https://manage.auth0.com/application/settings).
+>
+>   <Frame!>[Auth0 Dashboard > Applications > Settings](/relative-link-to-the-image)</Frame>
+
+<Warning>
+Do not store images in external locations like Dropbox, CloudUp, or the Auth0 CDN.
+</Warning>
+
+Auth0 organization members should review the Screenshot policy.
+
+### Screenshots
 
 Screenshots of the Auth0 interface need to be taken with Chrome and should not show the browser window.
 
 Resize the browser window to the standard size using the following script:
 
-```
+```bash
 osascript -e 'tell application "Chrome" to set the bounds of the front window to {100, 150, 1200, 900}'
 ```
+**Note**: This script is macOS-specific. Windows and Linux users should manually resize their browser window to 1100x750px.
 
 General guidelines:
 
@@ -321,22 +285,15 @@ Use to highlight a detail as part of a tutorial (for example, to show a field re
 
 Slightly shrink the screenshot to avoid having the image of the UI be mistaken for the actual UI.
 
-### Borders
-
-Apply a 1px centered border of color #cccccc to keep the image from blending with the background and appearing to float.
-
 ## Navigation
 
-<Warning>
 The Product Documentation team researches articles before determining where articles belong in the navigation. Please contact Auth0 Product Documentation **before** you add an article to the `docs.json` file.
-</Warning>
 
 When you add a new article, create the file in the appropriate section. This structure helps build the first part of the URL. If you need to add an article about Universal Login, you would add the new MDX file under authenticate>login>auth0-universal-login. With the Permalink in the header of your article, the URL is constructed.
 
-Next, add the relative path to the `{}docs.json` file to add it to the side navigation panel under the appropriate heading:
+Next, add the relative path to the `docs.json` file to add it to the side navigation panel under the appropriate heading:
 
-```
-{
+``` json
             "dropdown": "Authenticate",
             "description": "Auth0 simplifies the use of open industry standards",
             "icon": "lock",
@@ -372,9 +329,8 @@ Next, add the relative path to the `{}docs.json` file to add it to the side navi
                           "docs/authenticate/login/auth0-universal-login/configure-default-login-routes",
                           "docs/authenticate/login/auth0-universal-login/identifier-first",
                           "docs/authenticate/login/auth0-universal-login/error-pages",
-                          */ Example added here */
-                          "docs/authenticate/login/auth0-universal-login/example-doc"                    
-    
+                          /* Example added here */
+                          "docs/authenticate/login/auth0-universal-login/example-doc"   
 ```
 Finally, update the Auth0 sitemap, `{}sitemap.json`.
 
