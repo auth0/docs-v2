@@ -149,7 +149,7 @@ Use the following guidelines:
 
 You can draft tables in two ways:
 
-** Markdown tables**
+**Markdown tables**
 
 | Value | Description |
 | --- | --- |
@@ -162,6 +162,10 @@ You can draft tables in two ways:
 
 HTML tables are more complex. To learn how to structure an HTML table, read [Table Basics](https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Structuring_content/HTML_table_basics#creating_your_first_table), or review an existing table in our repository.
 
+<Note>
+When creating Tables that contain Links and lists, use **Markdown** and refer to [Tables documentation](https://www.markdownguide.org/extended-syntax/#tables). 
+</Note>
+
 <table class="table"><thead>
 <tr>
 <th><strong>Parameter</strong></th>
@@ -173,10 +177,7 @@ HTML tables are more complex. To learn how to structure an HTML table, read [Tab
 <td><code>client_id</code></td>
 <td><strong>Required</strong>. The <code>client_id</code> of your application.</td>
 </tr>
-
-<Note>
-When creating Tables that contain Links and lists, use **Markdown** and refer to [Tables documentation](https://www.markdownguide.org/extended-syntax/#tables). 
-</Note>
+</table>
 
 ### Tabs
 
