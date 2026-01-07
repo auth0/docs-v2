@@ -110,6 +110,10 @@ lychee --format detailed --verbose --root-dir "$(pwd)/auth4genai" \
   'auth4genai/**/*.md' 'auth4genai/**/*.mdx' 'auth4genai/**/*.jsx'
 ```
 
+## Vale Linting
+
+We use [Vale](https://vale.sh/) to keep terminology and brand usage consistent across the docs. See the dedicated Vale guide in [`./.vale/README.md`](./.vale/README.md) for details on configuration structure, MDX support, and how to extend or adjust the rules.
+
 ### Notes
 
 * You can combine `--base-url` and glob patterns however you like; the examples above are the patterns used in CI.
