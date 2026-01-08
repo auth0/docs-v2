@@ -16,7 +16,8 @@ export const AuthLink = ({
           key,
           value,
         ] of window.rootStore.variableStore.values.entries()) {
-          processedHref = processedHref.replace(new RegExp(key, "g"), value);
+          const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          processedHref = processedHref.replace(new RegExp(escapedKey, "g"), value);
         }
 
         // Only update state if the processed href has changed
