@@ -1,6 +1,6 @@
 # Vale Linting
 
-This directory contains the Vale configuration used to lint and standardize the documentation in `auth4genai`. Vale helps ensure consistent terminology, brand usage, spelling, and overall prose quality.
+This directory contains the Vale configuration used to lint and standardize the documentation in `docs-v2`. Vale helps ensure consistent terminology, brand usage, spelling, and overall prose quality.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ npm install -g mdx2vast
 
 Both executables must be available in your `$PATH`.
 
-Run Vale from the `auth4genai` directory:
+Run Vale from the `docs-v2` directory:
 
 ```bash
 vale .

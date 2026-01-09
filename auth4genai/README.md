@@ -58,20 +58,16 @@ In this repo, code block instantiation follows this pattern:
 
 For example:
 
-```
+````
 
 ```bash .env wrap lines
 ...
 
-```
+````
 
-```
+````
 
 ```typescript ./src/auth0/app wrap lines highlight={1,7-10}
 ...
 
-```
-
-## Vale Linting
-
-We use [Vale](https://vale.sh/) to keep terminology and brand usage consistent across the docs. See the dedicated Vale guide in [`./.vale/README.md`](./.vale/README.md) for details on configuration structure, MDX support, and how to extend or adjust the rules.
+````
