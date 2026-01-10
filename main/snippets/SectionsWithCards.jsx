@@ -15,6 +15,7 @@ export const SectionsWithCards = ({ sections }) => {
     const sample = getLink(item, "sample app");
     const quickstart = getLink(item, "quickstart");
     const docs = getLink(item, "documentation");
+    const reference = getLink(item, "reference");
 
     const title = item?.name ?? "";
     const subtext = item?.subtext ?? "";
@@ -90,6 +91,42 @@ export const SectionsWithCards = ({ sections }) => {
               </a>
             )}
 
+            {docs && (
+              <a
+                href={docs.url}
+                className="
+        no_external_icon inline-flex items-center gap-2 text-sm font-medium
+        !text-black dark:!text-white
+        !no-underline !border-0
+        transition-colors duration-200
+        hover:!text-neutral-700 dark:hover:!text-neutral-200
+      "
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="book-open" className="w-4 h-4 shrink-0" />
+                <span className="leading-none">Docs</span>
+              </a>
+            )}
+
+            {reference && (
+              <a
+                href={reference.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="
+        no_external_icon inline-flex items-center gap-2 text-sm font-medium
+        !text-black dark:!text-white
+        !no-underline !border-0
+        transition-colors duration-200
+        hover:!text-neutral-700 dark:hover:!text-neutral-200
+      "
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="play" className="w-4 h-4 shrink-0" />
+                <span className="leading-none">Reference</span>
+              </a>
+            )}
+
             {sample && (
               <a
                 href={sample.url}
@@ -109,7 +146,7 @@ export const SectionsWithCards = ({ sections }) => {
               </a>
             )}
 
-            {tertiary && (
+            {tertiary && !docs && !reference && (
               <a
                 href={tertiary.url}
                 className="
