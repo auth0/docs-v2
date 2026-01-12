@@ -152,15 +152,33 @@ export function useMenuAnimation(): [
 
   // dynamically set height based on current menu content
   useEffect(() => {
-    if (selectedMenu === SelectedMenu.PROFILE) {
-      const height =
-        profileMenuRef.current?.getBoundingClientRect().height ?? 296;
-      setMenuHeight(height);
-    } else if (selectedMenu === SelectedMenu.TENANT) {
-      const height =
-        tenantMenuRef.current?.getBoundingClientRect().height ?? 296;
-      setMenuHeight(height);
+    const updateHeight = () => {
+      if (selectedMenu === SelectedMenu.PROFILE && profileMenuRef.current) {
+        const height = profileMenuRef.current.getBoundingClientRect().height;
+        setMenuHeight(height || 296);
+      } else if (selectedMenu === SelectedMenu.TENANT && tenantMenuRef.current) {
+        const height = tenantMenuRef.current.getBoundingClientRect().height;
+        setMenuHeight(height || 296);
+      }
+    };
+
+    // Update immediately
+    updateHeight();
+
+    // Set up ResizeObserver to watch for content changes
+    const observer = new ResizeObserver(() => {
+      updateHeight();
+    });
+
+    if (selectedMenu === SelectedMenu.PROFILE && profileMenuRef.current) {
+      observer.observe(profileMenuRef.current);
+    } else if (selectedMenu === SelectedMenu.TENANT && tenantMenuRef.current) {
+      observer.observe(tenantMenuRef.current);
     }
+
+    return () => {
+      observer.disconnect();
+    };
   }, [selectedMenu]);
 
   return [
@@ -192,7 +210,7 @@ const AuthMenu = observer(() => {
     }
   };
 
-  if (!user || !selectedTenant) return null;
+  if (!user) return null;
 
   return (
     <DropdownMenu open={menuState.isOpen} onOpenChange={menuActions.openMenu}>
@@ -205,7 +223,9 @@ const AuthMenu = observer(() => {
       >
         <ProfileMenuContent
           ref={refs.profileMenuRef}
-          onSwitchTenant={menuActions.openTenantMenu}
+          onSwitchTenant={
+            selectedTenant ? menuActions.openTenantMenu : undefined
+          }
           className={animationClasses.profileMenuClasses}
           dashboardBaseUrl={config.dashboardBaseUrl}
           selectedTenant={selectedTenant}

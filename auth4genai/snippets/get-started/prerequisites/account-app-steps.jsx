@@ -30,7 +30,7 @@ export const AccountAndAppSteps = ({
         to create a new Auth0 Application.
         <ul>
           <li>
-            Navigate to <strong>Applications {">"} Applications</strong> in the
+            Navigate to <a href="https://manage.auth0.com/#/applications" target="_blank"><strong>Applications {">"} Applications</strong></a> in the
             left sidebar.
           </li>
           <li>
