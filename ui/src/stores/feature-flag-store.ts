@@ -39,7 +39,7 @@ export class FeatureFlagStore {
         console.error('Failed to fetch feature flags:', error);
         // Keep existing flags on error
       });
-    }, 60000); // 60 seconds
+    }, 300000); // 5 minutes
   }
 
   async fetchFlags() {
