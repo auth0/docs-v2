@@ -5,6 +5,7 @@ import { TenantStore } from './tenant-store';
 import { ClientStore } from './client-store';
 import { ResourceServerStore } from './resource-server-store';
 import { VariableStore } from './variable-store';
+import { FeatureFlagStore } from './feature-flag-store';
 
 export class RootStore {
   sessionStore: SessionStore;
@@ -12,6 +13,7 @@ export class RootStore {
   clientStore: ClientStore;
   resourceServerStore: ResourceServerStore;
   variableStore: VariableStore;
+  featureFlagStore: FeatureFlagStore;
 
   #disposer: IReactionDisposer | null = null;
 
@@ -22,11 +24,15 @@ export class RootStore {
     this.clientStore = new ClientStore(this);
     this.resourceServerStore = new ResourceServerStore(this);
     this.variableStore = new VariableStore(this);
+    this.featureFlagStore = new FeatureFlagStore(this);
   }
 
   async init() {
     // dispose previously subscribed listener
     this.#disposer?.();
+
+    // Initialize feature flags early (not dependent on auth)
+    await this.featureFlagStore.init();
 
     await this.sessionStore.init();
 
@@ -54,5 +60,6 @@ export class RootStore {
     this.clientStore.reset();
     this.resourceServerStore.reset();
     this.variableStore.reset();
+    this.featureFlagStore.reset();
   }
 }
