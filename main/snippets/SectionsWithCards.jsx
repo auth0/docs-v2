@@ -32,13 +32,7 @@ export const SectionsWithCards = ({ sections }) => {
       : "";
 
     return (
-      <article
-        className="
-          libraries_card
-        rounded-2xl border bg-white shadow-sm hover:shadow-md transition-shadow
-        border-gray-200 dark:border-gray-800 dark:bg-black
-      "
-      >
+      <article className="libraries_card rounded-3xl transition-shadow mb-4">
         <div className="px-5 md:px-6 pt-5 md:pt-6 pb-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
@@ -85,9 +79,9 @@ export const SectionsWithCards = ({ sections }) => {
           </div>
         </div>
 
-        <div className="h-px w-full bg-gray-200 dark:bg-gray-800" />
+        <div className="libraries_card_divider" />
 
-        <div className="px-5 md:px-6 py-4">
+        <div className="px-5 md:px-6 pt-3 pb-4">
           <div className="libraries_cards flex items-center justify-between w-full">
             {github && (
               <a
@@ -261,13 +255,7 @@ export const LibrariesCards = ({ cards }) => {
     const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
 
     return (
-      <article
-        className="
-          libraries_card
-        rounded-2xl border bg-white shadow-sm hover:shadow-md transition-shadow
-        border-gray-200 dark:border-gray-800 dark:bg-black
-      "
-      >
+      <article className="libraries_card rounded-2xl transition-shadow mb-4">
         <div className="px-5 md:px-6 pt-5 md:pt-6 pb-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
@@ -314,9 +302,9 @@ export const LibrariesCards = ({ cards }) => {
           </div>
         </div>
 
-        <div className="h-px w-full bg-gray-200 dark:bg-gray-800" />
+        <div className="libraries_card_divider" />
 
-        <div className="px-5 md:px-6 py-4">
+        <div className="px-5 md:px-6 pt-3 pb-4">
           <div className="libraries_cards flex items-center justify-between w-full">
             {github && (
               <a
@@ -424,13 +412,7 @@ export const SectionCard = ({ item }) => {
   const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
 
   return (
-    <article
-      className="
-      libraries_card mb-[16px]
-      rounded-xl border bg-white shadow-sm hover:shadow-md transition-shadow
-      border-gray-200 dark:border-gray-800 dark:bg-black
-    "
-    >
+    <article className="libraries_card rounded-2xl transition-shadow mb-4">
       <div className="px-4 md:px-5 pt-4 md:pt-5 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex gap-3 min-w-0">
@@ -484,9 +466,9 @@ export const SectionCard = ({ item }) => {
         </div>
       </div>
 
-      <div className="h-px mx-3 bg-gray-200 dark:bg-gray-800" />
+      <div className="libraries_card_divider" />
 
-      <div className="px-4 md:px-5 py-3">
+      <div className="px-4 md:px-5 pt-3 pb-4">
         <div className="libraries_cards flex items-center justify-between w-full gap-3">
           {github && (
             <a
