@@ -79,5 +79,3 @@ lychee -c lychee.toml 'main/docs/**/*.mdx'
 ### Check links in PRs
 
 The `.github/workflows/link-check.yml` GitHub Action runs against PRs that change content files and leaves a comment with a summary of the results which lists any broken links.
-
-TODO: Document GitHub Action
