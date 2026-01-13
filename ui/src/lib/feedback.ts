@@ -46,7 +46,9 @@ function getFeedbackMode(): FeedbackMode {
   const toolbar = document.querySelector('.feedback-toolbar');
   if (!toolbar) return 'NEGATIVE'; // Default to negative if we can't determine
 
-  const feedbackContainer = toolbar.querySelector('.contextual-feedback-container');
+  const feedbackContainer = toolbar.querySelector(
+    '.contextual-feedback-container',
+  );
   const buttons = Array.from(toolbar.querySelectorAll('button')).filter(
     (button) => !feedbackContainer?.contains(button),
   );
@@ -134,7 +136,7 @@ async function handlePageFeedbackSubmit(event: Event) {
   event.preventDefault();
 
   const form = event.target as HTMLFormElement;
-  const input = form.querySelector('.contextual-feedback-input') as
+  const input = form.querySelector('#feedback-form-input') as
     | HTMLInputElement
     | HTMLTextAreaElement;
 
@@ -175,7 +177,7 @@ async function handleCodeSnippetFeedbackClick(event: Event) {
   if (!feedbackForm) return;
 
   const textarea = feedbackForm.querySelector(
-    '.code-snippet-feedback-textarea',
+    '#code-snippet-feedback-textarea',
   ) as HTMLTextAreaElement;
 
   if (!textarea || !textarea.value.trim()) {
@@ -210,7 +212,11 @@ export function initFeedbackListeners() {
   // Listener for page-level feedback form submission
   document.body.addEventListener('submit', (event) => {
     const form = event.target as HTMLElement;
-    if (form.classList.contains('contextual-feedback-form')) {
+    if (
+      form &&
+      (form.id === 'feedback-form' ||
+        form.classList.contains('contextual-feedback-form'))
+    ) {
       handlePageFeedbackSubmit(event);
     }
   });
@@ -219,6 +225,7 @@ export function initFeedbackListeners() {
   document.body.addEventListener('click', (event) => {
     const button = event.target as HTMLElement;
     if (
+      button &&
       button.classList.contains('code-snippet-feedback-form-submit-button')
     ) {
       handleCodeSnippetFeedbackClick(event);
