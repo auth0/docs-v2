@@ -66,18 +66,18 @@ For more details, see the [Mintlify CLI documentation](https://mintlify.com/docs
 
 ## Link Checking
 
-We use [Lychee](https://lychee.cli.rs/) to check for broken non-local links across both the `main/` and `auth4genai/` docs sites. (We use Mintlify's built-in link checking for local links.)
-
-Our unified Lychee config for local and CI use is in [`lychee.toml`](lychee.toml).
+We use [Lychee](https://lychee.cli.rs/) to check for broken non-local links. Our Lychee config is in [`lychee.toml`](lychee.toml), which is used in our CI checks and which you can use locally.
 
 ### Check links locally
 
 For local link checking, run `lychee` from the root of the repo. Specify the config file and the path(s) you want to check. For example, to check everything in the main docs site:
 
 ```
-lychee -c lychee.toml 'main/docs/**/.mdx' 
+lychee -c lychee.toml 'main/docs/**/*.mdx' 
 ```
 
 ### Check links in PRs
+
+The `.github/workflows/link-check.yml` GitHub Action runs against PRs that change content files and leaves a comment with a summary of the results which lists any broken links.
 
 TODO: Document GitHub Action
