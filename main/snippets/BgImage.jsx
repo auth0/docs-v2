@@ -19,6 +19,7 @@ export const BgImage = () => {
           backgroundSize: "",
           backgroundPosition: "center 0",
           backgroundAttachment: "fixed",
+          backgroundSize: "cover",
         }}
       />
     </>

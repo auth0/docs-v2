@@ -4,11 +4,14 @@ export const SectionsWithCards = ({ sections }) => {
   const filteredSections = sections
     .map((s) => ({
       ...s,
-      items: s.items.filter((it) => it.name.toLowerCase().includes(query.toLowerCase())),
+      items: s.items.filter((it) =>
+        it.name.toLowerCase().includes(query.toLowerCase())
+      ),
     }))
     .filter((s) => s.items.length > 0);
 
-  const getLink = (item, label) => item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
+  const getLink = (item, label) =>
+    item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
 
   const Card = ({ item }) => {
     const github = getLink(item, "github");
@@ -22,28 +25,35 @@ export const SectionsWithCards = ({ sections }) => {
     const date = item?.date ?? ""; // plain string like "Jan 16, 2024"
 
     const tertiary = quickstart || docs;
-    const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Documentation" : "";
+    const tertiaryLabel = quickstart
+      ? "Quickstart"
+      : docs
+      ? "Documentation"
+      : "";
 
     return (
-      <article
-        className="
-          libraries_card
-        rounded-2xl border bg-white shadow-sm hover:shadow-md transition-shadow
-        border-gray-200 dark:border-gray-800 dark:bg-black
-      "
-      >
+      <article className="libraries_card rounded-3xl transition-shadow mb-4">
         <div className="px-5 md:px-6 pt-5 md:pt-6 pb-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
               {item?.logo && (
-                <img noZoom src={item.logo} alt={title} className="!my-0 w-10 h-10 object-contain shrink-0" />
+                <img
+                  noZoom
+                  src={item.logo}
+                  alt={title}
+                  className="!my-0 w-10 h-10 object-contain shrink-0"
+                />
               )}
 
               <div className="min-w-0">
                 <h4 className="text-lg md:text-xl font-semibold text-gray-900 dark:text-white truncate !my-0">
                   {title}
                 </h4>
-                {!!subtext && <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{subtext}</p>}
+                {!!subtext && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                    {subtext}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -61,15 +71,17 @@ export const SectionsWithCards = ({ sections }) => {
               )}
 
               {!!date && (
-                <span className="text-sm text-gray-500 dark:text-gray-400">on {date.replace(/^on\s+/i, "")}</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  on {date.replace(/^on\s+/i, "")}
+                </span>
               )}
             </div>
           </div>
         </div>
 
-        <div className="h-px w-full bg-gray-200 dark:bg-gray-800" />
+        <div className="libraries_card_divider" />
 
-        <div className="px-5 md:px-6 py-4">
+        <div className="px-5 md:px-6 pt-3 pb-4">
           <div className="libraries_cards flex items-center justify-between w-full">
             {github && (
               <a
@@ -198,12 +210,18 @@ export const SectionsWithCards = ({ sections }) => {
         </form>
 
         {filteredSections.length === 0 ? (
-          <p className="text-gray-600 dark:text-gray-400">No results for “{query}”.</p>
+          <p className="text-gray-600 dark:text-gray-400">
+            No results for “{query}”.
+          </p>
         ) : (
           filteredSections.map((section) => (
             <section key={section.id} id={section.id} className="mb-16">
-              <h3 className="text-3xl font-bold mb-2 text-gray-900 dark:text-white">{section.title}</h3>
-              <p className="mb-8 text-gray-600 dark:text-gray-400">{section.description}</p>
+              <h3 className="text-3xl font-bold mb-2 text-gray-900 dark:text-white">
+                {section.title}
+              </h3>
+              <p className="mb-8 text-gray-600 dark:text-gray-400">
+                {section.description}
+              </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                 {section.items.map((it, idx) => (
@@ -219,7 +237,8 @@ export const SectionsWithCards = ({ sections }) => {
 };
 
 export const LibrariesCards = ({ cards }) => {
-  const getLink = (item, label) => item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
+  const getLink = (item, label) =>
+    item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
 
   const Card = ({ item }) => {
     const github = getLink(item, "github");
@@ -236,25 +255,28 @@ export const LibrariesCards = ({ cards }) => {
     const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
 
     return (
-      <article
-        className="
-          libraries_card
-        rounded-2xl border bg-white shadow-sm hover:shadow-md transition-shadow
-        border-gray-200 dark:border-gray-800 dark:bg-black
-      "
-      >
+      <article className="libraries_card rounded-2xl transition-shadow mb-4">
         <div className="px-5 md:px-6 pt-5 md:pt-6 pb-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
               {item?.logo && (
-                <img noZoom src={item.logo} alt={title} className="!my-0 w-10 h-10 object-contain shrink-0" />
+                <img
+                  noZoom
+                  src={item.logo}
+                  alt={title}
+                  className="!my-0 w-10 h-10 object-contain shrink-0"
+                />
               )}
 
               <div className="min-w-0">
                 <h4 className="text-lg md:text-xl font-semibold text-gray-900 dark:text-white truncate !my-0">
                   {title}
                 </h4>
-                {!!subtext && <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{subtext}</p>}
+                {!!subtext && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                    {subtext}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -272,15 +294,17 @@ export const LibrariesCards = ({ cards }) => {
               )}
 
               {!!date && (
-                <span className="text-sm text-gray-500 dark:text-gray-400">on {date.replace(/^on\s+/i, "")}</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  on {date.replace(/^on\s+/i, "")}
+                </span>
               )}
             </div>
           </div>
         </div>
 
-        <div className="h-px w-full bg-gray-200 dark:bg-gray-800" />
+        <div className="libraries_card_divider" />
 
-        <div className="px-5 md:px-6 py-4">
+        <div className="px-5 md:px-6 pt-3 pb-4">
           <div className="libraries_cards flex items-center justify-between w-full">
             {github && (
               <a
@@ -357,7 +381,8 @@ export const LibrariesCards = ({ cards }) => {
 
 export const SectionCard = ({ item }) => {
   if (!item) return null;
-  const getLink = (item, label) => item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
+  const getLink = (item, label) =>
+    item.links?.find((l) => l.label?.toLowerCase() === label.toLowerCase());
   const github = getLink(item, "github");
   const sample = getLink(item, "sample app");
   const quickstart = getLink(item, "quickstart");
@@ -368,32 +393,43 @@ export const SectionCard = ({ item }) => {
   const badge = item?.badge ?? "";
   const date = item?.date ?? "";
 
-  const isHttpsLogo = typeof item?.logo === "string" && /^https:\/\//i.test(item.logo);
+  const isHttpsLogo =
+    typeof item?.logo === "string" && /^https:\/\//i.test(item.logo);
 
-  const src = isHttpsLogo ? item.logo : `/docs/images/icons/light/${item?.logo}`;
-  const srcDark = isHttpsLogo ? item.logo : `/docs/images/icons/dark/${item?.logo}`;
+  const src = isHttpsLogo
+    ? item.logo
+    : `/docs/images/icons/light/${item?.logo}`;
+  const srcDark = isHttpsLogo
+    ? item.logo
+    : `/docs/images/icons/dark/${item?.logo}`;
 
   // Add grayscale class only if https
-  const imgClass = "!my-0 w-8 h-8 object-contain shrink-0 " + (isHttpsLogo ? "mint-filter mint-grayscale" : "");
+  const imgClass =
+    "!my-0 w-8 h-8 object-contain shrink-0 " +
+    (isHttpsLogo ? "mint-filter mint-grayscale" : "");
 
   const tertiary = quickstart || docs;
   const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
 
   return (
-    <article
-      className="
-      libraries_card mb-[16px]
-      rounded-xl border bg-white shadow-sm hover:shadow-md transition-shadow
-      border-gray-200 dark:border-gray-800 dark:bg-black
-    "
-    >
+    <article className="libraries_card rounded-2xl transition-shadow mb-4">
       <div className="px-4 md:px-5 pt-4 md:pt-5 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex gap-3 min-w-0">
             {item?.logo && (
               <>
-                <img noZoom src={src} alt={title} className={`${imgClass} mint-block dark:mint-hidden`} />
-                <img noZoom src={srcDark} alt={title} className={`${imgClass} mint-hidden dark:mint-block`} />
+                <img
+                  noZoom
+                  src={src}
+                  alt={title}
+                  className={`${imgClass} mint-block dark:mint-hidden`}
+                />
+                <img
+                  noZoom
+                  src={srcDark}
+                  alt={title}
+                  className={`${imgClass} mint-hidden dark:mint-block`}
+                />
               </>
             )}
 
@@ -402,7 +438,9 @@ export const SectionCard = ({ item }) => {
                 {title}
               </h4>
               {!!subtext && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 truncate !m-0 leading-tight">{subtext}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 truncate !m-0 leading-tight">
+                  {subtext}
+                </p>
               )}
             </div>
           </div>
@@ -428,9 +466,9 @@ export const SectionCard = ({ item }) => {
         </div>
       </div>
 
-      <div className="h-px mx-3 bg-gray-200 dark:bg-gray-800" />
+      <div className="libraries_card_divider" />
 
-      <div className="px-4 md:px-5 py-3">
+      <div className="px-4 md:px-5 pt-3 pb-4">
         <div className="libraries_cards flex items-center justify-between w-full gap-3">
           {github && (
             <a
