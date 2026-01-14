@@ -371,3 +371,42 @@ export async function postSample(sampleData: SampleRequest, filename?: string) {
   const defaultFilename = `${sampleData.repo.split('/').pop()}-${sampleData.branch}.zip`;
   saveAs(blob, filename || defaultFilename);
 }
+
+// Feature Flags Interface
+export interface FeatureFlags {
+  [key: string]: boolean;
+}
+
+// Backend response structure
+interface FeatureFlagsResponse {
+  flags: FeatureFlags;
+}
+
+// Mock feature flags for development (until backend endpoint is ready)
+const MOCK_FEATURE_FLAGS: FeatureFlags = {
+  'example-feature': true,
+  'beta-feature': false,
+  'new-ui': true,
+};
+
+// Feature Flags Methods
+/**
+ * Fetches feature flags from the backend API.
+ * This is called periodically by the FeatureFlagStore to keep flags in sync.
+ * Falls back to mock data in local development if the endpoint is unavailable.
+ */
+export async function getFeatureFlags() {
+  try {
+    const response = await request<FeatureFlagsResponse>(`${config.apiBaseUrl}/feature-flags`);
+    return response.flags;
+  } catch (error) {
+    // If backend endpoint doesn't exist yet, return mock data in development
+    if (config.apiBaseUrl.includes('localhost') || config.apiBaseUrl.includes('local')) {
+      console.warn('Feature flags endpoint not available, using mock data');
+      return MOCK_FEATURE_FLAGS;
+    }
+    // In production, return empty flags rather than failing
+    console.error('Failed to fetch feature flags:', error);
+    return {};
+  }
+}

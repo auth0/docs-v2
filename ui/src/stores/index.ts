@@ -6,6 +6,7 @@ declare global {
     rootStore: RootStore;
     autorun: typeof autorun;
     reaction: typeof reaction;
+    flags: Record<string, boolean>;
   }
 }
 
@@ -19,6 +20,14 @@ export async function initRootStore() {
     window.rootStore = rootStore;
     window.autorun = autorun;
     window.reaction = reaction;
+
+    // Expose feature flags on window.flags for easy access by any JS code
+    window.flags = rootStore.featureFlagStore.getAllFlags();
+
+    // Keep window.flags in sync with the store using autorun
+    autorun(() => {
+      window.flags = rootStore.featureFlagStore.getAllFlags();
+    });
   }
 
   // broadcast store ready event
@@ -38,3 +47,5 @@ export { TenantStore } from './tenant-store';
 export { ClientStore } from './client-store';
 export { ResourceServerStore } from './resource-server-store';
 export { VariableStore } from './variable-store';
+export { FeatureFlagStore } from './feature-flag-store';
+export type { FeatureFlags } from '@/lib/api';
