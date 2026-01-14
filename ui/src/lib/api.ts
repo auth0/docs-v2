@@ -374,6 +374,11 @@ const MOCK_FEATURE_FLAGS: FeatureFlags = {
 };
 
 // Feature Flags Methods
+/**
+ * Fetches feature flags from the backend API.
+ * This is called periodically by the FeatureFlagStore to keep flags in sync.
+ * Falls back to mock data in local development if the endpoint is unavailable.
+ */
 export async function getFeatureFlags() {
   try {
     const response = await request<FeatureFlagsResponse>(`${config.apiBaseUrl}/feature-flags`);
