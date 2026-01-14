@@ -66,53 +66,16 @@ For more details, see the [Mintlify CLI documentation](https://mintlify.com/docs
 
 ## Link Checking
 
-We use [Lychee](https://lychee.cli.rs/) to check for broken links across both documentation sites (`main/` and `auth4genai/`).  
-All configuration and exclusions live in [`lychee.toml`](lychee.toml), and both local runs and CI use the same rules.
+We use [Lychee](https://lychee.cli.rs/) to check for broken non-local links. Our Lychee config is in [`lychee.toml`](lychee.toml), which is used in our CI checks and which you can use locally.
 
-### Local Usage
+### Check links locally
 
-There are two recommended ways to check links locally, depending on what you want to validate.
+For local link checking, run `lychee` from the root of the repo. Specify the config file and the path(s) you want to check. For example, to check everything in the main docs site:
 
-#### 1. Check links as they behave on auth0.com
-
-This mode asks Lychee to treat absolute paths like `/docs/...` as if they were being loaded from the live site.  
-It is useful when you want to confirm that public links resolve correctly through redirects, locale routing, or dynamically rendered pages.
-
-**Main docs:**
-```bash
-lychee --format detailed --verbose --base-url https://auth0.com \
-  'main/**/*.md' 'main/**/*.mdx' 'main/**/*.jsx'
-````
-
-**Auth0 for AI Agents docs:**
-
-```bash
-lychee --format detailed --verbose --base-url https://auth0.com/ai/docs \
-  'auth4genai/**/*.md' 'auth4genai/**/*.mdx' 'auth4genai/**/*.jsx'
+```
+lychee -c lychee.toml 'main/docs/**/*.mdx' 
 ```
 
-#### 2. Check links against the local filesystem
+### Check links in PRs
 
-This mode validates only links that actually exist in the repo.
-It is useful when you’re working on local references (images, snippets, relative paths) and want to ensure nothing in the tree is broken.
-
-**Main docs:**
-
-```bash
-lychee --format detailed --verbose --root-dir "$(pwd)/main" \
-  'main/**/*.md' 'main/**/*.mdx' 'main/**/*.jsx'
-```
-
-**Auth0 for AI Agents docs:**
-
-```bash
-lychee --format detailed --verbose --root-dir "$(pwd)/auth4genai" \
-  'auth4genai/**/*.md' 'auth4genai/**/*.mdx' 'auth4genai/**/*.jsx'
-```
-
-### Notes
-
-* You can combine `--base-url` and glob patterns however you like; the examples above are the patterns used in CI.
-* Any URLs that need to be ignored should be added to `lychee.toml`, not passed on the command line.
-* Lychee caches results locally, so repeat runs are much faster.
-* Mintlify already checks internal routes during `mint dev`, so Lychee is mainly for external links and static references.
+The `.github/workflows/link-check.yml` GitHub Action runs against PRs that change content files and leaves a comment with a summary of the results which lists any broken links.

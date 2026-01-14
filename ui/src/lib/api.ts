@@ -279,6 +279,22 @@ export async function patchRolloutConsent(consentData: RolloutConsentRequest) {
   );
 }
 
+// Feedback Interfaces
+export interface FeedbackRequest {
+  positive: boolean;
+  page_url: string;
+  page_title: string;
+  comment: string;
+}
+
+// Feedback Methods
+export async function postFeedback(feedbackData: FeedbackRequest) {
+  return request<FeedbackRequest>(`${config.apiBaseUrl}/feedback`, {
+    method: 'POST',
+    body: JSON.stringify(feedbackData),
+  });
+}
+
 // Sample Methods
 export async function getSample(
   params: {
