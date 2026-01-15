@@ -96,17 +96,19 @@ Content-Type: application/json
 }
 ```
 
-## Use case: Store organization context
+## Use case: Store and consume organization context
 
-You can use refresh token metadata to store organization context for downstream systems such as audit, analytics, and revocation pipelines.
+You can use refresh token metadata to store organization context during the initial authentication and consume it later during refresh token exchanges. This is useful for downstream systems such as audit, analytics, and revocation pipelines.
 
-Post-Login Action code:
+### Set metadata at initial authentication
+
+During the initial login, set the organization context in the refresh token metadata:
 
 ```javascript lines
 /**
  * Post-Login Action
- * Adds organization context to refresh token metadata so it appears in subsequent Actions
- * and the Management API.
+ * Adds organization context to refresh token metadata during initial authentication.
+ * This metadata will be available in subsequent refresh token exchanges.
  */
 exports.onExecutePostLogin = async (event, api) => {
   // Only proceed if the transaction targets an Organization
@@ -117,22 +119,44 @@ exports.onExecutePostLogin = async (event, api) => {
   const orgSlug = String(event.organization.name || "");
   const orgDisplay = String(event.organization.display_name || orgSlug);
 
-  // Minimal, idempotent writes (only a few keys to stay well under limits)
+  // Set metadata - this will be stored with the refresh token
   api.refreshToken.setMetadata("org_id", orgId);
   api.refreshToken.setMetadata("org_slug", orgSlug);
   api.refreshToken.setMetadata("org_name", orgDisplay);
 };
 ```
 
-The refresh token metadata is available for subsequent Actions and retrievable via the [Management API](https://auth0.com/docs/api/management/v2).
+### Consume metadata during refresh token exchange
 
-* In subsequent Actions, you can query the data via the `event.refresh_token.metadata` object:
+During a refresh token exchange, the `event.refresh_token` object exists and you can read the previously stored metadata:
 
 ```javascript lines
-const orgId = event.refresh_token?.metadata?.org_id;
+/**
+ * Post-Login Action
+ * Consumes organization context from refresh token metadata during token exchange.
+ * Use this to enforce policies or add claims based on the original authentication context.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Check if this is a refresh token exchange (event.refresh_token exists)
+  if (!event.refresh_token) return;
+
+  // Read organization context stored during initial authentication
+  const orgId = event.refresh_token.metadata?.org_id;
+  const orgSlug = event.refresh_token.metadata?.org_slug;
+
+  if (orgId) {
+    // Use the organization context for conditional logic
+    console.log(`Refresh token exchange for organization: ${orgSlug}`);
+    
+    // Example: Add custom claims based on the original org context
+    api.accessToken.setCustomClaim("org_id", orgId);
+  }
+};
 ```
 
-* If you use the Management API, you can query the data via the [/api/v2/refresh-tokens/{id}](https://auth0.com/docs/api/management/v2/refresh-tokens/get-refresh-token) endpoint:
+### Retrieve via Management API
+
+You can also query the refresh token metadata via the [/api/v2/refresh-tokens/{id}](https://auth0.com/docs/api/management/v2/refresh-tokens/get-refresh-token) endpoint:
 
 ```bash lines
 GET /api/v2/refresh-tokens/{id}
@@ -150,22 +174,48 @@ Sample response:
 }
 ```
 
-## Use case: Track device information
+## Use case: Track and validate device information
 
-You can use refresh token metadata to track device information for security and audit purposes.
+You can use refresh token metadata to capture device information at the initial authentication and validate it during subsequent refresh token exchanges for security purposes.
+
+### Set device information at initial authentication
 
 ```javascript lines
 exports.onExecutePostLogin = async (event, api) => {
-  // Store device information in refresh token metadata
-  const deviceInfo = {
-    ip: event.request?.ip || "unknown",
-    userAgent: event.request?.user_agent || "unknown",
-    geoip: event.request?.geoip?.country_code || "unknown"
-  };
+  // Only set device info if this is NOT a refresh token exchange
+  // (i.e., this is the initial authentication)
+  if (event.refresh_token) return;
 
-  api.refreshToken.setMetadata("initial_ip", deviceInfo.ip);
-  api.refreshToken.setMetadata("user_agent", deviceInfo.userAgent);
-  api.refreshToken.setMetadata("country", deviceInfo.geoip);
+  // Store device information in refresh token metadata
+  api.refreshToken.setMetadata("initial_ip", event.request?.ip || "unknown");
+  api.refreshToken.setMetadata("initial_asn", event.request?.asn?.value || "unknown");
+  api.refreshToken.setMetadata("initial_country", event.request?.geoip?.country_code || "unknown");
+  api.refreshToken.setMetadata("initial_user_agent", event.request?.user_agent || "unknown");
+};
+```
+
+### Validate device information during refresh token exchange
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  // Only validate if this is a refresh token exchange
+  if (!event.refresh_token) return;
+
+  // Read the original device information
+  const initialCountry = event.refresh_token.metadata?.initial_country;
+  const currentCountry = event.request?.geoip?.country_code;
+
+  // Example: Detect country change and take action
+  if (initialCountry && currentCountry && initialCountry !== currentCountry) {
+    console.log(`Country changed from ${initialCountry} to ${currentCountry}`);
+    
+    // Option 1: Revoke the refresh token for suspicious activity
+    // api.refreshToken.revoke("Suspicious country change detected");
+    
+    // Option 2: Update metadata to track the change
+    api.refreshToken.setMetadata("country_changed", "true");
+    api.refreshToken.setMetadata("last_country", currentCountry);
+  }
 };
 ```
 
