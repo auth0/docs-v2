@@ -14,6 +14,7 @@ interface TenantData {
   locality: string;
   highlightName?: boolean;
   loginUrl: string;
+  domain?: string;
 }
 
 interface TenantProp extends TenantData {

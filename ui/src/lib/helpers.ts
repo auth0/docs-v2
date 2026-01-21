@@ -27,6 +27,7 @@ export function toTenantData(tenant: Tenant): TenantData {
     flag: localityIdToFlag(tenant.locality.id),
     locality: tenant.locality.id,
     loginUrl: tenant.login_url,
+    domain: `${tenant.name}.${tenant.environment.apex}`
   };
 }
 

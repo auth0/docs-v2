@@ -67,7 +67,7 @@ export class SessionStore {
         return;
       }
 
-      this.domain = response.account.namespace;
+      this.domain = this.selectedTenant?.domain ?? '#';
       this.selectedTenantName = response.account.tenant;
       this.#user = {
         id: response.profile.sub ?? '',
