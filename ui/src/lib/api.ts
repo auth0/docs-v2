@@ -10,7 +10,7 @@ interface Account {
   app_name: string;
   /** The tenant name */
   tenant: string;
-  /* The domain of tenant*/
+  /* The domain of tenant */
   domain: string;
   /** The RTA domain/namespace */
   namespace: string;
