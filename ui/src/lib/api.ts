@@ -10,7 +10,9 @@ interface Account {
   app_name: string;
   /** The tenant name */
   tenant: string;
-  /** The tenant domain/namespace */
+  /* The domain of tenant*/
+  domain: string;
+  /** The RTA domain/namespace */
   namespace: string;
   /** The selected client ID */
   client_id: string;
