@@ -1,0 +1,140 @@
+The authorization model in this sample demonstrates how [Auth0 FGA](https://auth0.com/fine-grained-authorization) provides fine-grained access control using [Relationship-Based Access Control (ReBAC)](https://docs.fga.dev/concepts#what-is-relationship-based-access-control-rebac). The model defines four authorization patterns:
+
+<AccordionGroup>
+  <Accordion title="1. Public Tools">
+    Tools that are accessible to all authenticated users without requiring specific permissions.
+
+    ```yaml
+    # In fga/tuples.yaml
+    - user: user:*
+      relation: can_use
+      object: tool:get_datetime
+    ```
+
+    The wildcard `user:*` means any authenticated user can use the `get_datetime` tool.
+  </Accordion>
+
+  <Accordion title="2. Role-Based Access">
+    Tools are assigned to specific roles, and users with those roles can access the tools.
+
+    ```yaml
+    # In fga/tuples.yaml
+    # Admin role can use all tools
+    - user: role:admin#assignee
+      relation: can_use
+      object: tool:greet
+
+    - user: role:admin#assignee
+      relation: can_use
+      object: tool:whoami
+
+    - user: role:admin#assignee
+      relation: can_use
+      object: tool:get_documents
+    ```
+
+    Users assigned the `admin` role automatically gain access to these tools.
+  </Accordion>
+
+  <Accordion title="3. Group Membership">
+    Users inherit permissions through group membership. Groups are assigned to roles, creating a permission chain.
+
+    ```yaml
+    # In fga/tuples.yaml
+    # Managers group is assigned the admin role
+    - user: group:managers#member
+      relation: assignee
+      object: role:admin
+
+    # Marketing group is assigned the content_editor role
+    - user: group:marketing#member
+      relation: assignee
+      object: role:content_editor
+    ```
+
+    **Permission Chain**: User → Group → Role → Tool
+
+    When you add a user to the `managers` group, they automatically inherit all permissions of the `admin` role, including access to all tools.
+  </Accordion>
+
+  <Accordion title="4. Temporal Access">
+    Time-limited access to tools that automatically expires after a specified duration.
+
+    ```typescript
+    // In fga/model.fga
+    condition temporal_access(grant_time: timestamp, grant_duration: duration, current_time: timestamp) {
+      current_time < grant_time + grant_duration
+    }
+
+    // Tools can be assigned with temporal conditions
+    define can_use : [user:*, user, role#assignee, user with temporal_access, role#assignee with temporal_access]
+    ```
+
+    When you grant temporal access (e.g., "20 seconds to use the greet tool"), FGA evaluates the condition on each request. Access is automatically revoked when the time expires.
+  </Accordion>
+
+  <Accordion title="5. Resource-Specific Permissions">
+    Fine-grained permissions for specific features or data within tools.
+
+    ```yaml
+    # In fga/tuples.yaml
+    # Admin role can view private documents
+    - user: role:admin#assignee
+      relation: can_view_private_documents
+      object: tool:get_documents
+    ```
+
+    The `get_documents` tool checks this permission separately to determine whether to return private documents. This allows the same tool to provide different data based on user permissions.
+
+    **Example**:
+    - Admin role: Sees all documents (public + private)
+    - Content editor role: Sees only public documents
+  </Accordion>
+</AccordionGroup>
+
+### Authorization Model Structure
+
+The complete model is defined in `fga/model.fga`:
+
+```typescript
+model
+  schema 1.1
+
+  type user
+
+  # User groups
+  type group
+    relations
+      define member : [user]
+
+  # Roles can be linked to users or members of a user group
+  type role
+    relations
+      define assignee : [user, group#member]
+
+  type tool
+    relations
+      # Public access, role-based, and temporal access
+      define can_use : [user:*, user, role#assignee, user with temporal_access, role#assignee with temporal_access]
+
+      # Resource-specific permission for get_documents tool
+      define can_view_private_documents : [role#assignee]
+
+  # Temporal access condition
+  condition temporal_access(grant_time: timestamp, grant_duration: duration, current_time: timestamp) {
+    current_time < grant_time + grant_duration
+  }
+```
+
+### How Authorization Works
+
+When a user connects to the MCP server:
+
+1. The server authenticates the user with Auth0 (validates JWT token)
+2. The server queries FGA to get all tools the user can access:
+   - Checks `can_use` relation for each tool
+   - Evaluates group memberships, role assignments, and temporal conditions
+3. The server returns only authorized tools to the MCP client
+4. When the user calls a tool like `get_documents`, the server checks `can_view_private_documents` to determine what data to return
+
+This approach ensures that authorization decisions are centralized in FGA and can be updated dynamically without changing code.
