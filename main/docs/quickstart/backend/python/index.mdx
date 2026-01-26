@@ -75,27 +75,70 @@ This guide demonstrates how to integrate Auth0 with any new or existing Python A
       </Tab>
 
       <Tab title="CLI">
-        ```bash
-        # Install Auth0 CLI
-        brew tap auth0/auth0-cli && brew install auth0
+        Run the following shell command on your project's root directory to create an Auth0 API and update your `.env` file:
 
-        # Login to Auth0
-        auth0 login
+        <Tabs>
+          <Tab title="Mac/Linux">
+            ```bash
+            AUTH0_API_NAME="My Flask API" && \
+            AUTH0_API_IDENTIFIER="https://my-flask-api" && \
+            brew tap auth0/auth0-cli && \
+            brew install auth0 && \
+            auth0 login --no-input && \
+            auth0 apis create \
+              --name "${AUTH0_API_NAME}" \
+              --identifier "${AUTH0_API_IDENTIFIER}" \
+              --signing-alg RS256 \
+              --json > auth0-api-details.json && \
+            DOMAIN=$(auth0 tenants list --json | jq -r '.[] | select(.active == true) | .name') && \
+            AUDIENCE=$(jq -r '.identifier' auth0-api-details.json) && \
+            cat > .env << EOF
+AUTH0_DOMAIN=${DOMAIN}
+AUTH0_AUDIENCE=${AUDIENCE}
+EOF
+            rm auth0-api-details.json && \
+            echo "✅ .env file created with your Auth0 API details:" && \
+            cat .env
+            ```
 
-        # Create API
-        auth0 apis create \
-          --name "My Flask API" \
-          --identifier "https://my-flask-api" \
-          --signing-alg RS256
+            <Info>
+              This command requires `jq` for JSON parsing. Install it with: `brew install jq`
+            </Info>
+          </Tab>
 
-        # Get your domain
-        auth0 tenants list
-        ```
+          <Tab title="Windows (PowerShell)">
+            ```powershell
+            $ApiName = "My Flask API"
+            $ApiIdentifier = "https://my-flask-api"
+            $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/auth0/auth0-cli/releases/latest"
+            $latestVersion = $latestRelease.tag_name
+            $version = $latestVersion -replace "^v"
+            Invoke-WebRequest -Uri "https://github.com/auth0/auth0-cli/releases/download/${latestVersion}/auth0-cli_${version}_Windows_x86_64.zip" -OutFile ".\auth0.zip"
+            Expand-Archive ".\auth0.zip" .\
+            [System.Environment]::SetEnvironmentVariable('PATH', $Env:PATH + ";${pwd}")
+            auth0 login --no-input
+            auth0 apis create -n "$ApiName" -i "$ApiIdentifier" --signing-alg RS256 --json | Set-Content -Path auth0-api-details.json
+            $Domain = (auth0 tenants list --json | ConvertFrom-Json | Where-Object { $_.active -eq $true }).name
+            $Audience = (Get-Content -Raw auth0-api-details.json | ConvertFrom-Json).identifier
+            @"
+AUTH0_DOMAIN=$Domain
+AUTH0_AUDIENCE=$Audience
+"@ | Set-Content .env
+            Remove-Item auth0-api-details.json
+            Write-Output "✅ .env file created with your Auth0 API details:"
+            Get-Content .env
+            ```
+          </Tab>
+        </Tabs>
       </Tab>
     </Tabs>
   </Step>
   <Step title="Configure the Auth0 client" stepNumber={4}>
-    Create a `.env` file in your project root to store your Auth0 configuration:
+    <Note>
+      If you used the **CLI** method in Step 3, your `.env` file was automatically created. Skip to creating the `app.py` file below.
+    </Note>
+
+    If you used the **Dashboard** method, create a `.env` file in your project root to store your Auth0 configuration:
 
     ```bash .env
     AUTH0_DOMAIN=your-tenant.us.auth0.com
@@ -108,8 +151,9 @@ This guide demonstrates how to integrate Auth0 with any new or existing Python A
 
     Create an `app.py` file and configure the Auth0 API client:
 
-    ```python app.py lines
+    ```python app.py
     import os
+    import asyncio
     from flask import Flask, request, jsonify, g
     from functools import wraps
     from dotenv import load_dotenv
@@ -135,7 +179,7 @@ This guide demonstrates how to integrate Auth0 with any new or existing Python A
     # Authentication decorator
     def require_auth(f):
         @wraps(f)
-        async def decorated_function(*args, **kwargs):
+        def decorated_function(*args, **kwargs):
             auth_header = request.headers.get("Authorization", "")
             
             if not auth_header.startswith("Bearer "):
@@ -144,35 +188,39 @@ This guide demonstrates how to integrate Auth0 with any new or existing Python A
             token = auth_header.split(" ")[1]
             
             try:
-                claims = await api_client.verify_access_token(token)
+                claims = asyncio.run(api_client.verify_access_token(token))
                 g.user_claims = claims
-                return await f(*args, **kwargs)
+                return f(*args, **kwargs)
             except BaseAuthError as e:
-                return jsonify({"error": str(e)}), e.get_status_code(), e.get_headers()
+                return (
+                    jsonify({"error": str(e)}),
+                    e.get_status_code(),
+                    e.get_headers()
+                )
         
         return decorated_function
 
 
     # Public endpoint - no authentication required
     @app.route("/api/public", methods=["GET"])
-    async def public():
+    def public():
         return jsonify({"message": "This endpoint is public"})
 
 
     # Protected endpoint - requires authentication
     @app.route("/api/private", methods=["GET"])
     @require_auth
-    async def private():
+    def private():
         return jsonify({
             "message": "This endpoint requires authentication",
-            "user": g.user_claims["sub"]
+            "user": g.user_claims.get("sub")
         })
 
 
     # Protected endpoint with scope validation
     @app.route("/api/admin", methods=["GET"])
     @require_auth
-    async def admin():
+    def admin():
         scopes = g.user_claims.get("scope", "").split()
         
         if "read:admin" not in scopes:
@@ -180,7 +228,7 @@ This guide demonstrates how to integrate Auth0 with any new or existing Python A
         
         return jsonify({
             "message": "Admin access granted",
-            "user": g.user_claims["sub"]
+            "user": g.user_claims.get("sub")
         })
 
 
@@ -360,34 +408,58 @@ async def protected():
 </Accordion>
 
 <Accordion title="DPoP Authentication (Early Access)">
-  For enhanced security, enable DPoP (Demonstrating Proof-of-Possession):
+  For enhanced security, enable DPoP (Demonstrating Proof-of-Possession). DPoP enhances OAuth 2.0 by binding access tokens to cryptographic keys.
 
   ```python
-  # Configure API client with DPoP enabled
+  import asyncio
+
+  
+  # Configure API client with DPoP enabled (Allowed mode)
   api_client = ApiClient(ApiClientOptions(
       domain=os.getenv("AUTH0_DOMAIN"),
       audience=os.getenv("AUTH0_AUDIENCE"),
-      dpop_enabled=True  # Default, accepts both Bearer and DPoP
+      dpop_enabled=True,   # Default - enables DPoP support
+      dpop_required=False  # Default - allows both Bearer and DPoP tokens
   ))
 
-  @app.route("/api/dpop-protected")
-  @require_auth
-  async def dpop_protected():
-      headers = {
-          "authorization": request.headers.get("Authorization", ""),
-          "dpop": request.headers.get("DPoP", "")
-      }
+  # For Required mode (DPoP-only, rejects Bearer tokens)
+  # dpop_required=True
+
+  # DPoP-aware decorator
+  def require_auth_dpop(f):
+      @wraps(f)
+      def decorated_function(*args, **kwargs):
+          headers = {
+              "authorization": request.headers.get("Authorization", ""),
+              "dpop": request.headers.get("DPoP", "")  # DPoP proof header
+          }
+          
+          try:
+              # verify_request() automatically detects Bearer or DPoP scheme
+              claims = asyncio.run(api_client.verify_request(
+                  headers=headers,
+                  http_method=request.method,
+                  http_url=request.url
+              ))
+              g.user_claims = claims
+              return f(*args, **kwargs)
+          except BaseAuthError as e:
+              return jsonify({"error": str(e)}), e.get_status_code(), e.get_headers()
       
-      try:
-          claims = await api_client.verify_request(
-              headers=headers,
-              http_method=request.method,
-              http_url=request.url
-          )
-          return jsonify({"user": claims["sub"]})
-      except BaseAuthError as e:
-          return jsonify({"error": str(e)}), e.get_status_code(), e.get_headers()
+      return decorated_function
+
+  @app.route("/api/dpop-protected")
+  @require_auth_dpop
+  def dpop_protected():
+      return jsonify({
+          "message": "Successfully authenticated with DPoP or Bearer",
+          "user": g.user_claims.get("sub")
+      })
   ```
+
+  <Info>
+  The `verify_request()` method automatically detects whether the request uses Bearer or DPoP authentication. When DPoP is used, it validates both the access token and the DPoP proof according to RFC 9449.
+  </Info>
 </Accordion>
 
 <Accordion title="Scope-Based Authorization">
@@ -420,28 +492,55 @@ async def protected():
 </Accordion>
 
 <Accordion title="Error Handling Best Practices">
-  Implement comprehensive error handling:
+  Implement comprehensive error handling with specific error types:
 
   ```python
   from auth0_api_python.errors import (
+      BaseAuthError,
       VerifyAccessTokenError,
-      MissingRequiredArgumentError,
+      GetTokenByExchangeProfileError,
       ApiError
   )
 
   @app.errorhandler(BaseAuthError)
-  async def handle_auth_error(error):
+  def handle_auth_error(error):
+      """Handle all Auth0 authentication errors"""
       return jsonify({
           "error": error.get_error_code(),
           "error_description": str(error)
       }), error.get_status_code(), error.get_headers()
 
 
+  @app.errorhandler(VerifyAccessTokenError)
+  def handle_token_verification_error(error):
+      """Handle token verification failures specifically"""
+      app.logger.warning(f"Token verification failed: {str(error)}")
+      return jsonify({
+          "error": "invalid_token",
+          "error_description": str(error)
+      }), 401, error.get_headers()
+
+
+  @app.errorhandler(ApiError)
+  def handle_api_error(error):
+      """Handle Auth0 API errors (network, rate limits, etc.)"""
+      app.logger.error(f"Auth0 API error: {error.code} - {error.message}")
+      return jsonify({
+          "error": error.code,
+          "error_description": error.message
+      }), error.status_code or 500
+
+
   @app.errorhandler(Exception)
-  async def handle_generic_error(error):
-      app.logger.error(f"Unexpected error: {str(error)}")
+  def handle_generic_error(error):
+      """Catch-all for unexpected errors"""
+      app.logger.error(f"Unexpected error: {str(error)}", exc_info=True)
       return jsonify({"error": "Internal server error"}), 500
   ```
+
+  <Info>
+  All authentication errors extend from `BaseAuthError`, which provides methods like `get_status_code()`, `get_headers()`, and `get_error_code()` for proper HTTP responses with WWW-Authenticate headers.
+  </Info>
 </Accordion>
 
 ## Common Issues
@@ -540,27 +639,7 @@ async def protected():
   </Card>
 </CardGroup>
 
-## Sample Application
+## Next Steps
 
-A complete sample application is available in the SDK repository with additional features:
-
-- Public and protected endpoints
-- Scope-based authorization
-- Error handling middleware
-- Environment configuration
-- Application factory pattern
-
-Clone and run:
-
-```bash
-git clone https://github.com/auth0/auth0-api-python.git
-cd auth0-api-python/examples/flask
-pip install -r requirements.txt
-
-# Update .env with your Auth0 configuration
-cp .env.example .env
-
-# Run the application
-python app.py
-```
+Check out the [Auth0 Python API samples repository](https://github.com/auth0-samples/auth0-python-api-samples) for complete working examples with Flask.
 
