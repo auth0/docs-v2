@@ -1,6 +1,10 @@
 import { action, makeAutoObservable } from 'mobx';
 
-import { getClients, type Client } from '@/lib/api';
+import {
+  getClients,
+  createClient as createClientApi,
+  type Client,
+} from '@/lib/api';
 
 import type { RootStore } from './root-store';
 
@@ -15,6 +19,7 @@ export class ClientStore {
       init: action,
       reset: action,
       setSelectedClient: action,
+      createClient: action,
     });
     this.rootStore = rootStore;
   }
@@ -26,6 +31,25 @@ export class ClientStore {
       console.error('Failed to initialize ClientStore:', error);
       // Reset to empty state on error
       this.reset();
+    }
+  }
+
+  async createClient(clientData: {
+    name: string;
+    app_type?: string;
+    callbacks?: string[];
+    allowed_logout_urls?: string[];
+    web_origins?: string[];
+  }) {
+    try {
+      const newClient = await createClientApi(clientData);
+      this.clients.push(newClient);
+      // Set the newly created client as selected
+      this.setSelectedClient(newClient.client_id);
+      return newClient;
+    } catch (error) {
+      console.error('Failed to create client:', error);
+      throw error;
     }
   }
 
