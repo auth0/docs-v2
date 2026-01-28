@@ -684,6 +684,8 @@ export const CreateInteractiveApp = ({
     const init = () => setStoreReady(true);
 
     if (window.rootStore) {
+      // If this create component is re-mounted, clear any selected client
+      window.rootStore.clientStore.setSelectedClient(null);
       init();
     } else {
       window.addEventListener('adu:storeReady', init);
@@ -700,10 +702,6 @@ export const CreateInteractiveApp = ({
     const disposer = autorun(() => {
       const rootStore = window.rootStore;
       setIsAuthenticated(rootStore.sessionStore.isAuthenticated);
-      setSelectedClientIdState(rootStore.clientStore.selectedClientId ?? null);
-      setSelectedApiIdState(
-        rootStore.resourceServerStore.selectedApiId ?? null,
-      );
     });
 
     return () => {
@@ -770,7 +768,9 @@ export const CreateInteractiveApp = ({
           callbacks: allowedCallbackUrls,
           allowed_logout_urls: allowedLogoutUrls,
           web_origins: allowedOriginUrls,
-          client_metadata: { created_by: 'quickstart-docs-app-creation-component' },
+          client_metadata: {
+            created_by: 'quickstart-docs-app-creation-component',
+          },
         });
 
         setDisplayForm(false);
