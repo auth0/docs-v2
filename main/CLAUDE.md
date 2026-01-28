@@ -56,13 +56,7 @@ All documentation files follow this structure:
 ---
 title: "Page Title"
 description: "SEO description for search engines"
-'og:image': https://cdn2.auth0.com/docs/...
-'og:title': "Social media title"
-'og:url': https://auth0.com/docs/path
-permalink: unique-path-slug
 sidebarTitle: "Optional sidebar label"
-'twitter:description': "Twitter card description"
-'twitter:title': "Twitter card title"
 ---
 
 import { Component } from '/snippets/component.jsx';
@@ -77,7 +71,7 @@ export const codeExample2 = `more code here`;
 
 ### Key Conventions
 
-1. **Frontmatter**: All MDX files require complete YAML frontmatter with SEO metadata
+1. **Frontmatter**: All MDX files require complete YAML frontmatter
 2. **Code Examples**: Export code as constants at the top of the file (after imports, before content)
 3. **Imports**: Custom components imported from `/snippets/` directory
 4. **Permalinks**: Used for stable URLs and redirects

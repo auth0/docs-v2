@@ -81,7 +81,7 @@ This is **not a managed monorepo** (no Lerna, pnpm workspaces, etc.). Each folde
 
 **Content Structure:**
 - `.mdx` and `.md` files for documentation pages
-- YAML frontmatter for metadata (title, description, og/twitter tags)
+- YAML frontmatter for metadata (title, description)
 - `docs.json` defines navigation structure and Mintlify configuration
 
 **Reusable Components:**

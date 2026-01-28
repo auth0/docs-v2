@@ -20,19 +20,13 @@ Mintlify’s articles files are a form of Markdown, so all your article files sh
 | `configure-identity-provider.mdx` | `ConfigureIdentityProviders.mdx` |
 | `customize-ul-templates.mdx` | `customize_ul_templates.mdx` |
 
-### File metadata
+### Front matter and custom metadata
 
-| **Field name** | **Description** | **Example** |
-| ------ | -------- | ------ |
-| `'og:description'` | Meta description for articles. This short summary populates in search engines. * Descriptions should: Start with present tense verbs: Learn, Configure, Access, Create. * Be no more than two clear, concise sentences. * Not contain complicated terminology. | `Learn how to configure your login page to use passwordless authentication using the Auth0 Dashboard.` |
-| `'og:image'` | Main image from the doc site. | N/A |
-| `‘og:title’` | Main title of the article. This field is specific for search engines.  Titles should be short with present-tense verbs (Get Started not Getting Started) and SEO keywords. | Configure Universal Login |
-| `'og:url'` | Defines the docs domain: `https://auth0.com/docs` ||
-| `'permalink'` | URL component of the article. For search engine optimization, URLs should be **short** and contain **necessary keywords**, such as the feature name and job-to-be-done. Permalinks don’t have to be grammatically correct or contain all words in the title of the article. | `oidc-adoption-access-tokens`|
-| `'sidebarTitle'` | Title of the article as shown in the side navigation. **Note**: long titles will drop off in the side navigation. Be mindful when you title an article. | Manage Self-Service Single Sign-On |
-| `'title'` | Main title of the page. ||
-| `'twitter:description'` | Description for social media website, X. Is the same as meta description. | Learn how to configure your login page to use passwordless authentication using the Auth0 Dashboard. |
-| `'twitter:title'` | Title for social media website, X. Is the same as standard title. | Native to Web SSO and Sessions |
+See [Mintlify's documentation on page front matter](https://www.mintlify.com/docs/organize/pages#page-metadata). Of the default available front matter, most pages only need `title` and `default`.
+
+We one use piece of custom front matter:
+
+* `validatedOn` with a date in `yyyy-mm-dd` format to indicate when the content was last validated.
 
 ### Format text
 
