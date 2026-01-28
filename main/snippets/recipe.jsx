@@ -678,6 +678,7 @@ export const CreateInteractiveApp = ({
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [storeReady, setStoreReady] = useState(false);
+  const [displayForm, setDisplayForm] = useState(true);
 
   useEffect(() => {
     const init = () => setStoreReady(true);
@@ -710,7 +711,7 @@ export const CreateInteractiveApp = ({
     };
   }, [storeReady]);
 
-  if (!storeReady || typeof window === 'undefined') {
+  if (!storeReady || typeof window === 'undefined' || !displayForm) {
     return <></>;
   }
 
@@ -772,7 +773,7 @@ export const CreateInteractiveApp = ({
           client_metadata: { created_by: 'quickstart-docs-app-creation-component' },
         });
 
-        setName('');
+        setDisplayForm(false);
       } catch (err) {
         console.error('Error creating client:', err);
         const errorMessage =
