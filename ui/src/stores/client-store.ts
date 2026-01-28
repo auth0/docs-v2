@@ -40,6 +40,7 @@ export class ClientStore {
     callbacks?: string[];
     allowed_logout_urls?: string[];
     web_origins?: string[];
+    client_metadata?: { [key: string]: any };
   }) {
     try {
       const newClient = await createClientApi(clientData);
