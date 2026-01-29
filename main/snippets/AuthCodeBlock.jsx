@@ -17,8 +17,12 @@ export const AuthCodeBlock = ({
           key,
           value,
         ] of window.rootStore.variableStore.values.entries()) {
-          processedChildren = processedChildren.replace(
-            new RegExp(key, "g"),
+          const escapedKey = key.replaceAll(
+            /[.*+?^${}()|[\]\\]/g,
+            String.raw`\$&`
+          );
+          processedChildren = processedChildren.replaceAll(
+            new RegExp(escapedKey, "g"),
             value
           );
         }
