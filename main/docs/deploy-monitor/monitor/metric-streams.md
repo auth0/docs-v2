@@ -1,14 +1,18 @@
+---
+description: Monitor your Auth0 service through real-time metric streams.
+title: Metric Streams
+---
 
 # Metric Streams (Beta)
 
-| ::note::Metrics are currently available in Beta. If you are interested in using this feature, complete the following form (link: https://forms.gle/JaNpz8HpX5QUkxLX7), and someone from Auth0 will reach out to you.   |
-| :---- |
+<Note>Metrics are currently available in Beta. If you are interested in using this feature, complete the following form (link: https://forms.gle/JaNpz8HpX5QUkxLX7), and someone from Auth0 will reach out to you.
+</Note>
 
 ## Overview {#overview}
 
 Real-time monitoring of your Auth0 service is now available through metrics streams, allowing you to proactively identify issues, accelerate troubleshooting, and implement timely solutions. Our first metric stream provides direct visibility into your API usage within Datadog.  You may also now stream Metrics to OpenTelemetry Connectors, allowing visualizations in New Relic, Grafana Cloud, and Splunk. Track critical metrics like request volume, error rates, and rate limit occurrences to optimize your Auth0 API integration and ensure smooth operation.
 
-## Use Cases {#use-cases}
+## Use cases {#use-cases}
 
 Metric Streams deliver insights into Auth0 API responses (see Metric Types) in general, and the failure status of rate limited APIs and Endpoints API in particular.  This can assist Auth0 customers with:
 
@@ -23,9 +27,9 @@ Additional insights we hope to deliver over time (but could potentially be extra
 
 In the future, we may expand this to other monitoring use cases.
 
-## Metric Types {#metric-types}
+## Metric types {#metric-types}
 
-### Metric Name:  auth0.api\_request.count {#metric-name:-auth0.api_request.count}
+### Metric name:  auth0.api\_request.count {#metric-name:-auth0.api_request.count}
 
 | Tag Name | Required | Description |
 | :---- | :---- | :---- |
@@ -41,15 +45,17 @@ In the future, we may expand this to other monitoring use cases.
 | batch\_seq | ✅ | Sequence number of the same metric sent to Datadog with the same tags for the same timestamp. |
 |  |  |  |
 
-⚠️When working with metric streams, it’s important to be aware that certain tags can potentially lead to high cardinality in your metrics data. Specifically, \`client\_id\` and \`connection\_id\` are known to have the potential for high cardinality in environments with a large number of unique clients or frequent connection changes. This can lead to increased monitoring costs, performance issues, and potentially reduced observability.
+<Warning>
+When working with metric streams, it’s important to be aware that certain tags can potentially lead to high cardinality in your metrics data. Specifically, \`client\_id\` and \`connection\_id\` are known to have the potential for high cardinality in environments with a large number of unique clients or frequent connection changes. This can lead to increased monitoring costs, performance issues, and potentially reduced observability.
+</Warning>
 
-⚠️⚠️ API calls cached or blocked by WAF at the Auth0 edge won’t be delivered in metrics streams to protect our system and metrics destinations from overload.
+API calls cached or blocked by WAF at the Auth0 edge won’t be delivered in metrics streams to protect our system and metrics destinations from overload.
 
-#### Enum Definitions {#enum-definitions}
+#### Enum definitions {#enum-definitions}
 
 This section defines the possible values for the enum types used in the auth0\_response metric.
 
-##### Api {#api}
+##### API {#api}
 
 This enum specifies the different Auth0 APIs that can be called.
 
@@ -77,7 +83,7 @@ Provides specific reasons for the API operation failures when the operation\_res
 | ANOMALY\_DETECTION | Blocked by anomaly detection or attack protection. |
 | CLIENT\_SERVER\_ERROR | Client or Server Error |
 
-# Set up Datadog Metrics Streaming {#set-up-datadog-metrics-streaming}
+# Set up Datadog metrics streaming {#set-up-datadog-metrics-streaming}
 
 ### Before you begin {#before-you-begin}
 
@@ -91,7 +97,7 @@ Metric streams are facilitated by the [Auth0 Management API](https://auth0.com/d
 5. Navigate to the **Settings** tab to gather your **Client ID**, **Client Secret**, and **Domain**.  
 6. Review [Get Management API Access Tokens](https://auth0.com/docs/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-production) to retrieve and store your access token.
 
-### Datadog Prerequisites {#datadog-prerequisites}
+### Datadog prerequisites {#datadog-prerequisites}
 
 Before setting up a metric stream with Datadog, ensure you have the following:
 
@@ -169,7 +175,7 @@ auth0 api get /api/v2/metric-streams
 
 [Metrics Private Beta ](https://drive.google.com/drive/folders/1mIuqETXLyVC3AmHgVQdrlNHsbJrJZXuo?usp=drive_link)[https://drive.google.com/drive/folders/1mIuqETXLyVC3AmHgVQdrlNHsbJrJZXuo?usp=drive\_link](https://drive.google.com/drive/folders/1mIuqETXLyVC3AmHgVQdrlNHsbJrJZXuo?usp=drive_link)
 
-# Set up Metrics Streaming via OpenTelemetry Connectors {#set-up-metrics-streaming-via-opentelemetry-connectors}
+# Set up metrics dtreaming via OpenTelemetry Connectors {#set-up-metrics-streaming-via-opentelemetry-connectors}
 
 This is intended to allow anyone to send metrics via OTEL connector, which will allow you to visualize metrics in the following Observability tool (as examples): 
 
@@ -182,26 +188,16 @@ This is intended to allow anyone to send metrics via OTEL connector, which will 
 
 ## Grafana Cloud
 
-### Get Endpoint and Token
+### Get endpoint and token
 
 1. Go to your dashboard  
 2. Open the menu and click on Connections=\>Add new connection  
-   ![][image1]  
 3. From the list of Featured connections click on OpenTelemetry (or type OpenTelemetry in the search box)  
-   ![][image2]
-
 4. Click on OpenTelemtry SDK \=\> Language Other \=\> Next  
-   ![][image3]
-
 5. In “Choose your infrastructure” click on Other \=\> Next  
-   ![][image4]
-
 6. In “Choose your instrumentation method” click on OpenTelemetry Collector \=\> Next  
-   ![][image5]
-
 7. Finally, in the “Instrumentation Instructions”:  
    1. Create a new token. Set a name for the token and click “Create token”  
-      ![][image6]
 
    2. Copy the Endpoint from the header “`OTEL_EXPORTER_OTLP_ENDPOINT`” in the generated configuration block. You will need this to configure the metrics stream
 
@@ -232,18 +228,10 @@ auth0 api post metric-streams \
 ### Get Endpoint and Token
 
 1. Go to New Relic’s OTLP doc and select the corresponding **endpoint** according to your location: [https://docs.newrelic.com/docs/opentelemetry/best-practices/opentelemetry-otlp/\#configure-endpoint-port-protocol](https://docs.newrelic.com/docs/opentelemetry/best-practices/opentelemetry-otlp/#configure-endpoint-port-protocol). For instance for US it would be “[https://otlp.nr-data.net](https://otlp.nr-data.net)”. You need to save it as you will need it to set the metrics stream.
-
-2. Go to your dashboard \=\> click on your user name \=\> API Keys  
-   ![][image7]
-
+2. Go to your dashboard \=\> click on your user name \=\> API Keys 
 3. Click on Create a Key, and select Key Type \= “Ingest \- License”  
-   ![][image8]
-
 4. Set the key name and an optional note and click on Create a Key.  
-   ![][image9]
-
 5. After the last step you will be able to see and copy your Api Key. This will be showed only once, so make sure to copy it and store it safely as you will need it to configure the metrics stream  
-   ![][image10]
 
 ### Set up the stream
 
@@ -315,9 +303,8 @@ auth0 api post metric-streams --data '{
     `}`  
   `}'`
 
-NOTE TO CHECK
 
-# A note on the Cardinality of Metrics {#a-note-on-the-cardinality-of-metrics}
+## Cardinality of metrics {#a-note-on-the-cardinality-of-metrics}
 
 Below is a description of the expected cardinality of each tag, including the potential for high cardinality. Understanding these factors will help you optimize your monitoring and avoid unexpected costs due to excessive unique time series.
 
