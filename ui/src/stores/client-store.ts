@@ -13,6 +13,7 @@ export class ClientStore {
 
   clients: Client[] = [];
   selectedClientId: string | null = null;
+  selectedClientSecret: string | undefined = undefined;
 
   constructor(rootStore: RootStore) {
     makeAutoObservable(this, {
@@ -47,6 +48,7 @@ export class ClientStore {
       this.clients.push(newClient);
       // Set the newly created client as selected
       this.setSelectedClient(newClient.client_id);
+      this.setSelectedClientSecret(newClient.client_secret);
       return newClient;
     } catch (error) {
       console.error('Failed to create client:', error);
@@ -66,6 +68,16 @@ export class ClientStore {
       variableStore.setValue('{yourClientId}', clientId);
     } else {
       variableStore.resetKey('{yourClientId}');
+    }
+  }
+
+  setSelectedClientSecret(clientSecret: string | undefined) {
+    this.selectedClientSecret = clientSecret;
+    const { variableStore } = this.rootStore;
+    if (clientSecret) {
+      variableStore.setValue('{yourClientSecret}', clientSecret);
+    } else {
+      variableStore.resetKey('{yourClientSecret}');
     }
   }
 
