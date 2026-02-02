@@ -10,7 +10,9 @@ interface Account {
   app_name: string;
   /** The tenant name */
   tenant: string;
-  /** The tenant domain/namespace */
+  /* The domain of tenant */
+  domain: string;
+  /** The RTA domain/namespace */
   namespace: string;
   /** The selected client ID */
   client_id: string;
@@ -279,6 +281,22 @@ export async function patchRolloutConsent(consentData: RolloutConsentRequest) {
   );
 }
 
+// Feedback Interfaces
+export interface FeedbackRequest {
+  positive: boolean;
+  page_url: string;
+  page_title: string;
+  comment: string;
+}
+
+// Feedback Methods
+export async function postFeedback(feedbackData: FeedbackRequest) {
+  return request<FeedbackRequest>(`${config.apiBaseUrl}/feedback`, {
+    method: 'POST',
+    body: JSON.stringify(feedbackData),
+  });
+}
+
 // Sample Methods
 export async function getSample(
   params: {
@@ -354,4 +372,43 @@ export async function postSample(sampleData: SampleRequest, filename?: string) {
   const blob = await response.blob();
   const defaultFilename = `${sampleData.repo.split('/').pop()}-${sampleData.branch}.zip`;
   saveAs(blob, filename || defaultFilename);
+}
+
+// Feature Flags Interface
+export interface FeatureFlags {
+  [key: string]: boolean;
+}
+
+// Backend response structure
+interface FeatureFlagsResponse {
+  flags: FeatureFlags;
+}
+
+// Mock feature flags for development (until backend endpoint is ready)
+const MOCK_FEATURE_FLAGS: FeatureFlags = {
+  'example-feature': true,
+  'beta-feature': false,
+  'new-ui': true,
+};
+
+// Feature Flags Methods
+/**
+ * Fetches feature flags from the backend API.
+ * This is called periodically by the FeatureFlagStore to keep flags in sync.
+ * Falls back to mock data in local development if the endpoint is unavailable.
+ */
+export async function getFeatureFlags() {
+  try {
+    const response = await request<FeatureFlagsResponse>(`${config.apiBaseUrl}/feature-flags`);
+    return response.flags;
+  } catch (error) {
+    // If backend endpoint doesn't exist yet, return mock data in development
+    if (config.apiBaseUrl.includes('localhost') || config.apiBaseUrl.includes('local')) {
+      console.warn('Feature flags endpoint not available, using mock data');
+      return MOCK_FEATURE_FLAGS;
+    }
+    // In production, return empty flags rather than failing
+    console.error('Failed to fetch feature flags:', error);
+    return {};
+  }
 }

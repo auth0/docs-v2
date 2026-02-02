@@ -1,60 +1,311 @@
 ---
 title: "Auth0 Go API SDK Quickstarts: Troubleshooting"
-permalink: "03-troubleshooting"
 ---
 
-##### By Sergiu Ghitea
+##### By Kunal Dawar
 
-This document will help you troubleshoot your configuration if you get unexpected responses from your API.We recommend that you log in to follow this quickstart with examples configured for your account.
+This document will help you troubleshoot your configuration if you get unexpected responses from your API. We recommend that you log in to follow this quickstart with examples configured for your account.
 
-If you configured JWT validation correctly, you will be able to get proper responses from your API when you make requests. However, in the case where you get a 401 (Unauthorized) response from your API, it is because the configuration of your JWT middleware does not match with the JWT which was passed.
+## go-jwt-middleware Troubleshooting
 
-This document will help you troubleshoot your JWT middleware configuration.
+If you configured JWT validation correctly, you will be able to get proper responses from your API when you make requests. However, if you get a 401 (Unauthorized) response from your API, it is because the configuration of your JWT middleware does not match the JWT that was passed.
 
 ## How Does a Token Get Validated?
 
-In terms of validating a JWT, there are various things to consider:
+<Accordion title="Token Validation Steps" icon="shield-check" defaultOpen>
+The middleware validates tokens through these steps:
 
-1. **Is the token well-formed?** In other words, is this token conforming to the structure of a JSON Web Token (JWT)? To get more information on the structure of a JWT, please refer to [this section on the structure of a JWT](/docs/secure/tokens/json-web-tokens#what-is-the-json-web-token-structure-)
-2. **Has the token been tampered with?** The last part of a JWT is the signature. The signature is used to verify that the token was in fact signed by the sender and not altered in any way.
-3. **Has the token been received in its validity period?** JWTs are only valid for a specified time period (as expressed in the `exp` claim).
-4. **Is the token coming from the intended Authority?** This consists of 2 parts
+<Steps>
+  <Step title="Structure Validation">
+    The token must conform to the JWT structure. Learn more about [JWT structure](/docs/secure/tokens/json-web-tokens#what-is-the-json-web-token-structure-).
+  </Step>
 
-   * **Signature Verification**: Can we confirm that the JWT is correctly signed using the key issued by the issuing authority?
-   * **Issuer Value**: The Issuer is defined in the `iss` claim. Once again does this claim match up with what your application expects?
-5. **Is the token intended for the current application?** So does the `aud` claim of the JWT match with what your application is expecting?
+  <Step title="Signature Verification">
+    The signature verifies that the token was signed by the sender and not altered. The middleware uses a JWKS caching provider to fetch and validate against Auth0's public keys.
+  </Step>
+
+  <Step title="Expiration Check">
+    Tokens are only valid for a specified time (expressed in the `exp` claim). You can configure clock skew via `validator.WithAllowedClockSkew()`.
+  </Step>
+
+  <Step title="Issuer Validation">
+    **Signature Verification**: The JWKS provider automatically fetches and caches the correct keys
+
+    **Issuer Value**: The `iss` claim must match exactly (including trailing slash)
+  </Step>
+
+  <Step title="Audience Validation">
+    The `aud` claim must match your API identifier exactly.
+  </Step>
+</Steps>
+</Accordion>
 
 ## Inspecting a Token
 
-A quick way to inspect a JWT is by using the [JWT.io](https://jwt.io/) website. It has a handy debugger which allows you to quickly check that a JWT is well-formed, and also inspect the values of the various claims.
+Use [JWT.io](https://jwt.io/) to quickly inspect and debug JWTs.
 
 <Frame>![Debugging a JWT on JWT.io](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/aspnet-core-webapi/jwt-io-debugger-rs256.png)</Frame>
 
-In the screenshot above you can see that the token was signed using the **RS256** algorithm. The **Issuer** of the token is **https://jerrie.auth0.com/**, and the **Audience** is **https://rs256.test.api**.
+In the screenshot above, the token uses **RS256** algorithm. The **Issuer** is **https://jerrie.auth0.com/**, and the **Audience** is **https://rs256.test.api**.
 
-So, in other words, these values in your JWT validation configuration registration must match **exactly** - including the trailing slash for the Issuer, such as
+### Configuration Must Match Exactly
+
+Your validator configuration must match these values precisely:
+
+```go
+issuerURL, _ := url.Parse("https://jerrie.auth0.com/")
+
+provider, _ := jwks.NewCachingProvider(
+    jwks.WithIssuerURL(issuerURL),
+    jwks.WithCacheTTL(5*time.Minute),
+)
+
+jwtValidator, err := validator.New(
+    validator.WithKeyFunc(provider.KeyFunc),
+    validator.WithAlgorithm(validator.RS256),
+    validator.WithIssuer(issuerURL.String()),              // Must match token's 'iss' claim exactly
+    validator.WithAudience("https://rs256.test.api"),     // Must match token's 'aud' claim exactly
+    validator.WithAllowedClockSkew(30*time.Second),
+)
+```
+
+**Important**: The audience should NOT have a trailing slash.
+
+## Common Troubleshooting Scenarios
+
+### 1. Invalid Audience Error
+
+**Error Message:**
+```json
+{"error": "invalid_token", "description": "aud claim mismatch"}
+```
+
+**Cause**: The audience in your configuration doesn't match the `aud` claim in the token.
+
+**Solution**:
+- Verify `AUTH0_AUDIENCE` exactly matches your API Identifier in the Auth0 Dashboard
+- Audience should NOT have a trailing slash
+- Check that the token was requested with the correct `audience` parameter
+
+**Code Check:**
+```go
+jwtValidator, err := validator.New(
+    validator.WithKeyFunc(provider.KeyFunc),
+    validator.WithAlgorithm(validator.RS256),
+    validator.WithIssuer(issuerURL.String()),
+    validator.WithAudience(cfg.Audience), // Must match API Identifier exactly, no trailing slash
+)
+```
+
+### 2. JWKS Endpoint Unreachable
+
+**Error Message:**
+```
+error fetching keys: connection refused
+```
+
+**Cause**: The JWKS caching provider cannot reach Auth0's public key endpoint.
+
+**Solution**:
+- Verify network connectivity to Auth0 (check firewall/proxy settings)
+- Test JWKS endpoint manually:
+  ```bash
+  curl https://your-domain.auth0.com/.well-known/jwks.json
+  ```
+- Ensure correct Auth0 region (us/eu/au)
+- Check if corporate proxy requires configuration
+
+**Code Check:**
+```go
+provider, err := jwks.NewCachingProvider(
+    jwks.WithIssuerURL(issuerURL),
+    jwks.WithCacheTTL(5*time.Minute),
+)
+// Ensure issuerURL is correct and accessible
+```
+
+### 3. Wrong Import Path
+
+**Error Message:**
+```
+cannot find package "github.com/auth0/go-jwt-middleware/v3/..."
+```
+
+**Cause**: Import statements are incorrect.
+
+**Solution**:
+Ensure all imports use the correct path:
+
+```go
+// Correct
+import (
+    jwtmiddleware "github.com/auth0/go-jwt-middleware/v3"
+    "github.com/auth0/go-jwt-middleware/v3/jwks"
+    "github.com/auth0/go-jwt-middleware/v3/validator"
+)
+```
+
+### 4. Claims Extraction Fails
+
+**Error Message:**
+```
+Failed to retrieve claims
+```
+
+**Cause**: Incorrect generic type used with `GetClaims[T]()`.
+
+**Solution**:
+Ensure you're using the correct type parameter:
+
+```go
+// Correct - Extract validated claims with custom claims
+claims, err := jwtmiddleware.GetClaims[*validator.ValidatedClaims](r.Context())
+if err != nil {
+    // Handle error
+}
+
+// Access custom claims
+customClaims, ok := claims.CustomClaims.(*auth.CustomClaims)
+if !ok || !customClaims.HasScope("read:messages") {
+    // Insufficient permissions
+}
+```
+
+### 5. Algorithm Mismatch
+
+**Error Message:**
+```json
+{"error": "invalid_token", "description": "unexpected signing method"}
+```
+
+**Cause**: Token algorithm doesn't match validator configuration.
+
+**Solution**:
+- Auth0 uses RS256 by default (asymmetric)
+- Ensure validator specifies `validator.RS256`
+- Never use `validator.HS256` for Auth0 tokens (unless specifically configured)
+
+```go
+jwtValidator, err := validator.New(
+    validator.WithKeyFunc(provider.KeyFunc),
+    validator.WithAlgorithm(validator.RS256), // Must match Auth0's signing algorithm
+    validator.WithIssuer(issuerURL.String()),
+    validator.WithAudience(cfg.Audience),
+)
+```
+
+### 6. Clock Skew Issues
+
+**Error Message:**
+```json
+{"error": "invalid_token", "description": "token is expired"}
+```
+
+**Cause**: Server clock is out of sync, causing valid tokens to appear expired.
+
+**Solution**:
+Configure clock skew tolerance:
+
+```go
+jwtValidator, err := validator.New(
+    validator.WithKeyFunc(provider.KeyFunc),
+    validator.WithAlgorithm(validator.RS256),
+    validator.WithIssuer(issuerURL.String()),
+    validator.WithAudience(cfg.Audience),
+    validator.WithAllowedClockSkew(30*time.Second), // Allow 30s tolerance
+)
+```
+
+### 7. Go Version Incompatibility
+
+**Error Message:**
+```
+type parameter requires go1.24 or later (required by go-jwt-middleware v3)
+```
+
+**Cause**: Go version is too old for v3's generics usage.
+
+**Solution**:
+- Upgrade to Go 1.24 or later
+- Verify version: `go version`
+- Update `go.mod`: `go 1.24`
+
+## Error Responses
+
+The middleware returns RFC 6750 compliant error responses with structured JSON:
+
+```json
+{
+  "error": "invalid_token",
+  "description": "token expired"
+}
+```
+
+The `WWW-Authenticate` header also provides standard error information:
 
 ```
-audience = "https://rs256.test.api",
-domain = "https://jerrie.auth0.com/"
-};
+WWW-Authenticate: Bearer error="invalid_token", error_description="token expired"
 ```
 
+## Debugging Tips
 
+<AccordionGroup>
+  <Accordion title="Enable Structured Logging" icon="file-lines">
+    The middleware includes built-in logging support:
 
+    ```go
+    import "log/slog"
 
+    middleware := jwtmiddleware.New(
+        jwtmiddleware.WithValidator(jwtValidator),
+        jwtmiddleware.WithLogger(slog.Default()),
+    )
+    ```
 
+    This will log validation events, making debugging easier.
+  </Accordion>
 
-For a token signed using HS256, the debugger view will look a little different:
+  <Accordion title="Verify Configuration at Startup" icon="gear">
+    Add logging to verify your configuration on startup:
 
-<Frame>![Debugging a JWT on JWT.io](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/aspnet-core-webapi/jwt-io-debugger-hs256.png)</Frame>
+    ```go
+    log.Printf("Validator configured:")
+    log.Printf("  Issuer: %s", issuerURL.String())
+    log.Printf("  Audience: %v", cfg.Audience)
+    log.Printf("  Algorithm: RS256")
+    ```
+  </Accordion>
 
-In the screenshot above you can see that the token was signed using the **HS256** algorithm. The **Issuer** of the token is **https://jerrie.auth0.com/**, and the **Audience** is **https://hs256.test.api**.
+  <Accordion title="Test with Auth0 Dashboard Token" icon="vial">
+    Use the **Test** tab in your [API settings](https://manage.auth0.com/#/apis) to generate a test token, then verify it works with your API.
+  </Accordion>
 
+  <Accordion title="Check Token Claims" icon="magnifying-glass">
+    Decode your token at [JWT.io](https://jwt.io/) and verify:
+    - `iss` matches your issuer (with trailing slash)
+    - `aud` contains your API identifier
+    - `exp` is in the future
+    - `alg` is RS256
+  </Accordion>
+</AccordionGroup>
 
+## Getting Help
 
+If you're still experiencing issues after following this guide:
 
-
-
+<CardGroup cols={2}>
+  <Card title="go-jwt-middleware Repository" icon="github" href="https://github.com/auth0/go-jwt-middleware">
+    Check the official SDK documentation and examples
+  </Card>
+  <Card title="GitHub Issues" icon="circle-exclamation" href="https://github.com/auth0/go-jwt-middleware/issues">
+    Search for similar issues or report a new one
+  </Card>
+  <Card title="Auth0 Community Forum" icon="comments" href="https://community.auth0.com">
+    Ask questions and get help from the community
+  </Card>
+  <Card title="Auth0 Support" icon="headset" href="https://support.auth0.com">
+    Contact Auth0 support for enterprise assistance
+  </Card>
+</CardGroup>
 
 [Edit on GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/golang/03-troubleshooting.md)
