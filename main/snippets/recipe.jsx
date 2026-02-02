@@ -684,8 +684,9 @@ export const CreateInteractiveApp = ({
     const init = () => setStoreReady(true);
 
     if (window.rootStore) {
-      // If this create component is re-mounted, clear any selected client
+      // If this create component is re-mounted, clear any selected client information
       window.rootStore.clientStore.setSelectedClient(null);
+      window.rootStore.clientStore.setSelectedClientSecret(undefined);
       init();
     } else {
       window.addEventListener('adu:storeReady', init);

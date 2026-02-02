@@ -59,6 +59,7 @@ export class ClientStore {
   reset() {
     this.clients = [];
     this.selectedClientId = null;
+    this.selectedClientSecret = undefined;
   }
 
   setSelectedClient(clientId: string | null) {
