@@ -670,7 +670,7 @@ export const SignUpForm = () => {
 };
 
 export const CreateInteractiveApp = ({
-  type = 'Auth0',
+  placeholderText = 'Auth0',
   appType = 'regular_web', // 'regular_web' | 'spa' | 'native' | 'non_interactive',
   allowedCallbackUrls = ['localhost:3000'],
   allowedLogoutUrls = ['localhost:3000'],
@@ -800,7 +800,7 @@ export const CreateInteractiveApp = ({
               text-gray-900 dark:text-gray-200
               focus:outline-none dark:focus:outline-none
             "
-            placeholder={`My ${type} App`}
+            placeholder={`My ${placeholderText} App`}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
