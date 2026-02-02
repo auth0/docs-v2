@@ -17,12 +17,6 @@ export function setupPopperFix() {
             
             if (trigger) {
               const rect = trigger.getBoundingClientRect();
-              const scrollY = window.pageYOffset || document.documentElement.scrollTop;
-              const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
-              
-              console.log("Trigger rect:", rect);
-              console.log("Scroll position:", { scrollX, scrollY });
-              
               Object.assign(node.style, { 
                 position: 'fixed', 
                 top: `${rect.bottom + 4}px`, 
