@@ -1,475 +1,780 @@
+# Protect Your Express.js API with JWT Authentication
+
+This guide demonstrates how to add JWT authentication to your Express.js API using the `express-oauth2-jwt-bearer` SDK. You'll validate access tokens issued by Auth0, protect API routes, and implement scope-based authorization.
+
+> **Prerequisites**: Before you begin, ensure you have:
+> - [Node.js](https://nodejs.org/) 18 LTS or newer (supports `^18.12.0 || ^20.2.0 || ^22.1.0 || ^24.0.0`)
+> - [npm](https://npmjs.com/) 8+ (or yarn/pnpm)
+> - An [Auth0 account](https://auth0.com/signup) (free tier available)
+> - Basic familiarity with Express.js
+
 ---
-mode: wide
-title: Add Authorization to Your Express.js API
-description: This tutorial demonstrates how to add authorization to an Express.js API using the express-oauth2-jwt-bearer middleware.
-sidebarTitle: Node (Express) API
----
-
-import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
-
-<Note>
-**Prerequisites:** Before you begin, ensure you have the following:
-
-- An [Auth0 account](https://auth0.com/signup) (sign up for free)
-- [Node.js](https://nodejs.org/) v18.12.0 or later installed
-- [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) 8+ or [yarn](https://classic.yarnpkg.com/lang/en/docs/install/) 1.22+
-- [jq](https://jqlang.org/) - Required for Auth0 CLI setup
-- An existing Express.js application, or follow along to create one
-</Note>
 
 ## Get Started
 
-This quickstart demonstrates how to add authorization to an Express.js API using the [express-oauth2-jwt-bearer](https://github.com/auth0/node-oauth2-jwt-bearer/tree/main/packages/express-oauth2-jwt-bearer) middleware.
+### 1. Create a new Express project
 
-This example demonstrates:
+Create a new directory and initialize a Node.js project:
 
-- How to check for a JSON Web Token (JWT) in the `Authorization` header of an incoming HTTP request
-- How to check if the token is valid using the [JSON Web Key Set (JWKS)](https://auth0.com/docs/tokens/concepts/jwks) for your Auth0 account
-- How to protect API routes based on OAuth 2.0 scopes
-
-<Steps>
-  <Step title="Create a new project" stepNumber={1}>
-    Create a new directory for your Express.js API:
-
-    ```bash
-    mkdir auth0-express-api && cd auth0-express-api
-    npm init -y
-    ```
-  </Step>
-
-  <Step title="Install the SDK" stepNumber={2}>
-    Install the Auth0 Express OAuth2 JWT Bearer middleware and other dependencies:
-
-    ```bash
-    npm install express express-oauth2-jwt-bearer dotenv cors
-    ```
-  </Step>
-
-  <Step title="Setup your Auth0 API" stepNumber={3}>
-    Next, you need to create a new API on your Auth0 tenant and add the environment variables to your project.
-
-    You can choose to do this automatically by running a CLI command or do it manually via the Dashboard:
-
-    <Tabs>
-      <Tab title="CLI">
-        Run the following shell command on your project's root directory to create an Auth0 API and generate a `.env` file:
-
-        <AuthCodeGroup>
-          ```shellscript Mac
-          AUTH0_API_NAME="My API" && brew tap auth0/auth0-cli && brew install auth0 && auth0 login --no-input && auth0 apis create --name "${AUTH0_API_NAME}" --identifier "https://api.example.com" --json > auth0-api-details.json && API_ID=$(jq -r '.identifier' auth0-api-details.json) && DOMAIN=$(auth0 tenants list --json | jq -r '.[] | select(.active == true) | .name') && echo "ISSUER_BASE_URL=https://${DOMAIN}/" > .env && echo "AUDIENCE=${API_ID}" >> .env && echo "PORT=3000" >> .env && rm auth0-api-details.json && echo ".env file created with your Auth0 details:" && cat .env
-          ```
-
-          ```shellscript Windows
-          $ApiName = "My API"; winget install Auth0.CLI; auth0 login --no-input; auth0 apis create --name "$ApiName" --identifier "https://api.example.com" --json | Set-Content -Path auth0-api-details.json; $ApiId = (Get-Content -Raw auth0-api-details.json | ConvertFrom-Json).identifier; $Domain = (auth0 tenants list --json | ConvertFrom-Json | Where-Object { $_.active -eq $true }).name; Set-Content -Path .env -Value "ISSUER_BASE_URL=https://$Domain/"; Add-Content -Path .env -Value "AUDIENCE=$ApiId"; Add-Content -Path .env -Value "PORT=3000"; Remove-Item auth0-api-details.json; Write-Output ".env file created with your Auth0 details:"; Get-Content .env
-          ```
-        </AuthCodeGroup>
-      </Tab>
-
-      <Tab title="Dashboard">
-        Before you start, create a `.env` file in your project's root directory:
-
-        ```shellscript .env
-        ISSUER_BASE_URL=https://YOUR_DOMAIN.auth0.com/
-        AUDIENCE=YOUR_API_IDENTIFIER
-        PORT=3000
-        ```
-
-        1. Head to the [Auth0 Dashboard](https://manage.auth0.com/dashboard/)
-        2. Click on **Applications** > **APIs** > **Create API**
-        3. Enter a **Name** for your API (e.g., "My API")
-        4. Enter an **Identifier** for your API (e.g., `https://api.example.com`). This will be your `AUDIENCE` value.
-        5. Leave **Signing Algorithm** as **RS256** and click **Create**
-        6. Replace `YOUR_DOMAIN` and `YOUR_API_IDENTIFIER` in the `.env` file with your **Domain** (from tenant settings) and **Identifier** values
-
-        <Info>
-          The **Identifier** is the unique identifier for your API, also known as the `audience`. This value is used when requesting access tokens and validating them in your API.
-        </Info>
-      </Tab>
-    </Tabs>
-  </Step>
-
-  <Step title="Define permissions" stepNumber={4}>
-    Permissions let you define how resources can be accessed on behalf of the user with a given access token.
-
-    1. In the [Auth0 Dashboard](https://manage.auth0.com/), go to **Applications** > **APIs**
-    2. Select your API and go to the **Permissions** tab
-    3. Add the following permission:
-       - **Permission:** `read:messages`
-       - **Description:** Read messages
-
-    <Note>
-      This example uses the `read:messages` scope. You can define additional permissions based on your API's requirements.
-    </Note>
-  </Step>
-
-  <Step title="Configure the middleware" stepNumber={5}>
-    Create a `server.js` file and configure the `express-oauth2-jwt-bearer` middleware:
-
-    ```javascript server.js lines
-    const express = require('express');
-    const cors = require('cors');
-    const { auth } = require('express-oauth2-jwt-bearer');
-    require('dotenv').config();
-
-    // Validate environment variables
-    if (!process.env.ISSUER_BASE_URL || !process.env.AUDIENCE) {
-      throw new Error('Make sure you have ISSUER_BASE_URL and AUDIENCE in your .env file');
-    }
-
-    const app = express();
-
-    // Enable CORS
-    app.use(cors());
-
-    // Authorization middleware. When used, the Access Token must
-    // exist and be verified against the Auth0 JSON Web Key Set.
-    const checkJwt = auth({
-      audience: process.env.AUDIENCE,
-      issuerBaseURL: process.env.ISSUER_BASE_URL,
-    });
-    ```
-
-    The `checkJwt` middleware checks if the user's Access Token included in the request is valid. If the token is not valid, the user gets a 401 Authorization error when they try to access the endpoints.
-  </Step>
-
-  <Step title="Protect API endpoints" stepNumber={6}>
-    Add routes to your `server.js` file. The routes shown below are available for the following requests:
-
-    - `GET /api/public`: available for non-authenticated requests
-    - `GET /api/private`: available for authenticated requests containing an access token
-    - `GET /api/private-scoped`: available for authenticated requests containing an access token with the `read:messages` scope
-
-    ```javascript server.js lines
-    // This route doesn't need authentication
-    app.get('/api/public', function(req, res) {
-      res.json({
-        message: "Hello from a public endpoint! You don't need to be authenticated to see this."
-      });
-    });
-
-    // This route needs authentication
-    app.get('/api/private', checkJwt, function(req, res) {
-      res.json({
-        message: 'Hello from a private endpoint! You need to be authenticated to see this.'
-      });
-    });
-    ```
-
-    ### Protect routes with scopes
-
-    You can configure individual routes to look for a particular scope. Add the `requiredScopes` middleware to check for specific scopes:
-
-    ```javascript server.js lines
-    const { auth, requiredScopes } = require('express-oauth2-jwt-bearer');
-
-    const checkScopes = requiredScopes('read:messages');
-
-    app.get('/api/private-scoped', checkJwt, checkScopes, function(req, res) {
-      res.json({
-        message: 'Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this.'
-      });
-    });
-    ```
-
-    In this configuration, only Access Tokens with the `read:messages` scope can access the endpoint.
-  </Step>
-
-  <Step title="Add error handling" stepNumber={7}>
-    Add an error handler to return proper responses when authentication fails:
-
-    ```javascript server.js lines
-    // Error handler
-    app.use(function(err, req, res, next) {
-      console.error(err.stack);
-      return res.set(err.headers).status(err.status).json({ message: err.message });
-    });
-
-    // Start server
-    const port = process.env.PORT || 3000;
-    app.listen(port, function() {
-      console.log(`API server listening on http://localhost:${port}`);
-    });
-    ```
-
-    <Warning>
-      The `error_description` in the `WWW-Authenticate` header will contain useful information about the error, which you may not want to disclose in Production. Consider customizing the error handler for production environments.
-    </Warning>
-  </Step>
-
-  <Step title="Run and test your API" stepNumber={8}>
-    Start your Express server:
-
-    ```bash
-    node server.js
-    ```
-
-    The API will be served at `http://localhost:3000`.
-
-    **Test the public endpoint** (no authentication required):
-
-    ```bash
-    curl http://localhost:3000/api/public
-    ```
-
-    **Test the private endpoint** (requires valid Access Token):
-
-    ```bash
-    curl http://localhost:3000/api/private \
-      --header 'Authorization: Bearer YOUR_ACCESS_TOKEN'
-    ```
-
-    <Note>
-      To get a test Access Token, go to **Applications** > **APIs** > Your API > **Test** tab in the Auth0 Dashboard, or obtain one through your client application.
-    </Note>
-  </Step>
-</Steps>
-
----
-
-## Complete Server Example
-
-Here's the complete `server.js` file with all the code from this tutorial:
-
-```javascript server.js lines
-const express = require('express');
-const cors = require('cors');
-const { auth, requiredScopes } = require('express-oauth2-jwt-bearer');
-require('dotenv').config();
-
-// Validate environment variables
-if (!process.env.ISSUER_BASE_URL || !process.env.AUDIENCE) {
-  throw new Error('Make sure you have ISSUER_BASE_URL and AUDIENCE in your .env file');
-}
-
-const app = express();
-
-// Enable CORS
-app.use(cors());
-
-// Authorization middleware
-const checkJwt = auth({
-  audience: process.env.AUDIENCE,
-  issuerBaseURL: process.env.ISSUER_BASE_URL,
-});
-
-// Public route
-app.get('/api/public', function(req, res) {
-  res.json({
-    message: "Hello from a public endpoint! You don't need to be authenticated to see this."
-  });
-});
-
-// Private route
-app.get('/api/private', checkJwt, function(req, res) {
-  res.json({
-    message: 'Hello from a private endpoint! You need to be authenticated to see this.'
-  });
-});
-
-// Private route with scope
-const checkScopes = requiredScopes('read:messages');
-
-app.get('/api/private-scoped', checkJwt, checkScopes, function(req, res) {
-  res.json({
-    message: 'Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this.'
-  });
-});
-
-// Error handler
-app.use(function(err, req, res, next) {
-  console.error(err.stack);
-  return res.set(err.headers).status(err.status).json({ message: err.message });
-});
-
-// Start server
-const port = process.env.PORT || 3000;
-app.listen(port, function() {
-  console.log(`API server listening on http://localhost:${port}`);
-});
+```bash
+mkdir my-secure-api && cd my-secure-api
 ```
 
----
-
-## Access Token Claims
-
-After successful authentication, you can access the decoded JWT claims through `req.auth`:
-
-```javascript
-app.get('/api/profile', checkJwt, function(req, res) {
-  const payload = req.auth.payload;
-  
-  res.json({
-    sub: payload.sub,           // User ID
-    iss: payload.iss,           // Issuer
-    aud: payload.aud,           // Audience
-    exp: payload.exp,           // Expiration time
-    scope: payload.scope,       // Granted scopes
-  });
-});
+```bash
+npm init -y
 ```
 
----
+### 2. Install dependencies
 
-## TypeScript Support
+Install Express, the authentication SDK, and dotenv for environment variable management:
 
-The SDK includes full TypeScript support. Install the required dependencies:
+```bash
+npm install express express-oauth2-jwt-bearer dotenv
+```
+
+For TypeScript projects, also install type definitions:
 
 ```bash
 npm install -D typescript @types/express @types/node
 ```
 
-Here's an example using TypeScript:
+### 3. Configure your Auth0 API
 
-```typescript server.ts lines
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
-import { 
-  auth, 
-  requiredScopes,
-  AuthResult,
-  InvalidTokenError,
-  InsufficientScopeError
-} from 'express-oauth2-jwt-bearer';
-import 'dotenv/config';
+You need an Auth0 API to issue access tokens for your Express application. Configure Auth0 using the CLI or manually via the Dashboard:
 
-if (!process.env.ISSUER_BASE_URL || !process.env.AUDIENCE) {
-  throw new Error('Make sure you have ISSUER_BASE_URL and AUDIENCE in your .env file');
-}
+<Tabs>
+  <Tab label="Auth0 CLI">
 
-const app = express();
-app.use(cors());
-
-const checkJwt = auth({
-  audience: process.env.AUDIENCE,
-  issuerBaseURL: process.env.ISSUER_BASE_URL,
-});
-
-// Public route
-app.get('/api/public', (req: Request, res: Response) => {
-  res.json({ message: 'Public endpoint' });
-});
-
-// Private route
-app.get('/api/private', checkJwt, (req: Request, res: Response) => {
-  const auth: AuthResult | undefined = req.auth;
-  res.json({ 
-    message: 'Private endpoint',
-    sub: auth?.payload.sub 
-  });
-});
-
-// Error handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  if (err instanceof InvalidTokenError) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-  if (err instanceof InsufficientScopeError) {
-    return res.status(403).json({ error: 'Insufficient scope' });
-  }
-  next(err);
-});
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
-});
-```
-
----
-
-## Additional Configuration Options
-
-The `auth()` middleware accepts additional options for advanced use cases:
-
-```javascript
-const checkJwt = auth({
-  audience: process.env.AUDIENCE,
-  issuerBaseURL: process.env.ISSUER_BASE_URL,
-  
-  // Optional: Custom token signing algorithm (defaults to RS256)
-  tokenSigningAlg: 'RS256',
-  
-  // Optional: Clock tolerance for exp/iat validation (seconds)
-  clockTolerance: 5,
-  
-  // Optional: Allow unauthenticated requests (default: false)
-  authRequired: true,
-});
-```
-
----
-
-## Security Best Practices
-
-For production deployments, consider these security recommendations:
-
-### Use Helmet for security headers
+If you have the [Auth0 CLI](https://github.com/auth0/auth0-cli) installed, run:
 
 ```bash
-npm install helmet
+auth0 apis create \
+  --name "My Express API" \
+  --identifier "https://api.example.com" \
+  --signing-alg "RS256"
 ```
 
-```javascript
-const helmet = require('helmet');
+After creation, note the **Identifier** value—this is your `AUTH0_AUDIENCE`.
 
-app.use(helmet());
-app.use(cors());
+  </Tab>
+  <Tab label="Dashboard">
+
+1. Go to the [Auth0 Dashboard](https://manage.auth0.com/)
+2. Navigate to **Applications** → **APIs** in the sidebar
+3. Click **+ Create API**
+4. Fill in the following:
+   - **Name**: My Express API (or your preferred name)
+   - **Identifier**: `https://api.example.com` (this becomes your `AUTH0_AUDIENCE`)
+   - **Signing Algorithm**: RS256 (recommended)
+5. Click **Create**
+6. Copy the **Identifier** value for use in your application
+
+  </Tab>
+</Tabs>
+
+### 4. Create environment configuration
+
+Create a `.env` file in your project root with your Auth0 configuration:
+
+```bash
+# .env
+
+# Your Auth0 tenant domain (without https:// prefix shown in Dashboard)
+AUTH0_AUDIENCE=https://api.example.com
+AUTH0_DOMAIN=your-tenant.us.auth0.com
+
+# Server configuration
+PORT=3000
 ```
 
-### Hide error details in production
+> ℹ️ **Finding your Auth0 Domain**: In the Auth0 Dashboard, your domain appears in the top-left corner or under **Settings** → **General**. It typically looks like `dev-abc123.us.auth0.com`.
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `AUTH0_DOMAIN` | Your Auth0 tenant domain | `dev-abc123.us.auth0.com` |
+| `AUTH0_AUDIENCE` | The API Identifier you created | `https://api.example.com` |
+
+### 5. Create the server
+
+Create `server.js` (or `server.ts` for TypeScript) with the following code:
 
 ```javascript
-app.use(function(err, req, res, next) {
-  const isProduction = process.env.NODE_ENV === 'production';
-  
-  res.status(err.status || 500).json({
-    error: err.code || 'server_error',
-    message: isProduction ? 'An error occurred' : err.message
+// server.js
+require('dotenv').config();
+const express = require('express');
+const { auth } = require('express-oauth2-jwt-bearer');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Configure JWT validation middleware
+const checkJwt = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+});
+
+// Public route - no authentication required
+app.get('/api/public', (req, res) => {
+  res.json({
+    message: 'Hello from a public endpoint! No authentication required.',
   });
 });
+
+// Protected route - requires valid JWT
+app.get('/api/private', checkJwt, (req, res) => {
+  res.json({
+    message: 'Hello from a private endpoint!',
+    user: req.auth.payload.sub,
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  
+  const status = err.status || 500;
+  const message = err.message || 'Internal Server Error';
+  
+  res.status(status).json({
+    error: err.code || 'server_error',
+    message: status === 401 ? 'Authentication required' : message,
+  });
+});
+
+app.listen(port, () => {
+  console.log(`API server running on http://localhost:${port}`);
+});
+```
+
+<details>
+<summary>TypeScript Version</summary>
+
+Create `server.ts`:
+
+```typescript
+// server.ts
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
+import { auth, UnauthorizedError } from 'express-oauth2-jwt-bearer';
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Configure JWT validation middleware
+const checkJwt = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+});
+
+// Public route - no authentication required
+app.get('/api/public', (req: Request, res: Response) => {
+  res.json({
+    message: 'Hello from a public endpoint! No authentication required.',
+  });
+});
+
+// Protected route - requires valid JWT
+app.get('/api/private', checkJwt, (req: Request, res: Response) => {
+  res.json({
+    message: 'Hello from a private endpoint!',
+    user: req.auth?.payload.sub,
+  });
+});
+
+// Error handling middleware
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error(err.stack);
+  
+  if (err instanceof UnauthorizedError) {
+    res.status(err.status).set(err.headers).json({
+      error: err.code || 'unauthorized',
+      message: 'Authentication required',
+    });
+  } else {
+    res.status(500).json({
+      error: 'server_error',
+      message: 'Internal Server Error',
+    });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`API server running on http://localhost:${port}`);
+});
+```
+
+Add a `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "./dist"
+  },
+  "include": ["*.ts"]
+}
+```
+
+</details>
+
+### 6. Run your API
+
+Start the server:
+
+```bash
+node server.js
+```
+
+For TypeScript:
+
+```bash
+npx ts-node server.ts
+```
+
+> ℹ️ Your API is now running at [http://localhost:3000](http://localhost:3000).
+
+> ✅ **Checkpoint**: Verify your API is protecting routes correctly:
+>
+> **Test the public endpoint** (should return 200):
+> ```bash
+> curl http://localhost:3000/api/public
+> ```
+>
+> **Test the private endpoint without a token** (should return 401):
+> ```bash
+> curl http://localhost:3000/api/private
+> ```
+>
+> You should receive:
+> - Public endpoint: `{"message":"Hello from a public endpoint!..."}`
+> - Private endpoint: `{"error":"unauthorized","message":"Authentication required"}`
+
+### 7. Test with a valid token
+
+To test the protected endpoint with a valid access token:
+
+1. Go to [Auth0 Dashboard](https://manage.auth0.com/) → **Applications** → **APIs**
+2. Select your API → **Test** tab
+3. Copy the generated access token
+
+Test your protected endpoint:
+
+```bash
+curl http://localhost:3000/api/private \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+You should receive a response like:
+
+```json
+{
+  "message": "Hello from a private endpoint!",
+  "user": "auth0|abc123..."
+}
+```
+
+> ✅ **Success!** Your Express API is now protected with JWT authentication.
+
+---
+
+## Add Scope-Based Authorization
+
+Scopes allow fine-grained access control. You can require specific scopes for different endpoints.
+
+### 1. Configure scopes in Auth0
+
+1. In the Auth0 Dashboard, go to **Applications** → **APIs** → Your API
+2. Navigate to the **Permissions** tab
+3. Add the following scopes:
+   - `read:messages` - Read messages
+   - `write:messages` - Write messages
+   - `admin:access` - Administrative access
+
+### 2. Protect routes with scopes
+
+Update your server to use scope-based authorization:
+
+```javascript
+const { auth, requiredScopes } = require('express-oauth2-jwt-bearer');
+
+// ... existing setup ...
+
+// Requires 'read:messages' scope
+app.get('/api/messages', checkJwt, requiredScopes('read:messages'), (req, res) => {
+  res.json({
+    messages: [
+      { id: 1, text: 'Hello!' },
+      { id: 2, text: 'World!' },
+    ],
+  });
+});
+
+// Requires 'admin:access' scope
+app.get('/api/admin', checkJwt, requiredScopes('admin:access'), (req, res) => {
+  res.json({
+    message: 'Admin access granted',
+    userId: req.auth.payload.sub,
+  });
+});
+```
+
+### 3. Request tokens with scopes
+
+When obtaining tokens, include the required scopes in the authorization request. The scopes granted will be included in the token's `scope` claim.
+
+> ⚠️ **Important**: If a request lacks the required scope, the API returns `403 Forbidden` with an `insufficient_scope` error.
+
+---
+
+## Add Claim Validation
+
+Beyond scopes, you can validate custom claims in the JWT payload.
+
+### Validate specific claim values
+
+```javascript
+const { auth, claimEquals, claimIncludes, claimCheck } = require('express-oauth2-jwt-bearer');
+
+// Require exact claim value
+app.get('/api/org/:orgId', 
+  checkJwt, 
+  claimEquals('org_id', 'org_123'),
+  (req, res) => {
+    res.json({ message: 'Organization access granted' });
+  }
+);
+
+// Require claim to include all specified values
+app.get('/api/roles', 
+  checkJwt, 
+  claimIncludes('roles', 'editor', 'viewer'),
+  (req, res) => {
+    res.json({ message: 'Role check passed' });
+  }
+);
+
+// Custom claim validation logic
+app.get('/api/premium', 
+  checkJwt, 
+  claimCheck((claims) => {
+    return claims.subscription === 'premium' && claims.verified === true;
+  }),
+  (req, res) => {
+    res.json({ message: 'Premium feature access granted' });
+  }
+);
 ```
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+<details>
+<summary>Error: "Unexpected 'iss' value" or "Unexpected 'aud' value"</summary>
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| `401 Unauthorized` on valid token | Incorrect `audience` or `issuerBaseURL` | Verify values match your Auth0 API settings |
-| `403 Insufficient Scope` | Token missing required scope | Ensure the token was requested with the correct scopes |
-| `ISSUER_BASE_URL required` | Missing environment variable | Create a `.env` file with required values |
-| JWKS fetch timeout | Network/firewall issues | Check network access to your Auth0 domain |
+**Cause**: The issuer or audience in the token doesn't match your configuration.
 
-### Verify your configuration
+**Solution**:
 
-```javascript
-console.log('Issuer:', process.env.ISSUER_BASE_URL);
-console.log('Audience:', process.env.AUDIENCE);
-```
-
-### Test with a valid token
-
-1. Go to **Applications** > **APIs** > Your API > **Test** tab in the Auth0 Dashboard
-2. Copy the provided Access Token
-3. Use it in your API request:
+1. Decode your token at [jwt.io](https://jwt.io)
+2. Check the `iss` claim matches `https://YOUR_AUTH0_DOMAIN/` (note the trailing slash)
+3. Check the `aud` claim matches your `AUTH0_AUDIENCE` exactly
 
 ```bash
-curl http://localhost:3000/api/private \
-  --header 'Authorization: Bearer YOUR_TEST_TOKEN'
+# Correct .env configuration
+AUTH0_DOMAIN=dev-abc123.us.auth0.com
+AUTH0_AUDIENCE=https://api.example.com
+```
+
+</details>
+
+<details>
+<summary>Error: "You must provide an 'issuerBaseURL'" or "'audience' is required"</summary>
+
+**Cause**: Environment variables are not being loaded.
+
+**Solution**:
+
+1. Ensure `.env` file exists in your project root
+2. Verify `dotenv` is installed: `npm install dotenv`
+3. Add `require('dotenv').config()` at the top of your server file
+4. Check variable names match exactly (case-sensitive)
+
+</details>
+
+<details>
+<summary>401 Unauthorized on all requests</summary>
+
+**Possible causes**:
+- Token is expired
+- Audience doesn't match
+- Issuer doesn't match
+- Token not properly formatted
+
+**Debug steps**:
+
+1. Decode your token at [jwt.io](https://jwt.io)
+2. Check the `exp` claim hasn't passed (token not expired)
+3. Verify `aud` claim matches your `AUTH0_AUDIENCE` exactly
+4. Verify `iss` claim is `https://{AUTH0_DOMAIN}/`
+5. Ensure Authorization header format is `Bearer YOUR_TOKEN` (with space)
+
+</details>
+
+<details>
+<summary>Error: "Failed to fetch authorization server metadata"</summary>
+
+**Cause**: The SDK cannot reach Auth0 to fetch OIDC configuration.
+
+**Solution**:
+
+1. Verify your `AUTH0_DOMAIN` is correct
+2. Check network connectivity to Auth0
+3. If behind a proxy, configure the HTTP agent:
+
+```javascript
+const { HttpsProxyAgent } = require('https-proxy-agent');
+
+const checkJwt = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+  agent: new HttpsProxyAgent(process.env.HTTPS_PROXY),
+});
+```
+
+</details>
+
+<details>
+<summary>403 Forbidden with "insufficient_scope"</summary>
+
+**Cause**: The token doesn't have the required scopes.
+
+**Solution**:
+
+1. Verify the scopes are defined in your Auth0 API (Dashboard → APIs → Permissions)
+2. Request the scopes when obtaining the token
+3. Check the token's `scope` claim includes the required scopes
+
+</details>
+
+---
+
+## Advanced Usage
+
+<details>
+<summary>Optional Authentication (Mixed Public/Private Routes)</summary>
+
+Allow both authenticated and anonymous access to the same route:
+
+```javascript
+const optionalAuth = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+  authRequired: false, // Don't reject anonymous requests
+});
+
+app.get('/api/feed', optionalAuth, (req, res) => {
+  if (req.auth) {
+    // Authenticated user - show personalized content
+    res.json({ 
+      message: `Welcome back, ${req.auth.payload.sub}!`,
+      personalizedContent: true,
+    });
+  } else {
+    // Anonymous user - show public content
+    res.json({ 
+      message: 'Welcome, guest!',
+      personalizedContent: false,
+    });
+  }
+});
+```
+
+</details>
+
+<details>
+<summary>Using Express Router for API Organization</summary>
+
+Organize routes with Express Router:
+
+```javascript
+const express = require('express');
+const { auth, requiredScopes } = require('express-oauth2-jwt-bearer');
+
+const app = express();
+const apiRouter = express.Router();
+
+const checkJwt = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+});
+
+// Apply auth to all API routes
+apiRouter.use(checkJwt);
+
+apiRouter.get('/users', (req, res) => {
+  res.json({ users: [] });
+});
+
+apiRouter.get('/admin', requiredScopes('admin:access'), (req, res) => {
+  res.json({ admin: 'data' });
+});
+
+// Mount router
+app.use('/api', apiRouter);
+```
+
+</details>
+
+<details>
+<summary>CORS Configuration for SPAs</summary>
+
+Configure CORS when your API is called from a Single Page Application:
+
+```javascript
+const cors = require('cors');
+
+app.use(cors({
+  origin: 'https://your-spa.example.com',
+  allowedHeaders: ['Authorization', 'Content-Type'],
+  exposedHeaders: ['WWW-Authenticate'], // Important for error handling
+}));
+
+app.use(checkJwt);
+```
+
+Install cors: `npm install cors`
+
+</details>
+
+<details>
+<summary>Custom Error Responses</summary>
+
+Customize error responses for better client handling:
+
+```javascript
+const { UnauthorizedError, InvalidTokenError, InsufficientScopeError } = require('express-oauth2-jwt-bearer');
+
+app.use((err, req, res, next) => {
+  if (err instanceof InsufficientScopeError) {
+    return res.status(403).json({
+      error: 'forbidden',
+      message: 'You do not have permission to access this resource',
+      required_scopes: err.requiredScopes,
+    });
+  }
+  
+  if (err instanceof InvalidTokenError) {
+    return res.status(401).json({
+      error: 'invalid_token',
+      message: 'The provided token is invalid or expired',
+    });
+  }
+  
+  if (err instanceof UnauthorizedError) {
+    return res.status(401).set(err.headers).json({
+      error: 'unauthorized',
+      message: 'Authentication required',
+    });
+  }
+  
+  next(err);
+});
+```
+
+</details>
+
+<details>
+<summary>Production Security Best Practices</summary>
+
+For production deployments, add these security enhancements:
+
+```javascript
+const helmet = require('helmet');
+
+// Security headers
+app.use(helmet());
+
+// Trust proxy (when behind load balancer/reverse proxy)
+app.enable('trust proxy');
+
+// Configure auth with additional options
+const checkJwt = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+  clockTolerance: 10, // Allow 10 seconds clock skew
+});
+```
+
+Install helmet: `npm install helmet`
+
+**Additional recommendations**:
+- Always use HTTPS in production
+- Set short token expiration times
+- Use DPoP for high-security APIs
+- Never log or expose complete tokens
+- Validate the `audience` claim (SDK does this by default)
+
+</details>
+
+<details>
+<summary>Working with Custom Claims in TypeScript</summary>
+
+Define types for custom claims in your tokens:
+
+```typescript
+import { JWTPayload } from 'express-oauth2-jwt-bearer';
+
+// Extend the payload type with your custom claims
+interface CustomPayload extends JWTPayload {
+  permissions: string[];
+  org_id: string;
+  subscription: 'free' | 'premium';
+}
+
+app.get('/api/profile', checkJwt, (req, res) => {
+  // Type assertion for custom claims
+  const payload = req.auth?.payload as CustomPayload;
+  
+  res.json({
+    userId: payload.sub,
+    organization: payload.org_id,
+    subscription: payload.subscription,
+    permissions: payload.permissions,
+  });
+});
+```
+
+</details>
+
+---
+
+## Complete Example
+
+Here's a complete Express API with all features:
+
+```javascript
+// server.js
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const { 
+  auth, 
+  requiredScopes, 
+  claimCheck,
+  UnauthorizedError,
+  InsufficientScopeError,
+} = require('express-oauth2-jwt-bearer');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGIN || '*',
+  exposedHeaders: ['WWW-Authenticate'],
+}));
+app.use(express.json());
+
+// JWT validation middleware
+const checkJwt = auth({
+  issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+  audience: process.env.AUTH0_AUDIENCE,
+});
+
+// Public endpoints
+app.get('/api/public', (req, res) => {
+  res.json({ message: 'Public endpoint - no authentication required' });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+// Protected endpoints
+app.get('/api/private', checkJwt, (req, res) => {
+  res.json({
+    message: 'Private endpoint',
+    user: req.auth.payload.sub,
+  });
+});
+
+// Scope-protected endpoint
+app.get('/api/messages', checkJwt, requiredScopes('read:messages'), (req, res) => {
+  res.json({
+    messages: [
+      { id: 1, text: 'Hello from the API!' },
+    ],
+  });
+});
+
+// Admin endpoint with scope and claim check
+app.get('/api/admin', 
+  checkJwt, 
+  requiredScopes('admin:access'),
+  claimCheck((claims) => claims.role === 'admin'),
+  (req, res) => {
+    res.json({
+      message: 'Admin access granted',
+      userId: req.auth.payload.sub,
+    });
+  }
+);
+
+// Error handling
+app.use((err, req, res, next) => {
+  console.error('Error:', err.message);
+  
+  if (err instanceof InsufficientScopeError) {
+    return res.status(403).json({
+      error: 'insufficient_scope',
+      message: 'Missing required permissions',
+    });
+  }
+  
+  if (err instanceof UnauthorizedError) {
+    return res.status(err.status).set(err.headers).json({
+      error: err.code || 'unauthorized',
+      message: 'Authentication required',
+    });
+  }
+  
+  res.status(500).json({
+    error: 'server_error',
+    message: 'An unexpected error occurred',
+  });
+});
+
+app.listen(port, () => {
+  console.log(`🚀 API server running at http://localhost:${port}`);
+  console.log(`   - Public:  http://localhost:${port}/api/public`);
+  console.log(`   - Private: http://localhost:${port}/api/private`);
+});
 ```
 
 ---
 
 ## Next Steps
 
-Congratulations! You have successfully added authorization to your Express.js API using Auth0.
+Now that your Express API is protected with JWT authentication, you can:
 
-Continue building your application:
+- **Add more protected routes** with different scope requirements
+- **Implement refresh token rotation** for long-lived sessions
+- **Add rate limiting** to protect against abuse
+- **Connect a frontend application** that obtains tokens from Auth0
+- **Enable DPoP** for enhanced token security (proof-of-possession)
 
-- [Validate Access Tokens](https://auth0.com/docs/tokens/guides/validate-access-tokens) - Learn more about Access Token validation
-- [Role-Based Access Control](https://auth0.com/docs/authorization/rbac) - Implement fine-grained authorization
-- [Custom Claims](https://auth0.com/docs/tokens/jwt-claims#custom-claims) - Add custom data to your tokens
-- [API Reference](https://auth0.github.io/node-oauth2-jwt-bearer/) - Explore all SDK options
-- [Sample Application](https://github.com/auth0-samples/auth0-express-api-samples) - View complete example projects
+### Useful Resources
+
+- [express-oauth2-jwt-bearer README](https://github.com/auth0/node-oauth2-jwt-bearer/tree/main/packages/express-oauth2-jwt-bearer)
+- [Auth0 API Documentation](https://auth0.com/docs/api)
+- [JWT.io](https://jwt.io/) - Debug and decode JWTs
+- [OAuth 2.0 RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750) - Bearer Token Usage
+
+---
+
+> ✅ **Congratulations!** You've successfully protected your Express.js API with JWT authentication using Auth0 and express-oauth2-jwt-bearer.
