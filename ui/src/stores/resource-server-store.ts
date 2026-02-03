@@ -1,6 +1,10 @@
 import { action, makeAutoObservable } from 'mobx';
 
-import { getResourceServers, type ResourceServer } from '@/lib/api';
+import {
+  getResourceServers,
+  postResourceServers,
+  type ResourceServer,
+} from '@/lib/api';
 
 import type { RootStore } from './root-store';
 
@@ -15,6 +19,7 @@ export class ResourceServerStore {
       init: action,
       reset: action,
       setSelectedApi: action,
+      createApi: action,
     });
     this.rootStore = rootStore;
   }
@@ -26,6 +31,19 @@ export class ResourceServerStore {
       console.error('Failed to initialize ResourceServerStore:', error);
       // Reset to empty state on error
       this.reset();
+    }
+  }
+
+  async createApi(apiData: { name: string; identifier: string }) {
+    try {
+      const newApi = await postResourceServers(apiData);
+      this.resourceServers.push(newApi);
+      // Set the newly created API as selected
+      this.setSelectedApi(newApi.id);
+      return newApi;
+    } catch (error) {
+      console.error('Failed to create API:', error);
+      throw error;
     }
   }
 
