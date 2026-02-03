@@ -1,0 +1,260 @@
+---
+title: "Python API: 認証"
+---
+"/snippets/AuthCodeBlock.jsx" から {AuthCodeBlock} をインポートします。
+
+
+##### ルチアーノ・バルマセダ
+
+このチュートリアルでは、Flask で構築された Python API に承認を追加する方法を説明します。アカウントに設定された例を使用してこのクイックスタートを実行するには、ログインすることをお勧めします。
+{/* <Card title="View on Github" href="https://github.com/auth0-samples/auth0-python-api-samples/tree/master/00-Starter-Seed" icon="github">
+システム要件: Python 3.6 以上 | Flask 2.0 | Authlib 1.0
+</Card> */
+
+<Info>
+**Auth0 を初めてご利用ですか？** [Auth0 の仕組み](/docs/get-started/auth0-overview) と、OAuth 2.0 フレームワークを使用した [API 認証と認可の実装](/docs/get-started/authentication-and-authorization-flow) についてご確認ください。
+</Info>
+
+## Auth0 APIを構成する
+
+### APIを作成する
+
+Auth0ダッシュボードの[API](https://manage.auth0.com/#/apis)セクションで、**APIの作成**をクリックします。APIの名前と識別子（例：https://quickstarts/api）を入力します。この識別子は、後でアクセストークン検証を構成する際に、`audience`として使用します。**署名アルゴリズム**は**RS256**のままにしておきます。
+
+<Frame>![API の作成](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+デフォルトでは、API はトークン署名アルゴリズムとして RS256 を使用します。RS256 は秘密鍵と公開鍵のペアを使用するため、Auth0 アカウントの公開鍵と照合してトークンを検証します。公開鍵は [JSON Web Key Set (JWKS)](/docs/secure/tokens/json-web-tokens/json-web-key-sets) 形式で、[こちら](https://{yourDomain}/.well-known/jwks.json) からアクセスできます。
+
+### 権限を定義する
+
+権限を使用すると、特定のアクセストークンを持つユーザーに代わってリソースにアクセスする方法を定義することができます。例えば、ユーザーがマネージャーアクセスレベルを持つ場合は「messages」リソースへの読み取りアクセスを許可し、管理者アクセスレベルを持つ場合はそのリソースへの書き込みアクセスを許可するといったことが可能です。
+
+許可される権限は、Auth0 ダッシュボードの [API](https://manage.auth0.com/#/apis) セクションの **権限** ビューで定義できます。
+
+<Frame>![権限の設定](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+この例では、`read:messages` スコープを使用しています。
+</Info>
+
+この例では次のことを示します。
+
+* 受信 HTTP リクエストの `Authorization` ヘッダーで JSON Web Token (JWT) を確認する方法。
+* Auth0アカウントの[JSON Web Key Set (JWKS)](/docs/secure/tokens/json-web-tokens/json-web-key-sets)を使用して、トークンの有効性を確認する方法。アクセストークンの検証の詳細については、[アクセストークンの検証](/docs/secure/tokens/access-tokens/validate-access-tokens)をご覧ください。
+
+## アクセストークンの検証
+
+### 依存関係をインストールする
+
+次の依存関係を `requirements.txt` に追加します。
+
+```txt 行
+# /要件.txt
+
+flask==2.3.3
+python-dotenv
+pyjwt
+flask-cors
+six
+```
+
+### Flask アプリケーションを作成する
+
+`server.py` ファイルを作成し、[Flask](http://flask.pocoo.org/) アプリケーションを初期化します。ドメイン、オーディエンス、エラー処理を設定します。
+
+export const codeExample = `# /server.py
+
+import json
+from six.moves.urllib.request import urlopen
+from functools import wraps
+
+from flask import Flask, request, jsonify, _request_ctx_stack
+from flask_cors import cross_origin
+import jwt
+
+AUTH0_DOMAIN = '{yourDomain}'
+API_AUDIENCE = YOUR_API_AUDIENCE
+ALGORITHMS = ["RS256"]
+
+APP = Flask(__name__)
+
+# エラーハンドラー
+class AuthError(Exception):
+def __init__(self, error, status_code):
+self.error = error
+self.status_code = status_code
+
+@APP.errorhandler(AuthError)
+def handle_auth_error(ex):
+response = jsonify(ex.error)
+response.status_code = ex.status_code
+return response`;
+
+<AuthCodeBlock children={codeExample} language="py" filename="Python" />
+
+### JWT 検証デコレータを作成する
+
+アクセストークンを JWKS と照合して検証するデコレータを追加します。
+
+```py Python 行
+# /server.py
+
+# エラーレスポンスをフォーマットし、ステータスコードを追加します
+def get_token_auth_header():
+"""Authorization ヘッダーからアクセストークンを取得します
+"""
+auth = request.headers.get("Authorization", None)
+if not auth:
+raise AuthError({"code": "authorization_header_missing",
+"description":
+"Authorization ヘッダーが必要です"}, 401)
+
+parts = auth.split()
+
+if parts[0].lower() != "bearer":
+raise AuthError({"code": "invalid_header",
+"description":
+"Authorization ヘッダーは "Bearer" で始まっている必要があります"}, 401)
+elif len(parts) == 1:
+raise AuthError({"code": "invalid_header",
+"description": "トークンがありません見つかりました"}, 401)
+elif len(parts) > 2:
+AuthError({"code": "invalid_header",
+"description":
+"認可ヘッダーは"
+"ベアラートークン"}, 401) である必要があります
+
+token = parts[1]
+return token
+
+def requires_auth(f):
+"""アクセストークンが有効かどうかを判断します
+"""
+@wraps(f)
+def decorated(*args, **kwargs):
+token = get_token_auth_header()
+jsonurl = urlopen("https://"+AUTH0_DOMAIN+"/.well-known/jwks.json")
+jwks = json.loads(jsonurl.read())
+unverified_header = jwt.get_unverified_header(token)
+public_key = None
+for key in jwks["keys"]:
+if key["kid"] == unverified_header["kid"]:
+public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+if public_key:
+try:
+payload = jwt.decode(
+token,
+public_key,
+algorithms=ALGORITHMS,
+audience=API_AUDIENCE,
+issuer="https://"+AUTH0_DOMAIN+"/"
+)
+except jwt.ExpiredSignatureError:
+raise AuthError({"code": "token_expired",
+"description": "トークンの有効期限が切れています"}, 401)
+except jwt.InvalidAudienceError:
+raise AuthError({"code": "invalid_audience",
+"description":
+"オーディエンスが正しくありません"
+"オーディエンスを確認してください"}, 401)
+except jwt.InvalidIssuerError
+AuthError({"code": "invalid_issuer",
+"description":
+"発行者が正しくありません。"
+"発行者を確認してください。"}, 401) を発生します
+except Exception:
+AuthError({"code": "invalid_header",
+"description":
+"認証トークンを解析できません。"
+"トークン。"}, 401) を発生します
+
+_request_ctx_stack.top.current_user = payload
+return f(*args, **kwargs)
+AuthError({"code": "invalid_header",
+"description": "適切なキーが見つかりません。"}, 401) を発生します
+``` を返却します
+
+
+
+
+
+
+### スコープを検証する
+
+次のようにして、アクセス トークン内の特定の `scope` を検索するように個別のルートを設定できます。
+
+```py Python行
+# /server.py
+
+def requires_scope(required_scope):
+"""アクセストークンに必要なスコープが存在するかどうかを判断します
+引数:
+required_scope (str): リソースへのアクセスに必要なスコープ
+"""
+token = get_token_auth_header()
+unverified_claims = jwt.decode(token, options={"verify_signature": False})
+if unverified_claims.get("scope"):
+token_scopes = unverified_claims["scope"].split()
+for token_scope in token_scopes:
+if token_scope == required_scope:
+return True
+return False
+```
+
+## API エンドポイントの保護
+
+以下のルートは、以下のリクエストで利用できます。
+
+* `GET /api/public`: 認証されていないリクエストで利用できます。
+* `GET /api/private`: 追加のスコープが付与されていないアクセストークンを含む認証済みのリクエストで利用できます。
+* `GET /api/private-scoped`: `read:messages` スコープが付与されたアクセストークンを含む認証済みのリクエストで利用できます。
+
+上記で定義したデコレータと関数は、対応するエンドポイントで使用できます。
+
+``py Python 行
+# コントローラー API
+
+# 認証は不要です
+@APP.route("/api/public")
+@cross_origin(headers=["Content-Type", "Authorization"])
+def public():
+response = "Hello from a public endpoint! You don't need be authenticated to see this."
+return jsonify(message=response)
+
+# 認証が必要です
+@APP.route("/api/private")
+@cross_origin(headers=["Content-Type", "Authorization"])
+@requires_auth
+def private():
+response = "プライベートエンドポイントからのHelloです！これを表示するには認証が必要です。"
+return jsonify(message=response)
+
+# 認証が必要です
+@APP.route("/api/private-scoped")
+@cross_origin(headers=["Content-Type", "Authorization"])
+@requires_auth
+def private_scoped():
+if requires_scope("read:messages"):
+response = "プライベートエンドポイントからのHelloです！これを表示するには認証が必要で、スコープがread:messagesである必要があります。"
+return jsonify(message=response)
+raise AuthError({
+"code": "Unauthorized",
+"description": "このリソースへのアクセス権がありません"
+}, 403)
+```
+
+<Info>
+##### 次に何ができるでしょうか?
+<table>
+  <tr>
+    <td><a href="/docs/authenticate/identity-providers">他の ID プロバイダーを設定する</a></td>
+    <td><a href="/docs/secure/multi-factor-authentication">多要素認証を有効にする</a></td>
+  </tr>
+  <tr>
+    <td><a href="/docs/secure/attack-protection">攻撃保護について学ぶ</a></td>
+    <td><a href="/docs/customize/rules">ルールについて学ぶ</a></td>
+  </tr>
+<スパンclass='notranslate'></table>
+[GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md)
+</Info>
+---
