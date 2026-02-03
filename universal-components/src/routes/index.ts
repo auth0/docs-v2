@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { lazy } from "react";
 
 // Single import for all components
@@ -19,6 +20,6 @@ export const componentRoutes: Record<
 // Create lazy components for each route
 Object.entries(componentRoutes).forEach(([, route]) => {
   route.LazyComponent = lazy(() =>
-    mintlifyLoader().then((m) => ({ default: (m as any)[route.componentKey] }))
+    mintlifyLoader().then((m) => ({ default: (m as any)[route.componentKey] })),
   );
 });

@@ -14,7 +14,7 @@ import {
 } from "./helpers/history";
 import { getMockLogic } from "./mocks";
 import { componentRoutes, mintlifyLoader } from "./routes";
-import { setupPopperFix } from "./helpers/util";
+import { detectColorScheme, setupPopperFix } from "./helpers/util";
 
 // ==================== State & Cache ====================
 let cachedModule: any = null;
@@ -22,6 +22,8 @@ const mountedRoots = new Map<HTMLElement, Root>();
 let isScanning = false;
 let routeChangeHandler: (() => void) | null = null;
 let popperObserver: MutationObserver | null = null;
+let themeObserver: MutationObserver | null = null;
+let currentColorScheme: string | null = null;
 
 // ==================== Helper Functions ====================
 async function getModule() {
@@ -46,7 +48,7 @@ function WaitForCoreClient({
 }
 
 async function getWrapper(
-  componentName: string
+  componentName: string,
 ): Promise<React.ComponentType<any> | null> {
   const route = componentRoutes[componentName];
   if (!route) return null;
@@ -62,6 +64,7 @@ async function getWrapper(
 
   function Wrapper(props: Record<string, unknown>) {
     const logic = getMockLogic(componentName);
+    const mode = detectColorScheme();
 
     return (
       <Auth0ComponentProvider
@@ -69,7 +72,7 @@ async function getWrapper(
           skipApiClients: true,
           domain: "example.auth0.com",
         }}
-        themeSettings={{ theme: "default", mode: "light" }}
+        themeSettings={{ theme: "default", mode }}
       >
         <WaitForCoreClient
           useCoreClient={useCoreClient}
@@ -95,7 +98,7 @@ function unmountAll() {
 async function mountComponent(
   componentName: string,
   container: HTMLElement,
-  props?: Record<string, unknown>
+  props?: Record<string, unknown>,
 ) {
   if (mountedRoots.has(container)) return;
 
@@ -109,7 +112,7 @@ async function mountComponent(
   root.render(
     <StrictMode>
       <Wrapper {...props} />
-    </StrictMode>
+    </StrictMode>,
   );
   mountedRoots.set(container, root);
 }
@@ -117,7 +120,7 @@ async function mountComponent(
 async function scanAndMount() {
   if (isScanning) return;
   isScanning = true;
-  
+
   // Unmount components that are no longer in DOM
   mountedRoots.forEach((root, container) => {
     if (!document.body.contains(container)) {
@@ -127,11 +130,13 @@ async function scanAndMount() {
   });
 
   // Mount new components
-  const elements = document.querySelectorAll<HTMLElement>("[data-uc-component]");
-  
+  const elements = document.querySelectorAll<HTMLElement>(
+    "[data-uc-component]",
+  );
+
   for (const el of elements) {
     if (mountedRoots.has(el)) continue;
-    
+
     const name = el.dataset.ucComponent;
     if (!name) continue;
 
@@ -144,7 +149,7 @@ async function scanAndMount() {
 
     await mountComponent(name, el, props);
   }
-  
+
   isScanning = false;
 }
 
@@ -158,36 +163,68 @@ function cleanup() {
     popperObserver.disconnect();
     popperObserver = null;
   }
+  if (themeObserver) {
+    themeObserver.disconnect();
+    themeObserver = null;
+  }
   unmountAll();
+}
+
+function setupThemeWatcher() {
+  currentColorScheme = detectColorScheme();
+
+  themeObserver = new MutationObserver(() => {
+    const newColorScheme = detectColorScheme();
+
+    // Check if color scheme actually changed
+    if (currentColorScheme !== newColorScheme) {
+      console.log(
+        "Theme changed from",
+        currentColorScheme,
+        "to",
+        newColorScheme,
+      );
+      currentColorScheme = newColorScheme;
+
+      // Remount all components with new theme
+      unmountAll();
+      setTimeout(scanAndMount, 100);
+    }
+  });
+
+  // Observe HTML element for style and class changes
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["style", "class", "data-theme"],
+  });
 }
 
 function main() {
   overrideHistoryMethods();
-  
+
   // Setup popper fix
   popperObserver = setupPopperFix();
-  
+
   // Scan on route change
   routeChangeHandler = () => {
     setTimeout(scanAndMount, 200);
   };
   addRouteChangeListener(routeChangeHandler);
 
+  // Watch for theme changes
+  setupThemeWatcher();
+
   // Initial scan
-  if (document.readyState === 'complete') {
+  if (document.readyState === "complete") {
     setTimeout(scanAndMount, 200);
   } else {
-    window.addEventListener('load', () => setTimeout(scanAndMount, 200));
+    window.addEventListener("load", () => setTimeout(scanAndMount, 200));
   }
 }
 
-// ==================== Initialize ====================
-// Setup cleanup handlers
-window.addEventListener('beforeunload', cleanup);
-window.addEventListener('unload', cleanup);
+// ==================== Setup cleanup handlers ====================
+window.addEventListener("beforeunload", cleanup);
+window.addEventListener("unload", cleanup);
 
 // Start the application
 main();
-
-// Export for external usage
-export { cleanup };
