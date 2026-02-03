@@ -16,9 +16,14 @@ import { getMockLogic } from "./mocks";
 import { componentRoutes, mintlifyLoader } from "./routes";
 import { setupPopperFix } from "./helpers/util";
 
-// Cache for loaded module
+// ==================== State & Cache ====================
 let cachedModule: any = null;
+const mountedRoots = new Map<HTMLElement, Root>();
+let isScanning = false;
+let routeChangeHandler: (() => void) | null = null;
+let popperObserver: MutationObserver | null = null;
 
+// ==================== Helper Functions ====================
 async function getModule() {
   if (!cachedModule) {
     cachedModule = await mintlifyLoader();
@@ -40,15 +45,9 @@ function WaitForCoreClient({
   return <>{children}</>;
 }
 
-const wrapperCache: Record<string, React.ComponentType<any>> = {};
-
 async function getWrapper(
   componentName: string
 ): Promise<React.ComponentType<any> | null> {
-  if (wrapperCache[componentName]) {
-    return wrapperCache[componentName];
-  }
-
   const route = componentRoutes[componentName];
   if (!route) return null;
 
@@ -68,7 +67,7 @@ async function getWrapper(
       <Auth0ComponentProvider
         authDetails={{
           skipApiClients: true,
-          domain: "example.auth0.com", // Add domain here
+          domain: "example.auth0.com",
         }}
         themeSettings={{ theme: "default", mode: "light" }}
       >
@@ -82,12 +81,10 @@ async function getWrapper(
     );
   }
 
-  wrapperCache[componentName] = Wrapper;
   return Wrapper;
 }
 
-const mountedRoots = new Map<HTMLElement, Root>();
-
+// ==================== Mount/Unmount Functions ====================
 function unmountAll() {
   mountedRoots.forEach((root) => {
     root.unmount();
@@ -117,8 +114,10 @@ async function mountComponent(
   mountedRoots.set(container, root);
 }
 
-function scanAndMount() {
-  console.log("scanAndMount called");
+async function scanAndMount() {
+  if (isScanning) return;
+  isScanning = true;
+  
   // Unmount components that are no longer in DOM
   mountedRoots.forEach((root, container) => {
     if (!document.body.contains(container)) {
@@ -128,49 +127,28 @@ function scanAndMount() {
   });
 
   // Mount new components
-  document
-    .querySelectorAll<HTMLElement>("[data-uc-component]")
-    .forEach((el) => {
-      const name = el.dataset.ucComponent;
-      if (!name) return;
-
-      let props = {};
-      try {
-        props = el.dataset.ucProps ? JSON.parse(el.dataset.ucProps) : {};
-      } catch (e) {
-        console.error("Failed to parse props:", e);
-      }
-
-      mountComponent(name, el, props);
-    });
-}
-
-let routeChangeHandler: (() => void) | null = null;
-let popperObserver: MutationObserver | null = null;
-
-function main() {
-  overrideHistoryMethods();
+  const elements = document.querySelectorAll<HTMLElement>("[data-uc-component]");
   
-  // Setup popper fix after DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      popperObserver = setupPopperFix();
-    });
-  } else {
-    popperObserver = setupPopperFix();
+  for (const el of elements) {
+    if (mountedRoots.has(el)) continue;
+    
+    const name = el.dataset.ucComponent;
+    if (!name) continue;
+
+    let props = {};
+    try {
+      props = el.dataset.ucProps ? JSON.parse(el.dataset.ucProps) : {};
+    } catch (e) {
+      console.error("Failed to parse props:", e);
+    }
+
+    await mountComponent(name, el, props);
   }
   
-  // Scan on route change
-  routeChangeHandler = () => {
-    setTimeout(scanAndMount, 100);
-  };
-  addRouteChangeListener(routeChangeHandler);
-
-  // Initial scan
-  scanAndMount();
+  isScanning = false;
 }
 
-// Cleanup function (useful for HMR or SPA unmount)
+// ==================== Lifecycle Functions ====================
 function cleanup() {
   if (routeChangeHandler) {
     removeRouteChangeListener(routeChangeHandler);
@@ -183,6 +161,32 @@ function cleanup() {
   unmountAll();
 }
 
+function main() {
+  overrideHistoryMethods();
+  
+  // Setup popper fix
+  popperObserver = setupPopperFix();
+  
+  // Scan on route change
+  routeChangeHandler = () => {
+    setTimeout(scanAndMount, 200);
+  };
+  addRouteChangeListener(routeChangeHandler);
+
+  // Initial scan
+  if (document.readyState === 'complete') {
+    setTimeout(scanAndMount, 200);
+  } else {
+    window.addEventListener('load', () => setTimeout(scanAndMount, 200));
+  }
+}
+
+// ==================== Initialize ====================
+// Setup cleanup handlers
+window.addEventListener('beforeunload', cleanup);
+window.addEventListener('unload', cleanup);
+
+// Start the application
 main();
 
 // Export for external usage
