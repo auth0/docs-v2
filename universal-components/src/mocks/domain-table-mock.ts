@@ -86,10 +86,8 @@ export const getDomainManagementLogic = () => {
       handleCreate: async (domain: string) => {
         setIsCreating(true);
 
-        // Simulate API delay
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        // Create new domain
         const newDomain: Domain = {
           id: `domain_${Date.now()}`,
           org_id: "org_abc123xyz456",
