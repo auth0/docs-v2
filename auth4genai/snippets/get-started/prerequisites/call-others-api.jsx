@@ -107,7 +107,7 @@ export const Prerequisites = ({
       In the Auth0 Dashboard, configure the My Account API:
       <ul>
         <li>Navigate to <a href="https://manage.auth0.com/#/apis" target="_blank"><strong>Applications &gt; APIs</strong></a>, locate the My Account API banner, and select <strong>Activate</strong> to activate the Auth0 My Account API.</li>
-        <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Applications Access</strong> tab.
+        <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Application Access</strong> tab.
           <ul>
             <li>Find your client application and select <strong>Edit</strong> to configure its <a href="https://www.auth0.com//docs/get-started/apis/api-access-policies-for-applications" target="_blank">application access policies</a>.</li>
             <li>Select <strong>User Access</strong> and under <strong>Authorization</strong>, select <strong>Authorized</strong>.</li>
