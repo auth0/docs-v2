@@ -115,7 +115,7 @@ function convertPathToName(path) {
 // creates the base snippet
 function formatSnippet(oas, path, method) {
     return `---
-openapi: ${oas.destination}/${prefix}${oas.file} ${method} ${path}
+openapi: ${prefix}${oas.file} ${method} ${path}
 ---
 `;
 }
