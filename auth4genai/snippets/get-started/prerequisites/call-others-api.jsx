@@ -107,11 +107,12 @@ export const Prerequisites = ({
       In the Auth0 Dashboard, configure the My Account API:
       <ul>
         <li>Navigate to <a href="https://manage.auth0.com/#/apis" target="_blank"><strong>Applications &gt; APIs</strong></a>, locate the My Account API banner, and select <strong>Activate</strong> to activate the Auth0 My Account API.</li>
-        <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Applications</strong> tab.
+        <li>Once activated, select <strong>Auth0 My Account API</strong> and then select the <strong>Application Access</strong> tab.
           <ul>
-            <li>Toggle your client application to authorize it to access the My Account API.</li>
-            <li>In the dropdown menu, select the <strong>Connected Accounts scopes</strong> for the application, ensuring that at a minimum, the <code>create:me:connected_accounts</code> permission is selected.</li>
-            <li>Select <strong>Update</strong>.</li>
+            <li>Find your client application and select <strong>Edit</strong> to configure its <a href="https://www.auth0.com//docs/get-started/apis/api-access-policies-for-applications" target="_blank">application access policies</a>.</li>
+            <li>Select <strong>User Access</strong> and under <strong>Authorization</strong>, select <strong>Authorized</strong>.</li>
+            <li>For the permissions, select <strong>All</strong> the <a href="https://www.auth0.com/docs/manage-users/my-account-api#scope" target="_blank">Connected Accounts scopes</a> for the application.</li>
+            <li>Select <strong>Save</strong>.</li> This creates a <a href="https://www.auth0.com/docs/get-started/applications/application-access-to-apis-client-grants" target="_blank">client grant</a> that allows your client application to access the My Account API with the Connected Accounts scopes on the user’s behalf.
           </ul>
         </li>
         <li>Next, navigate to the <strong>Settings</strong> tab. Under <strong>Access Settings</strong>, select <strong>Allow Skipping User Consent</strong>.</li>
