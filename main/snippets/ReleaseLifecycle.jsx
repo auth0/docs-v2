@@ -9,34 +9,34 @@ export const ReleaseLifecycle = ({ releaseLifecycle = 'GA' }) => {
 
   const lifeCycleColors = {
     ea: {
-      // bg: '#F8D626',
-      // text: '#000000',
-      bg: '#473D0B',
-      text: '#E3C423',
+      bg: 'lab(91.896% .077188 -6.94053)',
+      text: 'lab(36.091% 25.9241 -68.0384)',
+      darkBg: 'lab(16.0426% 6.71726 -27.2409)',
+      darkText: 'lab(72.6029% 4.08953 -41.9669)',
     },
     ga: {
-      // bg: '#10783F',
-      // text: '#FFFFFF',
-      bg: '#094726',
-      text: '#98D2B2',
-    },
-    deprecated: {
-      // bg: '#424242',
-      // text: '#FFFFFF',
-      bg: '#3E3E3E',
-      text: '#C5C5C5',
-    },
-    planned: {
-      // bg: '#3F59E4',
-      // text: '#FFFFFF',
-      bg: '#263588',
-      text: '#B9C3F5',
+      bg: 'lab(91.896% .077188 -6.94053)',
+      text: 'lab(36.091% 25.9241 -68.0384)',
+      darkBg: 'lab(16.0426% 6.71726 -27.2409)',
+      darkText: 'lab(72.6029% 4.08953 -41.9669)',
     },
     beta: {
-      // bg: '#C32F26',
-      // text: '#FFFFFF',
-      bg: '#761C17',
-      text: '#F0B7B4',
+      bg: 'lab(91.896% .077188 -6.94053)',
+      text: 'lab(36.091% 25.9241 -68.0384)',
+      darkBg: 'lab(16.0426% 6.71726 -27.2409)',
+      darkText: 'lab(72.6029% 4.08953 -41.9669)',
+    },
+    deprecated: {
+      bg: 'lab(90.8548% 11.3355 8.01476)',
+      text: 'lab(47.5286% 56.4238 43.4706)',
+      darkBg: 'lab(16.3609% 37.191 25.6346)',
+      darkText: 'lab(71.881% 41.5 29.4839)',
+    },
+    planned: {
+      bg: 'lab(94.7916% -.0000298023 0)',
+      text: 'lab(54.3656% 0 -.0000119209)',
+      darkBg: 'lab(13.232% 0 0)',
+      darkText: 'lab(51.6164% 0 0)',
     },
   };
 
@@ -49,10 +49,19 @@ export const ReleaseLifecycle = ({ releaseLifecycle = 'GA' }) => {
   }
 
   const badgeClass = `inline-flex items-center w-fit font-medium relative gap-1 py-0.5 pl-2 pr-2 text-sm tracking-[-0.1px] rounded-[8px]`;
-  const badgeStyle = { backgroundColor: colors.bg, color: colors.text };
+  const badgeStyle = {
+    backgroundColor: colors.bg,
+    color: colors.text,
+  };
 
   return (
     <div>
+      <style>{`
+        .dark .release-lifecycle-badge-${lifecycle} {
+          background-color: ${colors.darkBg} !important;
+          color: ${colors.darkText} !important;
+        }
+      `}</style>
       <div class="api-section-heading flex flex-col gap-y-4 w-full">
         <div class="flex items-baseline border-b pb-2.5 border-gray-100 dark:border-gray-800 w-full">
           <h4 class="api-section-heading-title flex-1 mb-0">
@@ -85,7 +94,7 @@ export const ReleaseLifecycle = ({ releaseLifecycle = 'GA' }) => {
                 </div>
               </a>
             </div>
-            <span class={badgeClass} style={badgeStyle}>
+            <span class={`${badgeClass} release-lifecycle-badge-${lifecycle}`} style={badgeStyle}>
               {lifecycleText}
             </span>
           </div>
