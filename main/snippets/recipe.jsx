@@ -667,4 +667,159 @@ export const SignUpForm = () => {
 
   // Temporarily disable/hide the sign-up form until backend integration is ready
   return <></>;
-}
+};
+
+export const CreateInteractiveApp = ({
+  placeholderText = 'Auth0',
+  appType = 'regular_web', // 'regular_web' | 'spa' | 'native' | 'non_interactive',
+  allowedCallbackUrls = ['localhost:3000'],
+  allowedLogoutUrls = ['localhost:3000'],
+  allowedOriginUrls = ['localhost:3000'],
+}) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [storeReady, setStoreReady] = useState(false);
+  const [displayForm, setDisplayForm] = useState(true);
+
+  useEffect(() => {
+    const init = () => setStoreReady(true);
+
+    if (window.rootStore) {
+      // If this create component is re-mounted, clear any selected client information
+      window.rootStore.clientStore.setSelectedClient(null);
+      window.rootStore.clientStore.setSelectedClientSecret(undefined);
+      init();
+    } else {
+      window.addEventListener('adu:storeReady', init);
+    }
+
+    return () => {
+      window.removeEventListener('adu:storeReady', init);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!storeReady) return;
+
+    const disposer = autorun(() => {
+      const rootStore = window.rootStore;
+      setIsAuthenticated(rootStore.sessionStore.isAuthenticated);
+    });
+
+    return () => {
+      disposer();
+    };
+  }, [storeReady]);
+
+  if (!storeReady || typeof window === 'undefined' || !displayForm) {
+    return <></>;
+  }
+
+  const login = () => {
+    const baseUrl = window.rootStore.config.apiBaseUrl;
+    const returnTo = encodeURIComponent(window.location.href);
+    window.location.href = `${baseUrl}/auth/user/login?returnTo=${returnTo}`;
+  };
+
+  const Card = ({ className = '', children }) => {
+    return (
+      <div
+        className={`
+          flex border rounded-2xl
+          border-gray-950/10 dark:border-white/10
+          py-3.5 px-4 gap-2
+          text-sm text-gray-900 dark:text-gray-200
+          ${className}
+        `}
+      >
+        {children}
+      </div>
+    );
+  };
+
+  const Button = ({ children, ...props }) => {
+    return (
+      <button
+        className="bg-[--button-primary] text-[--foreground-inverse] px-[1.125rem] py-1.5 rounded-lg font-medium"
+        {...props}
+      >
+        {children}
+      </button>
+    );
+  };
+
+  const CreateApplicationForm = () => {
+    const [name, setName] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+
+    const handleSubmit = async () => {
+      if (!name.trim()) {
+        setError('Application name is required');
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        // Create client using the clientStore method
+        await window.rootStore.clientStore.createClient({
+          name: name.trim(),
+          app_type: appType,
+          callbacks: allowedCallbackUrls,
+          allowed_logout_urls: allowedLogoutUrls,
+          web_origins: allowedOriginUrls,
+          client_metadata: {
+            created_by: 'quickstart-docs-app-creation-component',
+          },
+        });
+
+        setDisplayForm(false);
+      } catch (err) {
+        console.error('Error creating client:', err);
+        const errorMessage =
+          err instanceof Error ? err.message : 'Failed to create application';
+        setError(errorMessage);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    return (
+      <Card className="flex-col items-start p-4 gap-3.75">
+        <span className="font-medium text-gray-900 dark:text-gray-200">
+          Create Auth0 App
+        </span>
+        <div className="w-full flex gap-2">
+          <input
+            id="app-name"
+            name={name}
+            className="
+              w-full max-w-[448px] h-11 py-2 px-4 
+              border rounded-lg border-gray-950/10 dark:border-white/10 
+              text-gray-900 dark:text-gray-200
+              focus:outline-none dark:focus:outline-none
+            "
+            placeholder={`My ${placeholderText} App`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <Button onClick={handleSubmit}>
+            {isLoading ? 'Creating...' : 'Create'}
+          </Button>
+        </div>
+        {error && <p className="text-red-500">{error}</p>}
+      </Card>
+    );
+  };
+
+  const SignInForm = () => {
+    return (
+      <Card className="items-center">
+        <Button onClick={login}>Log in</Button> <span>to create the app</span>
+      </Card>
+    );
+  };
+
+  return isAuthenticated ? <CreateApplicationForm /> : <SignInForm />;
+};

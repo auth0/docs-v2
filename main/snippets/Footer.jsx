@@ -1,7 +1,7 @@
 export const Footer = () => {
   const footerData = {
     socials: {
-      "x-twitter": "https://twitter.com/auth0",
+      "x-twitter": "https://x.com/auth0",
       github: "https://github.com/auth0",
       linkedin: "https://www.linkedin.com/company/auth0",
     },
