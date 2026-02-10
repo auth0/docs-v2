@@ -81,6 +81,11 @@ export interface Client {
 
 interface CreateClientRequest {
   name: string;
+  app_type?: string;
+  callbacks?: string[];
+  allowed_logout_urls?: string[];
+  web_origins?: string[];
+  client_metadata?: { [key: string]: any };
   [key: string]: unknown;
 }
 
@@ -399,11 +404,16 @@ const MOCK_FEATURE_FLAGS: FeatureFlags = {
  */
 export async function getFeatureFlags() {
   try {
-    const response = await request<FeatureFlagsResponse>(`${config.apiBaseUrl}/feature-flags`);
+    const response = await request<FeatureFlagsResponse>(
+      `${config.apiBaseUrl}/feature-flags`,
+    );
     return response.flags;
   } catch (error) {
     // If backend endpoint doesn't exist yet, return mock data in development
-    if (config.apiBaseUrl.includes('localhost') || config.apiBaseUrl.includes('local')) {
+    if (
+      config.apiBaseUrl.includes('localhost') ||
+      config.apiBaseUrl.includes('local')
+    ) {
       console.warn('Feature flags endpoint not available, using mock data');
       return MOCK_FEATURE_FLAGS;
     }
