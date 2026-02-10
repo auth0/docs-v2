@@ -16,19 +16,15 @@ Both teams have additional resources, contextual information, and internal docum
 
 Auth0 employees can request write access to the repository via Terminus and use a [branch-based workflow](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request) to propose changes.
 
-External contributors can use a [fork-based workflow](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request-from-a-fork) to propose changes.
+### Pull requests
 
 When you open a PR, the appropriate teams are assigned based on the repo `CODEOWNERS`. Approving reviews are required in order to merge.
 
-## Platform and repository structure
+We generally follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for PR titles. In particular, begin PR titles with the type (`feat`, `docs`, `fix`, `chore`, etc.) followed by a brief description.
 
-As described in the README, this is a [Mintlify](https://mintlify.com/) monorepo with the following structure:
+## Platform and tooling
 
-* The `main` directory contains the main product documentation site which lives at https://auth0.com/docs.
-
-* The `auth4genai` directory contains the Auth0 for AI Agents docs site which lives at https://auth0.com/ai/docs.
-
-* The `ui` directory contains a shared React component library for both docs sites. (See [the Docs UI library README](./ui/README.md) for more information.)
+As described in the README, this is a [Mintlify](https://mintlify.com/) monorepo.
 
 ### Mintlify setup
 
