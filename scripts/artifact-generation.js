@@ -12,9 +12,9 @@ const LOCALES = ["en", "fr-ca", "ja-jp"];
 const LANGUAGES = ["typescript", "go"];
 
 const REFERENCE_SECTION_MAP = {
-  en: "API References",
-  "fr-ca": "API References [FR]",
-  "ja-jp": "API References [JP]",
+  en: "API Reference",
+  "fr-ca": "API Reference",
+  "ja-jp": "API Reference",
 };
 
 const oasConfigs = [
