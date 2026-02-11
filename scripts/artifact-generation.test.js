@@ -96,7 +96,7 @@ describe("getEndpointScopes", () => {
 
     const result = getEndpointScopes(spec);
 
-    assert.deepStrictEqual(result, [["read:users", "read:profiles"]]);
+    assert.deepStrictEqual(result, ["read:users", "read:profiles"]);
   });
 
   it("should extract scopes from operation with multiple security requirements", () => {
@@ -118,8 +118,9 @@ describe("getEndpointScopes", () => {
     const result = getEndpointScopes(spec);
 
     assert.deepStrictEqual(result, [
-      ["write:users"],
-      ["update:profiles", "update:metadata"],
+      "write:users",
+      "update:profiles",
+      "update:metadata",
     ]);
   });
 
@@ -165,7 +166,7 @@ describe("getEndpointScopes", () => {
 
     const result = getEndpointScopes(spec);
 
-    assert.deepStrictEqual(result, [[]]);
+    assert.deepStrictEqual(result, []);
   });
 });
 

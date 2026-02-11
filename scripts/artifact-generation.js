@@ -1,6 +1,6 @@
 const fs = require("node:fs/promises");
 const { resolve } = require("node:path");
-const { kebabCase, startCase } = require("lodash");
+const { kebabCase, startCase, flattenDeep } = require("lodash");
 const dedent = require("dedent");
 
 // supported languages/locales for the script
@@ -95,7 +95,7 @@ function getEndpointScopes(spec) {
     const scopeList = Object.values(securityScheme);
     return [...acc, ...scopeList];
   }, []);
-  return scopes;
+  return flattenDeep(scopes);
 }
 
 async function writeMdxContent(config) {
