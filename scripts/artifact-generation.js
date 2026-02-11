@@ -20,7 +20,7 @@ const REFERENCE_SECTION_MAP = {
 const oasConfigs = [
   {
     // TODO: this needs to be a location in `node_modoles`
-    inputFile: "myaccount-api-oas.json",
+    inputFile: "node_modules/@a0/myaccount-api-oas/openapi-dereferenced.json",
     outputFile: "myaccount-api-oas.json",
     docRootDirectory: "myaccount",
     docSectionNameMap: {
@@ -281,13 +281,10 @@ async function main() {
   for (const oasConfig of oasConfigs) {
     const { inputFile, docRootDirectory } = oasConfig;
 
-    // TODO: this should be a node_modules path to the dependency
-    // `${DOCS_SITE}/${inputFile}` is NOT correct, only _for now_ value
-    const OAS_LOCATION = `${DOCS_SITE}/${inputFile}`;
-    const oasData = await readJson(OAS_LOCATION);
+    const oasData = await readJson(inputFile);
 
     if (!oasData) {
-      console.warn(`${OAS_LOCATION} not found`);
+      console.warn(`${inputFile} not found`);
       continue;
     }
 
