@@ -5,6 +5,11 @@ const dedent = require("dedent");
 
 // supported languages/locales for the script
 const LOCALES = ["en", "fr-ca", "ja-jp"];
+const LOCALES_MAP = {
+  en: "en",
+  "fr-ca": "fr",
+  "ja-jp": "ja",
+};
 
 // supported code snippet languages
 // TODO: move this into the `oasConfig` object; each api can have it's own
@@ -215,18 +220,25 @@ async function injectCodeSnippets(oasData, { spec, path, method, oasConfig }) {
 }
 
 function convertDocsToFormat(docs) {
-  const data = { group: " ", pages: [] };
+  const docsByLocale = {};
   // at the level of the api (management, account, etc)
-  for (const folder in docs) {
-    data.pages.push({ group: startCase(folder), pages: docs[folder] });
-    // at the level of the folder (actions, users, etc)
+  for (const locale in docs) {
+    const data = { group: " ", pages: [] };
+    for (const folder in docs[locale]) {
+      data.pages.push({
+        group: startCase(folder),
+        pages: docs[locale][folder],
+      });
+      // at the level of the folder (actions, users, etc)
+    }
+    docsByLocale[locale] = data;
   }
-  return data;
+  return docsByLocale;
 }
 
 function patchDocsJson({ oasConfig, rawDocs, docsJson }) {
   // this gets the raw doc snippet into the right format
-  const docs = convertDocsToFormat(rawDocs);
+  const docsByLocale = convertDocsToFormat(rawDocs);
   // loop through languages
   for (const locale of LOCALES) {
     // construct docsPath based on locale
@@ -236,7 +248,7 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson }) {
         : `${DOCS_SITE}/${DOCS_FOLDER}/${locale}/${API_FOLDER}/${oasConfig.docRootDirectory}`;
     // where is our current language's object at in the docs.json
     const langIdx = docsJson.navigation.languages.findIndex(
-      (item) => item.language === locale,
+      (item) => item.language === LOCALES_MAP[locale],
     );
     // this is the language "object" that contains navigation for the site
     const langObj = docsJson.navigation.languages[langIdx];
@@ -264,7 +276,7 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson }) {
     // now either way (existed before or not), we can replace the found nav object's pages
     docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
       apiIdx
-    ].pages = [`${docsPath}/index`, docs];
+    ].pages = [`${docsPath}/index`, docsByLocale[locale]];
   }
   return docsJson;
 }
@@ -289,12 +301,16 @@ async function main() {
     }
 
     // the output snippet for docs.json based on what we make
-    let docs = {};
+    const docs = {};
     for (const locale of LOCALES) {
+      if (!docs[locale]) {
+        docs[locale] = {};
+      }
+
       const DOCS_PATH =
         locale === "en"
-          ? `${DOCS_SITE}/${DOCS_FOLDER}/${API_FOLDER}/${docRootDirectory}`
-          : `${DOCS_SITE}/${DOCS_FOLDER}/${locale}/${API_FOLDER}/${docRootDirectory}`;
+          ? `${DOCS_FOLDER}/${API_FOLDER}/${docRootDirectory}`
+          : `${DOCS_FOLDER}/${locale}/${API_FOLDER}/${docRootDirectory}`;
 
       for (const [path, pathSpec] of Object.entries(oasData.paths)) {
         // INFO: `pathSpec` contains all the methods of this path
@@ -307,16 +323,17 @@ async function main() {
           const scopes = getEndpointScopes(spec);
 
           const docpath = `${DOCS_PATH}/${folder}`;
+          const mdxpath = `${DOCS_SITE}/${DOCS_PATH}/${folder}`;
 
           // INFO: collecting documents to build `docs.json` after loop
-          if (!docs[folder]) {
-            docs[folder] = [];
+          if (!docs[locale][folder]) {
+            docs[locale][folder] = [];
           }
-          docs[folder].push(`${docpath}/${filename}`);
+          docs[locale][folder].push(`${docpath}/${filename}`);
 
           // INFO: make folder for api docs section
           try {
-            await fs.mkdir(docpath, { recursive: true });
+            await fs.mkdir(mdxpath, { recursive: true });
           } catch (err) {
             console.error(`failed to create: ${docpath}`, err);
             // TODO: figure out of `break` or `continue` is what we want here
@@ -337,7 +354,7 @@ async function main() {
                 releaseLifecycle,
                 scopes,
               },
-              docpath,
+              docpath: mdxpath,
               filename,
             });
           } catch (err) {
@@ -356,12 +373,18 @@ async function main() {
     const docsJsonPath = `${DOCS_SITE}/docs.json`;
     await fs.writeFile(docsJsonPath, JSON.stringify(docsJson, null, 2));
     // actually write the spec
-    const newSpecPath = resolve(
-      `${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`,
-    );
+    const generatedSpecPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}`;
+    try {
+      await fs.mkdir(generatedSpecPath, { recursive: true });
+    } catch (err) {
+      console.error(`failed to create: ${generatedSpecPath}`, err);
+    }
     // this isn't present in the original, but that presents problems i think?
     oasData.openapi = "3.1.0";
-    await fs.writeFile(newSpecPath, JSON.stringify(oasData, null, 2));
+    await fs.writeFile(
+      `${generatedSpecPath}/${oasConfig.outputFile}`,
+      JSON.stringify(oasData, null, 2),
+    );
   }
 }
 
