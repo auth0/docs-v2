@@ -23,7 +23,7 @@ describe("main integration tests", () => {
         if (filePath.includes("docs.json")) {
           return JSON.stringify(docsEmptyFixture);
         }
-        if (filePath.includes("myaccount-api-oas.json")) {
+        if (filePath.includes("myaccount-api-oas.json") || filePath.includes("openapi-dereferenced.json")) {
           return JSON.stringify(testApiOasFixture);
         }
         throw new Error(`Unexpected file read: ${filePath}`);
@@ -126,7 +126,7 @@ describe("main integration tests", () => {
         if (filePath.includes("docs.json")) {
           return JSON.stringify(docsWithMatchingApiFixture);
         }
-        if (filePath.includes("myaccount-api-oas.json")) {
+        if (filePath.includes("myaccount-api-oas.json") || filePath.includes("openapi-dereferenced.json")) {
           return JSON.stringify(testApiOasFixture);
         }
         throw new Error(`Unexpected file read: ${filePath}`);
@@ -208,7 +208,7 @@ describe("main integration tests", () => {
         if (filePath.includes("docs.json")) {
           return JSON.stringify(docsWithOtherApisFixture);
         }
-        if (filePath.includes("myaccount-api-oas.json")) {
+        if (filePath.includes("myaccount-api-oas.json") || filePath.includes("openapi-dereferenced.json")) {
           return JSON.stringify(testApiOasFixture);
         }
         throw new Error(`Unexpected file read: ${filePath}`);

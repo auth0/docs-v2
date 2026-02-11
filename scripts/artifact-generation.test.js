@@ -124,7 +124,7 @@ describe("getEndpointScopes", () => {
     ]);
   });
 
-  it("should return undefined when operation has no security property", () => {
+  it("should return empty array when operation has no security property", () => {
     const spec = {
       summary: "Public endpoint",
       operationId: "getPublicData",
@@ -134,7 +134,7 @@ describe("getEndpointScopes", () => {
 
     const result = getEndpointScopes(spec);
 
-    assert.strictEqual(result, undefined);
+    assert.deepStrictEqual(result, []);
   });
 
   it("should return empty array when operation has empty security array", () => {
@@ -721,7 +721,7 @@ describe("injectCodeSnippets", () => {
 describe("convertDocsToFormat", () => {
   it("should convert empty docs object to structure with empty pages array", () => {
     const rawDocs = {};
-    const expected = { group: " ", pages: [] };
+    const expected = {};
 
     const actual = convertDocsToFormat(rawDocs);
 
@@ -730,22 +730,62 @@ describe("convertDocsToFormat", () => {
 
   it("should convert single folder to single group with startCase formatting", () => {
     const rawDocs = {
-      "user-management": [
-        "main/docs/api/myaccount/user-management/get-user",
-        "main/docs/api/myaccount/user-management/update-user",
-      ],
+      en: {
+        "user-management": [
+          "docs/api/myaccount/user-management/get-user",
+          "docs/api/myaccount/user-management/update-user",
+        ],
+      },
+      "fr-ca": {
+        "user-management": [
+          "docs/api/myaccount/user-management/get-user",
+          "docs/api/myaccount/user-management/update-user",
+        ],
+      },
+      "ja-jp": {
+        "user-management": [
+          "docs/api/myaccount/user-management/get-user",
+          "docs/api/myaccount/user-management/update-user",
+        ],
+      },
     };
     const expected = {
-      group: " ",
-      pages: [
-        {
-          group: "User Management",
-          pages: [
-            "main/docs/api/myaccount/user-management/get-user",
-            "main/docs/api/myaccount/user-management/update-user",
-          ],
-        },
-      ],
+      en: {
+        group: " ",
+        pages: [
+          {
+            group: "User Management",
+            pages: [
+              "docs/api/myaccount/user-management/get-user",
+              "docs/api/myaccount/user-management/update-user",
+            ],
+          },
+        ],
+      },
+      "fr-ca": {
+        group: " ",
+        pages: [
+          {
+            group: "User Management",
+            pages: [
+              "docs/api/myaccount/user-management/get-user",
+              "docs/api/myaccount/user-management/update-user",
+            ],
+          },
+        ],
+      },
+      "ja-jp": {
+        group: " ",
+        pages: [
+          {
+            group: "User Management",
+            pages: [
+              "docs/api/myaccount/user-management/get-user",
+              "docs/api/myaccount/user-management/update-user",
+            ],
+          },
+        ],
+      },
     };
 
     const actual = convertDocsToFormat(rawDocs);
@@ -755,23 +795,65 @@ describe("convertDocsToFormat", () => {
 
   it("should convert multiple folders to multiple groups", () => {
     const rawDocs = {
-      users: ["main/docs/api/myaccount/users/get-user"],
-      sessions: ["main/docs/api/myaccount/sessions/list-sessions"],
-      devices: ["main/docs/api/myaccount/devices/get-device"],
+      en: {
+        users: ["docs/api/myaccount/users/get-user"],
+        sessions: ["docs/api/myaccount/sessions/list-sessions"],
+        devices: ["docs/api/myaccount/devices/get-device"],
+      },
+      "fr-ca": {
+        users: ["docs/api/myaccount/users/get-user"],
+        sessions: ["docs/api/myaccount/sessions/list-sessions"],
+        devices: ["docs/api/myaccount/devices/get-device"],
+      },
+      "ja-jp": {
+        users: ["docs/api/myaccount/users/get-user"],
+        sessions: ["docs/api/myaccount/sessions/list-sessions"],
+        devices: ["docs/api/myaccount/devices/get-device"],
+      },
     };
     const expected = {
-      group: " ",
-      pages: [
-        { group: "Users", pages: ["main/docs/api/myaccount/users/get-user"] },
-        {
-          group: "Sessions",
-          pages: ["main/docs/api/myaccount/sessions/list-sessions"],
-        },
-        {
-          group: "Devices",
-          pages: ["main/docs/api/myaccount/devices/get-device"],
-        },
-      ],
+      en: {
+        group: " ",
+        pages: [
+          { group: "Users", pages: ["docs/api/myaccount/users/get-user"] },
+          {
+            group: "Sessions",
+            pages: ["docs/api/myaccount/sessions/list-sessions"],
+          },
+          {
+            group: "Devices",
+            pages: ["docs/api/myaccount/devices/get-device"],
+          },
+        ],
+      },
+      "fr-ca": {
+        group: " ",
+        pages: [
+          { group: "Users", pages: ["docs/api/myaccount/users/get-user"] },
+          {
+            group: "Sessions",
+            pages: ["docs/api/myaccount/sessions/list-sessions"],
+          },
+          {
+            group: "Devices",
+            pages: ["docs/api/myaccount/devices/get-device"],
+          },
+        ],
+      },
+      "ja-jp": {
+        group: " ",
+        pages: [
+          { group: "Users", pages: ["docs/api/myaccount/users/get-user"] },
+          {
+            group: "Sessions",
+            pages: ["docs/api/myaccount/sessions/list-sessions"],
+          },
+          {
+            group: "Devices",
+            pages: ["docs/api/myaccount/devices/get-device"],
+          },
+        ],
+      },
     };
 
     const actual = convertDocsToFormat(rawDocs);
@@ -781,18 +863,50 @@ describe("convertDocsToFormat", () => {
 
   it("should handle kebab-case folder names with startCase", () => {
     const rawDocs = {
-      "multi-factor-authentication": [
-        "main/docs/api/myaccount/multi-factor-authentication/enroll",
-      ],
+      en: {
+        "multi-factor-authentication": [
+          "docs/api/myaccount/multi-factor-authentication/enroll",
+        ],
+      },
+      "fr-ca": {
+        "multi-factor-authentication": [
+          "docs/api/myaccount/multi-factor-authentication/enroll",
+        ],
+      },
+      "ja-jp": {
+        "multi-factor-authentication": [
+          "docs/api/myaccount/multi-factor-authentication/enroll",
+        ],
+      },
     };
     const expected = {
-      group: " ",
-      pages: [
-        {
-          group: "Multi Factor Authentication",
-          pages: ["main/docs/api/myaccount/multi-factor-authentication/enroll"],
-        },
-      ],
+      en: {
+        group: " ",
+        pages: [
+          {
+            group: "Multi Factor Authentication",
+            pages: ["docs/api/myaccount/multi-factor-authentication/enroll"],
+          },
+        ],
+      },
+      "fr-ca": {
+        group: " ",
+        pages: [
+          {
+            group: "Multi Factor Authentication",
+            pages: ["docs/api/myaccount/multi-factor-authentication/enroll"],
+          },
+        ],
+      },
+      "ja-jp": {
+        group: " ",
+        pages: [
+          {
+            group: "Multi Factor Authentication",
+            pages: ["docs/api/myaccount/multi-factor-authentication/enroll"],
+          },
+        ],
+      },
     };
 
     const actual = convertDocsToFormat(rawDocs);
@@ -812,7 +926,15 @@ describe("patchDocsJson", () => {
       },
     };
     const rawDocs = {
-      users: ["main/docs/api/myaccount/users/get-user"],
+      en: {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "fr-ca": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "ja-jp": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
     };
     const docsJson = {
       navigation: {
@@ -821,25 +943,25 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
@@ -855,7 +977,7 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [
                   {
                     dropdown: "MyAccount API",
@@ -867,7 +989,7 @@ describe("patchDocsJson", () => {
                         pages: [
                           {
                             group: "Users",
-                            pages: ["main/docs/api/myaccount/users/get-user"],
+                            pages: ["docs/api/myaccount/users/get-user"],
                           },
                         ],
                       },
@@ -878,10 +1000,10 @@ describe("patchDocsJson", () => {
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [
                   {
                     dropdown: "MyAccount API [FR]",
@@ -893,7 +1015,7 @@ describe("patchDocsJson", () => {
                         pages: [
                           {
                             group: "Users",
-                            pages: ["main/docs/api/myaccount/users/get-user"],
+                            pages: ["docs/api/myaccount/users/get-user"],
                           },
                         ],
                       },
@@ -904,10 +1026,10 @@ describe("patchDocsJson", () => {
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [
                   {
                     dropdown: "MyAccount API [JP]",
@@ -919,7 +1041,7 @@ describe("patchDocsJson", () => {
                         pages: [
                           {
                             group: "Users",
-                            pages: ["main/docs/api/myaccount/users/get-user"],
+                            pages: ["docs/api/myaccount/users/get-user"],
                           },
                         ],
                       },
@@ -948,7 +1070,15 @@ describe("patchDocsJson", () => {
       },
     };
     const rawDocs = {
-      sessions: ["main/docs/api/myaccount/sessions/list-sessions"],
+      en: {
+        sessions: ["docs/api/myaccount/sessions/list-sessions"],
+      },
+      "fr-ca": {
+        sessions: ["docs/api/myaccount/sessions/list-sessions"],
+      },
+      "ja-jp": {
+        sessions: ["docs/api/myaccount/sessions/list-sessions"],
+      },
     };
     const docsJson = {
       navigation: {
@@ -957,7 +1087,7 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [
                   {
                     dropdown: "MyAccount API",
@@ -969,7 +1099,7 @@ describe("patchDocsJson", () => {
                         pages: [
                           {
                             group: "Users",
-                            pages: ["main/docs/api/myaccount/users/get-user"],
+                            pages: ["docs/api/myaccount/users/get-user"],
                           },
                         ],
                       },
@@ -980,10 +1110,10 @@ describe("patchDocsJson", () => {
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [
                   {
                     dropdown: "MyAccount API",
@@ -995,10 +1125,10 @@ describe("patchDocsJson", () => {
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [
                   {
                     dropdown: "MyAccount API",
@@ -1020,7 +1150,7 @@ describe("patchDocsJson", () => {
         pages: [
           {
             group: "Sessions",
-            pages: ["main/docs/api/myaccount/sessions/list-sessions"],
+            pages: ["docs/api/myaccount/sessions/list-sessions"],
           },
         ],
       },
@@ -1043,7 +1173,7 @@ describe("patchDocsJson", () => {
         pages: [
           {
             group: "Sessions",
-            pages: ["main/docs/api/myaccount/sessions/list-sessions"],
+            pages: ["docs/api/myaccount/sessions/list-sessions"],
           },
         ],
       },
@@ -1060,7 +1190,7 @@ describe("patchDocsJson", () => {
         pages: [
           {
             group: "Sessions",
-            pages: ["main/docs/api/myaccount/sessions/list-sessions"],
+            pages: ["docs/api/myaccount/sessions/list-sessions"],
           },
         ],
       },
@@ -1078,7 +1208,15 @@ describe("patchDocsJson", () => {
       },
     };
     const rawDocs = {
-      users: ["main/docs/api/myaccount/users/get-user"],
+      en: {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "fr-ca": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "ja-jp": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
     };
     const docsJson = {
       navigation: {
@@ -1087,25 +1225,25 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
@@ -1133,7 +1271,15 @@ describe("patchDocsJson", () => {
       },
     };
     const rawDocs = {
-      users: ["main/docs/api/myaccount/users/get-user"],
+      en: {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "fr-ca": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "ja-jp": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
     };
     const docsJson = {
       navigation: {
@@ -1142,25 +1288,25 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
@@ -1192,7 +1338,15 @@ describe("patchDocsJson", () => {
       },
     };
     const rawDocs = {
-      users: ["main/docs/api/myaccount/users/get-user"],
+      en: {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "fr-ca": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "ja-jp": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
     };
     const docsJson = {
       navigation: {
@@ -1201,25 +1355,25 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
@@ -1253,7 +1407,15 @@ describe("patchDocsJson", () => {
       },
     };
     const rawDocs = {
-      users: ["main/docs/api/myaccount/users/get-user"],
+      en: {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "fr-ca": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
+      "ja-jp": {
+        users: ["docs/api/myaccount/users/get-user"],
+      },
     };
     const docsJson = {
       navigation: {
@@ -1262,25 +1424,25 @@ describe("patchDocsJson", () => {
             language: "en",
             tabs: [
               {
-                tab: "API References",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "fr-ca",
+            language: "fr",
             tabs: [
               {
-                tab: "API References [FR]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
           },
           {
-            language: "ja-jp",
+            language: "ja",
             tabs: [
               {
-                tab: "API References [JP]",
+                tab: "API Reference",
                 dropdowns: [],
               },
             ],
