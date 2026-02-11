@@ -1,4 +1,4 @@
-function main() {
+export function manageExplorers() {
   const buttonSelector = '[data-testid="try-it-button"]';
   const callback = function (mutationsList, observer) {
     if (
@@ -34,4 +34,3 @@ function main() {
     }
   }
 }
-main();
