@@ -306,11 +306,7 @@ async function main() {
           const releaseLifecycle = spec["x-release-lifecycle"];
           const scopes = getEndpointScopes(spec);
 
-          // TODO: take `locale` into account here
           const docpath = `${DOCS_PATH}/${folder}`;
-          // TODO: determine if `docPath` exists
-          // yes -> previously iterated on this OAS
-          // no -> first iteration; create things
 
           // INFO: collecting documents to build `docs.json` after loop
           if (!docs[folder]) {
