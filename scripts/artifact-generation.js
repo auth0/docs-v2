@@ -1,6 +1,13 @@
 const fs = require("node:fs/promises");
 const { resolve } = require("node:path");
-const { kebabCase, startCase, flattenDeep } = require("lodash");
+const {
+  kebabCase,
+  startCase,
+  flattenDeep,
+  chain,
+  initial,
+  last,
+} = require("lodash");
 const dedent = require("dedent");
 
 // supported languages/locales for the script
@@ -219,14 +226,16 @@ async function injectCodeSnippets(oasData, { spec, path, method, oasConfig }) {
   }
 }
 
-function convertDocsToFormat(docs) {
+function convertDocsToFormat({ docs, tags }) {
   const docsByLocale = {};
   // at the level of the api (management, account, etc)
   for (const locale in docs) {
     const data = { group: " ", pages: [] };
     for (const folder in docs[locale]) {
+      const tag = tags.find((tag) => tag.name === folder);
+      const groupName = tag?.["x-displayName"] || startCase(folder);
       data.pages.push({
-        group: startCase(folder),
+        group: groupName,
         pages: docs[locale][folder],
       });
       // at the level of the folder (actions, users, etc)
@@ -236,9 +245,12 @@ function convertDocsToFormat(docs) {
   return docsByLocale;
 }
 
-function patchDocsJson({ oasConfig, rawDocs, docsJson }) {
+function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
   // this gets the raw doc snippet into the right format
-  const docsByLocale = convertDocsToFormat(rawDocs);
+  const docsByLocale = convertDocsToFormat({
+    docs: rawDocs,
+    tags: oasData.tags || [],
+  });
   // loop through languages
   for (const locale of LOCALES) {
     // construct docsPath based on locale
@@ -301,10 +313,10 @@ async function main() {
     }
 
     // the output snippet for docs.json based on what we make
-    const docs = {};
+    const collectedDocs = {};
     for (const locale of LOCALES) {
-      if (!docs[locale]) {
-        docs[locale] = {};
+      if (!collectedDocs[locale]) {
+        collectedDocs[locale] = {};
       }
 
       const DOCS_PATH =
@@ -326,10 +338,10 @@ async function main() {
           const mdxpath = `${DOCS_SITE}/${DOCS_PATH}/${folder}`;
 
           // INFO: collecting documents to build `docs.json` after loop
-          if (!docs[locale][folder]) {
-            docs[locale][folder] = [];
+          if (!collectedDocs[locale][folder]) {
+            collectedDocs[locale][folder] = [];
           }
-          docs[locale][folder].push(`${docpath}/${filename}`);
+          collectedDocs[locale][folder].push(`${docpath}/${filename}`);
 
           // INFO: make folder for api docs section
           try {
@@ -341,12 +353,20 @@ async function main() {
           }
 
           // INFO: write MDX file content
+          const oasFilename =
+            locale === "en"
+              ? oasConfig.outputFile
+              : chain(oasConfig.outputFile)
+                  .split(".")
+                  .thru((parts) => [...initial(parts), locale, last(parts)])
+                  .join(".")
+                  .value();
           try {
             await writeMdxContent({
               // INFO: this is the name of the file we're saving at
               // `main/docs/oas/`
               frontMatter: {
-                file: "myaccount-api-oas.json",
+                file: oasFilename,
                 method,
                 path,
               },
@@ -364,27 +384,36 @@ async function main() {
 
           // INFO: do the code snippet generation
           await injectCodeSnippets(oasData, { spec, path, method, oasConfig });
+
+          // INFO: create `oas` directory if it doesn't exist
+          const generatedSpecPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}`;
+          try {
+            await fs.mkdir(generatedSpecPath, { recursive: true });
+          } catch (err) {
+            console.error(`failed to create: ${generatedSpecPath}`, err);
+            continue;
+          }
+
+          // INFO: write generated OAS to disk
+          await fs.writeFile(
+            `${generatedSpecPath}/${oasFilename}`,
+            JSON.stringify(oasData, null, 2),
+          );
         }
       }
     } // INFO: end of `LOCALES` loop
 
     // give it all the data it needs to mutate docsJson with the right info
-    docsJson = patchDocsJson({ oasConfig, rawDocs: docs, docsJson });
+    docsJson = patchDocsJson({
+      oasConfig,
+      rawDocs: collectedDocs,
+      docsJson,
+      oasData,
+    });
+
+    // INFO: write mutated `docs.json` to disk
     const docsJsonPath = `${DOCS_SITE}/docs.json`;
     await fs.writeFile(docsJsonPath, JSON.stringify(docsJson, null, 2));
-    // actually write the spec
-    const generatedSpecPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}`;
-    try {
-      await fs.mkdir(generatedSpecPath, { recursive: true });
-    } catch (err) {
-      console.error(`failed to create: ${generatedSpecPath}`, err);
-    }
-    // this isn't present in the original, but that presents problems i think?
-    oasData.openapi = "3.1.0";
-    await fs.writeFile(
-      `${generatedSpecPath}/${oasConfig.outputFile}`,
-      JSON.stringify(oasData, null, 2),
-    );
   }
 }
 
