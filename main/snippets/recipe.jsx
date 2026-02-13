@@ -680,9 +680,16 @@ export const CreateInteractiveApp = ({
   const [storeReady, setStoreReady] = useState(false);
   const [displayForm, setDisplayForm] = useState(true);
 
+  console.group("CreateInteractiveApp");
   useEffect(() => {
     const init = () => setStoreReady(true);
 
+    console.log(
+      "location:",
+      window.location,
+      "top.location:",
+      window.top.location,
+    );
     if (window.rootStore) {
       // If this create component is re-mounted, clear any selected client information
       window.rootStore.clientStore.setSelectedClient(null);
@@ -696,6 +703,7 @@ export const CreateInteractiveApp = ({
       window.removeEventListener('adu:storeReady', init);
     };
   }, []);
+  console.groupEnd();
 
   useEffect(() => {
     if (!storeReady) return;
