@@ -280,7 +280,6 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
       // start a new api explorer nav item
       docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns.push({
         dropdown: oasConfig.docSectionNameMap[locale],
-        // description: `Auth0 ${oasConfig.friendly} Documentation`,
         icon: "list",
         pages: [],
       });
@@ -384,21 +383,6 @@ async function main() {
 
           // INFO: do the code snippet generation
           await injectCodeSnippets(oasData, { spec, path, method, oasConfig });
-
-          // INFO: create `oas` directory if it doesn't exist
-          const generatedSpecPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}`;
-          try {
-            await fs.mkdir(generatedSpecPath, { recursive: true });
-          } catch (err) {
-            console.error(`failed to create: ${generatedSpecPath}`, err);
-            continue;
-          }
-
-          // INFO: write generated OAS to disk
-          await fs.writeFile(
-            `${generatedSpecPath}/${oasFilename}`,
-            JSON.stringify(oasData, null, 2),
-          );
         }
       }
     } // INFO: end of `LOCALES` loop
@@ -410,6 +394,21 @@ async function main() {
       docsJson,
       oasData,
     });
+
+    // INFO: create `oas` directory if it doesn't exist
+    const generatedSpecPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}`;
+    try {
+      await fs.mkdir(generatedSpecPath, { recursive: true });
+    } catch (err) {
+      console.error(`failed to create: ${generatedSpecPath}`, err);
+      continue;
+    }
+
+    // INFO: write generated OAS to disk
+    await fs.writeFile(
+      `${generatedSpecPath}/${oasConfig.outputFile}`,
+      JSON.stringify(oasData, null, 2),
+    );
 
     // INFO: write mutated `docs.json` to disk
     const docsJsonPath = `${DOCS_SITE}/docs.json`;

@@ -37,7 +37,7 @@ describe("main integration tests", () => {
       async (filePath, content) => {
         if (filePath.includes("docs.json")) {
           capturedDocsJson = JSON.parse(content);
-        } else if (filePath.includes("myaccount-api-oas.json")) {
+        } else if (filePath.endsWith("myaccount-api-oas.json")) {
           capturedOasData = JSON.parse(content);
         } else if (filePath.endsWith(".mdx")) {
           writtenMdxFiles.push({ path: filePath, content });
@@ -86,7 +86,17 @@ describe("main integration tests", () => {
       );
     }
 
-    // Verify OAS data has code samples injected
+    // Verify that x-displayName from tags is used for group names
+    const enPages = capturedDocsJson.navigation.languages[0].tabs[0].dropdowns[0].pages;
+    const groupStructure = enPages.find(item => item.group === " ");
+    assert.ok(groupStructure, "Should have group structure");
+    const groups = groupStructure.pages.map(p => p.group);
+    assert.ok(
+      groups.includes("Test Resources"),
+      "Should use 'Test Resources' from x-displayName in tags",
+    );
+
+    // Verify OAS data was written
     assert.ok(capturedOasData, "OAS data should be written");
     assert.ok(
       capturedOasData.paths["/test-resources"].get["x-codeSamples"],
@@ -101,6 +111,24 @@ describe("main integration tests", () => {
     assert.ok(
       writtenMdxFiles.length > 0,
       "Should have written at least one MDX file",
+    );
+
+    // Verify MDX files reference correct locale-specific OAS filenames
+    const enMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/api/"));
+    const frMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/fr-ca/api/"));
+    const jpMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/ja-jp/api/"));
+
+    assert.ok(
+      enMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas.json")),
+      "English MDX files should reference myaccount-api-oas.json",
+    );
+    assert.ok(
+      frMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas.fr-ca.json")),
+      "French-CA MDX files should reference myaccount-api-oas.fr-ca.json",
+    );
+    assert.ok(
+      jpMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas.ja-jp.json")),
+      "Japanese MDX files should reference myaccount-api-oas.ja-jp.json",
     );
 
     // Verify directories were created
@@ -140,7 +168,7 @@ describe("main integration tests", () => {
       async (filePath, content) => {
         if (filePath.includes("docs.json")) {
           capturedDocsJson = JSON.parse(content);
-        } else if (filePath.includes("myaccount-api-oas.json")) {
+        } else if (filePath.endsWith("myaccount-api-oas.json")) {
           capturedOasData = JSON.parse(content);
         }
       },
@@ -185,11 +213,25 @@ describe("main integration tests", () => {
       "Should include test-resources from test API",
     );
 
-    // Verify OAS data has code samples
+    // Verify that x-displayName from tags is used
+    const groupStructure = enDropdown.pages.find(item => item.group === " ");
+    if (groupStructure) {
+      const groups = groupStructure.pages.map(p => p.group);
+      assert.ok(
+        groups.includes("Test Resources"),
+        "Should use 'Test Resources' from x-displayName in tags",
+      );
+    }
+
+    // Verify OAS data was written
     assert.ok(capturedOasData, "OAS data should be written");
     assert.ok(
       capturedOasData.paths["/test-resources"].get["x-codeSamples"],
-      "Should have code samples",
+      "Should have code samples for /test-resources GET",
+    );
+    assert.ok(
+      capturedOasData.paths["/test-resources"].get["x-codeSamples"].length > 0,
+      "Should have at least one code sample",
     );
   });
 
@@ -199,6 +241,7 @@ describe("main integration tests", () => {
     const testApiOasFixture = require("./fixtures/test-api-oas.json");
 
     let capturedDocsJson = null;
+    let capturedOasData = null;
 
     // Mock fs.readFile to return fixtures based on path
     const mockReadFile = t.mock.method(
@@ -222,6 +265,8 @@ describe("main integration tests", () => {
       async (filePath, content) => {
         if (filePath.includes("docs.json")) {
           capturedDocsJson = JSON.parse(content);
+        } else if (filePath.endsWith("myaccount-api-oas.json")) {
+          capturedOasData = JSON.parse(content);
         }
       },
     );
@@ -272,6 +317,28 @@ describe("main integration tests", () => {
       enDropdowns[2].dropdown,
       "MyAccount API",
       "New dropdown should be appended at the end",
+    );
+
+    // Verify that x-displayName from tags is used in the new dropdown
+    const newDropdown = enDropdowns[2];
+    const groupStructure = newDropdown.pages.find(item => item.group === " ");
+    if (groupStructure) {
+      const groups = groupStructure.pages.map(p => p.group);
+      assert.ok(
+        groups.includes("Test Resources"),
+        "Should use 'Test Resources' from x-displayName in tags",
+      );
+    }
+
+    // Verify OAS data was written
+    assert.ok(capturedOasData, "OAS data should be written");
+    assert.ok(
+      capturedOasData.paths["/test-resources"].get["x-codeSamples"],
+      "Should have code samples for /test-resources GET",
+    );
+    assert.ok(
+      capturedOasData.paths["/test-resources"].get["x-codeSamples"].length > 0,
+      "Should have at least one code sample",
     );
   });
 });
