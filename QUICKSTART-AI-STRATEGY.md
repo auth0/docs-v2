@@ -34,30 +34,42 @@ Replaced large accordion prompts (200-740 lines each) with agent skills snippets
 
 **Total Reduction:** ~2,709 lines of duplicated prompt content removed from these 4 files alone.
 
-### 3. Updated Quickstarts WITHOUT Agent Skills Support
+### 3. Created NEW Agent Skills
 
-For frameworks not yet supported by agent skills, we added an `<Info>` callout above the existing accordion:
+Created new agent skills in the agent-skills repository for previously unsupported frameworks:
 
-**Example (Svelte):**
-```mdx
-<Info>
-**Want to use AI to integrate Auth0?** [Auth0 Agent Skills](/quickstart/agent-skills) provide structured guidance for AI coding assistants. Svelte support is coming soon. In the meantime, use the AI prompt below.
-</Info>
+**New Skills Created:**
+- `/plugins/auth0-sdks/skills/auth0-svelte/` - Complete skill with SKILL.md and 3 reference files (setup.md, integration.md, api.md)
+- `/plugins/auth0-sdks/skills/auth0-vanilla-js/` - Complete skill with SKILL.md and 3 reference files
+- `/plugins/auth0-sdks/skills/auth0-fastapi/` - Complete skill with SKILL.md and 3 reference files
 
-<Accordion title="AI Prompt (Svelte-specific)" icon="microchip-ai" iconType="sharp-solid">
-  Add this prompt to Cursor, Windsurf, Copilot, Claude Code or your favourite AI-powered IDE to speed up development.
-  ...
-</Accordion>
-```
+Each skill follows the writing-skills pattern from claude-marketplace:
+- Gerund naming convention (auth0-svelte, auth0-vanilla-js, auth0-fastapi)
+- "Use when..." description format
+- Quick Start Workflow with 5 steps
+- Progressive disclosure with references/ folder
+- Automated setup scripts (Bash/PowerShell)
+- Integration guides with advanced patterns
+- Complete API reference documentation
 
-**Frameworks Still Using Embedded Prompts:**
-- Svelte (SPA)
-- Vanilla JS (SPA)
+### 4. Updated Quickstarts WITH New Agent Skills Support
+
+Updated quickstarts to include agent skills accordions:
+
+**Updated Files:**
+- `/main/docs/quickstart/spa/svelte/index.mdx` - Added agent skills accordion (defaultOpen) with auth0-svelte skill
+- `/main/docs/quickstart/spa/vanillajs/index.mdx` - Added agent skills accordion (defaultOpen) with auth0-vanilla-js skill
+- `/main/docs/quickstart/webapp/fastapi/index.mdx` - Added agent skills accordion (defaultOpen) with auth0-fastapi skill
+
+Each now has:
+- Primary accordion: Agent skills (defaultOpen) with install command and example prompt
+- Secondary accordion: Framework-specific AI prompt as alternative
+
+**Frameworks Still Using ONLY Embedded Prompts:**
 - Capn Web (SPA)
 - ASP.NET Core (Web App)
 - ASP.NET Core Blazor Server (Web App)
 - ASP.NET Core Web API (Backend)
-- FastAPI (Web App and Backend)
 
 **Action Required:** When agent skills add support for these frameworks, update the quickstarts following the pattern used for React/Vue/Angular/Next.js.
 
@@ -117,28 +129,37 @@ import QuickstartAgentSkills from "/snippets/quickstart-agent-skills-react.mdx";
 
 ## Next Steps
 
-### 1. Monitor Agent Skills Repository
-Watch https://github.com/auth0/agent-skills for new framework support additions:
-- Svelte
-- ASP.NET Core
-- FastAPI
-- Ruby on Rails
-- PHP/Laravel
-- Mobile frameworks (iOS, Android, Flutter)
+### 1. Agent Skills Created ✅
+Successfully created agent skills for:
+- ✅ Svelte - `auth0-svelte` skill in agent-skills repo
+- ✅ Vanilla JS - `auth0-vanilla-js` skill in agent-skills repo
+- ✅ FastAPI - `auth0-fastapi` skill in agent-skills repo
 
-### 2. Update Additional Frameworks
-As agent skills expand coverage, migrate remaining quickstarts from embedded prompts to agent skills snippets:
+### 2. Remaining Frameworks Needing Agent Skills
+Create agent skills for these frameworks (following the same pattern):
+- ASP.NET Core (Web App) - needs `auth0-aspnet-core` skill
+- ASP.NET Core Blazor Server - needs `auth0-blazor-server` skill
+- ASP.NET Core Web API (Backend) - needs `auth0-aspnet-webapi` skill
+- Capn Web (SPA) - needs clarification on framework/SDK
 
-1. Create new snippet file: `/main/snippets/quickstart-agent-skills-[framework].mdx`
-2. Update quickstart: `/main/docs/quickstart/[type]/[framework]/index.mdx`
-3. Remove the large accordion block
-4. Add import and `<QuickstartAgentSkills />` component
+### 3. Test New Skills
+Test the newly created skills on sample applications:
+1. Create a Svelte app and use `npx skills add auth0/agent-skills`, then ask AI to "Add Auth0 authentication to my Svelte app"
+2. Create a vanilla JS app and test the auth0-vanilla-js skill
+3. Create a FastAPI app and test the auth0-fastapi skill
 
-### 3. Consider Additional Snippets
-Potential future snippets:
-- `quickstart-agent-skills-express.mdx` - Express.js (already has agent skill)
-- `quickstart-agent-skills-react-native.mdx` - React Native (already has agent skill)
-- `quickstart-agent-skills-nuxt.mdx` - Nuxt (already has agent skill)
+Verify that:
+- Skills install correctly via CLI
+- AI can discover and use the skills
+- Code examples work correctly
+- Setup scripts function properly
+- Documentation is accurate and complete
+
+### 4. Consider Additional Skills
+Potential future skills for frameworks that already have basic agent support:
+- `auth0-express` - Express.js (skill exists, check if needs updates)
+- `auth0-react-native` - React Native (skill exists, check if needs updates)
+- `auth0-nuxt` - Nuxt (skill exists, check if needs updates)
 
 ### 4. Maintain Consistency
 When updating agent skills documentation or snippets:
@@ -149,11 +170,15 @@ When updating agent skills documentation or snippets:
 
 ## Rollout Complete
 
-✅ **Phase 1:** Created agent skills snippets for 4 frameworks
+✅ **Phase 1:** Created agent skills snippets for 4 frameworks (React, Vue, Angular, Next.js)
 ✅ **Phase 2:** Updated 4 quickstarts with agent skills (React, Vue, Angular, Next.js)
-✅ **Phase 3:** Updated 1 quickstart without agent skills to reference them (Svelte)
+✅ **Phase 3:** Created NEW agent skills for 3 frameworks (Svelte, Vanilla JS, FastAPI)
+✅ **Phase 4:** Updated 3 quickstarts to use new agent skills (Svelte, Vanilla JS, FastAPI)
 
-**Remaining:** Update the other 7 quickstarts without agent skills (Vanilla JS, Capn Web, ASP.NET variants, FastAPI) with similar Info callouts.
+**Remaining:**
+- Create agent skills for 4 frameworks (ASP.NET Core variants, Capn Web)
+- Test newly created skills on sample applications
+- Update remaining quickstarts once agent skills are available
 
 ## Metrics
 
