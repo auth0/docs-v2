@@ -2,7 +2,8 @@
 import { lazy } from "react";
 
 // Single import for all components
-export const mintlifyLoader = () => import("@auth0/universal-components-react/spa");
+export const mintlifyLoader = () =>
+  import("@auth0/universal-components-react/spa");
 
 // Component key mapping
 export const componentRoutes: Record<
@@ -13,8 +14,6 @@ export const componentRoutes: Record<
   }
 > = {
   "domain-table-view": { LazyComponent: null, componentKey: "DomainTableView" },
-  // Add more components:
-  // "mfa-enrollment-view": { LazyComponent: null, componentKey: "MfaEnrollmentUI" },
 };
 
 // Create lazy components for each route
