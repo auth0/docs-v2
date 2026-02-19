@@ -6,6 +6,7 @@ import { ClientStore } from './client-store';
 import { ResourceServerStore } from './resource-server-store';
 import { VariableStore } from './variable-store';
 import { FeatureFlagStore } from './feature-flag-store';
+import { config, type EnvConfig } from '@/lib/config';
 
 export class RootStore {
   sessionStore: SessionStore;
@@ -14,6 +15,7 @@ export class RootStore {
   resourceServerStore: ResourceServerStore;
   variableStore: VariableStore;
   featureFlagStore: FeatureFlagStore;
+  config: EnvConfig;
 
   #disposer: IReactionDisposer | null = null;
 
@@ -25,6 +27,7 @@ export class RootStore {
     this.resourceServerStore = new ResourceServerStore(this);
     this.variableStore = new VariableStore(this);
     this.featureFlagStore = new FeatureFlagStore(this);
+    this.config = config;
   }
 
   async init() {
