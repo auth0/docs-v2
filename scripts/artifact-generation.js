@@ -31,7 +31,7 @@ const REFERENCE_SECTION_MAP = {
 
 const oasConfigs = [
   {
-    // TODO: this needs to be a location in `node_modoles`
+    // TODO: this needs to be a location in `node_modules`
     inputFile: "node_modules/@a0/myaccount-api-oas/openapi-dereferenced.json",
     outputFile: "myaccount-api-oas.json",
     docRootDirectory: "myaccount",
@@ -45,7 +45,7 @@ const oasConfigs = [
     //   .SnippetResolver,
   },
   // {
-  //   // TODO: this needs to be a location in `node_modoles`
+  //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "myorganization-api-oas.json",
   //   outputFile: "myorganization-api-oas.json",
   //   docRootDirectory: "myorganization",
@@ -58,7 +58,7 @@ const oasConfigs = [
   //     .SnippetResolver,
   // },
   // {
-  //   // TODO: this needs to be a location in `node_modoles`
+  //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "management-api-oas.json",
   //   outputFile: "management-api-oas.json",
   //   docRootDirectory: "management/v2",
@@ -71,7 +71,7 @@ const oasConfigs = [
   //     .SnippetResolver,
   // },
   // {
-  //   // TODO: this needs to be a location in `node_modoles`
+  //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "authentication-api-oas.json",
   //   outputFile: "authentication-api-oas.json",
   //   docRootDirectory: "authentication",
@@ -123,7 +123,7 @@ async function writeMdxContent(config) {
     openapi: ${file} ${method} ${path}
     ---
 
-    import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+    import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
     import { Scopes } from "/snippets/ApiScopes.jsx";
 
     <ReleaseLifecycle releaseLifecycle="${releaseLifecycle}" />
@@ -136,6 +136,39 @@ async function writeMdxContent(config) {
   } catch (err) {
     console.error(`failed to write: ${mdxFilePath}`, err);
     throw err;
+  }
+}
+
+
+/**
+ * For new APIs add an `index.mdx` landing page that will be 
+ * managed by the product team. 
+ * 
+ * Note: This file will be ignored if it already exists to prevent
+ * loss of any changes.
+ */
+async function writeApiIndexMdx({ docpath, apiName }) {
+  const indexContent = dedent`
+    ---
+    title: "${apiName}"
+    description: "${apiName} endpoints"
+    ---
+  `;
+
+  const indexFilePath = `${docpath}/index.mdx`;
+
+  // Check if index.mdx already exists to avoid overwriting manual changes
+  try {
+    await fs.access(indexFilePath);
+    // File exists, don't overwrite
+    return;
+  } catch {
+    // File doesn't exist, create it
+    try {
+      await fs.writeFile(indexFilePath, indexContent);
+    } catch (err) {
+      console.error(`failed to write index: ${indexFilePath}`, err);
+    }
   }
 }
 
@@ -256,8 +289,8 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
     // construct docsPath based on locale
     const docsPath =
       locale === "en"
-        ? `${DOCS_SITE}/${DOCS_FOLDER}/${API_FOLDER}/${oasConfig.docRootDirectory}`
-        : `${DOCS_SITE}/${DOCS_FOLDER}/${locale}/${API_FOLDER}/${oasConfig.docRootDirectory}`;
+        ? `${DOCS_FOLDER}/${API_FOLDER}/${oasConfig.docRootDirectory}`
+        : `${DOCS_FOLDER}/${locale}/${API_FOLDER}/${oasConfig.docRootDirectory}`;
     // where is our current language's object at in the docs.json
     const langIdx = docsJson.navigation.languages.findIndex(
       (item) => item.language === LOCALES_MAP[locale],
@@ -287,7 +320,7 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
     // now either way (existed before or not), we can replace the found nav object's pages
     docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
       apiIdx
-    ].pages = [`${docsPath}/index`, docsByLocale[locale]];
+    ].pages = [`${docsPath}/index`, ...docsByLocale[locale].pages];
   }
   return docsJson;
 }
@@ -322,6 +355,19 @@ async function main() {
         locale === "en"
           ? `${DOCS_FOLDER}/${API_FOLDER}/${docRootDirectory}`
           : `${DOCS_FOLDER}/${locale}/${API_FOLDER}/${docRootDirectory}`;
+
+      const API_ROOT_PATH = `${DOCS_SITE}/${DOCS_PATH}`;
+
+      // INFO: create API root directory and index.mdx once per locale
+      try {
+        await fs.mkdir(API_ROOT_PATH, { recursive: true });
+        await writeApiIndexMdx({
+          docpath: API_ROOT_PATH,
+          apiName: oasConfig.docSectionNameMap[locale],
+        });
+      } catch (err) {
+        console.error(`failed to create API root: ${API_ROOT_PATH}`, err);
+      }
 
       for (const [path, pathSpec] of Object.entries(oasData.paths)) {
         // INFO: `pathSpec` contains all the methods of this path
@@ -360,12 +406,12 @@ async function main() {
                   .thru((parts) => [...initial(parts), locale, last(parts)])
                   .join(".")
                   .value();
+          const oasFilePath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${docRootDirectory}/${oasFilename}`;
           try {
             await writeMdxContent({
-              // INFO: this is the name of the file we're saving at
-              // `main/docs/oas/`
+              // INFO: this is the path to the OAS file relative to docs root
               frontMatter: {
-                file: oasFilename,
+                file: oasFilePath,
                 method,
                 path,
               },
@@ -413,6 +459,7 @@ async function main() {
     // INFO: write mutated `docs.json` to disk
     const docsJsonPath = `${DOCS_SITE}/docs.json`;
     await fs.writeFile(docsJsonPath, JSON.stringify(docsJson, null, 2));
+    console.log("Done! 🎉")
   }
 }
 
@@ -424,6 +471,7 @@ module.exports = {
   readJson,
   getEndpointScopes,
   writeMdxContent,
+  writeApiIndexMdx,
   injectCodeSnippets,
   generateCodeBlocks,
   patchDocsJson,
