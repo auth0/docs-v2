@@ -40,9 +40,8 @@ const oasConfigs = [
       "fr-ca": "MyAccount API",
       "ja-jp": "MyAccount API",
     },
-    SnippetResolver: null,
-    // SnippetResolver: require("@fern-api/auth0-myaccount-snippets")
-    //   .SnippetResolver,
+    SnippetResolver: require("@fern-api/auth0-myaccount-snippets")
+      .SnippetResolver,
   },
   // {
   //   // TODO: this needs to be a location in `node_modules`
