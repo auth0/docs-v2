@@ -4,7 +4,6 @@ import * as React from "react";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import "./assets/styles.css";
 import "./index.css";
 
 import {
@@ -63,13 +62,16 @@ async function getWrapper(
   }
 
   function Wrapper(props: Record<string, unknown>) {
-    const logic = getMockLogic(componentName);
+    const mockData = getMockLogic(componentName) as {
+      logic?: any;
+      handlers?: any;
+    } | null;
     const mode = detectColorScheme();
 
     return (
       <Auth0ComponentProvider
         authDetails={{
-          skipApiClients: true,
+          previewMode: true,
           domain: "example.auth0.com",
         }}
         themeSettings={{ theme: "default", mode }}
@@ -78,7 +80,11 @@ async function getWrapper(
           useCoreClient={useCoreClient}
           fallback={<div>Initializing...</div>}
         >
-          <Component logic={logic} {...props} />
+          <Component
+            logic={mockData?.logic}
+            handlers={mockData?.handlers}
+            {...props}
+          />
         </WaitForCoreClient>
       </Auth0ComponentProvider>
     );

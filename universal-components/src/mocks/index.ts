@@ -9,7 +9,7 @@ export function getMockLogic(componentName: string) {
   const logicFn = mockLogicRegistry[componentName];
   if (!logicFn) {
     console.warn(`No mock logic found for "${componentName}"`);
-    return {};
+    return { logic: {}, handlers: {} };
   }
   return logicFn();
 }
