@@ -1265,6 +1265,7 @@ describe("patchDocsJson", () => {
   it("should create new dropdown when apiIdx is -1", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API [FR]",
@@ -1328,6 +1329,7 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API",
                     icon: "list",
+                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
                       "docs/api/myaccount/index",
                       {
@@ -1349,6 +1351,7 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API [FR]",
                     icon: "list",
+                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
                       "docs/fr-ca/api/myaccount/index",
                       {
@@ -1370,6 +1373,7 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API [JP]",
                     icon: "list",
+                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
                       "docs/ja-jp/api/myaccount/index",
                       {
@@ -1395,6 +1399,7 @@ describe("patchDocsJson", () => {
   it("should update existing dropdown when found", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1509,11 +1514,27 @@ describe("patchDocsJson", () => {
       },
     ];
     assert.deepStrictEqual(actualJpPages, expectedJpPages);
+
+    // Check openapi field is set on all locales
+    const expectedOpenapi = "docs/oas/myaccount/myaccount-api-oas.json";
+    assert.strictEqual(
+      actual.navigation.languages[0].tabs[0].dropdowns[0].openapi,
+      expectedOpenapi,
+    );
+    assert.strictEqual(
+      actual.navigation.languages[1].tabs[0].dropdowns[0].openapi,
+      expectedOpenapi,
+    );
+    assert.strictEqual(
+      actual.navigation.languages[2].tabs[0].dropdowns[0].openapi,
+      expectedOpenapi,
+    );
   });
 
   it("should construct correct docsPath for en locale", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1578,6 +1599,7 @@ describe("patchDocsJson", () => {
   it("should construct correct docsPath for non-en locales", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1646,6 +1668,7 @@ describe("patchDocsJson", () => {
   it("should mutate the original docsJson object", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1716,6 +1739,7 @@ describe("patchDocsJson", () => {
   it("should process all three LOCALES correctly", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "API MyAccount",
@@ -1789,6 +1813,7 @@ describe("patchDocsJson", () => {
   it("should handle when oasData doesn't have tags property", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1863,6 +1888,7 @@ describe("patchDocsJson", () => {
   it("should pass tags from oasData to convertDocsToFormat", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1932,6 +1958,7 @@ describe("patchDocsJson", () => {
   it("should use x-displayName from tags when available in patchDocsJson", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",

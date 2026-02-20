@@ -111,7 +111,7 @@ function getEndpointScopes(spec) {
 
 async function writeMdxContent(config) {
   const {
-    frontMatter: { file, method, path },
+    frontMatter: { method, path },
     content: { releaseLifecycle, scopes },
     docpath,
     filename,
@@ -119,7 +119,7 @@ async function writeMdxContent(config) {
 
   const mdxContent = dedent`
     ---
-    openapi: ${file} ${method} ${path}
+    openapi: ${method} ${path}
     ---
 
     import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
@@ -283,6 +283,9 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
     docs: rawDocs,
     tags: oasData.tags || [],
   });
+  // the openapi spec path is always the English OAS file regardless of locale
+  // TODO: update this to support other locale files when available
+  const specPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
   // loop through languages
   for (const locale of LOCALES) {
     // construct docsPath based on locale
@@ -313,10 +316,15 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
       docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns.push({
         dropdown: oasConfig.docSectionNameMap[locale],
         icon: "list",
+        openapi: specPath,
         pages: [],
       });
     }
     // now either way (existed before or not), we can replace the found nav object's pages
+    // and ensure the openapi field is always present
+    docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
+      apiIdx
+    ].openapi = specPath;
     docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
       apiIdx
     ].pages = [`${docsPath}/index`, ...docsByLocale[locale].pages];
@@ -423,12 +431,10 @@ async function main() {
           }
 
           // INFO: write MDX file content
-          const oasFilePath = await getOasFilePath({ locale, oasConfig });
           try {
             await writeMdxContent({
               // INFO: this is the path to the OAS file relative to docs root
               frontMatter: {
-                file: oasFilePath,
                 method,
                 path,
               },
