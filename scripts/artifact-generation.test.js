@@ -8,6 +8,7 @@ const {
   generateCodeBlocks,
   convertDocsToFormat,
   patchDocsJson,
+  getOasFilePath,
 } = require("./artifact-generation.js");
 const fs = require("node:fs/promises");
 const dedent = require("dedent");
@@ -204,7 +205,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.json get /api/v2/users/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -281,7 +282,7 @@ describe("writeMdxContent", () => {
       openapi: test-api.json delete /api/v2/resource/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -324,7 +325,7 @@ describe("writeMdxContent", () => {
       openapi: test-api.json get /api/v2/public
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -395,7 +396,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.fr-ca.json get /api/v2/users/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -438,7 +439,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.ja-jp.json post /api/v2/sessions
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="early-access" />
@@ -481,7 +482,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.json delete /api/v2/devices/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -536,24 +537,40 @@ describe("generateCodeBlocks", () => {
     assert.strictEqual(result, null);
   });
 
-  it("should return null when SnippetResolver is falsy", async () => {
-    const spec = {
-      summary: "Get users",
-      operationId: "getUsers",
-      tags: ["Users"],
-      parameters: [],
-      responses: {},
-    };
 
-    const result = await generateCodeBlocks({
-      language: "typescript",
-      spec,
-      path: "/api/v2/users",
-      method: "get",
-      SnippetResolver: null,
+});
+
+describe("getOasFilePath", () => {
+  const oasConfig = {
+    outputFile: "myaccount-api-oas.json",
+    docRootDirectory: "myaccount",
+  };
+
+  it("should return English OAS path for en locale without calling fs.access", async (t) => {
+    const mockAccess = t.mock.method(fs, "access", async () => {});
+
+    const result = await getOasFilePath({ locale: "en", oasConfig });
+
+    assert.strictEqual(result, "docs/oas/myaccount/myaccount-api-oas.json");
+    assert.strictEqual(mockAccess.mock.callCount(), 0, "fs.access should not be called for en locale");
+  });
+
+  it("should return locale-specific OAS path when locale file exists", async (t) => {
+    t.mock.method(fs, "access", async () => {}); // resolves — file exists
+
+    const result = await getOasFilePath({ locale: "fr-ca", oasConfig });
+
+    assert.strictEqual(result, "docs/oas/myaccount/myaccount-api-oas.fr-ca.json");
+  });
+
+  it("should fall back to English OAS path when locale file does not exist", async (t) => {
+    t.mock.method(fs, "access", async () => {
+      throw new Error("ENOENT: no such file or directory");
     });
 
-    assert.strictEqual(result, null);
+    const result = await getOasFilePath({ locale: "fr-ca", oasConfig });
+
+    assert.strictEqual(result, "docs/oas/myaccount/myaccount-api-oas.json");
   });
 });
 

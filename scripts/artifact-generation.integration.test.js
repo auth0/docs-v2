@@ -50,6 +50,12 @@ describe("main integration tests", () => {
       createdDirectories.push(dirPath);
     });
 
+    // Mock fs.access: throw for all paths so index.mdx is created and
+    // locale OAS files don't exist (triggering English OAS fallback)
+    t.mock.method(fs, "access", async () => {
+      throw new Error("ENOENT: no such file or directory");
+    });
+
     // Mock generateCodeBlocks to skip actual snippet generation
     const mockGenerateCodeBlocks = t.mock.method(
       require("./artifact-generation.js"),
@@ -88,9 +94,9 @@ describe("main integration tests", () => {
 
     // Verify that x-displayName from tags is used for group names
     const enPages = capturedDocsJson.navigation.languages[0].tabs[0].dropdowns[0].pages;
-    const groupStructure = enPages.find(item => item.group === " ");
-    assert.ok(groupStructure, "Should have group structure");
-    const groups = groupStructure.pages.map(p => p.group);
+    const groupItems = enPages.filter(item => typeof item === "object" && item.group);
+    assert.ok(groupItems.length > 0, "Should have group pages");
+    const groups = groupItems.map(p => p.group);
     assert.ok(
       groups.includes("Test Resources"),
       "Should use 'Test Resources' from x-displayName in tags",
@@ -114,27 +120,87 @@ describe("main integration tests", () => {
     );
 
     // Verify MDX files reference correct locale-specific OAS filenames
-    const enMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/api/"));
-    const frMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/fr-ca/api/"));
-    const jpMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/ja-jp/api/"));
+    const enMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/api/") && !f.path.endsWith("index.mdx"));
+    const frMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/fr-ca/api/") && !f.path.endsWith("index.mdx"));
+    const jpMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/ja-jp/api/") && !f.path.endsWith("index.mdx"));
 
     assert.ok(
-      enMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas.json")),
-      "English MDX files should reference myaccount-api-oas.json",
+      enMdxFiles.some(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.json")),
+      "English MDX files should reference docs/oas/myaccount/myaccount-api-oas.json",
     );
     assert.ok(
-      frMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas.fr-ca.json")),
-      "French-CA MDX files should reference myaccount-api-oas.fr-ca.json",
+      frMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.json")),
+      "French-CA MDX files should fall back to English OAS",
     );
     assert.ok(
-      jpMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas.ja-jp.json")),
-      "Japanese MDX files should reference myaccount-api-oas.ja-jp.json",
+      jpMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.json")),
+      "Japanese MDX files should fall back to English OAS",
     );
 
     // Verify directories were created
     assert.ok(
       createdDirectories.length > 0,
       "Should have created at least one directory",
+    );
+  });
+
+  it("should use locale-specific OAS path when locale file exists", async (t) => {
+    const docsEmptyFixture = require("./fixtures/docs-empty.json");
+    const testApiOasFixture = require("./fixtures/test-api-oas.json");
+
+    const writtenMdxFiles = [];
+
+    t.mock.method(fs, "readFile", async (filePath, options) => {
+      if (filePath.includes("docs.json")) {
+        return JSON.stringify(docsEmptyFixture);
+      }
+      if (filePath.includes("myaccount-api-oas.json") || filePath.includes("openapi-dereferenced.json")) {
+        return JSON.stringify(testApiOasFixture);
+      }
+      throw new Error(`Unexpected file read: ${filePath}`);
+    });
+
+    t.mock.method(fs, "writeFile", async (filePath, content) => {
+      if (filePath.endsWith(".mdx")) {
+        writtenMdxFiles.push({ path: filePath, content });
+      }
+    });
+
+    t.mock.method(fs, "mkdir", async () => {});
+
+    // fs.access: succeed for locale OAS paths, throw for .mdx (index check)
+    t.mock.method(fs, "access", async (filePath) => {
+      if (filePath.endsWith(".mdx")) {
+        throw new Error("ENOENT: no such file or directory");
+      }
+      // locale OAS files exist
+    });
+
+    t.mock.method(
+      require("./artifact-generation.js"),
+      "generateCodeBlocks",
+      async ({ language, spec, path, method }) => ({
+        lang: language,
+        label: spec.summary,
+        source: `// ${language} code`,
+      }),
+    );
+
+    await main();
+
+    const frMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/fr-ca/api/") && !f.path.endsWith("index.mdx"));
+    const jpMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/ja-jp/api/") && !f.path.endsWith("index.mdx"));
+
+    assert.ok(frMdxFiles.length > 0, "Should have written French-CA MDX files");
+    assert.ok(jpMdxFiles.length > 0, "Should have written Japanese MDX files");
+
+    assert.ok(
+      frMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.fr-ca.json")),
+      "French-CA MDX files should reference myaccount-api-oas.fr-ca.json",
+    );
+    assert.ok(
+      jpMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.ja-jp.json")),
+      "Japanese MDX files should reference myaccount-api-oas.ja-jp.json",
     );
   });
 
