@@ -31,7 +31,7 @@ const REFERENCE_SECTION_MAP = {
 
 const oasConfigs = [
   {
-    // TODO: this needs to be a location in `node_modoles`
+    // TODO: this needs to be a location in `node_modules`
     inputFile: "node_modules/@a0/myaccount-api-oas/openapi-dereferenced.json",
     outputFile: "myaccount-api-oas.json",
     docRootDirectory: "myaccount",
@@ -40,12 +40,11 @@ const oasConfigs = [
       "fr-ca": "MyAccount API",
       "ja-jp": "MyAccount API",
     },
-    SnippetResolver: null,
-    // SnippetResolver: require("@fern-api/auth0-myaccount-snippets")
-    //   .SnippetResolver,
+    SnippetResolver: require("@fern-api/auth0-myaccount-snippets")
+      .SnippetResolver,
   },
   // {
-  //   // TODO: this needs to be a location in `node_modoles`
+  //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "myorganization-api-oas.json",
   //   outputFile: "myorganization-api-oas.json",
   //   docRootDirectory: "myorganization",
@@ -58,7 +57,7 @@ const oasConfigs = [
   //     .SnippetResolver,
   // },
   // {
-  //   // TODO: this needs to be a location in `node_modoles`
+  //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "management-api-oas.json",
   //   outputFile: "management-api-oas.json",
   //   docRootDirectory: "management/v2",
@@ -71,7 +70,7 @@ const oasConfigs = [
   //     .SnippetResolver,
   // },
   // {
-  //   // TODO: this needs to be a location in `node_modoles`
+  //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "authentication-api-oas.json",
   //   outputFile: "authentication-api-oas.json",
   //   docRootDirectory: "authentication",
@@ -112,7 +111,7 @@ function getEndpointScopes(spec) {
 
 async function writeMdxContent(config) {
   const {
-    frontMatter: { file, method, path },
+    frontMatter: { method, path },
     content: { releaseLifecycle, scopes },
     docpath,
     filename,
@@ -120,10 +119,10 @@ async function writeMdxContent(config) {
 
   const mdxContent = dedent`
     ---
-    openapi: ${file} ${method} ${path}
+    openapi: ${method} ${path}
     ---
 
-    import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+    import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
     import { Scopes } from "/snippets/ApiScopes.jsx";
 
     <ReleaseLifecycle releaseLifecycle="${releaseLifecycle}" />
@@ -136,6 +135,39 @@ async function writeMdxContent(config) {
   } catch (err) {
     console.error(`failed to write: ${mdxFilePath}`, err);
     throw err;
+  }
+}
+
+
+/**
+ * For new APIs add an `index.mdx` landing page that will be 
+ * managed by the product team. 
+ * 
+ * Note: This file will be ignored if it already exists to prevent
+ * loss of any changes.
+ */
+async function writeApiIndexMdx({ docpath, apiName }) {
+  const indexContent = dedent`
+    ---
+    title: "${apiName}"
+    description: "${apiName} endpoints"
+    ---
+  `;
+
+  const indexFilePath = `${docpath}/index.mdx`;
+
+  // Check if index.mdx already exists to avoid overwriting manual changes
+  try {
+    await fs.access(indexFilePath);
+    // File exists, don't overwrite
+    return;
+  } catch {
+    // File doesn't exist, create it
+    try {
+      await fs.writeFile(indexFilePath, indexContent);
+    } catch (err) {
+      console.error(`failed to write index: ${indexFilePath}`, err);
+    }
   }
 }
 
@@ -251,13 +283,16 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
     docs: rawDocs,
     tags: oasData.tags || [],
   });
+  // the openapi spec path is always the English OAS file regardless of locale
+  // TODO: update this to support other locale files when available
+  const specPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
   // loop through languages
   for (const locale of LOCALES) {
     // construct docsPath based on locale
     const docsPath =
       locale === "en"
-        ? `${DOCS_SITE}/${DOCS_FOLDER}/${API_FOLDER}/${oasConfig.docRootDirectory}`
-        : `${DOCS_SITE}/${DOCS_FOLDER}/${locale}/${API_FOLDER}/${oasConfig.docRootDirectory}`;
+        ? `${DOCS_FOLDER}/${API_FOLDER}/${oasConfig.docRootDirectory}`
+        : `${DOCS_FOLDER}/${locale}/${API_FOLDER}/${oasConfig.docRootDirectory}`;
     // where is our current language's object at in the docs.json
     const langIdx = docsJson.navigation.languages.findIndex(
       (item) => item.language === LOCALES_MAP[locale],
@@ -281,15 +316,39 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
       docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns.push({
         dropdown: oasConfig.docSectionNameMap[locale],
         icon: "list",
+        openapi: specPath,
         pages: [],
       });
     }
     // now either way (existed before or not), we can replace the found nav object's pages
+    // and ensure the openapi field is always present
     docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
       apiIdx
-    ].pages = [`${docsPath}/index`, docsByLocale[locale]];
+    ].openapi = specPath;
+    docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
+      apiIdx
+    ].pages = [`${docsPath}/index`, ...docsByLocale[locale].pages];
   }
   return docsJson;
+}
+
+async function getOasFilePath({ locale, oasConfig }) {
+  const enPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
+  if (locale === "en") {
+    return enPath;
+  }
+  const localeFilename = chain(oasConfig.outputFile)
+    .split(".")
+    .thru((parts) => [...initial(parts), locale, last(parts)])
+    .join(".")
+    .value();
+  const localeAbsPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${localeFilename}`;
+  try {
+    await fs.access(localeAbsPath);
+    return `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${localeFilename}`;
+  } catch {
+    return enPath; // locale file doesn't exist, fall back to English
+  }
 }
 
 async function main() {
@@ -311,6 +370,13 @@ async function main() {
       continue;
     }
 
+    // INFO: inject code snippets once before locale loop to avoid duplication
+    for (const [path, pathSpec] of Object.entries(oasData.paths)) {
+      for (const [method, spec] of Object.entries(pathSpec)) {
+        await injectCodeSnippets(oasData, { spec, path, method, oasConfig });
+      }
+    }
+
     // the output snippet for docs.json based on what we make
     const collectedDocs = {};
     for (const locale of LOCALES) {
@@ -322,6 +388,19 @@ async function main() {
         locale === "en"
           ? `${DOCS_FOLDER}/${API_FOLDER}/${docRootDirectory}`
           : `${DOCS_FOLDER}/${locale}/${API_FOLDER}/${docRootDirectory}`;
+
+      const API_ROOT_PATH = `${DOCS_SITE}/${DOCS_PATH}`;
+
+      // INFO: create API root directory and index.mdx once per locale
+      try {
+        await fs.mkdir(API_ROOT_PATH, { recursive: true });
+        await writeApiIndexMdx({
+          docpath: API_ROOT_PATH,
+          apiName: oasConfig.docSectionNameMap[locale],
+        });
+      } catch (err) {
+        console.error(`failed to create API root: ${API_ROOT_PATH}`, err);
+      }
 
       for (const [path, pathSpec] of Object.entries(oasData.paths)) {
         // INFO: `pathSpec` contains all the methods of this path
@@ -352,20 +431,10 @@ async function main() {
           }
 
           // INFO: write MDX file content
-          const oasFilename =
-            locale === "en"
-              ? oasConfig.outputFile
-              : chain(oasConfig.outputFile)
-                  .split(".")
-                  .thru((parts) => [...initial(parts), locale, last(parts)])
-                  .join(".")
-                  .value();
           try {
             await writeMdxContent({
-              // INFO: this is the name of the file we're saving at
-              // `main/docs/oas/`
+              // INFO: this is the path to the OAS file relative to docs root
               frontMatter: {
-                file: oasFilename,
                 method,
                 path,
               },
@@ -380,9 +449,6 @@ async function main() {
             // TODO: figure out of `break` or `continue` is what we want here
             continue;
           }
-
-          // INFO: do the code snippet generation
-          await injectCodeSnippets(oasData, { spec, path, method, oasConfig });
         }
       }
     } // INFO: end of `LOCALES` loop
@@ -413,6 +479,7 @@ async function main() {
     // INFO: write mutated `docs.json` to disk
     const docsJsonPath = `${DOCS_SITE}/docs.json`;
     await fs.writeFile(docsJsonPath, JSON.stringify(docsJson, null, 2));
+    console.log("Done! 🎉")
   }
 }
 
@@ -424,6 +491,8 @@ module.exports = {
   readJson,
   getEndpointScopes,
   writeMdxContent,
+  writeApiIndexMdx,
+  getOasFilePath,
   injectCodeSnippets,
   generateCodeBlocks,
   patchDocsJson,

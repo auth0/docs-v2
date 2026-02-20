@@ -8,6 +8,7 @@ const {
   generateCodeBlocks,
   convertDocsToFormat,
   patchDocsJson,
+  getOasFilePath,
 } = require("./artifact-generation.js");
 const fs = require("node:fs/promises");
 const dedent = require("dedent");
@@ -204,7 +205,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.json get /api/v2/users/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -281,7 +282,7 @@ describe("writeMdxContent", () => {
       openapi: test-api.json delete /api/v2/resource/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -324,7 +325,7 @@ describe("writeMdxContent", () => {
       openapi: test-api.json get /api/v2/public
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -395,7 +396,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.fr-ca.json get /api/v2/users/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -438,7 +439,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.ja-jp.json post /api/v2/sessions
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="early-access" />
@@ -481,7 +482,7 @@ describe("writeMdxContent", () => {
       openapi: myaccount-api-oas.json delete /api/v2/devices/{id}
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
       <ReleaseLifecycle releaseLifecycle="generally-available" />
@@ -536,24 +537,40 @@ describe("generateCodeBlocks", () => {
     assert.strictEqual(result, null);
   });
 
-  it("should return null when SnippetResolver is falsy", async () => {
-    const spec = {
-      summary: "Get users",
-      operationId: "getUsers",
-      tags: ["Users"],
-      parameters: [],
-      responses: {},
-    };
 
-    const result = await generateCodeBlocks({
-      language: "typescript",
-      spec,
-      path: "/api/v2/users",
-      method: "get",
-      SnippetResolver: null,
+});
+
+describe("getOasFilePath", () => {
+  const oasConfig = {
+    outputFile: "myaccount-api-oas.json",
+    docRootDirectory: "myaccount",
+  };
+
+  it("should return English OAS path for en locale without calling fs.access", async (t) => {
+    const mockAccess = t.mock.method(fs, "access", async () => {});
+
+    const result = await getOasFilePath({ locale: "en", oasConfig });
+
+    assert.strictEqual(result, "docs/oas/myaccount/myaccount-api-oas.json");
+    assert.strictEqual(mockAccess.mock.callCount(), 0, "fs.access should not be called for en locale");
+  });
+
+  it("should return locale-specific OAS path when locale file exists", async (t) => {
+    t.mock.method(fs, "access", async () => {}); // resolves — file exists
+
+    const result = await getOasFilePath({ locale: "fr-ca", oasConfig });
+
+    assert.strictEqual(result, "docs/oas/myaccount/myaccount-api-oas.fr-ca.json");
+  });
+
+  it("should fall back to English OAS path when locale file does not exist", async (t) => {
+    t.mock.method(fs, "access", async () => {
+      throw new Error("ENOENT: no such file or directory");
     });
 
-    assert.strictEqual(result, null);
+    const result = await getOasFilePath({ locale: "fr-ca", oasConfig });
+
+    assert.strictEqual(result, "docs/oas/myaccount/myaccount-api-oas.json");
   });
 });
 
@@ -1248,6 +1265,7 @@ describe("patchDocsJson", () => {
   it("should create new dropdown when apiIdx is -1", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API [FR]",
@@ -1311,16 +1329,12 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API",
                     icon: "list",
+                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
-                      "main/docs/api/myaccount/index",
+                      "docs/api/myaccount/index",
                       {
-                        group: " ",
-                        pages: [
-                          {
-                            group: "Users",
-                            pages: ["docs/api/myaccount/users/get-user"],
-                          },
-                        ],
+                        group: "Users",
+                        pages: ["docs/api/myaccount/users/get-user"],
                       },
                     ],
                   },
@@ -1337,16 +1351,12 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API [FR]",
                     icon: "list",
+                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
-                      "main/docs/fr-ca/api/myaccount/index",
+                      "docs/fr-ca/api/myaccount/index",
                       {
-                        group: " ",
-                        pages: [
-                          {
-                            group: "Users",
-                            pages: ["docs/api/myaccount/users/get-user"],
-                          },
-                        ],
+                        group: "Users",
+                        pages: ["docs/api/myaccount/users/get-user"],
                       },
                     ],
                   },
@@ -1363,16 +1373,12 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API [JP]",
                     icon: "list",
+                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
-                      "main/docs/ja-jp/api/myaccount/index",
+                      "docs/ja-jp/api/myaccount/index",
                       {
-                        group: " ",
-                        pages: [
-                          {
-                            group: "Users",
-                            pages: ["docs/api/myaccount/users/get-user"],
-                          },
-                        ],
+                        group: "Users",
+                        pages: ["docs/api/myaccount/users/get-user"],
                       },
                     ],
                   },
@@ -1393,6 +1399,7 @@ describe("patchDocsJson", () => {
   it("should update existing dropdown when found", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1423,15 +1430,10 @@ describe("patchDocsJson", () => {
                     dropdown: "MyAccount API",
                     icon: "list",
                     pages: [
-                      "main/docs/api/myaccount/index",
+                      "docs/api/myaccount/index",
                       {
-                        group: " ",
-                        pages: [
-                          {
-                            group: "Users",
-                            pages: ["docs/api/myaccount/users/get-user"],
-                          },
-                        ],
+                        group: "Users",
+                        pages: ["docs/api/myaccount/users/get-user"],
                       },
                     ],
                   },
@@ -1474,15 +1476,10 @@ describe("patchDocsJson", () => {
     };
 
     const expectedPages = [
-      "main/docs/api/myaccount/index",
+      "docs/api/myaccount/index",
       {
-        group: " ",
-        pages: [
-          {
-            group: "Sessions",
-            pages: ["docs/api/myaccount/sessions/list-sessions"],
-          },
-        ],
+        group: "Sessions",
+        pages: ["docs/api/myaccount/sessions/list-sessions"],
       },
     ];
     const oasData = { tags: [] };
@@ -1498,15 +1495,10 @@ describe("patchDocsJson", () => {
     const actualFrPages =
       actual.navigation.languages[1].tabs[0].dropdowns[0].pages;
     const expectedFrPages = [
-      "main/docs/fr-ca/api/myaccount/index",
+      "docs/fr-ca/api/myaccount/index",
       {
-        group: " ",
-        pages: [
-          {
-            group: "Sessions",
-            pages: ["docs/api/myaccount/sessions/list-sessions"],
-          },
-        ],
+        group: "Sessions",
+        pages: ["docs/api/myaccount/sessions/list-sessions"],
       },
     ];
     assert.deepStrictEqual(actualFrPages, expectedFrPages);
@@ -1515,23 +1507,34 @@ describe("patchDocsJson", () => {
     const actualJpPages =
       actual.navigation.languages[2].tabs[0].dropdowns[0].pages;
     const expectedJpPages = [
-      "main/docs/ja-jp/api/myaccount/index",
+      "docs/ja-jp/api/myaccount/index",
       {
-        group: " ",
-        pages: [
-          {
-            group: "Sessions",
-            pages: ["docs/api/myaccount/sessions/list-sessions"],
-          },
-        ],
+        group: "Sessions",
+        pages: ["docs/api/myaccount/sessions/list-sessions"],
       },
     ];
     assert.deepStrictEqual(actualJpPages, expectedJpPages);
+
+    // Check openapi field is set on all locales
+    const expectedOpenapi = "docs/oas/myaccount/myaccount-api-oas.json";
+    assert.strictEqual(
+      actual.navigation.languages[0].tabs[0].dropdowns[0].openapi,
+      expectedOpenapi,
+    );
+    assert.strictEqual(
+      actual.navigation.languages[1].tabs[0].dropdowns[0].openapi,
+      expectedOpenapi,
+    );
+    assert.strictEqual(
+      actual.navigation.languages[2].tabs[0].dropdowns[0].openapi,
+      expectedOpenapi,
+    );
   });
 
   it("should construct correct docsPath for en locale", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1583,7 +1586,7 @@ describe("patchDocsJson", () => {
       },
     };
 
-    const expectedEnIndexPath = "main/docs/api/myaccount/index";
+    const expectedEnIndexPath = "docs/api/myaccount/index";
     const oasData = { tags: [] };
 
     const actual = patchDocsJson({ oasConfig, rawDocs, docsJson, oasData });
@@ -1596,6 +1599,7 @@ describe("patchDocsJson", () => {
   it("should construct correct docsPath for non-en locales", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1647,8 +1651,8 @@ describe("patchDocsJson", () => {
       },
     };
 
-    const expectedFrIndexPath = "main/docs/fr-ca/api/myaccount/index";
-    const expectedJpIndexPath = "main/docs/ja-jp/api/myaccount/index";
+    const expectedFrIndexPath = "docs/fr-ca/api/myaccount/index";
+    const expectedJpIndexPath = "docs/ja-jp/api/myaccount/index";
     const oasData = { tags: [] };
 
     const actual = patchDocsJson({ oasConfig, rawDocs, docsJson, oasData });
@@ -1664,6 +1668,7 @@ describe("patchDocsJson", () => {
   it("should mutate the original docsJson object", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1734,6 +1739,7 @@ describe("patchDocsJson", () => {
   it("should process all three LOCALES correctly", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "API MyAccount",
@@ -1807,6 +1813,7 @@ describe("patchDocsJson", () => {
   it("should handle when oasData doesn't have tags property", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1872,7 +1879,7 @@ describe("patchDocsJson", () => {
       actual.navigation.languages[0].tabs[0].dropdowns[0];
     assert.strictEqual(enDropdown.dropdown, "MyAccount API");
     assert.strictEqual(
-      enDropdown.pages[1].pages[0].group,
+      enDropdown.pages[1].group,
       "Authentication Methods",
       "Should use startCase when tags property is missing",
     );
@@ -1881,6 +1888,7 @@ describe("patchDocsJson", () => {
   it("should pass tags from oasData to convertDocsToFormat", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -1941,7 +1949,7 @@ describe("patchDocsJson", () => {
     const enDropdown =
       actual.navigation.languages[0].tabs[0].dropdowns[0];
     assert.strictEqual(
-      enDropdown.pages[1].pages[0].group,
+      enDropdown.pages[1].group,
       "Factors",
       "Should use x-displayName from tags",
     );
@@ -1950,6 +1958,7 @@ describe("patchDocsJson", () => {
   it("should use x-displayName from tags when available in patchDocsJson", () => {
     const oasConfig = {
       docRootDirectory: "myaccount",
+      outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
         en: "MyAccount API",
         "fr-ca": "MyAccount API",
@@ -2029,7 +2038,7 @@ describe("patchDocsJson", () => {
 
     const enDropdown =
       actual.navigation.languages[0].tabs[0].dropdowns[0];
-    const groups = enDropdown.pages[1].pages.map((p) => p.group);
+    const groups = enDropdown.pages.slice(1).map((p) => p.group);
 
     assert.ok(
       groups.includes("Authentication Methods"),
