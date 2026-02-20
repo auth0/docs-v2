@@ -324,6 +324,25 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
   return docsJson;
 }
 
+async function getOasFilePath({ locale, oasConfig }) {
+  const enPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
+  if (locale === "en") {
+    return enPath;
+  }
+  const localeFilename = chain(oasConfig.outputFile)
+    .split(".")
+    .thru((parts) => [...initial(parts), locale, last(parts)])
+    .join(".")
+    .value();
+  const localeAbsPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${localeFilename}`;
+  try {
+    await fs.access(localeAbsPath);
+    return `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${localeFilename}`;
+  } catch {
+    return enPath; // locale file doesn't exist, fall back to English
+  }
+}
+
 async function main() {
   // docsJson is the parsed representation of the docs.json nav listing for mintlify
   let docsJson = await readJson(`${DOCS_SITE}/docs.json`);
@@ -397,15 +416,7 @@ async function main() {
           }
 
           // INFO: write MDX file content
-          const oasFilename =
-            locale === "en"
-              ? oasConfig.outputFile
-              : chain(oasConfig.outputFile)
-                  .split(".")
-                  .thru((parts) => [...initial(parts), locale, last(parts)])
-                  .join(".")
-                  .value();
-          const oasFilePath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${docRootDirectory}/${oasFilename}`;
+          const oasFilePath = await getOasFilePath({ locale, oasConfig });
           try {
             await writeMdxContent({
               // INFO: this is the path to the OAS file relative to docs root
@@ -471,6 +482,7 @@ module.exports = {
   getEndpointScopes,
   writeMdxContent,
   writeApiIndexMdx,
+  getOasFilePath,
   injectCodeSnippets,
   generateCodeBlocks,
   patchDocsJson,
