@@ -362,6 +362,13 @@ async function main() {
       continue;
     }
 
+    // INFO: inject code snippets once before locale loop to avoid duplication
+    for (const [path, pathSpec] of Object.entries(oasData.paths)) {
+      for (const [method, spec] of Object.entries(pathSpec)) {
+        await injectCodeSnippets(oasData, { spec, path, method, oasConfig });
+      }
+    }
+
     // the output snippet for docs.json based on what we make
     const collectedDocs = {};
     for (const locale of LOCALES) {
@@ -436,9 +443,6 @@ async function main() {
             // TODO: figure out of `break` or `continue` is what we want here
             continue;
           }
-
-          // INFO: do the code snippet generation
-          await injectCodeSnippets(oasData, { spec, path, method, oasConfig });
         }
       }
     } // INFO: end of `LOCALES` loop
