@@ -22,7 +22,7 @@ To configure Native to Web SSO, you need to create and manage session_transfer_t
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
 
-Native to Web SSO supports the following SDKs: [Auth0 Android SDK](https://github.com/auth0/auth0.android/blob/main/EXAMPLES.md#native-to-web-sso-login-ea) and [Auth0 Swift SDK](https://github.com/auth0/Auth0.swift/blob/master/EXAMPLES.md#sso-credentials-ea).
+Native to Web SSO supports the following SDKs: [Auth0 Android SDK](https://github.com/auth0/auth0.android/blob/main/EXAMPLES.md#native-to-web-sso-login-ea), [Auth0 Swift SDK](https://github.com/auth0/Auth0.swift/blob/master/EXAMPLES.md#sso-credentials-ea), and [Auth0 React Native SDK](https://github.com/auth0/react-native-auth0/blob/master/EXAMPLES.md#native-to-web-sso-early-access).
 
 Native to Web SSO support is available in the following tools: [Auth0 Deploy CLI](/docs/deploy-monitor/deploy-cli-tool). [Auth0 Terraform Provider](/docs/deploy-monitor/auth0-terraform-provider) and [Auth0 CLI](https://auth0.github.io/auth0-cli/).
 
@@ -131,7 +131,7 @@ To facilitate this, your native application needs to exchange a refresh token fo
 
 Use the [/token](https://auth0.com/docs/api/authentication/authorization-code-flow-with-pkce/get-token-pkce) endpoint with your native application to exchange the refresh token for a Session Transfer Token.
 
-* Exchange a refresh token for a session transfer token using Swift or Android SDKs:
+* Exchange a refresh token for a session transfer token using Swift, Android, or React Native SDKs:
 
 <Tabs><Tab title="Swift SDK">
 
@@ -157,18 +157,53 @@ do {
 
 </Tab><Tab title="Android SDK">
 
-```swift lines
-authentication
-.ssoExchange("refresh_token")
-.start(object : Callback<SSOCredentials, AuthenticationException> {
-    override fun onSuccess(result: SSOCredentials) {
-        // Use the sessionTransferToken token to authenticate the user in a web session in your app
-    }
+```kotlin lines
+secureCredentialsManager.getSsoCredentials(
+    mapOf(),  // optional parameters
+    object : Callback<SSOCredentials, CredentialsManagerException> {
+        override fun onSuccess(result: SSOCredentials) {
+            // Use result.sessionTransferToken to authenticate
+            // the user in a web session in your app
+        }
 
-    override fun onFailure(exception: AuthenticationException) {
-        // Handle error
+        override fun onFailure(error: CredentialsManagerException) {
+            // Handle error
+        }
     }
-})
+)
+```
+
+</Tab><Tab title="React Native SDK">
+
+```typescript lines
+// Using Hooks
+import { useAuth0 } from 'react-native-auth0';
+
+function MyComponent() {
+  const { getSSOCredentials } = useAuth0();
+
+  const openWebApp = async () => {
+    try {
+      const ssoCredentials = await getSSOCredentials();
+      // Use ssoCredentials.sessionTransferToken to authenticate
+      // the user in a web session in your app
+      console.log('Session Transfer Token:', ssoCredentials.sessionTransferToken);
+    } catch (error) {
+      console.error('Failed to get SSO credentials:', error);
+    }
+  };
+}
+
+// Using Auth0 class
+import Auth0 from 'react-native-auth0';
+
+const auth0 = new Auth0({
+  domain: '{yourDomain}',
+  clientId: '{yourClientId}',
+});
+
+const ssoCredentials = await auth0.credentialsManager.getSSOCredentials();
+console.log('Session Transfer Token:', ssoCredentials.sessionTransferToken);
 ```
 
 </Tab></Tabs>
@@ -616,6 +651,41 @@ puts response.read_body
 ```
 </AuthCodeGroup>
 
+## Native to Web SSO with Organizations
+
+Native to Web SSO supports [Organizations](/docs/manage-users/organizations). When a user authenticates with an organization in your native application, the session transfer token includes the organization context.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+When using Organizations with Native to Web SSO, the `organization` parameter in the web application's `/authorize` request must match the organization associated with the session transfer token. If there is a mismatch, authentication will fail and the user will be prompted to log in again.
+
+</Callout>
+
+To use Organizations with Native to Web SSO:
+
+1. Authenticate the user in your native application with an organization:
+
+```javascript javascript lines
+// Native app login with organization
+await authorize({
+  organization: 'org_abc123',
+  scope: 'openid profile email offline_access'
+});
+```
+
+2. When redirecting to the web application, include the same organization in the `/authorize` request:
+
+```bash bash lines
+https://{yourDomain}/authorize?
+  client_id={yourWebClientId}&
+  redirect_uri={yourRedirectUri}&
+  response_type=code&
+  organization=org_abc123&
+  session_transfer_token=YOUR_SESSION_TRANSFER_TOKEN
+```
+
+If the organization in the `/authorize` request does not match the organization in the session transfer token, the session transfer token is rejected and the user is redirected to the login page to re-authenticate. A warning log is emitted in your tenant logs with the event description "Single Sign-On failed: Session Transfer Token organization mismatch detected."
+
 ## Session Transfer Token with Actions
 
 Using `session_transfer_token` with [Actions](/docs/customize/actions) allows you to configure post-authentication risk detection and response capabilities to enhance user protection.
@@ -641,9 +711,63 @@ exports.onExecutePostLogin = async (event, api) => {
 };
 ```
 
+### Access Parent Refresh Token Metadata
+
+Native to Web SSO allows you to access metadata from the parent refresh token that was used to initiate the SSO flow. This enables you to pass contextual information collected in the native application (such as device integrity, risk signals, or custom context) into the web session created from the `session_transfer_token`.
+
+Auth0 exposes this information in Post Login Actions via the `event.session.session_transfer.parent_refresh_token.metadata` object. This enables secure, standardized propagation of metadata between platforms.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+**Example Use Case:** A mobile app collects risk data (device score, location, etc.) and stores it in the refresh token's metadata. When the native app initiates a Native to Web SSO flow, that metadata is automatically available in the corresponding web session via Actions.
+
+</Callout>
+
+The Action code below allows you to perform conditional access logic based on device trust metadata from the native application:
+
+```javascript javascript lines
+/**
+* Handler that will be called during the execution of a PostLogin flow.
+*
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  // Access metadata from the parent refresh token (native app)
+  const parentMetadata = event.session?.session_transfer?.parent_refresh_token?.metadata;
+
+  if (parentMetadata) {
+    const deviceTrustLevel = parentMetadata.device_trust;
+
+    if (deviceTrustLevel !== 'high') {
+      api.access.deny("Device trust level insufficient.");
+    }
+
+    // You can also add claims based on native app context
+    if (parentMetadata.subscription_tier) {
+      api.idToken.setCustomClaim('subscription_tier', parentMetadata.subscription_tier);
+    }
+  }
+};
+```
+
 ## Monitoring
 
 You can monitor the Native to Web SSO activity by reviewing the Tenant [logs](/docs/deploy-monitor/logs).
 
+### Token exchange logs
+
 * `sertft` : Successful Refresh Token exchange. This log will correspond to a Native to Web SSO exchange when the `audience` field is `"audience":"urn:$auth0Domain:session_transfer"`
 * `fertft`: Failed Refresh Token exchange. This log will correspond to a Native to Web SSO exchange when the `audience` field is `"audience": "urn:$auth0Domain:session_transfer"`
+
+### Session transfer validation warning logs
+
+Auth0 emits warning logs (`w`) when session transfer token validation fails during the `/authorize` request. These logs help you troubleshoot Native to Web SSO issues:
+
+| Event Description | Cause |
+|-------------------|-------|
+| `Single Sign-On failed: Session Transfer Token not found or expired. This may indicate token reuse or expiration.` | The session transfer token was not found, has already been used, or has expired (tokens are single-use and expire after 1 minute). |
+| `Single Sign-On failed: Session Transfer Token device binding validation failed due to IP/ASN mismatch.` | The IP address or ASN of the web request does not match the device binding configured for the session transfer token. |
+| `Single Sign-On failed: Session Transfer Token organization mismatch detected.` | The `organization` parameter in the `/authorize` request does not match the organization in the session transfer token. |
+| `Single Sign-On failed: Session Transfer Token user mismatch detected.` | A pre-existing Auth0 session belongs to a different user than the session transfer token. |
+| `Single Sign-On failed: Parent refresh token not found. Session Transfer Token won't be used for session establishment.` | The parent refresh token used to create the session transfer token has been revoked or deleted. |
