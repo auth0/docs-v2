@@ -277,17 +277,15 @@ function convertDocsToFormat({ docs, tags }) {
   return docsByLocale;
 }
 
-function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
+async function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
   // this gets the raw doc snippet into the right format
   const docsByLocale = convertDocsToFormat({
     docs: rawDocs,
     tags: oasData.tags || [],
   });
-  // the openapi spec path is always the English OAS file regardless of locale
-  // TODO: update this to support other locale files when available
-  const specPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
   // loop through languages
   for (const locale of LOCALES) {
+    const specPath = await module.exports.getOasFilePath({ locale, oasConfig });
     // construct docsPath based on locale
     const docsPath =
       locale === "en"
@@ -454,7 +452,7 @@ async function main() {
     } // INFO: end of `LOCALES` loop
 
     // give it all the data it needs to mutate docsJson with the right info
-    docsJson = patchDocsJson({
+    docsJson = await patchDocsJson({
       oasConfig,
       rawDocs: collectedDocs,
       docsJson,
