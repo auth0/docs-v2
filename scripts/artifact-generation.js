@@ -58,7 +58,7 @@ const oasConfigs = [
     playground: "simple",
   },
   {
-  //   // TODO: this needs to be a location in `node_modules`
+    //   // TODO: this needs to be a location in `node_modules`
     inputFile: "node_modules/@a0-mgmt-api/oas/openapi-3.1.json",
     outputFile: "management-api-oas.json",
     docRootDirectory: "management/v2",
