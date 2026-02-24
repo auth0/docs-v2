@@ -54,9 +54,7 @@ const oasConfigs = [
       "fr-ca": "MyOrganization API",
       "ja-jp": "MyOrganization API",
     },
-    SnippetResolver: null,
-    // SnippetResolver: require("@fern-api/auth0-myorganization-snippets")
-    //   .SnippetResolver,
+    SnippetResolver: require("@fern-api/auth0-myorg-snippets").SnippetResolver,
   },
   // {
   //   // TODO: this needs to be a location in `node_modoles`
