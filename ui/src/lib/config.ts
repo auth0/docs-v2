@@ -1,4 +1,4 @@
-interface EnvConfig {
+export interface EnvConfig {
   apiBaseUrl: string;
   dashboardBaseUrl: string;
   heapAnalytics: {
