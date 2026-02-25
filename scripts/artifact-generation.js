@@ -127,10 +127,10 @@ async function writeMdxContent(config) {
     playground: ${playground}
     ---
 
-    import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
+    import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
     import { Scopes } from "/snippets/ApiScopes.jsx";
 
-    <ReleaseLifecycle releaseLifecycle="${releaseLifecycle}" />
+    <ApiReleaseLifecycle releaseLifecycle="${releaseLifecycle}" />
     <Scopes scopes={${JSON.stringify(scopes)}} />
   `;
 

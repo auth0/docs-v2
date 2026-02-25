@@ -1,4 +1,4 @@
-export const ReleaseLifecycle = ({ releaseLifecycle = 'GA' }) => {
+export const ApiReleaseLifecycle = ({ releaseLifecycle = 'GA' }) => {
   const lifecycleMap = {
     ea: 'Early Access',
     ga: 'Generally Available',
