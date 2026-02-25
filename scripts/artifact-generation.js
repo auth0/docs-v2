@@ -31,7 +31,7 @@ const REFERENCE_SECTION_MAP = {
 
 const oasConfigs = [
   {
-    // TODO: this needs to be a location in `node_modules`
+    // this needs to be a location in `node_modules`
     inputFile: "node_modules/@a0/myaccount-api-oas/openapi-dereferenced.json",
     outputFile: "myaccount-api-oas.json",
     docRootDirectory: "myaccount",
@@ -44,20 +44,19 @@ const oasConfigs = [
       .SnippetResolver,
     playground: "simple",
   },
-  // {
-  //   // TODO: this needs to be a location in `node_modules`
-  //   inputFile: "myorganization-api-oas.json",
-  //   outputFile: "myorganization-api-oas.json",
-  //   docRootDirectory: "myorganization",
-  //   docSectionNameMap: {
-  //     en: { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
-  //     "fr-ca": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
-  //     "ja-jp": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
-  //   },
-  //   SnippetResolver: require("@fern-api/auth0-myorganization-snippets")
-  //     .SnippetResolver,
-  //   playground: "simple",
-  // },
+  {
+    // this needs to be a location in `node_modules`
+    inputFile: "node_modules/@a0/my-organization-api-oas/openapi.json",
+    outputFile: "myorganization-api-oas.json",
+    docRootDirectory: "myorganization",
+    docSectionNameMap: {
+      en: { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
+      "fr-ca": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
+      "ja-jp": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
+    },
+    SnippetResolver: require("@fern-api/auth0-myorg-snippets").SnippetResolver,
+    playground: "simple",
+  },
   // {
   //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "management-api-oas.json",
