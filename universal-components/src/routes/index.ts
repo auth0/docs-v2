@@ -14,6 +14,26 @@ export const componentRoutes: Record<
   }
 > = {
   "domain-table-view": { LazyComponent: null, componentKey: "DomainTableView" },
+  "sso-provider-create": {
+    LazyComponent: null,
+    componentKey: "SsoProviderCreateView",
+  },
+  "sso-provider-edit": {
+    LazyComponent: null,
+    componentKey: "SsoProviderEditView",
+  },
+  "sso-provider-table": {
+    LazyComponent: null,
+    componentKey: "SsoProviderTableView",
+  },
+  "organization-details-edit": {
+    LazyComponent: null,
+    componentKey: "OrganizationDetailsEditView",
+  },
+  "user-mfa-management": {
+    LazyComponent: null,
+    componentKey: "UserMFAMgmtView",
+  },
 };
 
 // Create lazy components for each route

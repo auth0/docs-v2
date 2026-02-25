@@ -11,9 +11,9 @@ import {
   addRouteChangeListener,
   removeRouteChangeListener,
 } from "./helpers/history";
-import { getMockLogic } from "./mocks";
 import { componentRoutes, mintlifyLoader } from "./routes";
 import { detectColorScheme, setupPopperFix } from "./helpers/util";
+import { getComponentMock } from "./helpers/getComponentMock";
 
 // ==================== State & Cache ====================
 let cachedModule: any = null;
@@ -62,7 +62,7 @@ async function getWrapper(
   }
 
   function Wrapper(props: Record<string, unknown>) {
-    const mockData = getMockLogic(componentName) as {
+    const mockData = getComponentMock(componentName) as {
       logic?: any;
       handlers?: any;
     } | null;

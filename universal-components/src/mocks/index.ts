@@ -1,17 +1,15 @@
-import { getDomainManagementLogic } from "./domain-table-mock";
+import { getDomainManagementMock } from "./domain-table-mock";
+import { getOrganizationDetailsEditLMock } from "./organization-details-edit-mock";
+import { getSsoProviderCreateMock } from "./sso-provider-create-mock";
+import { getSsoProviderEditMock } from "./sso-provider-edit-mock";
+import { getSsoProviderTableMock } from "./sso-provider-table-mock";
+import { getUserMfaManagementMock } from "./user-mfa-management-mock";
 
-// Map component names to their mock logic generators
-const mockLogicRegistry: Record<string, () => unknown> = {
-  "domain-table-view": getDomainManagementLogic,
+export {
+  getDomainManagementMock,
+  getOrganizationDetailsEditLMock,
+  getSsoProviderCreateMock,
+  getSsoProviderEditMock,
+  getSsoProviderTableMock,
+  getUserMfaManagementMock,
 };
-
-export function getMockLogic(componentName: string) {
-  const logicFn = mockLogicRegistry[componentName];
-  if (!logicFn) {
-    console.warn(`No mock logic found for "${componentName}"`);
-    return { logic: {}, handlers: {} };
-  }
-  return logicFn();
-}
-
-export { getDomainManagementLogic };

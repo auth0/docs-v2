@@ -54,7 +54,7 @@ const createDomain = (name: string): Domain => ({
   verification_host: `_auth0-challenge.${name}`,
 });
 
-export const getDomainManagementLogic = () => {
+export const getDomainManagementMock = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfigureModal, setShowConfigureModal] = useState(false);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
