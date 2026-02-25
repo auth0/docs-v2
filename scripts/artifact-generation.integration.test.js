@@ -50,9 +50,9 @@ describe("main integration tests", () => {
       createdDirectories.push(dirPath);
     });
 
-    // Mock fs.access: throw for all paths so index.mdx is created and
+    // Mock fs.stat: throw for all paths so index.mdx is created and
     // locale OAS files don't exist (triggering English OAS fallback)
-    t.mock.method(fs, "access", async () => {
+    t.mock.method(fs, "stat", async () => {
       throw new Error("ENOENT: no such file or directory");
     });
 
@@ -168,8 +168,8 @@ describe("main integration tests", () => {
 
     t.mock.method(fs, "mkdir", async () => {});
 
-    // fs.access: succeed for locale OAS paths, throw for .mdx (index check)
-    t.mock.method(fs, "access", async (filePath) => {
+    // fs.stat: succeed for locale OAS paths, throw for .mdx (index check)
+    t.mock.method(fs, "stat", async (filePath) => {
       if (filePath.endsWith(".mdx")) {
         throw new Error("ENOENT: no such file or directory");
       }

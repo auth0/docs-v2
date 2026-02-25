@@ -190,6 +190,7 @@ describe("writeMdxContent", () => {
         file: "myaccount-api-oas.json",
         method: "get",
         path: "/api/v2/users/{id}",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "generally-available",
@@ -203,12 +204,13 @@ describe("writeMdxContent", () => {
     const expectedContent = dedent`
       ---
       openapi: myaccount-api-oas.json get /api/v2/users/{id}
+      playground: simple
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+      import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
-      <ReleaseLifecycle releaseLifecycle="generally-available" />
+      <ApiReleaseLifecycle releaseLifecycle="generally-available" />
       <Scopes scopes={["read:users","read:profiles"]} />
     `;
 
@@ -235,6 +237,7 @@ describe("writeMdxContent", () => {
         file: "myaccount-api-oas.json",
         method: "post",
         path: "/api/v2/users",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "early-access",
@@ -268,6 +271,7 @@ describe("writeMdxContent", () => {
         file: "test-api.json",
         method: "delete",
         path: "/api/v2/resource/{id}",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "generally-available",
@@ -280,12 +284,13 @@ describe("writeMdxContent", () => {
     const expectedContent = dedent`
       ---
       openapi: test-api.json delete /api/v2/resource/{id}
+      playground: simple
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+      import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
-      <ReleaseLifecycle releaseLifecycle="generally-available" />
+      <ApiReleaseLifecycle releaseLifecycle="generally-available" />
       <Scopes scopes={["delete:resource","write:resource","admin:all"]} />
     `;
 
@@ -311,6 +316,7 @@ describe("writeMdxContent", () => {
         file: "test-api.json",
         method: "get",
         path: "/api/v2/public",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "generally-available",
@@ -323,12 +329,13 @@ describe("writeMdxContent", () => {
     const expectedContent = dedent`
       ---
       openapi: test-api.json get /api/v2/public
+      playground: simple
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+      import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
-      <ReleaseLifecycle releaseLifecycle="generally-available" />
+      <ApiReleaseLifecycle releaseLifecycle="generally-available" />
       <Scopes scopes={[]} />
     `;
 
@@ -350,6 +357,7 @@ describe("writeMdxContent", () => {
         file: "test-api.json",
         method: "get",
         path: "/api/v2/test",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "generally-available",
@@ -382,6 +390,7 @@ describe("writeMdxContent", () => {
         file: "myaccount-api-oas.fr-ca.json",
         method: "get",
         path: "/api/v2/users/{id}",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "generally-available",
@@ -394,12 +403,13 @@ describe("writeMdxContent", () => {
     const expectedContent = dedent`
       ---
       openapi: myaccount-api-oas.fr-ca.json get /api/v2/users/{id}
+      playground: simple
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+      import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
-      <ReleaseLifecycle releaseLifecycle="generally-available" />
+      <ApiReleaseLifecycle releaseLifecycle="generally-available" />
       <Scopes scopes={["read:users"]} />
     `;
 
@@ -425,6 +435,7 @@ describe("writeMdxContent", () => {
         file: "myaccount-api-oas.ja-jp.json",
         method: "post",
         path: "/api/v2/sessions",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "early-access",
@@ -437,12 +448,13 @@ describe("writeMdxContent", () => {
     const expectedContent = dedent`
       ---
       openapi: myaccount-api-oas.ja-jp.json post /api/v2/sessions
+      playground: simple
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+      import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
-      <ReleaseLifecycle releaseLifecycle="early-access" />
+      <ApiReleaseLifecycle releaseLifecycle="early-access" />
       <Scopes scopes={["create:sessions"]} />
     `;
 
@@ -468,6 +480,7 @@ describe("writeMdxContent", () => {
         file: "myaccount-api-oas.json",
         method: "delete",
         path: "/api/v2/devices/{id}",
+        playground: "simple",
       },
       content: {
         releaseLifecycle: "generally-available",
@@ -480,12 +493,13 @@ describe("writeMdxContent", () => {
     const expectedContent = dedent`
       ---
       openapi: myaccount-api-oas.json delete /api/v2/devices/{id}
+      playground: simple
       ---
 
-      import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+      import { ApiReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
       import { Scopes } from "/snippets/ApiScopes.jsx";
 
-      <ReleaseLifecycle releaseLifecycle="generally-available" />
+      <ApiReleaseLifecycle releaseLifecycle="generally-available" />
       <Scopes scopes={["delete:devices"]} />
     `;
 
@@ -547,7 +561,7 @@ describe("getOasFilePath", () => {
   };
 
   it("should return English OAS path for en locale without calling fs.access", async (t) => {
-    const mockAccess = t.mock.method(fs, "access", async () => {});
+    const mockAccess = t.mock.method(fs, "stat", async () => {});
 
     const result = await getOasFilePath({ locale: "en", oasConfig });
 
@@ -556,7 +570,7 @@ describe("getOasFilePath", () => {
   });
 
   it("should return locale-specific OAS path when locale file exists", async (t) => {
-    t.mock.method(fs, "access", async () => {}); // resolves — file exists
+    t.mock.method(fs, "stat", async () => {}); // resolves — file exists
 
     const result = await getOasFilePath({ locale: "fr-ca", oasConfig });
 
@@ -564,7 +578,7 @@ describe("getOasFilePath", () => {
   });
 
   it("should fall back to English OAS path when locale file does not exist", async (t) => {
-    t.mock.method(fs, "access", async () => {
+    t.mock.method(fs, "stat", async () => {
       throw new Error("ENOENT: no such file or directory");
     });
 
@@ -1267,9 +1281,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API [FR]",
-        "ja-jp": "MyAccount API [JP]",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API [FR]", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API [JP]", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1329,7 +1343,6 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API",
                     icon: "list",
-                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
                       "docs/api/myaccount/index",
                       {
@@ -1351,7 +1364,6 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API [FR]",
                     icon: "list",
-                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
                       "docs/fr-ca/api/myaccount/index",
                       {
@@ -1373,7 +1385,6 @@ describe("patchDocsJson", () => {
                   {
                     dropdown: "MyAccount API [JP]",
                     icon: "list",
-                    openapi: "docs/oas/myaccount/myaccount-api-oas.json",
                     pages: [
                       "docs/ja-jp/api/myaccount/index",
                       {
@@ -1401,9 +1412,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1514,21 +1525,6 @@ describe("patchDocsJson", () => {
       },
     ];
     assert.deepStrictEqual(actualJpPages, expectedJpPages);
-
-    // Check openapi field is set on all locales
-    const expectedOpenapi = "docs/oas/myaccount/myaccount-api-oas.json";
-    assert.strictEqual(
-      actual.navigation.languages[0].tabs[0].dropdowns[0].openapi,
-      expectedOpenapi,
-    );
-    assert.strictEqual(
-      actual.navigation.languages[1].tabs[0].dropdowns[0].openapi,
-      expectedOpenapi,
-    );
-    assert.strictEqual(
-      actual.navigation.languages[2].tabs[0].dropdowns[0].openapi,
-      expectedOpenapi,
-    );
   });
 
   it("should construct correct docsPath for en locale", () => {
@@ -1536,9 +1532,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1601,9 +1597,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1670,9 +1666,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1741,9 +1737,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "API MyAccount",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "API MyAccount", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1815,9 +1811,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1890,9 +1886,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1960,9 +1956,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: "MyAccount API",
-        "fr-ca": "MyAccount API",
-        "ja-jp": "MyAccount API",
+        en: { apiName: "MyAccount API", title: "", description: "" },
+        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
+        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
       },
     };
     const rawDocs = {
