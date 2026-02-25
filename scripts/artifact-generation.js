@@ -36,12 +36,13 @@ const oasConfigs = [
     outputFile: "myaccount-api-oas.json",
     docRootDirectory: "myaccount",
     docSectionNameMap: {
-      en: "MyAccount API",
-      "fr-ca": "MyAccount API",
-      "ja-jp": "MyAccount API",
+      en: { apiName: "MyAccount API", title: "MyAccount API Reference", description: "Documentation for Auth0's MyAccount API" },
+      "fr-ca": { apiName: "MyAccount API", title: "MyAccount API Reference", description: "Documentation for Auth0's MyAccount API" },
+      "ja-jp": { apiName: "MyAccount API", title: "MyAccount API Reference", description: "Documentation for Auth0's MyAccount API" },
     },
     SnippetResolver: require("@fern-api/auth0-myaccount-snippets")
       .SnippetResolver,
+    playground: "simple",
   },
   // {
   //   // TODO: this needs to be a location in `node_modules`
@@ -49,12 +50,13 @@ const oasConfigs = [
   //   outputFile: "myorganization-api-oas.json",
   //   docRootDirectory: "myorganization",
   //   docSectionNameMap: {
-  //     en: "MyOrganization API",
-  //     "fr-ca": "MyOrganization API",
-  //     "ja-jp": "MyOrganization API",
+  //     en: { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
+  //     "fr-ca": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
+  //     "ja-jp": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
   //   },
   //   SnippetResolver: require("@fern-api/auth0-myorganization-snippets")
   //     .SnippetResolver,
+  //   playground: "simple",
   // },
   // {
   //   // TODO: this needs to be a location in `node_modules`
@@ -62,12 +64,13 @@ const oasConfigs = [
   //   outputFile: "management-api-oas.json",
   //   docRootDirectory: "management/v2",
   //   docSectionNameMap: {
-  //     en: "Management API",
-  //     "fr-ca": "Management API",
-  //     "ja-jp": "Management API",
+  //     en: { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
+  //     "fr-ca": { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
+  //     "ja-jp": { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
   //   },
   //   SnippetResolver: require("@fern-api/auth0-management-snippets")
   //     .SnippetResolver,
+  //   playground: "interactive",
   // },
   // {
   //   // TODO: this needs to be a location in `node_modules`
@@ -75,11 +78,12 @@ const oasConfigs = [
   //   outputFile: "authentication-api-oas.json",
   //   docRootDirectory: "authentication",
   //   docSectionNameMap: {
-  //     en: "Authentication API",
-  //     "fr-ca": "Authentication API",
-  //     "ja-jp": "Authentication API",
+  //     en: { apiName: "Authentication API", title: "Authentication API Reference", description: "Documentation for Auth0's Authentication API" },
+  //     "fr-ca": { apiName: "Authentication API", title: "Authentication API Reference", description: "Documentation for Auth0's Authentication API" },
+  //     "ja-jp": { apiName: "Authentication API", title: "Authentication API Reference", description: "Documentation for Auth0's Authentication API" },
   //   },
   //   SnippetResolver: null,
+  //   playground: "simple",
   // },
 ];
 
@@ -111,7 +115,7 @@ function getEndpointScopes(spec) {
 
 async function writeMdxContent(config) {
   const {
-    frontMatter: { method, path },
+    frontMatter: { file, method, path, playground },
     content: { releaseLifecycle, scopes },
     docpath,
     filename,
@@ -119,10 +123,11 @@ async function writeMdxContent(config) {
 
   const mdxContent = dedent`
     ---
-    openapi: ${method} ${path}
+    openapi: ${file} ${method} ${path}
+    playground: ${playground}
     ---
 
-    import { ReleaseLifecycle } from "/snippets/ReleaseLifecycle.jsx";
+    import { ReleaseLifecycle } from "/snippets/ApiReleaseLifecycle.jsx";
     import { Scopes } from "/snippets/ApiScopes.jsx";
 
     <ReleaseLifecycle releaseLifecycle="${releaseLifecycle}" />
@@ -146,11 +151,11 @@ async function writeMdxContent(config) {
  * Note: This file will be ignored if it already exists to prevent
  * loss of any changes.
  */
-async function writeApiIndexMdx({ docpath, apiName }) {
+async function writeApiIndexMdx({ docpath, title, description }) {
   const indexContent = dedent`
     ---
-    title: "${apiName}"
-    description: "${apiName} endpoints"
+    title: "${title}"
+    description: "${description}"
     ---
   `;
 
@@ -158,7 +163,7 @@ async function writeApiIndexMdx({ docpath, apiName }) {
 
   // Check if index.mdx already exists to avoid overwriting manual changes
   try {
-    await fs.access(indexFilePath);
+    await fs.stat(indexFilePath);
     // File exists, don't overwrite
     return;
   } catch {
@@ -189,13 +194,13 @@ async function generateCodeBlocks({
 
   const reducer =
     (loc) =>
-    (parameters = []) =>
-      parameters.reduce((acc, param) => {
-        if (param.in === loc) {
-          acc[param.name] = "";
-        }
-        return acc;
-      }, {});
+      (parameters = []) =>
+        parameters.reduce((acc, param) => {
+          if (param.in === loc) {
+            acc[param.name] = "";
+          }
+          return acc;
+        }, {});
 
   const queryParameters = reducer("query")(parameters);
   const pathParameters = reducer("path")(parameters);
@@ -277,7 +282,7 @@ function convertDocsToFormat({ docs, tags }) {
   return docsByLocale;
 }
 
-async function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
+function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
   // this gets the raw doc snippet into the right format
   const docsByLocale = convertDocsToFormat({
     docs: rawDocs,
@@ -285,7 +290,6 @@ async function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
   });
   // loop through languages
   for (const locale of LOCALES) {
-    const specPath = await module.exports.getOasFilePath({ locale, oasConfig });
     // construct docsPath based on locale
     const docsPath =
       locale === "en"
@@ -303,7 +307,7 @@ async function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
     );
     // within the api reference section, where is the specific api we're interested in
     let apiIdx = langObj.tabs[refIdx].dropdowns.findIndex(
-      (item) => item.dropdown === oasConfig.docSectionNameMap[locale],
+      (item) => item.dropdown === oasConfig.docSectionNameMap[locale].apiName,
     );
     // now let's see if our specific api exists in the nav
     if (apiIdx === -1) {
@@ -312,17 +316,12 @@ async function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
         docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns.length;
       // start a new api explorer nav item
       docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns.push({
-        dropdown: oasConfig.docSectionNameMap[locale],
+        dropdown: oasConfig.docSectionNameMap[locale].apiName,
         icon: "list",
-        openapi: specPath,
         pages: [],
       });
     }
     // now either way (existed before or not), we can replace the found nav object's pages
-    // and ensure the openapi field is always present
-    docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
-      apiIdx
-    ].openapi = specPath;
     docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
       apiIdx
     ].pages = [`${docsPath}/index`, ...docsByLocale[locale].pages];
@@ -330,19 +329,24 @@ async function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
   return docsJson;
 }
 
+// Get the path to the OAS file for a given locale, falling back to English if the locale-specific file doesn't exist
 async function getOasFilePath({ locale, oasConfig }) {
   const enPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
   if (locale === "en") {
     return enPath;
   }
+
+  // Get locale-specific file path by inserting locale before the file extension
+  // ie: `api-oas.json` -> `api-oas.fr-ca.json`
   const localeFilename = chain(oasConfig.outputFile)
     .split(".")
     .thru((parts) => [...initial(parts), locale, last(parts)])
     .join(".")
     .value();
+
   const localeAbsPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${localeFilename}`;
   try {
-    await fs.access(localeAbsPath);
+    await fs.stat(localeAbsPath);
     return `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${localeFilename}`;
   } catch {
     return enPath; // locale file doesn't exist, fall back to English
@@ -394,7 +398,8 @@ async function main() {
         await fs.mkdir(API_ROOT_PATH, { recursive: true });
         await writeApiIndexMdx({
           docpath: API_ROOT_PATH,
-          apiName: oasConfig.docSectionNameMap[locale],
+          title: oasConfig.docSectionNameMap[locale].title,
+          description: oasConfig.docSectionNameMap[locale].description,
         });
       } catch (err) {
         console.error(`failed to create API root: ${API_ROOT_PATH}`, err);
@@ -429,12 +434,15 @@ async function main() {
           }
 
           // INFO: write MDX file content
+          const specPath = await getOasFilePath({ locale, oasConfig });
           try {
             await writeMdxContent({
               // INFO: this is the path to the OAS file relative to docs root
               frontMatter: {
+                file: specPath,
                 method,
                 path,
+                playground: oasConfig.playground,
               },
               content: {
                 releaseLifecycle,
