@@ -323,7 +323,7 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
     // now either way (existed before or not), we can replace the found nav object's pages
     docsJson.navigation.languages[langIdx].tabs[refIdx].dropdowns[
       apiIdx
-    ].pages = [`${docsPath}/index`, ...docsByLocale[locale].pages];
+    ].pages = [`${docsPath}/index`, docsByLocale[locale]];
   }
   return docsJson;
 }
