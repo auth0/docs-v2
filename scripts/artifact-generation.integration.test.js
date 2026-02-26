@@ -94,9 +94,9 @@ describe("main integration tests", () => {
 
     // Verify that x-displayName from tags is used for group names
     const enPages = capturedDocsJson.navigation.languages[0].tabs[0].dropdowns[0].pages;
-    const groupItems = enPages.filter(item => typeof item === "object" && item.group);
-    assert.ok(groupItems.length > 0, "Should have group pages");
-    const groups = groupItems.map(p => p.group);
+    const groupStructure = enPages.find(item => item.group === " ");
+    assert.ok(groupStructure, "Should have group structure");
+    const groups = groupStructure.pages.map(p => p.group);
     assert.ok(
       groups.includes("Test Resources"),
       "Should use 'Test Resources' from x-displayName in tags",
