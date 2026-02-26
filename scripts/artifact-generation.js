@@ -57,20 +57,20 @@ const oasConfigs = [
     SnippetResolver: require("@fern-api/auth0-myorg-snippets").SnippetResolver,
     playground: "simple",
   },
-  // {
-  //   // TODO: this needs to be a location in `node_modules`
-  //   inputFile: "management-api-oas.json",
-  //   outputFile: "management-api-oas.json",
-  //   docRootDirectory: "management/v2",
-  //   docSectionNameMap: {
-  //     en: { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
-  //     "fr-ca": { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
-  //     "ja-jp": { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
-  //   },
-  //   SnippetResolver: require("@fern-api/auth0-management-snippets")
-  //     .SnippetResolver,
-  //   playground: "interactive",
-  // },
+  {
+    //   // TODO: this needs to be a location in `node_modules`
+    inputFile: "node_modules/@a0-mgmt-api/oas/openapi-3.1.json",
+    outputFile: "management-api-oas.json",
+    docRootDirectory: "management/v2",
+    docSectionNameMap: {
+      en: { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
+      "fr-ca": { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
+      "ja-jp": { apiName: "Management API", title: "Management API Reference", description: "Documentation for Auth0's Management API" },
+    },
+    SnippetResolver: require("@fern-api/auth0-management-snippets")
+      .SnippetResolver,
+    playground: "interactive",
+  },
   // {
   //   // TODO: this needs to be a location in `node_modules`
   //   inputFile: "authentication-api-oas.json",
