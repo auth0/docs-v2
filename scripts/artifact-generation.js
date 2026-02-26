@@ -330,7 +330,7 @@ function patchDocsJson({ oasConfig, rawDocs, docsJson, oasData }) {
 
 // Get the path to the OAS file for a given locale, falling back to English if the locale-specific file doesn't exist
 async function getOasFilePath({ locale, oasConfig }) {
-  const enPath = `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
+  const enPath = `${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${oasConfig.outputFile}`;
   if (locale === "en") {
     return enPath;
   }
@@ -346,7 +346,7 @@ async function getOasFilePath({ locale, oasConfig }) {
   const localeAbsPath = `${DOCS_SITE}/${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${localeFilename}`;
   try {
     await fs.stat(localeAbsPath);
-    return `${DOCS_FOLDER}/${SPEC_FOLDER}/${oasConfig.docRootDirectory}/${localeFilename}`;
+    return `${SPEC_LOCATION}/${oasConfig.docRootDirectory}/${localeFilename}`;
   } catch {
     return enPath; // locale file doesn't exist, fall back to English
   }
@@ -401,7 +401,7 @@ async function main() {
           description: oasConfig.docSectionNameMap[locale].description,
         });
       } catch (err) {
-        console.error(`failed to create API root: ${API_ROOT_PATH}`, err);
+        console.error(`failed to create API root: ${API_ROOT_PATH} or write index.mdx`, err);
       }
 
       for (const [path, pathSpec] of Object.entries(oasData.paths)) {
@@ -459,7 +459,7 @@ async function main() {
     } // INFO: end of `LOCALES` loop
 
     // give it all the data it needs to mutate docsJson with the right info
-    docsJson = await patchDocsJson({
+    docsJson = patchDocsJson({
       oasConfig,
       rawDocs: collectedDocs,
       docsJson,
