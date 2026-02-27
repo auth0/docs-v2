@@ -1,75 +1,96 @@
-# React + TypeScript + Vite
+# Universal Components
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This folder contains the implementation and integration of Auth0 Universal Components for the docs-v2 project. It provides reusable React components and core utilities for organization and account management, including domain tables, SSO provider tables, and more.
 
-Currently, two official plugins are available:
+## Structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `src/` — Component source code, styles, and integration logic.
+- `package.json` — Project dependencies and scripts.
+- `index.css` — Custom styles and overrides for component previews and modals.
+- `README.md` — This documentation.
 
-## React Compiler
+## Expectations:
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+- Interactive Documentation: Enable live, interactive components within documentation
+- Component Embedding: Support direct embedding in MDX documentation files.
+- Dynamic Mounting: Mount React components dynamically based on component names
+- Mock API Logic: Provide realistic mock implementations & skip real authentication calls
+- Mintlify Integration: Handle client-side routing changes, detect theme switches (light/dark).
 
-Note: This will impact Vite dev & build performances.
+## Auth0 Universal Packages
 
-## Expanding the ESLint configuration
+This project uses [@auth0/universal-components-core](https://www.npmjs.com/package/@auth0/universal-components-core) and [@auth0/universal-components-react](https://www.npmjs.com/package/@auth0/universal-components-react):
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- `@auth0/universal-components-core`: Provides core utilities, API logic, and shared types for Auth0 Universal Components.
+- `@auth0/universal-components-react`: Provides React UI components for organization and account management, ready to embed in your app or docs.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Both packages are installed via `pnpm` and used throughout the docs-v2 project for interactive demos and previews.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Setup & Usage
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+1. **Install dependencies:**
+
+   ```bash
+   pnpm install
+   ```
+
+   This will install all dependencies, including Auth0 Universal packages.
+
+2. **Build the universal-components package:**
+
+   ```bash
+   pnpm build
+   ```
+
+   This runs TypeScript build, Vite build, and copies assets as needed.
+
+3. **Move to the main docs-v2 folder:**
+
+   ```bash
+   cd ..
+   ```
+
+4. **Run Mintlify docs locally:**
+   ```bash
+   pnpm mint dev
+   ```
+   This will start the documentation site with all universal components integrated and previewable.
+
+### Using Auth0 Universal Components
+
+- Components like `DomainTableView`, `SsoProviderTableView`, etc. are imported from `@auth0/universal-components-react`.
+- Core logic and API integration are handled by `@auth0/universal-components-core`.
+- You can use these packages in your own apps or in the docs-v2 previews.
+
+Example:
+
+```tsx
+import { DomainTableView } from "@auth0/universal-components-react/spa";
+
+export function DomainsPage() {
+  return <DomainTableView />;
+}
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Node Version Support
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+This project requires **Node.js 18.x or later** for compatibility with all dependencies and scripts.  
+Please ensure your environment uses a supported Node version before running `pnpm install` or build scripts.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+You can check your Node version with:
+```bash
+node --version
 ```
+
+## Notes
+
+- All component previews are rendered with fixed height and scrollbars for overflow.
+- Modals/dialogs are scoped to the preview container for accurate demo experience.
+- Use the snippets (e.g., `ComponentLoader`, `SsoProviderTablePreview`) for consistent preview styling and loading states.
+
+## Contributing
+
+- Make changes in the `universal-components` folder, rebuild, and then run the docs site from the main folder.
+- Keep styles and preview logic up-to-date for new components.
+
+---
