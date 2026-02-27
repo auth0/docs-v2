@@ -1346,8 +1346,11 @@ describe("patchDocsJson", () => {
                     pages: [
                       "docs/api/myaccount/index",
                       {
-                        group: "Users",
-                        pages: ["docs/api/myaccount/users/get-user"],
+                        group: " ",
+                        pages: [{
+                          group: "Users",
+                          pages: ["docs/api/myaccount/users/get-user"],
+                        }]
                       },
                     ],
                   },
@@ -1367,8 +1370,11 @@ describe("patchDocsJson", () => {
                     pages: [
                       "docs/fr-ca/api/myaccount/index",
                       {
-                        group: "Users",
-                        pages: ["docs/api/myaccount/users/get-user"],
+                        group: " ",
+                        pages: [{
+                          group: "Users",
+                          pages: ["docs/api/myaccount/users/get-user"],
+                        }],
                       },
                     ],
                   },
@@ -1388,8 +1394,11 @@ describe("patchDocsJson", () => {
                     pages: [
                       "docs/ja-jp/api/myaccount/index",
                       {
-                        group: "Users",
-                        pages: ["docs/api/myaccount/users/get-user"],
+                        group: " ",
+                        pages: [{
+                          group: "Users",
+                          pages: ["docs/api/myaccount/users/get-user"],
+                        }],
                       },
                     ],
                   },
@@ -1443,8 +1452,11 @@ describe("patchDocsJson", () => {
                     pages: [
                       "docs/api/myaccount/index",
                       {
-                        group: "Users",
-                        pages: ["docs/api/myaccount/users/get-user"],
+                        group: " ",
+                        pages: [{
+                          group: "Users",
+                          pages: ["docs/api/myaccount/users/get-user"],
+                        }]
                       },
                     ],
                   },
@@ -1489,8 +1501,11 @@ describe("patchDocsJson", () => {
     const expectedPages = [
       "docs/api/myaccount/index",
       {
+        group: " ",
+        pages: [{
         group: "Sessions",
         pages: ["docs/api/myaccount/sessions/list-sessions"],
+      }],
       },
     ];
     const oasData = { tags: [] };
@@ -1508,8 +1523,11 @@ describe("patchDocsJson", () => {
     const expectedFrPages = [
       "docs/fr-ca/api/myaccount/index",
       {
-        group: "Sessions",
-        pages: ["docs/api/myaccount/sessions/list-sessions"],
+        group: " ",
+        pages: [{
+          group: "Sessions",
+          pages: ["docs/api/myaccount/sessions/list-sessions"],
+        }],
       },
     ];
     assert.deepStrictEqual(actualFrPages, expectedFrPages);
@@ -1520,8 +1538,11 @@ describe("patchDocsJson", () => {
     const expectedJpPages = [
       "docs/ja-jp/api/myaccount/index",
       {
-        group: "Sessions",
-        pages: ["docs/api/myaccount/sessions/list-sessions"],
+        group: " ",
+        pages: [{
+          group: "Sessions",
+          pages: ["docs/api/myaccount/sessions/list-sessions"],
+        }],
       },
     ];
     assert.deepStrictEqual(actualJpPages, expectedJpPages);
@@ -1875,7 +1896,7 @@ describe("patchDocsJson", () => {
       actual.navigation.languages[0].tabs[0].dropdowns[0];
     assert.strictEqual(enDropdown.dropdown, "MyAccount API");
     assert.strictEqual(
-      enDropdown.pages[1].group,
+      enDropdown.pages[1].pages[0].group,
       "Authentication Methods",
       "Should use startCase when tags property is missing",
     );
@@ -1945,7 +1966,7 @@ describe("patchDocsJson", () => {
     const enDropdown =
       actual.navigation.languages[0].tabs[0].dropdowns[0];
     assert.strictEqual(
-      enDropdown.pages[1].group,
+      enDropdown.pages[1].pages[0].group,
       "Factors",
       "Should use x-displayName from tags",
     );
@@ -2034,7 +2055,7 @@ describe("patchDocsJson", () => {
 
     const enDropdown =
       actual.navigation.languages[0].tabs[0].dropdowns[0];
-    const groups = enDropdown.pages.slice(1).map((p) => p.group);
+    const groups = enDropdown.pages[1].pages.map((p) => p.group);
 
     assert.ok(
       groups.includes("Authentication Methods"),
