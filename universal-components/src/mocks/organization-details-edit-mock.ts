@@ -17,14 +17,11 @@ export const getOrganizationDetailsEditLMock = () => {
     schema: undefined,
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
     customMessages: {
-      header: { title: "Mock Organization Settings", back_button_text: "Back" },
+      header: { title: "Organization Settings" },
       details: {},
     },
     readOnly: false,
     hideHeader: false,
-    backButton: {
-      onClick: () => console.log("Back clicked"),
-    },
   };
 
   const mockHandlers = {

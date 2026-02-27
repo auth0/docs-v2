@@ -213,7 +213,7 @@ function main() {
 
   // Scan on route change
   routeChangeHandler = () => {
-    setTimeout(scanAndMount, 200);
+    setTimeout(scanAndMount, 500);
   };
   addRouteChangeListener(routeChangeHandler);
 
@@ -222,9 +222,9 @@ function main() {
 
   // Initial scan
   if (document.readyState === "complete") {
-    setTimeout(scanAndMount, 200);
+    setTimeout(scanAndMount, 500);
   } else {
-    window.addEventListener("load", () => setTimeout(scanAndMount, 200));
+    window.addEventListener("load", () => setTimeout(scanAndMount, 500));
   }
 }
 
