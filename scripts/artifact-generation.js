@@ -50,9 +50,9 @@ const oasConfigs = [
     outputFile: "myorganization-api-oas.json",
     docRootDirectory: "myorganization",
     docSectionNameMap: {
-      en: { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
-      "fr-ca": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
-      "ja-jp": { apiName: "MyOrganization API", title: "MyOrganization API Reference", description: "Documentation for Auth0's MyOrganization API" },
+      en: { apiName: "My Organization API", title: "My Organization API Reference", description: "Documentation for Auth0's My Organization API" },
+      "fr-ca": { apiName: "My Organization API", title: "My Organization API Reference", description: "Documentation for Auth0's My Organization API" },
+      "ja-jp": { apiName: "My Organization API", title: "My Organization API Reference", description: "Documentation for Auth0's My Organization API" },
     },
     SnippetResolver: require("@fern-api/auth0-myorg-snippets").SnippetResolver,
     playground: "simple",
