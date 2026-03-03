@@ -1,5 +1,5 @@
 const fs = require("node:fs/promises");
-const { resolve } = require("node:path");
+const { resolve, basename } = require("node:path");
 const {
   kebabCase,
   startCase,
@@ -438,7 +438,7 @@ async function main() {
             await writeMdxContent({
               // INFO: this is the path to the OAS file relative to docs root
               frontMatter: {
-                file: specPath,
+                file: basename(specPath, ".json"),
                 method,
                 path,
                 playground: oasConfig.playground,
@@ -478,12 +478,12 @@ async function main() {
     // INFO: write generated OAS to disk
     await fs.writeFile(
       `${generatedSpecPath}/${oasConfig.outputFile}`,
-      JSON.stringify(oasData, null, 2),
+      `${JSON.stringify(oasData, null, 2)}\n`,
     );
 
     // INFO: write mutated `docs.json` to disk
     const docsJsonPath = `${DOCS_SITE}/docs.json`;
-    await fs.writeFile(docsJsonPath, JSON.stringify(docsJson, null, 2));
+    await fs.writeFile(docsJsonPath, `${JSON.stringify(docsJson, null, 2)}\n`);
     console.log("Done! 🎉")
   }
 }
