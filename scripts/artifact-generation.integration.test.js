@@ -125,15 +125,15 @@ describe("main integration tests", () => {
     const jpMdxFiles = writtenMdxFiles.filter(f => f.path.includes("main/docs/ja-jp/api/") && !f.path.endsWith("index.mdx"));
 
     assert.ok(
-      enMdxFiles.some(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.json")),
-      "English MDX files should reference docs/oas/myaccount/myaccount-api-oas.json",
+      enMdxFiles.some(f => f.content.includes("openapi: myaccount-api-oas ")),
+      "English MDX files should reference myaccount-api-oas",
     );
     assert.ok(
-      frMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.json")),
+      frMdxFiles.every(f => f.content.includes("openapi: myaccount-api-oas ")),
       "French-CA MDX files should fall back to English OAS",
     );
     assert.ok(
-      jpMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.json")),
+      jpMdxFiles.every(f => f.content.includes("openapi: myaccount-api-oas ")),
       "Japanese MDX files should fall back to English OAS",
     );
 
@@ -195,12 +195,12 @@ describe("main integration tests", () => {
     assert.ok(jpMdxFiles.length > 0, "Should have written Japanese MDX files");
 
     assert.ok(
-      frMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.fr-ca.json")),
-      "French-CA MDX files should reference myaccount-api-oas.fr-ca.json",
+      frMdxFiles.every(f => f.content.includes("openapi: myaccount-api-oas.fr-ca ")),
+      "French-CA MDX files should reference myaccount-api-oas.fr-ca",
     );
     assert.ok(
-      jpMdxFiles.every(f => f.content.includes("openapi: docs/oas/myaccount/myaccount-api-oas.ja-jp.json")),
-      "Japanese MDX files should reference myaccount-api-oas.ja-jp.json",
+      jpMdxFiles.every(f => f.content.includes("openapi: myaccount-api-oas.ja-jp ")),
+      "Japanese MDX files should reference myaccount-api-oas.ja-jp",
     );
   });
 
