@@ -109,7 +109,7 @@ function getEndpointScopes(spec) {
     const scopeList = Object.values(securityScheme);
     return [...acc, ...scopeList];
   }, []);
-  return new Set(flattenDeep(scopes));
+  return [...new Set(flattenDeep(scopes))];
 }
 
 async function writeMdxContent(config) {
