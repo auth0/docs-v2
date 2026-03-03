@@ -4,6 +4,7 @@ const {
   kebabCase,
   startCase,
   flattenDeep,
+  uniq,
   chain,
   initial,
   last,
@@ -109,7 +110,7 @@ function getEndpointScopes(spec) {
     const scopeList = Object.values(securityScheme);
     return [...acc, ...scopeList];
   }, []);
-  return flattenDeep(scopes);
+  return uniq(flattenDeep(scopes));
 }
 
 async function writeMdxContent(config) {
