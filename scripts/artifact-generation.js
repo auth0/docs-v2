@@ -478,7 +478,7 @@ async function main() {
     // INFO: write generated OAS to disk
     await fs.writeFile(
       `${generatedSpecPath}/${oasConfig.outputFile}`,
-      JSON.stringify(oasData, null, 2),
+      `${JSON.stringify(oasData, null, 2)}\n`,
     );
 
     // INFO: write mutated `docs.json` to disk
