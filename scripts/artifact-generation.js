@@ -1,5 +1,5 @@
 const fs = require("node:fs/promises");
-const { resolve } = require("node:path");
+const { resolve, basename } = require("node:path");
 const {
   kebabCase,
   startCase,
@@ -438,7 +438,7 @@ async function main() {
             await writeMdxContent({
               // INFO: this is the path to the OAS file relative to docs root
               frontMatter: {
-                file: specPath,
+                file: basename(specPath, ".json"),
                 method,
                 path,
                 playground: oasConfig.playground,
