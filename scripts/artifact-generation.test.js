@@ -169,6 +169,27 @@ describe("getEndpointScopes", () => {
 
     assert.deepStrictEqual(result, []);
   });
+
+  it("should return unique scopes when duplicate values exist across security requirements", () => {
+    const spec = {
+      summary: "Endpoint with duplicate scopes",
+      operationId: "getDuplicateScopes",
+      tags: ["Test"],
+      security: [
+        {
+          oAuth2ClientCredentials: ["read:users", "read:profiles"],
+        },
+        {
+          oAuth2ClientCredentials: ["read:users", "write:users"],
+        },
+      ],
+      responses: {},
+    };
+
+    const result = getEndpointScopes(spec);
+
+    assert.deepStrictEqual(result, ["read:users", "read:profiles", "write:users"]);
+  });
 });
 
 describe("writeMdxContent", () => {
