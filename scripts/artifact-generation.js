@@ -483,7 +483,7 @@ async function main() {
 
     // INFO: write mutated `docs.json` to disk
     const docsJsonPath = `${DOCS_SITE}/docs.json`;
-    await fs.writeFile(docsJsonPath, JSON.stringify(docsJson, null, 2));
+    await fs.writeFile(docsJsonPath, `${JSON.stringify(docsJson, null, 2)}\n`);
     console.log("Done! 🎉")
   }
 }
