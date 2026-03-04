@@ -1302,9 +1302,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API [FR]", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API [JP]", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API [FR]", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API [JP]", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1362,7 +1362,7 @@ describe("patchDocsJson", () => {
                 tab: "API Reference",
                 dropdowns: [
                   {
-                    dropdown: "MyAccount API",
+                    dropdown: "My Account API",
                     icon: "list",
                     pages: [
                       "docs/api/myaccount/index",
@@ -1386,7 +1386,7 @@ describe("patchDocsJson", () => {
                 tab: "API Reference",
                 dropdowns: [
                   {
-                    dropdown: "MyAccount API [FR]",
+                    dropdown: "My Account API [FR]",
                     icon: "list",
                     pages: [
                       "docs/fr-ca/api/myaccount/index",
@@ -1410,7 +1410,7 @@ describe("patchDocsJson", () => {
                 tab: "API Reference",
                 dropdowns: [
                   {
-                    dropdown: "MyAccount API [JP]",
+                    dropdown: "My Account API [JP]",
                     icon: "list",
                     pages: [
                       "docs/ja-jp/api/myaccount/index",
@@ -1442,9 +1442,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1468,7 +1468,7 @@ describe("patchDocsJson", () => {
                 tab: "API Reference",
                 dropdowns: [
                   {
-                    dropdown: "MyAccount API",
+                    dropdown: "My Account API",
                     icon: "list",
                     pages: [
                       "docs/api/myaccount/index",
@@ -1492,7 +1492,7 @@ describe("patchDocsJson", () => {
                 tab: "API Reference",
                 dropdowns: [
                   {
-                    dropdown: "MyAccount API",
+                    dropdown: "My Account API",
                     icon: "list",
                     pages: [],
                   },
@@ -1507,7 +1507,7 @@ describe("patchDocsJson", () => {
                 tab: "API Reference",
                 dropdowns: [
                   {
-                    dropdown: "MyAccount API",
+                    dropdown: "My Account API",
                     icon: "list",
                     pages: [],
                   },
@@ -1574,9 +1574,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1639,9 +1639,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1708,9 +1708,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1779,9 +1779,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "API MyAccount", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "API My Account", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1829,9 +1829,9 @@ describe("patchDocsJson", () => {
       },
     };
 
-    const expectedEnDropdownName = "MyAccount API";
-    const expectedFrDropdownName = "API MyAccount";
-    const expectedJpDropdownName = "MyAccount API";
+    const expectedEnDropdownName = "My Account API";
+    const expectedFrDropdownName = "API My Account";
+    const expectedJpDropdownName = "My Account API";
     const oasData = { tags: [] };
 
     const actual = patchDocsJson({ oasConfig, rawDocs, docsJson, oasData });
@@ -1853,9 +1853,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1915,7 +1915,7 @@ describe("patchDocsJson", () => {
     // Should fall back to startCase since no tags are provided
     const enDropdown =
       actual.navigation.languages[0].tabs[0].dropdowns[0];
-    assert.strictEqual(enDropdown.dropdown, "MyAccount API");
+    assert.strictEqual(enDropdown.dropdown, "My Account API");
     assert.strictEqual(
       enDropdown.pages[1].pages[0].group,
       "Authentication Methods",
@@ -1928,9 +1928,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {
@@ -1998,9 +1998,9 @@ describe("patchDocsJson", () => {
       docRootDirectory: "myaccount",
       outputFile: "myaccount-api-oas.json",
       docSectionNameMap: {
-        en: { apiName: "MyAccount API", title: "", description: "" },
-        "fr-ca": { apiName: "MyAccount API", title: "", description: "" },
-        "ja-jp": { apiName: "MyAccount API", title: "", description: "" },
+        en: { apiName: "My Account API", title: "", description: "" },
+        "fr-ca": { apiName: "My Account API", title: "", description: "" },
+        "ja-jp": { apiName: "My Account API", title: "", description: "" },
       },
     };
     const rawDocs = {

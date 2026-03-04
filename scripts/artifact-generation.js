@@ -36,9 +36,9 @@ const oasConfigs = [
     outputFile: "myaccount-api-oas.json",
     docRootDirectory: "myaccount",
     docSectionNameMap: {
-      en: { apiName: "MyAccount API", title: "MyAccount API Reference", description: "Documentation for Auth0's MyAccount API" },
-      "fr-ca": { apiName: "MyAccount API", title: "MyAccount API Reference", description: "Documentation for Auth0's MyAccount API" },
-      "ja-jp": { apiName: "MyAccount API", title: "MyAccount API Reference", description: "Documentation for Auth0's MyAccount API" },
+      en: { apiName: "My Account API", title: "My Account API Reference", description: "Documentation for Auth0's My Account API" },
+      "fr-ca": { apiName: "My Account API", title: "My Account API Reference", description: "Documentation for Auth0's My Account API" },
+      "ja-jp": { apiName: "My Account API", title: "My Account API Reference", description: "Documentation for Auth0's My Account API" },
     },
     SnippetResolver: require("@fern-api/auth0-myaccount-snippets")
       .SnippetResolver,
