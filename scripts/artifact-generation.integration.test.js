@@ -70,7 +70,7 @@ describe("main integration tests", () => {
     // Run main function
     await main();
 
-    // Verify docs.json was created with new MyAccount API dropdown
+    // Verify docs.json was created with new My Account API dropdown
     assert.ok(capturedDocsJson, "docs.json should be written");
     assert.strictEqual(
       capturedDocsJson.navigation.languages[0].tabs[0].dropdowns.length,
@@ -79,8 +79,8 @@ describe("main integration tests", () => {
     );
     assert.strictEqual(
       capturedDocsJson.navigation.languages[0].tabs[0].dropdowns[0].dropdown,
-      "MyAccount API",
-      "Dropdown should be named MyAccount API",
+      "My Account API",
+      "Dropdown should be named My Account API",
     );
 
     // Verify all locales have the dropdown
@@ -263,8 +263,8 @@ describe("main integration tests", () => {
       capturedDocsJson.navigation.languages[0].tabs[0].dropdowns[0];
     assert.strictEqual(
       enDropdown.dropdown,
-      "MyAccount API",
-      "Should still have MyAccount API dropdown",
+      "My Account API",
+      "Should still have My Account API dropdown",
     );
     assert.ok(
       Array.isArray(enDropdown.pages),
@@ -354,7 +354,7 @@ describe("main integration tests", () => {
     // Run main function
     await main();
 
-    // Verify docs.json has 3 dropdowns now (Management, Authentication, MyAccount)
+    // Verify docs.json has 3 dropdowns now (Management, Authentication, My Account)
     assert.ok(capturedDocsJson, "docs.json should be written");
     const enDropdowns = capturedDocsJson.navigation.languages[0].tabs[0].dropdowns;
     assert.strictEqual(
@@ -374,14 +374,14 @@ describe("main integration tests", () => {
       "Should still have Authentication API",
     );
     assert.ok(
-      dropdownNames.includes("MyAccount API"),
-      "Should have new MyAccount API",
+      dropdownNames.includes("My Account API"),
+      "Should have new My Account API",
     );
 
     // Verify the new dropdown is at the end
     assert.strictEqual(
       enDropdowns[2].dropdown,
-      "MyAccount API",
+      "My Account API",
       "New dropdown should be appended at the end",
     );
 
