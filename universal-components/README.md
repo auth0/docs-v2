@@ -84,6 +84,7 @@ node --version
 
 ## Notes
 
+- Make sure we update package.json to next version(minor/major/patch) so that our component bundle gets created with that version and mintlify automatically bursts the cache for us once its redeployed.
 - All component previews are rendered with fixed height and scrollbars for overflow.
 - Modals/dialogs are scoped to the preview container for accurate demo experience.
 - Use the snippets (e.g., `ComponentLoader`, `SsoProviderTablePreview`) for consistent preview styling and loading states.

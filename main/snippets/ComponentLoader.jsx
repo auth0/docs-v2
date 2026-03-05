@@ -1,11 +1,12 @@
 export const ComponentLoader = (props) => {
+  const themeMode = window.localStorage.getItem("isDarkMode");
   return (
     <div
       style={{
         minHeight: "400px",
         minWidth: "650px",
         marginTop: "40px",
-        background: "rgb(var(--gray-950)/.03)",
+        background: themeMode === "light" ? 'rgb(var(--gray-950)/.03)' : 'rgb(255 255 255/.1)',
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -20,14 +21,11 @@ export const ComponentLoader = (props) => {
         style={{
           minWidth: "640px",
           margin: "12px 12px 0",
-          background: "#fff",
+          background: themeMode === "light" ? "#ffffff" : "#101011",
           borderRadius: "10px",
           boxShadow: "0 2px 8px 0 rgba(16,30,54,0.04)",
           padding: "24px",
-          display: "flex",
           minHeight: "400px",
-          position: "relative",
-          justifyContent: "center",
         }}
         data-uc-component={props.componentSelector}
       >
@@ -47,7 +45,7 @@ export const ComponentLoader = (props) => {
         style={{
           width: "100%",
           textAlign: "center",
-          color: "#6B7280",
+          color: themeMode === "light" ? "#6B7280": "ffffff",
           fontSize: "12px",
           marginTop: "8px",
           marginBottom: "8px",

@@ -179,14 +179,7 @@ function setupThemeWatcher() {
 
     // Check if color scheme actually changed
     if (currentColorScheme !== newColorScheme) {
-      console.log(
-        "Theme changed from",
-        currentColorScheme,
-        "to",
-        newColorScheme,
-      );
       currentColorScheme = newColorScheme;
-
       // Remount all components with new theme
       unmountAll();
       setTimeout(scanAndMount, 100);
