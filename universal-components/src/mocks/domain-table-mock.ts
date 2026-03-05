@@ -55,10 +55,6 @@ const createDomain = (name: string): Domain => ({
 });
 
 export const getDomainManagementMock = () => {
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showConfigureModal, setShowConfigureModal] = useState(false);
-  const [showVerifyModal, setShowVerifyModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<Domain | null>(null);
   const [verifyError, setVerifyError] = useState<string | undefined>(undefined);
   const [domains, setDomains] = useState<Domain[]>(initialDomains);
@@ -114,21 +110,13 @@ export const getDomainManagementMock = () => {
   };
 
   const handlers = {
-    showCreateModal,
-    showConfigureModal,
-    showVerifyModal,
-    showDeleteModal,
     verifyError,
     selectedDomain,
-    setShowCreateModal,
-    setShowConfigureModal,
-    setShowDeleteModal,
     handleCreate: async (name: string) => {
       setIsCreating(true);
       await delay();
       setDomains((prev) => [...prev, createDomain(name)]);
       setIsCreating(false);
-      setShowCreateModal(false);
     },
     handleVerify: async (domain: Domain) => {
       setIsVerifying(true);
@@ -139,34 +127,26 @@ export const getDomainManagementMock = () => {
         ),
       );
       setIsVerifying(false);
-      setShowVerifyModal(false);
-      setVerifyError(undefined);
     },
     handleDelete: async (domain: Domain) => {
       setIsDeleting(true);
       await delay();
       setDomains((prev) => prev.filter((d) => d.id !== domain.id));
       setIsDeleting(false);
-      setShowDeleteModal(false);
-      setSelectedDomain(null);
     },
     handleToggleSwitch: async () => {},
     handleCloseVerifyModal: () => {
-      setShowVerifyModal(false);
       setVerifyError(undefined);
     },
-    handleCreateClick: async () => setShowCreateModal(true),
+    handleCreateClick: async () => false,
     handleConfigureClick: async (domain: Domain) => {
       setSelectedDomain(domain);
-      setShowConfigureModal(true);
     },
     handleVerifyClick: async (domain: Domain) => {
       setSelectedDomain(domain);
-      setShowVerifyModal(true);
     },
     handleDeleteClick: async (domain: Domain) => {
       setSelectedDomain(domain);
-      setShowDeleteModal(true);
     },
   };
 

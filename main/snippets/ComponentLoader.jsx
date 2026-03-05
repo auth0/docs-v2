@@ -25,12 +25,9 @@ export const ComponentLoader = (props) => {
           boxShadow: "0 2px 8px 0 rgba(16,30,54,0.04)",
           padding: "24px",
           display: "flex",
-          gap: "24px",
           minHeight: "400px",
           position: "relative",
           justifyContent: "center",
-          overflowY: "scroll",
-          maxHeight: "450px",
         }}
         data-uc-component={props.componentSelector}
       >

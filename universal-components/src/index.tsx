@@ -12,7 +12,7 @@ import {
   removeRouteChangeListener,
 } from "./helpers/history";
 import { componentRoutes, mintlifyLoader } from "./routes";
-import { detectColorScheme, setupPopperFix } from "./helpers/util";
+import { detectColorScheme } from "./helpers/util";
 import { getComponentMock } from "./helpers/getComponentMock";
 
 // ==================== State & Cache ====================
@@ -20,7 +20,6 @@ let cachedModule: any = null;
 const mountedRoots = new Map<HTMLElement, Root>();
 let isScanning = false;
 let routeChangeHandler: (() => void) | null = null;
-let popperObserver: MutationObserver | null = null;
 let themeObserver: MutationObserver | null = null;
 let currentColorScheme: string | null = null;
 
@@ -165,10 +164,6 @@ function cleanup() {
     removeRouteChangeListener(routeChangeHandler);
     routeChangeHandler = null;
   }
-  if (popperObserver) {
-    popperObserver.disconnect();
-    popperObserver = null;
-  }
   if (themeObserver) {
     themeObserver.disconnect();
     themeObserver = null;
@@ -207,9 +202,6 @@ function setupThemeWatcher() {
 
 function main() {
   overrideHistoryMethods();
-
-  // Setup popper fix
-  popperObserver = setupPopperFix();
 
   // Scan on route change
   routeChangeHandler = () => {

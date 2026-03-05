@@ -24,8 +24,6 @@ const mockProvidersInitial = [
 export const getSsoProviderTableMock = () => {
   const [providers, setProviders] = useState(mockProvidersInitial);
   const [selectedIdp, setSelectedIdp] = useState<unknown>(null);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
 
@@ -39,12 +37,10 @@ export const getSsoProviderTableMock = () => {
 
   const handleDelete = (idp: string) => {
     setSelectedIdp(idp);
-    setShowDeleteModal(true);
   };
 
   const handleDeleteFromOrganization = (idp: string) => {
     setSelectedIdp(idp);
-    setShowRemoveModal(true);
   };
 
   const handleToggleEnabled = (idp: any, enabled: boolean) => {
@@ -58,7 +54,6 @@ export const getSsoProviderTableMock = () => {
     setTimeout(() => {
       setProviders((prev) => prev.filter((p) => p.id !== provider.id));
       setIsDeleting(false);
-      setShowDeleteModal(false);
       setSelectedIdp(null);
     }, 700);
   };
@@ -68,7 +63,6 @@ export const getSsoProviderTableMock = () => {
     setTimeout(() => {
       setProviders((prev) => prev.filter((p) => p.id !== provider.id));
       setIsRemoving(false);
-      setShowRemoveModal(false);
       setSelectedIdp(null);
     }, 700);
   };
@@ -88,8 +82,6 @@ export const getSsoProviderTableMock = () => {
       onBefore: () => true,
     },
     selectedIdp,
-    showDeleteModal,
-    showRemoveModal,
     organization: null,
     isDeleting,
     isRemoving,
@@ -111,8 +103,6 @@ export const getSsoProviderTableMock = () => {
     handleToggleEnabled,
     handleDeleteConfirm,
     handleRemoveConfirm,
-    setShowDeleteModal,
-    setShowRemoveModal,
     setSelectedIdp,
   };
   return { logic: mockLogic, handlers: mockHandlers };
