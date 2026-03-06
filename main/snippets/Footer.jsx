@@ -1,7 +1,7 @@
 export const Footer = () => {
   const footerData = {
     socials: {
-      "x-twitter": "https://twitter.com/auth0",
+      "x-twitter": "https://x.com/auth0",
       github: "https://github.com/auth0",
       linkedin: "https://www.linkedin.com/company/auth0",
     },
@@ -13,7 +13,7 @@ export const Footer = () => {
           { label: "Code Samples & Guides", href: "https://developer.auth0.com/resources" },
           { label: "Zero Index Newsletter", href: "https://auth0.com/blog/newsletter" },
           { label: "Blog", href: "https://auth0.com/blog" },
-          { label: "Changelog", href: "https://auth0.com/docs/deploy/changelog" },
+          { label: "Changelog", href: "https://auth0.com/changelog" },
         ],
       },
       {
