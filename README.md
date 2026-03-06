@@ -10,4 +10,6 @@ This repo contains the content, configuration, and styling for much of Auth0's d
 
 * The `ui` directory contains a shared React component library for both docs sites. (See [the Docs UI library README](./ui/README.md) for more information.)
 
+* The `universal-components` directory contains a shared React universal component library for both docs sites. (See [the Docs UI library README](./universal-components/README.md) for more information.)
+
 To contribute to the docs, please coordinate with the Auth0 Product Docs and/or Product Management team, then read our [contribution guide](./CONTRIBUTING.md).

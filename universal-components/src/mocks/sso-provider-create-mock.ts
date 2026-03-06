@@ -7,7 +7,7 @@ const mockFilteredStrategies = ["samlp", "oidc"];
 // Mock idpConfig for each strategy
 const mockIdpConfig = {
   organization: {
-    name: "Mock Organization",
+    name: "Organization",
     id: "mock-org-id",
     can_set_show_as_button: true,
     can_set_assign_membership_on_login: true,
@@ -84,7 +84,7 @@ const detailsRef = {
     validate: async () => true,
     getData: () => ({
       name: "mock-name",
-      display_name: "Mock Display Name",
+      display_name: "Display Name",
     }),
     isDirty: () => false,
     reset: () => {},

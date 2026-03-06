@@ -1,7 +1,7 @@
 export const getSsoProviderEditMock = () => {
   const mockProvider = {
     id: "test-provider-id",
-    name: "Test Provider",
+    name: "Provider Name",
     is_enabled: true,
     strategy: "waad" as const,
     options: {},
@@ -39,7 +39,7 @@ export const getSsoProviderEditMock = () => {
     currentStyles: { variables: {}, classes: {} },
     provider: mockProvider,
     organization: {
-      name: "Mock Org",
+      name: "Org",
       branding: {
         colors: {
           primary: "",

@@ -5,7 +5,7 @@ import { useState } from "react";
 const mockProvidersInitial = [
   {
     id: "test-provider-id",
-    name: "Test Provider",
+    name: "Provider Name",
     display_name: "WAAD Provider 1",
     is_enabled: true,
     strategy: "waad" as const,
