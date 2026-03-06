@@ -25,6 +25,7 @@ export function initOneTrust(): void {
   script.setAttribute('data-domain-script', config.oneTrust.domainId);
   script.type = 'text/javascript';
   script.async = true;
+  script.crossOrigin = 'anonymous';
 
   // Set the OneTrust callback to handle consent changes
   window.OptanonWrapper = () => {
