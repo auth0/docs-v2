@@ -14,9 +14,11 @@ Actions provide access to custom domain information through the `event.request.h
 
 Custom domain information is available in the following Action triggers:
 
-* **Login** - Post-Login, Pre-User Registration, Post-User Registration
-* **Password Reset** - Post-Change Password
-* **Machine to Machine** - Credentials Exchange
+* Post-Login
+* Pre-User Registration
+* Post-User Registration
+* Password Reset - Post-Change Password
+* Machine to Machine - Credentials Exchange
 
 <Note>
 The `event.request.hostname` property is only available in triggers that involve an HTTP request from an end user or client. Triggers such as Send Phone Message or custom database scripts do not have access to this property.
@@ -24,142 +26,28 @@ The `event.request.hostname` property is only available in triggers that involve
 
 ### Event object structure
 
+Using `login.example.com` domain configured with domain metadata:
+
+| Key        | Value                     |
+|------------|---------------------------|
+| allow_list | example1.com,example2.com |
+
 ```javascript
 exports.onExecutePostLogin = async (event, api) => {
-  // Access the hostname used for authentication
-  const hostname = event.request.hostname;
-  // Example: "login.example.com"
-
-  console.log('Authentication via:', hostname);
+  console.log(event.custom_domain);
 };
+```
+Would log at the console:
+```bash
+{
+  "domain": "login.example.com",
+  "domain_metadata": {
+    "allow_list": "example1.com,example2.com"
+  }
+}
 ```
 
 ## Common use cases
-
-### Route users to organizations
-
-Direct users to specific [Organizations](/docs/manage-users/organizations) based on the custom domain:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  // Map custom domains to organization IDs
-  const domainToOrgMap = {
-    'login.companya.com': 'org_CompanyA123',
-    'auth.companyb.com': 'org_CompanyB456',
-    'sso.companyc.com': 'org_CompanyC789'
-  };
-
-  const organizationId = domainToOrgMap[hostname];
-
-  if (organizationId) {
-    // Check if user is a member of the organization
-    const userOrgs = event.organization?.id ||
-                     event.user.org_id; // From user metadata
-
-    if (userOrgs !== organizationId) {
-      return api.access.deny(
-        `Access denied. This login portal is for ${hostname} members only.`
-      );
-    }
-
-    // Optionally, add organization info to tokens
-    api.idToken.setCustomClaim('org_domain', hostname);
-    api.accessToken.setCustomClaim('org_domain', hostname);
-  }
-};
-```
-
-### Domain-based access control
-
-Enforce domain-specific access policies using custom domain metadata:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-  const userEmail = event.user.email;
-
-  // Retrieve custom domain configuration
-  // (In practice, you'd fetch this from an external service or cache)
-  const domainConfig = {
-    'enterprise.example.com': {
-      allowedDomains: ['example.com', 'example.co.uk'],
-      requireMFA: true,
-      environment: 'production'
-    },
-    'partner.example.com': {
-      allowedDomains: ['partner.com'],
-      requireMFA: false,
-      environment: 'partner'
-    }
-  };
-
-  const config = domainConfig[hostname];
-
-  if (config) {
-    // Validate user email domain
-    const emailDomain = userEmail.split('@')[1];
-
-    if (!config.allowedDomains.includes(emailDomain)) {
-      return api.access.deny(
-        `Access denied. Users from ${emailDomain} cannot access ${hostname}.`
-      );
-    }
-
-    // Enforce MFA requirement
-    if (config.requireMFA && !event.authentication?.methods?.find(m => m.name === 'mfa')) {
-      return api.multifactor.enable('any', { allowRememberBrowser: false });
-    }
-
-    // Add environment claim
-    api.accessToken.setCustomClaim('environment', config.environment);
-  }
-};
-```
-
-### Domain-specific branding and messaging
-
-Customize the user experience based on the custom domain:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  // Brand-specific configurations
-  const brandConfig = {
-    'login.brandA.com': {
-      brand: 'Brand A',
-      locale: 'en-US',
-      welcomeMessage: 'Welcome to Brand A'
-    },
-    'login.brandB.com': {
-      brand: 'Brand B',
-      locale: 'en-GB',
-      welcomeMessage: 'Welcome to Brand B'
-    },
-    'login.brandC.com': {
-      brand: 'Brand C',
-      locale: 'fr-FR',
-      welcomeMessage: 'Bienvenue à Brand C'
-    }
-  };
-
-  const config = brandConfig[hostname];
-
-  if (config) {
-    // Add brand information to tokens
-    api.idToken.setCustomClaim('brand', config.brand);
-    api.idToken.setCustomClaim('locale', config.locale);
-
-    // Set user metadata for consistent experience
-    if (!event.user.app_metadata?.preferred_brand) {
-      api.user.setAppMetadata('preferred_brand', config.brand);
-      api.user.setAppMetadata('preferred_locale', config.locale);
-    }
-  }
-};
-```
 
 ### Conditional logic by domain
 
@@ -167,375 +55,164 @@ Apply different rules based on whether a custom domain or canonical domain is us
 
 ```javascript
 exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
+  const domain = event.custom_domain?.domain;
 
-  // Check if using custom domain or canonical domain
-  const isCustomDomain = !hostname.includes('.auth0.com');
-
-  if (isCustomDomain) {
-    // Custom domain-specific logic
-    console.log('User authenticated via custom domain:', hostname);
-
-    // Track custom domain usage
-    api.user.setAppMetadata('last_custom_domain', hostname);
-    api.user.setAppMetadata('last_login_domain_type', 'custom');
-  } else {
-    // Canonical domain logic
-    console.log('User authenticated via canonical domain');
-    api.user.setAppMetadata('last_login_domain_type', 'canonical');
-
-    // Optionally restrict canonical domain access
-    // return api.access.deny('Please use the custom domain to log in.');
+  if (
+    domain === undefined ||
+    domain.includes('.auth0.com') || // Public Cloud
+    domain.includes('.auth0app.com') // Private Cloud
+  ) {
+    return api.access.deny('Please use the custom domain to log in.');
   }
 };
 ```
 
-### Region-based routing
+### Email domain-based access control
 
-Route users to region-specific resources based on custom domain:
+Enforce email domain-specific access policies using custom domain metadata:
 
 ```javascript
 exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
+  const domain = event.custom_domain?.domain;
+  
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
 
-  // Map domains to regions
-  const domainRegions = {
-    'us.example.com': { region: 'us-east-1', apiEndpoint: 'https://api-us.example.com' },
-    'eu.example.com': { region: 'eu-west-1', apiEndpoint: 'https://api-eu.example.com' },
-    'ap.example.com': { region: 'ap-southeast-1', apiEndpoint: 'https://api-ap.example.com' }
+  const email = event.user.email;
+  
+  if (email === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without email.`
+    );
+  }
+
+  const domainAllowList = event.custom_domain?.domain_metadata?.allow_list?.split(',') || [];
+  const emailDomain = email.split('@')[1];
+
+  if (domainAllowList.includes(emailDomain) === false) {
+    return api.access.deny(
+      `Access denied - Users from ${emailDomain} cannot access ${domain}.`
+    );
+  }
+};
+```
+
+### Application metadata-based access control
+
+Enforce application and domain groups access policies using application and domain metadata:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+  
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const applicationGroup = event.client.metadata?.domain_group?.split(',') || [];
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];
+  const intersection = domainGroup.filter(x => new Set(applicationGroup).has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access application ${event.client.name} from ${domain}.`
+    );
+  }
+};
+```
+
+### Connection metadata-based access control
+
+Enforce connection and domain groups access policies using connection and domain metadata:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const connectionGroup = connection.metadata?.domain_group?.split(',') || [];
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];  
+  const intersection = domainGroup.filter(x => new Set(connectionGroup).has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access connection ${connection.name} from ${domain}.`
+    );
+  }
+};
+```
+
+### Organization metadata-based access control
+
+Enforce organization and domain groups access policies using organization and domain metadata:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const organization = event.organization;
+
+  if (!organization) {
+    return; // Skip for non-organization authentication
+  }
+
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const organizationGroup = organization.metadata?.domain_group?.split(',') || [];
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];  
+  const intersection = domainGroup.filter(x => new Set(organizationGroup).has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access organization ${organization.name} from ${domain}.`
+    );
+  }
+};
+```
+
+### Region-based requests
+
+Make requests to region-specific external services based on custom domain metadata:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const regionDomain = event.custom_domain?.domain_metadata?.regionDomain;
+
+  if (regionDomain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const messageBody = {
+    message: 'Hello World!'
   };
 
-  const regionConfig = domainRegions[hostname];
-
-  if (regionConfig) {
-    // Add region information to tokens
-    api.accessToken.setCustomClaim('region', regionConfig.region);
-    api.accessToken.setCustomClaim('api_endpoint', regionConfig.apiEndpoint);
-
-    // Store user's preferred region
-    api.user.setUserMetadata('preferred_region', regionConfig.region);
-  }
-};
-```
-
-### Organization-based allow/deny lists
-
-Use organization metadata to control which custom domains can access the organization:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  // Only apply if user is authenticating to an organization
-  if (!event.organization) {
-    return;
-  }
-
-  const org = event.organization;
-
-  // Check organization's deny list
-  const denyDomains = org.metadata?.deny_domains?.split(',').map(d => d.trim()) || [];
-  if (denyDomains.includes(hostname)) {
-    return api.access.deny(
-      `Access to ${org.name} is not allowed from ${hostname}.`
-    );
-  }
-
-  // Check organization's allow list
-  const allowDomains = org.metadata?.allow_domains?.split(',').map(d => d.trim()) || [];
-  if (allowDomains.length > 0 && !allowDomains.includes(hostname)) {
-    return api.access.deny(
-      `Access to ${org.name} requires authentication via an approved domain.`
-    );
-  }
-
-  // Access granted - add domain to user metadata
-  api.user.setAppMetadata('last_org_domain', hostname);
-};
-```
-
-## Fetching custom domain metadata
-
-Custom domain metadata is not directly available in the Action event object. To use metadata in your Actions, you can:
-
-### Option 1: Fetch from Management API
-
-Use the Management API to retrieve custom domain metadata:
-
-```javascript
-const axios = require('axios');
-
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
   try {
-    // Get Management API token
-    const tokenResponse = await axios.post(
-      `https://${event.secrets.AUTH0_DOMAIN}/oauth/token`,
-      {
-        client_id: event.secrets.CLIENT_ID,
-        client_secret: event.secrets.CLIENT_SECRET,
-        audience: `https://${event.secrets.AUTH0_DOMAIN}/api/v2/`,
-        grant_type: 'client_credentials'
-      }
-    );
-
-    const accessToken = tokenResponse.data.access_token;
-
-    // Fetch all custom domains
-    const domainsResponse = await axios.get(
-      `https://${event.secrets.AUTH0_DOMAIN}/api/v2/custom-domains`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      }
-    );
-
-    // Find the current domain
-    const currentDomain = domainsResponse.data.find(d => d.domain === hostname);
-
-    if (currentDomain?.domain_metadata) {
-      // Use the metadata
-      const metadata = currentDomain.domain_metadata;
-
-      if (metadata.environment === 'production') {
-        api.accessToken.setCustomClaim('env', 'prod');
-      }
-
-      if (metadata.customer_id) {
-        api.accessToken.setCustomClaim('customer_id', metadata.customer_id);
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching custom domain metadata:', error.message);
+    await fetch(`https://${regionDomain}/api/resource`, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': event.secrets.API_KEY,
+      },
+      body: JSON.stringify(messageBody),
+    });
+  } catch (err) {
+    api.notification.drop('External service failure');
   }
-};
-```
-
-### Option 2: Use cached configuration
-
-Store domain configuration in a persistent cache:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  // Check cache first
-  if (!event.cache.domains) {
-    // Initialize cache with domain configuration
-    // In production, fetch this from your API or configuration service
-    event.cache.domains = {
-      'login.customer1.com': { customer_id: 'cust_001', tier: 'enterprise' },
-      'login.customer2.com': { customer_id: 'cust_002', tier: 'professional' },
-      'login.customer3.com': { customer_id: 'cust_003', tier: 'starter' }
-    };
-  }
-
-  const domainConfig = event.cache.domains[hostname];
-
-  if (domainConfig) {
-    api.accessToken.setCustomClaim('customer_id', domainConfig.customer_id);
-    api.accessToken.setCustomClaim('tier', domainConfig.tier);
-  }
-};
-```
-
-### Option 3: Use secrets for static configuration
-
-Store domain mappings in Action secrets for simpler scenarios:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  // Parse domain mapping from secret
-  // Secret format: "domain1:value1,domain2:value2"
-  const domainMapping = event.secrets.DOMAIN_CUSTOMER_MAP
-    ?.split(',')
-    .reduce((map, pair) => {
-      const [domain, customerId] = pair.split(':');
-      map[domain.trim()] = customerId.trim();
-      return map;
-    }, {}) || {};
-
-  const customerId = domainMapping[hostname];
-
-  if (customerId) {
-    api.accessToken.setCustomClaim('customer_id', customerId);
-  }
-};
-```
-
-## Testing Actions with custom domains
-
-When testing Actions that use custom domain logic:
-
-### Local testing
-
-Use the Actions test runner in the Dashboard:
-
-1. Navigate to **Actions** > **Library** > **[Your Action]**
-2. Click **Test**
-3. Modify the test payload to include your custom domain:
-
-```json
-{
-  "request": {
-    "hostname": "login.example.com"
-  }
-}
-```
-
-### Integration testing
-
-Test your Actions in a non-production tenant:
-
-1. Configure custom domains in your development/staging tenant
-2. Deploy your Actions
-3. Test authentication flows through each custom domain
-4. Verify tokens contain expected claims
-
-### Debugging
-
-Add logging to track custom domain usage:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  console.log('=== Custom Domain Debug Info ===');
-  console.log('Hostname:', hostname);
-  console.log('User:', event.user.email);
-  console.log('Organization:', event.organization?.name);
-  console.log('Client:', event.client.name);
-  console.log('================================');
-
-  // Your domain-specific logic here
-};
-```
-
-View logs in **Monitoring** > **Logs** in the Auth0 Dashboard.
-
-## Best practices
-
-### 1. Handle missing hostnames gracefully
-
-Always provide fallback behavior:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname || 'default';
-
-  // Your logic here
-};
-```
-
-### 2. Validate domain configuration
-
-Ensure the hostname is expected:
-
-```javascript
-const ALLOWED_DOMAINS = [
-  'login.example.com',
-  'auth.example.com',
-  'sso.example.com'
-];
-
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  if (hostname && !hostname.includes('.auth0.com') && !ALLOWED_DOMAINS.includes(hostname)) {
-    console.warn('Unexpected custom domain:', hostname);
-  }
-};
-```
-
-### 3. Cache external data
-
-Minimize API calls by caching configuration:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  // Use cache to reduce external API calls
-  if (!event.cache.domainConfig) {
-    event.cache.domainConfig = await fetchDomainConfig();
-  }
-
-  const config = event.cache.domainConfig[event.request.hostname];
-  // Use config
-};
-```
-
-### 4. Use secrets for sensitive data
-
-Store API credentials and sensitive configuration in Action secrets:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const apiKey = event.secrets.EXTERNAL_API_KEY;
-  // Use apiKey for external API calls
-};
-```
-
-### 5. Document domain-specific logic
-
-Add clear comments explaining domain routing:
-
-```javascript
-/**
- * Custom Domain Routing Logic
- *
- * - login.customer1.com -> Enterprise tier, MFA required
- * - login.customer2.com -> Professional tier, MFA optional
- * - login.customer3.com -> Starter tier, no MFA
- *
- * Organization assignment based on email domain:
- * - @customer1.com -> org_Customer1
- * - @customer2.com -> org_Customer2
- */
-exports.onExecutePostLogin = async (event, api) => {
-  // Implementation
-};
-```
-
-## Performance considerations
-
-### Minimize external API calls
-
-Cache domain configuration to reduce latency:
-
-```javascript
-const CACHE_TTL = 3600000; // 1 hour in milliseconds
-
-exports.onExecutePostLogin = async (event, api) => {
-  const now = Date.now();
-  const cache = event.cache;
-
-  // Check if cache is expired
-  if (!cache.domainConfig || !cache.lastFetch || (now - cache.lastFetch) > CACHE_TTL) {
-    cache.domainConfig = await fetchDomainConfiguration();
-    cache.lastFetch = now;
-  }
-
-  const config = cache.domainConfig[event.request.hostname];
-  // Use config
-};
-```
-
-### Use async operations efficiently
-
-Process multiple operations in parallel:
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const hostname = event.request.hostname;
-
-  // Fetch multiple resources in parallel
-  const [domainConfig, userPreferences] = await Promise.all([
-    fetchDomainConfig(hostname),
-    fetchUserPreferences(event.user.user_id)
-  ]);
-
-  // Apply configuration
 };
 ```
 
