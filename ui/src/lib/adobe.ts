@@ -5,10 +5,11 @@ export function initAdobe(source: string): void {
   const script = document.createElement('script');
   script.src = source;
   script.async = true;
-  script.type = 'text/javascript';
+  script.classList.add('consent-required:C0002'); // needed for one-trust
+  script.type = 'text/plain';
 
   // append to body tag
-  document.head.appendChild(script);
+  document.body.append(script);
 }
 
 export function loadAdobeScript(): void {

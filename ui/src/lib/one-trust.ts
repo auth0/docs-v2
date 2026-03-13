@@ -43,6 +43,8 @@ export function initOneTrust(): void {
   // load analytics scripts content with type text/plain
   loadHeapScript();
 
+  loadAdobeScript();
+
   const consentsMap = parseConsentCookie();
 
   if (!consentsMap) {
@@ -51,9 +53,6 @@ export function initOneTrust(): void {
   }
 
   loadAllowedScripts(consentsMap);
-
-  // load Adobe Tag Manager script immediately after
-  loadAdobeScript();
 }
 
 function parseConsentCookie() {
