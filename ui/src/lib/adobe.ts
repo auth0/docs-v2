@@ -8,7 +8,7 @@ export function initAdobe(source: string): void {
   script.type = 'text/javascript';
 
   // append to body tag
-  document.head.append(script);
+  document.head.appendChild(script);
 }
 
 export function loadAdobeScript(): void {
