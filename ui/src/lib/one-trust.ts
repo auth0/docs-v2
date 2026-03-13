@@ -1,3 +1,4 @@
+import { loadAdobeScript } from './adobe';
 import { loadHeapScript } from './analytics';
 import { config } from './config';
 import { getCookies } from './cookies';
@@ -41,6 +42,8 @@ export function initOneTrust(): void {
 
   // load analytics scripts content with type text/plain
   loadHeapScript();
+
+  loadAdobeScript();
 
   const consentsMap = parseConsentCookie();
 
@@ -104,7 +107,7 @@ function loadAllowedScripts(consents: Set<string>) {
       .replace('consent-required:', '')
       .split('-');
 
-      return consentsRequired.every((cr) => consents.has(cr));
+    return consentsRequired.every((cr) => consents.has(cr));
   });
 
   // Re-inject scripts now with js type
