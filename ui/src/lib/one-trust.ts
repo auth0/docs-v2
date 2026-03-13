@@ -1,3 +1,4 @@
+import { loadAdobeScript } from './adobe';
 import { loadHeapScript } from './analytics';
 import { config } from './config';
 import { getCookies } from './cookies';
@@ -50,6 +51,9 @@ export function initOneTrust(): void {
   }
 
   loadAllowedScripts(consentsMap);
+
+  // load Adobe Tag Manager script immediately after
+  loadAdobeScript();
 }
 
 function parseConsentCookie() {
@@ -104,7 +108,7 @@ function loadAllowedScripts(consents: Set<string>) {
       .replace('consent-required:', '')
       .split('-');
 
-      return consentsRequired.every((cr) => consents.has(cr));
+    return consentsRequired.every((cr) => consents.has(cr));
   });
 
   // Re-inject scripts now with js type
