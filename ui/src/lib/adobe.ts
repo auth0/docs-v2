@@ -3,10 +3,14 @@ import { config } from './config';
 export function initAdobe(source: string): void {
   // load adobe tag manager script
   const script = document.createElement('script');
+  script.id = 'adobe-script';
   script.src = source;
   script.async = true;
-  script.classList.add('consent-required:C0002'); // needed for one-trust
+  // Important: Set type to 'text/plain' to prevent immediate execution
+  // The actual execution will be controlled by OneTrust based on user consent
   script.type = 'text/plain';
+  script.classList.add('consent-required:C0002'); // needed for one-trust
+  script.crossOrigin = 'anonymous';
 
   // append to body tag
   document.body.append(script);
