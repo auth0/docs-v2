@@ -30,7 +30,7 @@ export function initOneTrust(): void {
 
   // Set the OneTrust callback to handle consent changes
   window.OptanonWrapper = () => {
-    if (window.OnetrustActiveGroups) {
+    if (window.OneTrust.IsAlertBoxClosedAndValid() && window.OnetrustActiveGroups) {
       const consents = window.OnetrustActiveGroups.split(',').filter((c) => c);
       // load allowed scripts based on consents
       loadAllowedScripts(new Set(consents.map((group) => `C000${group}`)));
