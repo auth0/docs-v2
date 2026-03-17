@@ -1,12 +1,15 @@
 export const ComponentLoader = (props) => {
-  const themeMode = window.localStorage.getItem("isDarkMode");
+  const themeMode = window?.localStorage?.getItem?.("isDarkMode") || "light";
   return (
     <div
       style={{
         minHeight: "400px",
         minWidth: "650px",
         marginTop: "40px",
-        background: themeMode === "light" ? 'rgb(var(--gray-950)/.03)' : 'rgb(255 255 255/.1)',
+        background:
+          themeMode === "light"
+            ? "rgb(var(--gray-950)/.03)"
+            : "rgb(255 255 255/.1)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -45,7 +48,7 @@ export const ComponentLoader = (props) => {
         style={{
           width: "100%",
           textAlign: "center",
-          color: themeMode === "light" ? "#6B7280": "ffffff",
+          color: themeMode === "light" ? "#6B7280" : "ffffff",
           fontSize: "12px",
           marginTop: "8px",
           marginBottom: "8px",

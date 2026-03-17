@@ -32,7 +32,7 @@ export const getSsoProviderEditMock = () => {
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
     activeTab: "sso",
     schema: undefined,
-    readOnly: false,
+    readOnly: true,
     providerId: "mock-provider-id",
     domains: undefined,
     hideHeader: false,

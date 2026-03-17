@@ -1,19 +1,19 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-refresh/only-export-components */
-import * as React from "react";
-import { StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import * as React from 'react';
+import { StrictMode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 
-import "./index.css";
+import './index.css';
 
 import {
   overrideHistoryMethods,
   addRouteChangeListener,
   removeRouteChangeListener,
-} from "./helpers/history";
-import { componentRoutes, mintlifyLoader } from "./routes";
-import { detectColorScheme } from "./helpers/util";
-import { getComponentMock } from "./helpers/getComponentMock";
+} from './helpers/history';
+import { componentRoutes, mintlifyLoader } from './routes';
+import { detectColorScheme } from './helpers/util';
+import { getComponentMock } from './helpers/getComponentMock';
 
 // ==================== State & Cache ====================
 let cachedModule: any = null;
@@ -71,9 +71,10 @@ async function getWrapper(
       <Auth0ComponentProvider
         authDetails={{
           previewMode: true,
-          domain: "example.auth0.com",
+          domain: 'example.auth0.com',
         }}
-        themeSettings={{ theme: "default", mode }}
+        themeSettings={{ theme: 'default', mode }}
+        toastSettings={{ provider: 'custom', methods: {} }}
       >
         <WaitForCoreClient
           useCoreClient={useCoreClient}
@@ -82,6 +83,7 @@ async function getWrapper(
           <Component
             logic={mockData?.logic}
             handlers={mockData?.handlers}
+            {...mockData}
             {...props}
           />
         </WaitForCoreClient>
@@ -136,7 +138,7 @@ async function scanAndMount() {
 
   // Mount new components
   const elements = document.querySelectorAll<HTMLElement>(
-    "[data-uc-component]",
+    '[data-uc-component]',
   );
 
   for (const el of elements) {
@@ -149,7 +151,7 @@ async function scanAndMount() {
     try {
       props = el.dataset.ucProps ? JSON.parse(el.dataset.ucProps) : {};
     } catch (e) {
-      console.error("Failed to parse props:", e);
+      console.error('Failed to parse props:', e);
     }
 
     await mountComponent(name, el, props);
@@ -189,7 +191,7 @@ function setupThemeWatcher() {
   // Observe HTML element for style and class changes
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["style", "class", "data-theme"],
+    attributeFilter: ['style', 'class', 'data-theme'],
   });
 }
 
@@ -206,16 +208,16 @@ function main() {
   setupThemeWatcher();
 
   // Initial scan
-  if (document.readyState === "complete") {
+  if (document.readyState === 'complete') {
     setTimeout(scanAndMount, 500);
   } else {
-    window.addEventListener("load", () => setTimeout(scanAndMount, 500));
+    window.addEventListener('load', () => setTimeout(scanAndMount, 500));
   }
 }
 
 // ==================== Setup cleanup handlers ====================
-window.addEventListener("beforeunload", cleanup);
-window.addEventListener("unload", cleanup);
+window.addEventListener('beforeunload', cleanup);
+window.addEventListener('unload', cleanup);
 
 // Start the application
 main();
