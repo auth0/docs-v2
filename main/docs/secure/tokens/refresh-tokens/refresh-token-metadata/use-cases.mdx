@@ -1,0 +1,356 @@
+---
+description: Explore example implementations of use cases for refresh token metadata and session metadata. 
+title: Refresh token metadata and session metadata Use Cases
+validatedOn: 2026-03-06
+---
+
+[Refresh token metadata](/docs/secure/tokens/refresh-tokens/refresh-token-metadata) and [session metadata](/docs/manage-users/sessions/session-metadata) together allow you to create and store data that persists throughout a user’s Auth0 session lifecycle. This article includes examples for the following use cases:
+
+* [Creating persistent custom claims](/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#create-persistent-custom-claims)  
+* [Creating a unique session ID](/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#create-a-unique-session-id)
+* [Propagating tenant identifiers](/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#create-a-tenant-identifier)
+* [Managing transient data from upstream identity providers (IDPs)](/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#manage-transient-data-from-upstream-identity-providers-idps)
+* [Enhancing security and fraud detection](/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#enhance-security-and-fraud-detection)
+
+To learn more, read [A guide to Auth0 Session and Refresh Token Metadata](https://auth0.com/blog/auth0-session-refresh-token-metadata-guide). 
+
+<Warning>
+Auth0 session metadata is not a secure data store and should not be used to store sensitive information. This includes secrets and high-risk PII like social security numbers or credit card numbers, etc. Auth0 customers are strongly encouraged to evaluate the data stored in metadata and only store that which is necessary for identity and access management purposes. To learn more, read [Auth0 General Data Protection Regulation Compliance](/docs/secure/data-privacy-and-compliance/gdpr).
+</Warning>
+
+## Create persistent custom claims 
+
+Refresh token metadata and session metadata together lets you create persistent custom claims to extend information contained within [ID](/docs/secure/tokens#id-tokens) and [access](/docs/secure/tokens/access-tokens) tokens. 
+
+Using persistent custom claims, you can access application specific data, such as:
+
+ * User roles
+ * Permissions
+ * Tenant IDs
+ * And other attributes necessary for authorization and personalization across refresh token exchanges.
+
+Configure a [post-login](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) [Action](/docs/customize/actions) trigger to create persistent custom claims and assign them to refresh token metadata using the `api.refreshToken.setMetadata()` object. 
+
+```javascript custom claim Action example expandable
+/**
+ * @param {Event} event - Details about the user and the authentication transaction.
+ * @param {PostLoginActionAPI} api - Interface to modify the completed auth transaction.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let customClaimValue1;
+  let customClaimValue2;
+
+  // --- Helper function to simulate custom claim calculation ---
+  // In a real scenario, this function would perform complex logic
+  // based on user data, external APIs, etc.
+  const calculateCustomClaims = (user) => {
+    // After doing  your calculations return
+    return { claim1: value1, claim2: value2 };
+  };
+
+  // --- Determine if this is an initial login or a refresh token exchange ---
+  // If event.request.body.grant_type is not 'refresh_token', it's likely an initial interactive login
+  const isRefreshTokenGrant = event.request.body.grant_type === 'refresh_token';
+
+  if (!isRefreshTokenGrant) {
+    // --- Initial Login (e.g., pwd, social, MFA-OOB) ---
+    // Calculate the custom claim values
+    const calculatedClaims = calculateCustomClaims(event.user);
+    customClaimValue1 = calculatedClaims.claim1;
+    customClaimValue2 = calculatedClaims.claim2;
+
+    // Store these calculated values into Refresh Token Metadata for persistence
+    // Check if we will issue a refresh token and if so add metadata
+if (event.transaction.requested_scopes.indexOf('offline_access') > -1) {
+api.refreshToken.setMetadata('customClaim1', customClaimValue1);
+api.refreshToken.setMetadata('customClaim2', customClaimValue2);
+}
+
+  } else {
+    // --- Refresh Token Exchange ---
+    // Use the custom claim values from Refresh Token Metadata
+    customClaimValue1 = event.refresh_token?.metadata?.customClaim1;
+    customClaimValue2 = event.refresh_token?.metadata?.customClaim2;
+
+  } 
+  // --- Finally, add the determined values as custom claims to the tokens ---
+  api.idToken.setCustomClaim('custom_claim_1', customClaimValue1);
+  api.accessToken.setCustomClaim('custom_claim_1', customClaimValue1);
+
+  api.idToken.setCustomClaim('custom_claim_2', customClaimValue2);
+  api.accessToken.setCustomClaim('custom_claim_2', customClaimValue2);
+};
+```
+During a [refresh token exchange](/docs/secure/tokens/refresh-tokens/use-refresh-tokens#use-refresh-tokens), a subsequent `post-login` Action trigger can access these custom claims, using the `event.refresh_token.metadata` object and apply them to newly issued refresh tokens using the `api.idToken.setCustomClaim()` and `api.accessToken.setCustomClaim()` objects.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+A single `post-login` Action can handle different `grant_type` scenarios using the `event.request.body.grant_type` object to manage claim persistence. The `event.refresh_token` object is read-only available during refresh token exchanges.  
+</Callout>
+
+## Create a unique session ID 
+
+Refresh token metadata and Session metadata together let you create a unique session ID to implement a persistent session identifier that is carried across the entire lifespan of a user's session, including during [refresh token rotations](docs/secure/tokens/refresh-tokens/refresh-token-rotation).
+
+Using unique session IDs, you can:
+
+* Accurately log a user’s session for debugging and auditing purposes.
+* Provide a mechanism for applications to track internal session state.
+* Enable [APIs](/docs/get-started/apis#apis) to provide granular logging, rate limiting, and contextual authorization decisions.
+* Apply consistent UX experiences that span multiple token lifecycles.
+
+Configure a [post-login](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action trigger to create a unique session ID and assign it to the user’s session using the `api.session.setMetadata()` and `api.refreshToken.setMetadata()` objects. 
+
+
+Add the unique session ID, as a custom claim to the ID and access tokens, using the `api.idToken.setCustomClaim()` and `api.accessToken.setCustomClaim()` objects. 
+
+```javascript unique session ID Action example expandable
+/**
+ * @param {Event} event - Details about the user and the authentication transaction.
+ * @param {PostLoginActionAPI} api - Interface to modify the completed auth transaction.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let sessionId;
+
+  // 1) Check if a session metadata key called 'ses_id' already exists.
+  if (event.session && event.session.metadata && event.session.metadata.ses_id) {
+    sessionId = event.session.metadata.ses_id;
+  }
+  // If not found in session metadata, check if it's available in the refresh token metadata.
+  // This is specifically relevant for ROPG flows where there was no actual session.
+  else if (event.refresh_token && event.refresh_token.metadata && event.refresh_token.metadata.ses_id) {
+    sessionId = event.refreshToken.metadata.ses_id;
+  }
+
+  // If a 'ses_id' doesn't exist, generate a new one 
+  if (!sessionId) {
+    sessionId = generateSesId(); // Your own helper function to generate a UUID
+
+    // Store the newly generated 'ses_id' in session metadata
+    // Only do this if a session is actually being issued/present in the event. 
+    if (event.session) {
+      api.session.setMetadata('ses_id', sessionId);
+    }
+
+    // Store the 'ses_id' in refresh token metadata.
+    // Only do this if a refresh token is actually being issued/present in the event.
+    if (event.refresh_token) {
+      api.refreshToken.setMetadata('ses_id', sessionId);
+    }
+  } else {
+    // Also, ensure the refresh token metadata has the ses_id, in case it was missing
+    // or updated elsewhere. This could happen if the user did not request offline_access at first but added it later.
+    if (event.refresh_token && event.refresh_token.metadata && !event.refresh_token.metadata.ses_id) {
+        api.refreshToken.setMetadata('ses_id', sessionId);
+    }
+  }
+
+
+  // 2) Add this 'ses_id' as a custom claim to both the ID Token and Access Token.
+  api.idToken.setCustomClaim('ses_id', sessionId);
+  api.accessToken.setCustomClaim('ses_id', sessionId);
+};
+```
+During a refresh token exchange, a subsequent post-login Action trigger can access these custom claims using the `event.refresh_token.metadata` object, and apply them to newly issued refresh tokens using the `api.idToken.setCustomClaim()` and `api.accessToken.setCustomClaim()` objects.
+
+## Create a tenant identifier 
+
+Refresh token metadata and session metadata together let you create a persistent tenant identifier to manage multi-tenant applications, where a single instance of an application serves multiple customer organizations, that is carried across the entire lifespan of a user's session.
+
+Using a persistent tenant identifier, you can:
+
+* Add dynamic access control to easily enforce tenant-specific permissions in your applications and APIs
+* Create a tailored user experience to deliver content and features relevant to the user's current tenant context
+* Simplify multi-tenancy logic by centralizing tenant identification and propagation within Auth0
+* Enhance security by preventing accidental cross-tenant data exposure by ensuring consistent tenant context in all tokens
+* Improve scalability by reducing the need for repeated database queries or complex logic to determine tenant context on every API call or token refresh
+
+Configure a [post-login](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action trigger to identify the user’s active tenant either by querying the application for an `ext-tenantId` value provided during the authentication request, infer the tenant using geo-location, or by prompting the user to select their desired tenant.  
+
+
+Once the tenant is identified, assign the tenant identifier value to the user’s session using the `api.session.setMetadata()` and `api.refreshToken.setMetadata()` objects, and add it as a custom claim to the ID and access tokens using the `api.idToken.setCustomClaim()` and `api.accessToken.setCustomClaim()` objects. 
+
+```javascript tenant identifier Action example expandable
+/** 
+ * @param {Event} event - Details about the user and the authentication transaction.
+ * @param {PostLoginActionAPI} api - Interface to modify the completed auth transaction.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let tenantId;
+
+  // 1) Check if a session metadata key called 'tenant_id' already exists.
+  if (event.session && event.session.metadata && event.session.metadata.tenant_id) {
+    tenantId = event.session.metadata.tenant_id;
+  }
+  // If not found in session metadata, check if it's available in the refresh token metadata.
+  // This is specifically relevant for ROPG flows where there was no actual session.
+  else if (event.refresh_token && event.refresh_token.metadata && event.refresh_token.metadata.tenant_id) {
+    tenantId = event.refreshToken.metadata.tenant_id;
+  }
+
+  // If we don't know yet the 'tenant_id' we figure it out 
+  if (!tenantId) {
+    // Assume tenant_id came as an ext- parameter
+    tenantId = event.request.query['ext-tenantId'];
+
+    // It could also come from geo location in event  
+    // or from forms. If using forms you'd open the form
+    // now and run the rest of the code in the 
+    // onContinuePostLogin function
+  
+    // Store the newly generated 'tenant_id' in session metadata 
+    // Only do this if a session is actually being issued/present in the event. 
+    if (event.session) {
+      api.session.setMetadata('tenant_id', tenantId);
+    }
+
+    // Store the 'tenant_id' in refresh token metadata.
+    // Only do this if a refresh token is actually being issued/present in the event.
+    if (event.refresh_token) {
+      api.refreshToken.setMetadata('tenant_id', tenantId);
+    }
+  } else {
+    // Also, ensure the refresh token metadata has the tenant_id, in case it was missing
+    // or updated elsewhere. This could happen if the user did not request offline_access at first but added it later.
+    if (event.refresh_token && event.refresh_token.metadata && !event.refresh_token.metadata.tenant_id) {
+        api.refreshToken.setMetadata('tenant_id', tenantId);
+    }
+  }
+
+
+  // 2) Add this 'tenant_id' as a custom claim to both the ID Token and Access Token.
+  api.idToken.setCustomClaim('tenant_id', tenantId);
+  api.accessToken.setCustomClaim('tenant_id', tenantId);
+};
+```
+During a refresh token exchange, a subsequent `post-login` Action can access these custom claims, using the `event.refresh_token.metadata` object, and apply them to newly issued refresh tokens using the `api.idToken.setCustomClaim()` and `api.accessToken.setCustomClaim()` objects. 
+
+## Manage transient data from upstream identity providers (IDPs)
+
+Refresh token metadata and session metadata together let you manage transient and contextual data from upstream IDPs throughout a user's session without storing it permanently in the user's Auth0 profile.  
+
+Using transient data, you can:
+
+* Maintain clean user profiles by preventing the storage of transient or session specific data
+* Enhance flexibility by supporting diverse data requirements from various IDPs without forcing schema changes or data bloat in persistent user profiles
+* Improve compliance by facilitating adherence to data privacy and retention policies by storing transient data only for its required lifetime
+* Reduce development overhead by simplifying the process of handling transient IDP data, as Auth0 Actions and metadata manage the data lifecycle
+
+Configure a [post-login](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action trigger to identify user profile data contained in the `event.request`, `event.user`, and `event.context` objects. 
+
+
+Determine which data is transient or contextual data and assign it to the user’s session, using the `api.session.setMetadata()` and `api.refreshToken.setMetadata()` objects, add the transient data as a custom claim to the ID and access tokens using the `api.idToken.setCustomClaim()` and `api.accessToken.setCustomClaim()` objects. 
+
+```javascript transient data Action example expandable
+/**
+ * @param {Event} event - Details about the user and the authentication transaction.
+ * @param {PostLoginActionAPI} api - Interface to modify the completed auth transaction.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let deviceIdentifier;
+  let groups;
+
+  // Example: Extract device info from request headers or context
+  // This is illustrative; actual device fingerprinting might be more complex
+  if (event.request.user_agent) {
+    deviceIdentifier = event.request.user_agent;
+  } else {
+    deviceIdentifier = 'unknown';
+  }
+
+  // Example: Extract IDP information from an upstream connection's context
+  // This depends heavily on the upstream IDP and how it passes info.
+  // Assuming a custom claim or context variable from a SAML/OIDC connection, e.g. "groups"
+  if (event.user.groups) {
+    groups = event.user.groups;
+  } else {
+    groups = [];
+  }
+
+  // Store the transient data in session metadata
+  api.session.setMetadata('deviceIdentifier', deviceIdentifier);
+  api.session.setMetadata('groups', groups);
+
+  // Store the transient data in refresh token metadata for persistence across refreshes
+  if (event.refreshToken) {
+    api.refreshToken.setMetadata('deviceIdentifier', deviceIdentifier);
+    api.refreshToken.setMetadata('groups', groups);
+  }
+
+  // Optionally, add these as claims to access tokens if needed by APIs
+  // Using custom namespaces is good practice for application-specific claims.
+  api.accessToken.setCustomClaim('https://myapp.example.com/device_id', deviceIdentifier);
+  api.accessToken.setCustomClaim('https://myapp.example.com/groups', groups);
+
+  // Example: If the upstream IDP provides a "level of assurance" for this auth event
+  if (event.transaction && event.transaction.acr_values) { // acr: Authentication Context Class Reference
+      api.session.setMetadata('authLevel', event.transaction.acr_values);
+      if (event.refreshToken) {
+        api.refreshToken.setMetadata('authLevel', event.transaction.acr_values);
+      }
+      api.accessToken.setCustomClaim('https://myapp.example.com/auth_level', event.transaction.acr_values);
+  }
+};
+```
+During a refresh token exchange, a subsequent `post-login` Action trigger can access these custom claims, using the `event.refresh_token.metadata` object, and apply them to newly issued refresh tokens using the `api.accessToken.setCustomClaim()` object.
+
+## Enhance security and fraud detection
+
+Refresh token metadata and session metadata together let you implement adaptive security by enabling the tracking and comparison of contextual information throughout a user's session  including refresh token rotations and [silent authentication](/docs/authenticate/login/configure-silent-authentication) requests.
+
+By implementing adaptive security you can:
+
+* Create proactive threat detection by automatically identifying and responding to suspicious changes in user context data, reducing the risk of session hijacking and unauthorized access.
+* Reduce friction for legitimate users by only prompts for MFA or additional verification when a genuine anomaly is detected, improving the user experience compared to blanket MFA requirements.
+
+Configure a [post-login](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action trigger to identify contextual user data that can include device fingerprint, geographic location, network attributes, and behavioral attributes. Store the contextual data for comparison in the user’s session, using the `api.session.setMetadata()` object. 
+
+```javascript security detection Action example expandable
+/**
+ * @param {Event} event - Details about the user and the authentication transaction.
+ * @param {PostLoginActionAPI} api - Interface to modify the completed auth transaction.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // --- Capture current contextual data ---
+  // Use the ja3/ja4 fingerprints provided by Auth0
+  const {ja3, ja4} = event.security_context;
+  // Add ja3/ja4 to metadata if it is not there yet
+  // (first login does not have metadata set)
+  if (event.session && !event.session.metadata) {
+    api.session.setMetadata('ja3', ja3);
+    api.session.setMetadata('ja4', ja4);
+  } else {
+    // Compare the stored fingerprint with the incoming fingerprint 
+    if(ja3 != event.session?.metadata?.ja3 || ja4 != event.session?.metadata?.ja4) {
+      // If fingerprints differ, challenge for MFA
+      api.authentication.challengeWith(
+        { type: 'otp'}, 
+        { additionalFactors: [
+          { type: 'push-notification'}, { type: 'phone' }
+        ]}
+      );
+    }    
+  }
+};
+```
+During a refresh token exchange or silent authentication, a subsequent `post-login Action` trigger can apply risk assessment and adaptive responses.
+
+## Access Metadata with the Management API
+
+You can use the Auth0 Management API `GET` [/api/v2/refresh-tokens/\{id}](/docs/api/management/v2/refresh-tokens/get-refresh-token) and [/api/v2/sessions/\{id}](/docs/api/management/v2/sessions/get-session) endpoints to retrieve the stored data in either a refresh token or session’s metadata. 
+
+The response includes the `metadata` field containing the stored data:  
+```json
+{
+  "id": "object_id",
+  "metadata": {
+    "deviceIdentifier": "deviceIdentifier"
+  }
+}
+```
+
+## Learn more
+
+* [Refresh tokens](/docs/secure/tokens/refresh-tokens): Learn about Refresh tokens. 
+* [Sessions](/docs/manage-users/sessions): Learn about Sessions. 
+* [Actions Event objects](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object): Learn about the `post-login` event object and properties. 
+* [Actions API object](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object): Learn about the `post-login` API object and methods.
