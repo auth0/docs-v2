@@ -6,7 +6,7 @@ import { getCookies } from './cookies';
 declare global {
   interface Window {
     OneTrust: {
-      IsAlertBoxClosedAndValid: () => boolean;
+      IsAlertBoxClosed: () => boolean;
     };
     OptanonWrapper: () => void;
     OnetrustActiveGroups: string;
@@ -30,7 +30,8 @@ export function initOneTrust(): void {
 
   // Set the OneTrust callback to handle consent changes
   window.OptanonWrapper = () => {
-    if (window.OneTrust.IsAlertBoxClosedAndValid() && window.OnetrustActiveGroups) {
+    // checks whether alert box is closed and valid + active groups are defined
+    if (window.OneTrust.IsAlertBoxClosed() && window.OnetrustActiveGroups) {
       const consents = window.OnetrustActiveGroups.split(',').filter((c) => c);
       // load allowed scripts based on consents
       loadAllowedScripts(new Set(consents.map((group) => `C000${group}`)));
