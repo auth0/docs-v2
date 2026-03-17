@@ -75,6 +75,7 @@ async function getWrapper(
         }}
         themeSettings={{ theme: 'default', mode }}
         toastSettings={{ provider: 'custom', methods: {} }}
+        {...props}
       >
         <WaitForCoreClient
           useCoreClient={useCoreClient}
@@ -84,7 +85,6 @@ async function getWrapper(
             logic={mockData?.logic}
             handlers={mockData?.handlers}
             {...mockData}
-            {...props}
           />
         </WaitForCoreClient>
       </Auth0ComponentProvider>

@@ -1,5 +1,10 @@
 export const ComponentLoader = (props) => {
   const themeMode = window?.localStorage?.getItem?.("isDarkMode") || "light";
+  const lang = {
+    i18n: {
+      currentLanguage: props.lang || "en-US",
+    },
+  };
   return (
     <div
       style={{
@@ -31,6 +36,7 @@ export const ComponentLoader = (props) => {
           minHeight: "400px",
         }}
         data-uc-component={props.componentSelector}
+        data-uc-props={JSON.stringify(lang)}
       >
         <Spinner
           size={40}
@@ -56,7 +62,7 @@ export const ComponentLoader = (props) => {
           fontWeight: 400,
         }}
       >
-        {`Preview of the ${props.componentName} component`}
+        {props.componentPreviewText}
       </div>
     </div>
   );
