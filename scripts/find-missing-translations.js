@@ -53,8 +53,31 @@ const sourceFiles = globSync("**/*.mdx", { cwd: DOCS_DIR }).filter(
 const sourceSet = new Set(sourceFiles);
 
 if (orphanedMode) {
+  // Build a redirect lookup from docs.json:
+  //   relative source path (no .mdx) → relative destination path (no .mdx)
+  // Redirect URLs use the format "/docs/some/path" (sometimes without leading slash).
+  const urlPrefix = "/" + sourceBase.split("/").pop() + "/"; // e.g. "/docs/"
+
+  const urlToRel = (url) => {
+    const normalized = url.startsWith("/") ? url : "/" + url;
+    if (!normalized.startsWith(urlPrefix)) return null;
+    return normalized.slice(urlPrefix.length) + ".mdx";
+  };
+
+  const docsJson = JSON.parse(
+    readFileSync(path.join(REPO_ROOT, sourceBase, "../docs.json"), "utf8")
+  );
+  const redirectMap = new Map();
+  for (const { source, destination } of docsJson.redirects ?? []) {
+    const srcRel = urlToRel(source);
+    const dstRel = urlToRel(destination);
+    if (srcRel && dstRel) redirectMap.set(srcRel, dstRel);
+  }
+
   // Find translation files that have no corresponding English source
-  const orphaned = Object.fromEntries(locales.map((l) => [l, 0]));
+  const counts = Object.fromEntries(
+    locales.map((l) => [l, { movable: 0, conflict: 0, stale: 0 }])
+  );
 
   for (const locale of locales) {
     const translationFiles = globSync("**/*.mdx", {
@@ -63,17 +86,36 @@ if (orphanedMode) {
 
     for (const rel of translationFiles.sort()) {
       if (isExcluded(rel)) continue;
-      if (!sourceSet.has(rel)) {
-        console.log(`ORPHANED [${locale}]  ${rel}`);
-        orphaned[locale]++;
+      if (sourceSet.has(rel)) continue;
+
+      const newRel = redirectMap.get(rel);
+      if (newRel && existsSync(path.join(DOCS_DIR, newRel))) {
+        const translationExists = existsSync(
+          path.join(DOCS_DIR, locale, newRel)
+        );
+        if (translationExists) {
+          console.log(`CONFLICT [${locale}]  ${rel}  →  ${newRel}`);
+          counts[locale].conflict++;
+        } else {
+          console.log(`MOVABLE  [${locale}]  ${rel}  →  ${newRel}`);
+          counts[locale].movable++;
+        }
+      } else {
+        console.log(`STALE    [${locale}]  ${rel}`);
+        counts[locale].stale++;
       }
     }
   }
 
   console.log("\n--- Summary ---");
   for (const locale of locales) {
+    const { movable, conflict, stale } = counts[locale];
+    const total = movable + conflict + stale;
     console.log(`\n[${locale}]`);
-    console.log(`  Orphaned translations: ${orphaned[locale]}`);
+    console.log(`  Total orphaned:  ${total}`);
+    console.log(`  MOVABLE:         ${movable}  (can be moved to new location)`);
+    console.log(`  CONFLICT:        ${conflict}  (redirect exists but translation already at target)`);
+    console.log(`  STALE:           ${stale}  (no matching redirect)`);
   }
 } else {
   // Find English source files that are missing a translation
