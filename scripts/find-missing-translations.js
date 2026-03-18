@@ -7,17 +7,35 @@
 //   --locale <locale>   Only check the specified locale (default: check all)
 //   --orphaned          Find translation files with no English source instead
 
-const { existsSync, globSync } = require("fs");
+const { existsSync, readFileSync, globSync } = require("fs");
 const path = require("path");
+const yaml = require("js-yaml");
 
-const LOCALES = ["fr-ca", "ja-jp"];
-const DOCS_DIR = path.resolve(__dirname, "../main/docs");
+// ---------------------------------------------------------------------------
+// Derive configuration from .tx/sync.yaml
+// ---------------------------------------------------------------------------
 
-// Paths (relative to main/docs) to exclude from all checks.
-// Supports exact file matches and directory prefixes.
-const EXCLUDED_PATHS = [
-  //"libraries/acul",
-];
+const REPO_ROOT = path.resolve(__dirname, "..");
+const txConfig = yaml.load(
+  readFileSync(path.join(REPO_ROOT, ".tx/sync.yaml"), "utf8")
+);
+const filter = txConfig.filters[0];
+
+// DOCS_DIR: base path extracted from source_files_expression before the first placeholder
+const sourceBase = filter.source_files_expression.split("<")[0].replace(/\/+$/, "");
+const DOCS_DIR = path.join(REPO_ROOT, sourceBase);
+
+// LOCALES: directory names from the values of language_mapping
+const LOCALES = Object.values(txConfig.settings.language_mapping);
+
+// EXCLUDED_PATHS: ignore_dirs entries that are not locale root dirs,
+// expressed relative to DOCS_DIR to match the paths used in the checks
+const localeDirSet = new Set(LOCALES.map((l) => `${sourceBase}/${l}`));
+const EXCLUDED_PATHS = (filter.ignore_dirs ?? [])
+  .filter((d) => !localeDirSet.has(d))
+  .map((d) =>
+    d.startsWith(sourceBase + "/") ? d.slice(sourceBase.length + 1) : d
+  );
 
 const isExcluded = (rel) =>
   EXCLUDED_PATHS.some((p) => rel === p || rel.startsWith(p + "/"));
