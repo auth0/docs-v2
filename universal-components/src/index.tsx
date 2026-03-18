@@ -69,12 +69,10 @@ async function getWrapper(
 
     return (
       <Auth0ComponentProvider
-        authDetails={{
-          previewMode: true,
-          domain: 'example.auth0.com',
-        }}
+        domain="your-tenant.auth0.com"
         themeSettings={{ theme: 'default', mode }}
         toastSettings={{ provider: 'custom', methods: {} }}
+        previewMode={true}
         {...props}
       >
         <WaitForCoreClient
