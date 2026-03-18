@@ -42,7 +42,8 @@ export function initOneTrust(): void {
   document.body.append(script);
 
   // load analytics scripts content with type text/plain
-  loadHeapScript();
+  // TEST: commenting out to use built-in integration
+  // loadHeapScript();
 
   loadAdobeScript();
 
