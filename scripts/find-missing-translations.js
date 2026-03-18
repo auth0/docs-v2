@@ -76,7 +76,7 @@ if (orphanedMode) {
 
   // Find translation files that have no corresponding English source
   const counts = Object.fromEntries(
-    locales.map((l) => [l, { movable: 0, conflict: 0, stale: 0 }])
+    locales.map((l) => [l, { movable: 0, duplicate: 0, conflict: 0, stale: 0 }])
   );
 
   for (const locale of locales) {
@@ -94,8 +94,15 @@ if (orphanedMode) {
           path.join(DOCS_DIR, locale, newRel)
         );
         if (translationExists) {
-          console.log(`CONFLICT [${locale}]  ${rel}  →  ${newRel}`);
-          counts[locale].conflict++;
+          const orphanContent = readFileSync(path.join(DOCS_DIR, locale, rel));
+          const targetContent = readFileSync(path.join(DOCS_DIR, locale, newRel));
+          if (orphanContent.equals(targetContent)) {
+            console.log(`DUPLICATE [${locale}]  ${rel}  →  ${newRel}`);
+            counts[locale].duplicate++;
+          } else {
+            console.log(`CONFLICT  [${locale}]  ${rel}  →  ${newRel}`);
+            counts[locale].conflict++;
+          }
         } else {
           console.log(`MOVABLE  [${locale}]  ${rel}  →  ${newRel}`);
           counts[locale].movable++;
@@ -109,12 +116,13 @@ if (orphanedMode) {
 
   console.log("\n--- Summary ---");
   for (const locale of locales) {
-    const { movable, conflict, stale } = counts[locale];
-    const total = movable + conflict + stale;
+    const { movable, duplicate, conflict, stale } = counts[locale];
+    const total = movable + duplicate + conflict + stale;
     console.log(`\n[${locale}]`);
     console.log(`  Total orphaned:  ${total}`);
     console.log(`  MOVABLE:         ${movable}  (can be moved to new location)`);
-    console.log(`  CONFLICT:        ${conflict}  (redirect exists but translation already at target)`);
+    console.log(`  DUPLICATE:       ${duplicate}  (redirect exists, target translation identical — safe to delete)`);
+    console.log(`  CONFLICT:        ${conflict}  (redirect exists, target translation differs — manual review needed)`);
     console.log(`  STALE:           ${stale}  (no matching redirect)`);
   }
 } else {
