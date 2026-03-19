@@ -9,7 +9,7 @@ export const getOrganizationDetailsEditLMock = () => {
           primary: '#000',
           page_background: '#fff',
         },
-        logo_url: 'https://logo.example.com/logo.png',
+        logo_url: '',
       },
       metadata: {},
     },
