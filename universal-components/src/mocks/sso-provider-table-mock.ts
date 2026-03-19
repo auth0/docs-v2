@@ -1,21 +1,29 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/rules-of-hooks */
-import { useState } from "react";
+import { useState } from 'react';
 
 const mockProvidersInitial = [
   {
-    id: "test-provider-id",
-    name: "Provider Name",
-    display_name: "WAAD Provider 1",
+    id: 'test-provider-id',
+    name: 'Provider Name',
+    display_name: 'WAAD Provider 1',
     is_enabled: true,
-    strategy: "waad" as const,
+    strategy: 'waad' as const,
     options: {},
   },
   {
-    id: "waad-2",
-    name: "waad-2",
-    display_name: "WAAD Provider 2",
-    strategy: "waad" as const,
+    id: 'waad-2',
+    name: 'waad-2',
+    display_name: 'WAAD Provider 2',
+    strategy: 'waad' as const,
+    is_enabled: true,
+    options: {},
+  },
+  {
+    id: 'waad-3',
+    name: 'waad-3',
+    display_name: 'WAAD Provider 3',
+    strategy: 'waad' as const,
     is_enabled: true,
     options: {},
   },
@@ -28,11 +36,11 @@ export const getSsoProviderTableMock = () => {
   const [isRemoving, setIsRemoving] = useState(false);
 
   const handleCreate = () => {
-    console.log("Navigate to SSO Provider Create Page");
+    console.log('Navigate to SSO Provider Create Page');
   };
 
   const handleEdit = () => {
-    console.log("Navigate to SSO Provider Edit Page");
+    console.log('Navigate to SSO Provider Edit Page');
   };
 
   const handleDelete = (idp: string) => {
