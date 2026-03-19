@@ -2,14 +2,12 @@
 description: Understand how to link user accounts from various identity providers, so your users can authenticate from any account and be recognized by your app.
 title: Link User Accounts
 ---
-import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
 
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
 import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
 
 <Card title="Availability varies by Auth0 plan">
-
 Both your specific login implementation and your Auth0 plan or custom agreement affect whether this feature is available. To learn more, read [Pricing](https://auth0.com/pricing).
-
 </Card>
 
 You can link user accounts through a variety of methods:
@@ -23,11 +21,9 @@ You can link user accounts through a variety of methods:
 You can use an Action along with an external linking application to link user accounts with the Management API.
 
 <Warning>
-
 **Auth0 does not automatically change to the correct primary** **user** after Account Linking, so it must be changed within the Actions code upon successful Account Linking.
 
 **Every manual account link should prompt the user to enter credentials**. Your tenant should request authentication for both accounts before linking occurs to avoid allowing malicious actors to access legitimate user accounts.
-
 </Warning>
 
 The following steps illustrate an example implementation:
@@ -79,9 +75,6 @@ The following steps illustrate an example implementation:
    }
    ```
 
-   
-
-   
 5. Action validates the authenticity and contents of the token.
 6. Action calls the Management API to link the accounts based on the results from the external linking application.
 7. Action switches to the primary user if it doesn’t match the `event.user.user_id`.
@@ -92,161 +85,126 @@ The following steps illustrate an example implementation:
 const { ManagementClient, AuthenticationClient } = require('auth0');
 
 /**
- * @constant {string} - Account linking timestamp key
+ * Auth0 Account Linking Action - Production Version
+ *
+ * Required dependency: auth0@5.3.1
+ *
+ * This Action detects users with duplicate accounts (same verified email)
+ * and redirects them to an external service to manage account linking.
  */
+
 const ACCOUNT_LINKING_TIMESTAMP_KEY = 'account_linking_timestamp';
+const TTL_LEEWAY_FACTOR = 0.2;
+const PROPERTIES_TO_COMPLETE = ['given_name', 'family_name', 'name'];
 
 /**
- * @constant {number} - TTL leeway factor
+ * Get Management API access token with caching
  */
-const TTL_LEEWAY_FACTOR = .2;
-
-/**
- * @constant {string[]} - Properties to complete based on identities
- */
-const PROPERTIES_TO_COMPLETE = [
-  'given_name',
-  'family_name',
-  'name'
-];
-
-/**
-* @param {Event} event
-* @param {PostLoginAPI} api
-* @returns {Promise<string>} - Management API access token
-*/
 const getManagementAccessToken = async (event, api) => {
-  const managementApiTokenCacheKey = `mgmt-api-token-${event.secrets.MANAGEMENT_API_CLIENT_ID}`;
-  const { value: cachedAccessToken } = api.cache.get(managementApiTokenCacheKey) || {};
+  const cacheKey = `mgmt-api-token-${event.secrets.MANAGEMENT_API_CLIENT_ID}`;
+  const cached = api.cache.get(cacheKey);
 
-  if (cachedAccessToken) {
-    return cachedAccessToken;
+  if (cached && cached.value) {
+    return cached.value;
   }
 
-  const authentication = new AuthenticationClient({
+  const auth = new AuthenticationClient({
     domain: event.secrets.MANAGEMENT_API_DOMAIN,
     clientId: event.secrets.MANAGEMENT_API_CLIENT_ID,
     clientSecret: event.secrets.MANAGEMENT_API_CLIENT_SECRET
   });
 
-  const { data: { access_token: accessToken, expires_in: expiresIn } } = await authentication.oauth.clientCredentialsGrant({
-    audience: `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/`,
+  const response = await auth.oauth.clientCredentialsGrant({
+    audience: `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/`
   });
 
-  api.cache.set(managementApiTokenCacheKey, accessToken, {
-    ttl: expiresIn - expiresIn * TTL_LEEWAY_FACTOR
-  });
+  
+  const accessToken = response.access_token || response.data?.access_token;
+  const expiresIn = response.expires_in || response.data?.expires_in;
+
+  if (accessToken && typeof accessToken === 'string') {
+    api.cache.set(cacheKey, accessToken, {
+      ttl: expiresIn - expiresIn * TTL_LEEWAY_FACTOR
+    });
+  }
 
   return accessToken;
-}
+};
 
 /**
-* @param {Event} event
-* @param {PostLoginAPI} api
-* @returns {Promise<ManagementClient>} - Auth0 management client
-*/
-const getManagementClient = async (event, api) => {
-  const token = await getManagementAccessToken(event, api);
-
-  return new ManagementClient({
-    domain: event.secrets.MANAGEMENT_API_DOMAIN,
-    token,
-  });
-}
-
-/**
- * @typedef `{Object}` CandidateUsersIdentities
- * @property {string} user_id
- * @property {string} provider
- * @property {string} connection
+ * Get users with the same verified email address
  */
-
-/**
- * @typedef `{Object}` CandidateUsers
- * @property {string} email
- * @property `{Boolean}` email_verified
- * @property {string} user_id
- * @property {CandidateUsersIdentities[]} identities
- */
-
-/**
- * @typedef `{Object}` CandidateIdentities
- * @property {User['user_id']} user_id
- * @property {string} connection
- * @property {string} provider
- */
-
-/**
- * @typedef `{Object}` LinkedIdentity
- * @property {User['user_id']} user_id
- */
-
-/**
-* @param {Event} event
-* @param {PostLoginAPI} api
-* @returns {Promise<CandidateUsers[]>} - List of users with the same email address
-*/
 const getUsersWithSameEmail = async (event, api) => {
-  const management = await getManagementClient(event, api);
-
-  const { data } = await management.usersByEmail.getByEmail({
-    email: event.user.email,
-    fields: 'email,email_verified,user_id,identities',
-    include_fields: true,
+  const accessToken = await getManagementAccessToken(event, api);
+  const management = new ManagementClient({
+    domain: event.secrets.MANAGEMENT_API_DOMAIN,
+    token: accessToken
   });
 
-  return data;
-}
+  
+  const users = await management.users.listUsersByEmail({
+    email: event.user.email
+  });
+
+  return users;
+};
 
 /**
-* @param {Event} event - Details about the user and the context in which they are logging in.
-* @param {CandidateUsers[]} candidateUsers - List of users that match the same email address
-* @returns {CandidateIdentities[]} - List of candidate identities
-*/
+ * Filter and map candidate identities with verified email
+ */
 const getCandidateIdentitiesWithVerifiedEmail = (event, candidateUsers) => {
-  // Removes current user from candidate identities and checks the email is verified
   return candidateUsers
     .filter((user) => user.user_id !== event.user.user_id && user.email_verified === true)
-    .filter((user) => user.identities)
-    // .flatMap((user) => user.identities)
-    .map((user) => {
-      return {
-        user_id: user.user_id,
-        provider: user.identities[0].provider,
-        connection: user.identities[0].connection
-      }
-    });
-}
+    .filter((user) => user.identities && user.identities.length > 0)
+    .map((user) => ({
+      user_id: user.user_id,
+      provider: user.identities[0].provider,
+      connection: user.identities[0].connection
+    }));
+};
 
 /**
-* @param {Event} event
-* @param {PostLoginAPI} api
-* @returns {Promise<LinkedIdentity[]>} - Linked identity response
-*/
-const linkIdentities = async (event, api, primaryIdentity, secondaryIdentity) => {
-  const management = await getManagementClient(event, api);
+ * Link accounts using Management API
+ * Links secondary identity TO primary identity
+ */
+const linkAccounts = async (event, primaryIdentity, secondaryIdentity) => {
+  const accessToken = await getManagementAccessToken(event, { cache: { get: () => null, set: () => {} } });
 
-  const { data } = await management.users.link({
-    id: primaryIdentity.user_id
-  }, {
+  // Extract the ID part after the | for the API
+  const idParts = secondaryIdentity.user_id.split('|');
+  const userId = idParts.length > 1 ? idParts[1] : secondaryIdentity.user_id;
+
+  const url = `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/users/${encodeURIComponent(primaryIdentity.user_id)}/identities`;
+
+  const body = {
     provider: secondaryIdentity.provider,
-    user_id: secondaryIdentity.user_id
+    user_id: userId
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
   });
 
-  return data;
-}
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Link API error: ${response.status} - ${errorText}`);
+  }
+
+  return await response.json();
+};
 
 /**
-* @param {Event} event
-* @param {PostLoginAPI} api
-* @returns {void}
-*/
+ * Complete missing profile properties from linked identities
+ */
 const completeProperties = (event, api) => {
-  // go over each property and try to get missing
-  // information from secondary identities for ID Token
   for (const property of PROPERTIES_TO_COMPLETE) {
     if (!event.user[property]) {
-      for(const identity of event.user.identities) {
+      for (const identity of event.user.identities) {
         if (identity.profileData && identity.profileData[property]) {
           api.idToken.setCustomClaim(property, identity.profileData[property]);
           break;
@@ -254,15 +212,13 @@ const completeProperties = (event, api) => {
       }
     }
   }
-}
+};
 
 /**
-* Handler that will be called during the execution of a PostLogin flow.
-*
-* @param {Event} event - Details about the user and the context in which they are logging in.
-* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
-*/
+ * onExecutePostLogin - Detect duplicate accounts and redirect to linking service
+ */
 exports.onExecutePostLogin = async (event, api) => {
+  // Validate configuration
   if (
     !event.secrets.MANAGEMENT_API_DOMAIN ||
     !event.secrets.MANAGEMENT_API_CLIENT_ID ||
@@ -270,11 +226,11 @@ exports.onExecutePostLogin = async (event, api) => {
     !event.secrets.SESSION_TOKEN_SHARED_SECRET ||
     !event.secrets.ACCOUNT_LINKING_SERVICE_URL
   ) {
-    console.log('Missing required configuration for account linking action. Skipping.');
+    console.log('Missing required configuration - skipping account linking');
     return;
   }
 
-  // We won't process users for account linking until they have verified their email address.
+// We won't process users for account linking until they have verified their email address.
   // We might consider rejecting logins here or redirecting users to an external tool to
   // remind the user to confirm their email address before proceeding.
   //
@@ -283,29 +239,28 @@ exports.onExecutePostLogin = async (event, api) => {
     return;
   }
 
-  // Account linking has already been processed and completed for this user. No further work
-  // to be done in this Action.
-  if (event.user.app_metadata[ACCOUNT_LINKING_TIMESTAMP_KEY] !== undefined) {
+  // Skip if already processed
+  if (event.user.app_metadata && event.user.app_metadata[ACCOUNT_LINKING_TIMESTAMP_KEY]) {
     completeProperties(event, api);
     return;
   }
 
   try {
+    // Find users with same email
     const candidateUsers = await getUsersWithSameEmail(event, api);
 
-    // If there are no candidates, skip
     if (!Array.isArray(candidateUsers) || candidateUsers.length === 0) {
       return;
     }
 
+    // Filter for verified emails
     const candidateIdentities = getCandidateIdentitiesWithVerifiedEmail(event, candidateUsers);
 
-    // If there are no candidates, skip
     if (candidateIdentities.length === 0) {
       return;
     }
 
-    // Encode the current user and an array of their candidate identities
+    // Create session token
     const sessionToken = api.redirect.encodeToken({
       payload: {
         current_identity: {
@@ -314,56 +269,63 @@ exports.onExecutePostLogin = async (event, api) => {
           connection: event.connection.name
         },
         candidate_identities: candidateIdentities,
+        email: event.user.email,
+        continue_url: `https://${event.request.hostname}/continue`
       },
       secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
-      expiresInSeconds: 20
+      expiresInSeconds: 120
     });
 
-    // Redirect to your Account Linking UX
+    // Redirect to linking service
     api.redirect.sendUserTo(event.secrets.ACCOUNT_LINKING_SERVICE_URL, {
       query: {
         session_token: sessionToken
       }
     });
+
   } catch (err) {
-    console.error(err);
-    // Handle error
+    console.error('Account linking error:', err.message);
+    // Don't block login on error
   }
 };
 
 /**
-* Handler that will be invoked when this action is resuming after an external redirect. If your
-* onExecutePostLogin function does not perform a redirect, this function can be safely ignored.
-*
-* @param {Event} event - Details about the user and the context in which they are logging in.
-* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
-*/
+ * onContinuePostLogin - Process user's linking decision
+ */
 exports.onContinuePostLogin = async (event, api) => {
-  // Validate the session token passed to `/continue?state` and extract the `user_id` claim. 
-  const { primary_identity: primaryIdentity, secondary_identity: secondaryIdentity } = api.redirect.validateToken({
-    secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
-    tokenParameterName: 'session_token',
-  });
-
   try {
-    const linkedIdentity = await linkIdentities(event, api, primaryIdentity, secondaryIdentity);
+    // Validate response token
+    const { primary_identity: primaryIdentity, secondary_identity: secondaryIdentity } = api.redirect.validateToken({
+      secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+      tokenParameterName: 'session_token'
+    });
 
-    if (linkedIdentity !== undefined && linkedIdentity.length > 1) {
-      if (primaryIdentity.user_id !== event.user.user_id) {
-        // The account linking service indicated that the primary user changed.
-        api.authentication.setPrimaryUser(primaryIdentity.user_id);
-      }
-      // Mark the user as having been processed for account linking
+    if (!primaryIdentity || !secondaryIdentity) {
+      // User cancelled - continue without linking
+      return;
+    }
+
+    const currentUserId = event.user.user_id;
+
+    // CRITICAL: Switch to primary user BEFORE linking
+    // This prevents "Unable to construct login user" error
+    if (primaryIdentity.user_id !== currentUserId) {
+      api.authentication.setPrimaryUser(primaryIdentity.user_id);
+    }
+
+    // Link the secondary account
+    const linkedIdentities = await linkAccounts(event, primaryIdentity, secondaryIdentity);
+
+    if (linkedIdentities && linkedIdentities.length > 0) {
+      // Mark as processed
       api.user.setAppMetadata(ACCOUNT_LINKING_TIMESTAMP_KEY, Date.now());
-
       completeProperties(event, api);
     } else {
-      // Handle error
-      api.access.deny('Account linking failure');
+      api.access.deny('Account linking failed');
     }
   } catch (err) {
-    console.error(err);
-    // Handle error
+    console.error('onContinuePostLogin error:', err.message);
+    api.access.deny('Account linking error: ' + err.message);
   }
 };
 ```
