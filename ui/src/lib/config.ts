@@ -1,4 +1,4 @@
-interface EnvConfig {
+export interface EnvConfig {
   apiBaseUrl: string;
   dashboardBaseUrl: string;
   heapAnalytics: {
@@ -8,6 +8,9 @@ interface EnvConfig {
   sentry: {
     dsn: string;
     enabled: boolean;
+    release: string;
+    environment: string;
+    loaderScript: string;
   };
   oneTrust: {
     enabled: boolean;
@@ -16,6 +19,26 @@ interface EnvConfig {
 }
 
 type Env = 'prod' | 'staging' | 'dev' | 'local';
+
+const devConfig: EnvConfig = {
+  apiBaseUrl: 'https://tus.auth0.com/docs/v2',
+  dashboardBaseUrl: 'https://manage.tus.auth0.com',
+  heapAnalytics: {
+    enabled: true,
+    appId: '2269341915',
+  },
+  sentry: {
+    enabled: true,
+    dsn: 'https://8eae506d264532942aace9ecc223a526@o27592.ingest.us.sentry.io/4510008367972352',
+    release: 'docs-v2-tus',
+    environment: 'tus',
+    loaderScript: 'https://js.sentry-cdn.com/8eae506d264532942aace9ecc223a526.min.js'
+  },
+  oneTrust: {
+    enabled: true,
+    domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf-test',
+  },
+};
 
 const env: { [key in Env]: EnvConfig } = {
   prod: {
@@ -28,6 +51,9 @@ const env: { [key in Env]: EnvConfig } = {
     sentry: {
       enabled: true,
       dsn: 'https://d433d747a8af0820757f35be62ee08be@o27592.ingest.us.sentry.io/4509985515241472',
+      release: 'docs-v2',
+      environment: 'prod',
+      loaderScript: 'https://js.sentry-cdn.com/d433d747a8af0820757f35be62ee08be.min.js'
     },
     oneTrust: {
       enabled: true,
@@ -44,43 +70,20 @@ const env: { [key in Env]: EnvConfig } = {
     sentry: {
       enabled: true,
       dsn: 'https://0fe11b3e3241a0986fc2755ca26fbe79@o27592.ingest.us.sentry.io/4510008371970048',
+      release: 'docs-v2-sus',
+      environment: 'sus',
+      loaderScript: 'https://js.sentry-cdn.com/0fe11b3e3241a0986fc2755ca26fbe79.min.js'
     },
     oneTrust: {
       enabled: true,
       domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf',
     },
   },
-  dev: {
-    apiBaseUrl: 'https://tus.auth0.com/docs/v2',
-    dashboardBaseUrl: 'https://manage.tus.auth0.com',
-    heapAnalytics: {
-      enabled: true,
-      appId: '2269341915',
-    },
-    sentry: {
-      enabled: true,
-      dsn: 'https://8eae506d264532942aace9ecc223a526@o27592.ingest.us.sentry.io/4510008367972352',
-    },
-    oneTrust: {
-      enabled: true,
-      domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf-test',
-    },
-  },
+  dev: devConfig,
   local: {
+    ... devConfig,
     apiBaseUrl: 'http://localhost:7200/docs/v2',
     dashboardBaseUrl: 'https://manage.local.dev.auth0.com',
-    heapAnalytics: {
-      enabled: true,
-      appId: '2269341915',
-    },
-    sentry: {
-      enabled: true,
-      dsn: 'https://8eae506d264532942aace9ecc223a526@o27592.ingest.us.sentry.io/4510008367972352',
-    },
-    oneTrust: {
-      enabled: true,
-      domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf-test',
-    },
   },
 };
 

@@ -13,7 +13,7 @@ export const Footer = () => {
           { label: "Code Samples & Guides", href: "https://developer.auth0.com/resources" },
           { label: "Zero Index Newsletter", href: "https://auth0.com/blog/newsletter" },
           { label: "Blog", href: "https://auth0.com/blog" },
-          { label: "Changelog", href: "https://auth0.com/docs/deploy/changelog" },
+          { label: "Changelog", href: "https://auth0.com/changelog" },
         ],
       },
       {

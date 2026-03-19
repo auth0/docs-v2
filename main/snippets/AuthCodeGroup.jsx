@@ -13,8 +13,12 @@ export const AuthCodeGroup = ({ children, dropdown }) => {
               key,
               value,
             ] of window.rootStore.variableStore.values.entries()) {
-              processedNode = processedNode.replace(
-                new RegExp(key, "g"),
+              const escapedKey = key.replaceAll(
+                /[.*+?^${}()|[\]\\]/g,
+                String.raw`\$&`
+              );
+              processedNode = processedNode.replaceAll(
+                new RegExp(escapedKey, "g"),
                 value
               );
             }
