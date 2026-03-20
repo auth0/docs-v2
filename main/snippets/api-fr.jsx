@@ -52,17 +52,17 @@ export const ManagementApiSection = () => {
 
       {/* Right column */}
       <div>
-        <p>Some example tasks include:</p>
+        <p>Quelques exemples de tâches incluent :</p>
         <ul className="space-y-2 !mt-0">
-          <li>Register your applications and APIs with Auth0</li>
+          <li>Enregistrez vos applications et API auprès d’Auth0</li>
           <li>
-            Set up <a href="/docs/connections">connections</a> with which your users can authenticate
+            Configurer des <a href="/docs/connections">connexions</a> avec lesquelles vos utilisateus peuvent s’authentifier
           </li>
           <li>
-            <a href="/docs/manage-users">Manage users</a>
+            <a href="/docs/manage-users">Gérer les utilisateurs</a>
           </li>
           <li>
-            <a href="/docs/manage-users/user-accounts/user-account-linking/link-user-accounts">Link user accounts</a>
+            <a href="/docs/manage-users/user-accounts/user-account-linking/link-user-accounts">Lier les comptes utilisateurs</a>
           </li>
         </ul>
       </div>
