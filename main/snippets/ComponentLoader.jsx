@@ -9,7 +9,6 @@ export const ComponentLoader = (props) => {
     <div
       style={{
         minHeight: "400px",
-        minWidth: "650px",
         marginTop: "40px",
         background:
           themeMode === "light"
@@ -22,12 +21,15 @@ export const ComponentLoader = (props) => {
         backgroundSize: "16px 16px",
         borderRadius: "10px",
         boxShadow: "0 1px 4px 0 rgba(16,30,54,0.04)",
+        display: "flex",
         flexDirection: "column",
       }}
     >
       <div
         style={{
-          minWidth: "640px",
+          minWidth: "320px",
+          width: "96.5%",
+          maxWidth: "1200px",
           margin: "12px 12px 0",
           background: themeMode === "light" ? "#ffffff" : "#101011",
           borderRadius: "10px",
