@@ -1,5 +1,11 @@
 export const ComponentLoader = (props) => {
-  const themeMode = window?.localStorage?.getItem?.("isDarkMode") || "light";
+  const themePref = window?.localStorage?.getItem?.("isDarkMode");
+  const theme =
+    themePref === "dark" || themePref === "light"
+      ? themePref
+      : window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
   const lang = {
     i18n: {
       currentLanguage: props.lang || "en-US",
@@ -11,7 +17,7 @@ export const ComponentLoader = (props) => {
         minHeight: "400px",
         marginTop: "40px",
         background:
-          themeMode === "light"
+          theme === "light"
             ? "rgb(var(--gray-950)/.03)"
             : "rgb(255 255 255/.1)",
         display: "flex",
@@ -31,7 +37,7 @@ export const ComponentLoader = (props) => {
           width: "96.5%",
           maxWidth: "1200px",
           margin: "12px 12px 0",
-          background: themeMode === "light" ? "#ffffff" : "#101011",
+          background: theme === "light" ? "#ffffff" : "#101011",
           borderRadius: "10px",
           boxShadow: "0 2px 8px 0 rgba(16,30,54,0.04)",
           padding: "24px",
@@ -56,7 +62,7 @@ export const ComponentLoader = (props) => {
         style={{
           width: "100%",
           textAlign: "center",
-          color: themeMode === "light" ? "#6B7280" : "ffffff",
+          color: theme === "light" ? "#6B7280" : "ffffff",
           fontSize: "12px",
           marginTop: "8px",
           marginBottom: "8px",

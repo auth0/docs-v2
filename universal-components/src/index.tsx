@@ -198,7 +198,7 @@ function main() {
 
   // Scan on route change
   routeChangeHandler = () => {
-    setTimeout(scanAndMount, 500);
+    setTimeout(scanAndMount, 1000);
   };
   addRouteChangeListener(routeChangeHandler);
 
@@ -207,9 +207,9 @@ function main() {
 
   // Initial scan
   if (document.readyState === 'complete') {
-    setTimeout(scanAndMount, 500);
+    setTimeout(scanAndMount, 1000);
   } else {
-    window.addEventListener('load', () => setTimeout(scanAndMount, 500));
+    window.addEventListener('load', () => setTimeout(scanAndMount, 1000));
   }
 }
 
