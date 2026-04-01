@@ -66,12 +66,12 @@ export const Footer = () => {
               <img
                 className="nav-logo w-auto relative object-contain block dark:hidden max-w-48 h-[26px]"
                 alt="Auth0 Docs"
-                src="/docs/logo/light.svg"
+                src="/docs/images/logo/light.svg"
               />
               <img
                 className="nav-logo w-auto relative object-contain hidden dark:block max-w-48 h-[26px]"
                 alt="Auth0 Docs"
-                src="/docs/logo/dark.svg"
+                src="/docs/images/logo/dark.svg"
               />
             </a>
             <div className="gap-4 min-w-[140px] max-w-[492px] flex-wrap h-fit flex justify-end md:justify-start">
