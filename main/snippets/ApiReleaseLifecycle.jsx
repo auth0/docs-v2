@@ -90,8 +90,9 @@ export const ApiReleaseLifecycle = ({ releaseLifecycle = 'GA' }) => {
               </a>
             </div>
             <span
-              className="inline-flex items-center w-fit font-medium gap-1 py-0.5 px-2 rounded-md border"
+              className="inline-flex items-center w-fit font-medium gap-1 py-0.5 px-2 rounded-md"
               style={{
+                lineHeight: '1rem',
                 fontSize: '0.75rem',
                 fontFamily:
                   'var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
