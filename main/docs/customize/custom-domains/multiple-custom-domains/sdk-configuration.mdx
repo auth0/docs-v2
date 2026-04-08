@@ -1,0 +1,802 @@
+---
+description: Learn how to configure Auth0 SDKs to work with multiple custom domains.
+title: SDK Configuration for Multiple Custom Domains
+---
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
+
+When using [multiple custom domains](/docs/customize/custom-domains/multiple-custom-domains), you need to configure your Auth0 SDKs to use the appropriate custom domain for authentication. This guide covers SDK configuration for different platforms and scenarios.
+
+## Key concepts
+
+### Domain parameter
+
+All Auth0 SDKs require a `domain` parameter that specifies which Auth0 domain to use for authentication. When using custom domains, set this parameter to your custom domain instead of your Auth0 canonical domain.
+
+**Without custom domain:**
+```
+domain: 'tenant.auth0.com'
+```
+
+**With custom domain:**
+```
+domain: 'login.example.com'
+```
+
+### Token issuer
+
+When using a custom domain, tokens will have the `iss` (issuer) claim set to your custom domain:
+
+```json
+{
+  "iss": "https://login.example.com/",
+  "sub": "auth0|123456",
+  "aud": "your-client-id"
+}
+```
+
+You must configure your token validation to accept your custom domain as a valid issuer.
+
+## Authentication SDKs
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+When using MCD, the Customer is responsible for providing and validating all custom domains. When configuring SDKs to resolve tenant custom domains via the domain resolver functions, you are responsible for ensuring that all resolved domains are trusted. Misconfiguring the domain resolver can lead to authentication bypass on the relying party or expose the application to server-side request forgery. Failure to properly configure your domains and proxy servers can create critical security vulnerabilities for which Okta is not liable.
+
+</Callout> 
+
+### Auth0 SPA SDK (JavaScript)
+
+For single-page applications using the [Auth0 SPA SDK](https://github.com/auth0/auth0-spa-js):
+
+<AuthCodeGroup>
+```javascript Static Configuration
+import { createAuth0Client } from '@auth0/auth0-spa-js';
+
+const auth0 = await createAuth0Client({
+  domain: 'login.example.com',  // Your custom domain
+  clientId: 'YOUR_CLIENT_ID',
+  authorizationParams: {
+    redirect_uri: window.location.origin
+  }
+});
+```
+```javascript Dynamic Configuration
+import { createAuth0Client } from '@auth0/auth0-spa-js';
+
+// Determine domain based on app context
+function getAuth0Domain() {
+  const hostname = window.location.hostname;
+
+  // Map application domains to Auth0 custom domains
+  if (hostname.includes('app1.example.com')) {
+    return 'login.brand1.com';
+  } else if (hostname.includes('app2.example.com')) {
+    return 'login.brand2.com';
+  }
+
+  // Default custom domain
+  return 'login.example.com';
+}
+
+const auth0 = await createAuth0Client({
+  domain: getAuth0Domain(),
+  clientId: 'YOUR_CLIENT_ID',
+  authorizationParams: {
+    redirect_uri: window.location.origin
+  }
+});
+```
+```javascript Environment Variables
+import { createAuth0Client } from '@auth0/auth0-spa-js';
+
+const auth0 = await createAuth0Client({
+  domain: process.env.REACT_APP_AUTH0_DOMAIN,  // From .env file
+  clientId: process.env.REACT_APP_AUTH0_CLIENT_ID,
+  authorizationParams: {
+    redirect_uri: window.location.origin
+  }
+});
+```
+</AuthCodeGroup>
+
+### Next.js
+
+For Next.js applications using the [Auth0 Next.js SDK](https://github.com/auth0/nextjs-auth0) (v4+):
+
+<AuthCodeGroup>
+```typescript Static Configuration
+import { Auth0Client } from '@auth0/nextjs-auth0/server';
+
+const auth0 = new Auth0Client({
+  domain: 'login.example.com',        // Your custom domain
+  clientId: process.env.AUTH0_CLIENT_ID,
+  clientSecret: process.env.AUTH0_CLIENT_SECRET,
+  appBaseUrl: process.env.APP_BASE_URL,
+  secret: process.env.AUTH0_SECRET
+});
+```
+
+```typescript Dynamic Configuration (Multi-Brand)
+import { Auth0Client } from '@auth0/nextjs-auth0/server';
+
+const auth0 = new Auth0Client({
+  domain: ({ headers }) => {
+    // Map application hosts to Auth0 custom domains
+    const host = headers.get('host') || '';
+
+    if (host.includes('brand1.example.com')) {
+      return 'login.brand1.com';
+    } else if (host.includes('brand2.example.com')) {
+      return 'login.brand2.com';
+    }
+
+    return 'login.example.com';  // Default domain
+  },
+  clientId: process.env.AUTH0_CLIENT_ID,
+  clientSecret: process.env.AUTH0_CLIENT_SECRET,
+  appBaseUrl: process.env.APP_BASE_URL,
+  secret: process.env.AUTH0_SECRET
+});
+```
+
+```typescript Dynamic Configuration (B2B SaaS)
+import { Auth0Client } from '@auth0/nextjs-auth0/server';
+
+// Map tenant identifiers to custom domains (from database, cache, etc.)
+async function resolveTenantDomain(host: string): Promise<string> {
+  // Extract tenant identifier from subdomain
+  const subdomain = host.split('.')[0];
+
+  // Look up custom domain for this tenant (example: from database)
+  const tenantConfig = await getTenantConfig(subdomain);
+
+  return tenantConfig?.customDomain || 'login.example.com';
+}
+
+const auth0 = new Auth0Client({
+  domain: async ({ headers }) => {
+    const host = headers.get('host') || '';
+    return resolveTenantDomain(host);
+  },
+  clientId: process.env.AUTH0_CLIENT_ID,
+  clientSecret: process.env.AUTH0_CLIENT_SECRET,
+  appBaseUrl: process.env.APP_BASE_URL,
+  secret: process.env.AUTH0_SECRET
+});
+```
+
+```bash Environment Variables
+# .env.local
+
+# Auth0 configuration (single tenant with multiple custom domains)
+AUTH0_DOMAIN=login.example.com           # Default or fallback custom domain
+AUTH0_CLIENT_ID=your_client_id
+AUTH0_CLIENT_SECRET=your_client_secret
+APP_BASE_URL=http://localhost:3000
+AUTH0_SECRET=your-long-random-secret
+```
+</AuthCodeGroup>
+
+**Key concepts for MCD with Next.js:**
+
+- **Single Auth0 tenant, multiple domains**: All custom domains share the same `clientId` and `clientSecret` since they belong to the same Auth0 tenant.
+- **DomainResolver function**: The `domain` parameter accepts a function `(config: { headers: Headers; url?: URL }) => Promise<string> | string`. This allows dynamic domain resolution per request based on the incoming request headers.
+- **Instance caching**: The SDK automatically caches `Auth0Client` instances per domain using a bounded LRU cache (max 100 entries) for performance.
+- **Session isolation**: Sessions created via one custom domain are isolated to that domain and cannot be used interchangeably with sessions from another domain.
+- **URL parameter**: The `url` parameter in the resolver is `undefined` in Server Components and Server Actions; it is only available in middleware or API routes.
+- **Discovery cache tuning**: Configure OIDC metadata caching with the `discoveryCache` option:
+  ```typescript
+  const auth0 = new Auth0Client({
+    // ... other config
+    discoveryCache: {
+      ttl: 600,      // Cache for 10 minutes (default)
+      maxEntries: 100  // Max cached issuers (default: 100, LRU eviction)
+    }
+  });
+  ```
+
+### Auth0 React SDK
+
+For React applications using the [Auth0 React SDK](https://github.com/auth0/auth0-react):
+
+```jsx
+import { Auth0Provider } from '@auth0/auth0-react';
+
+function App() {
+  return (
+    <Auth0Provider
+      domain="login.example.com"
+      clientId="YOUR_CLIENT_ID"
+      authorizationParams={{
+        redirect_uri: window.location.origin
+      }}
+    >
+      <MyApp />
+    </Auth0Provider>
+  );
+}
+```
+
+For multi-domain scenarios:
+
+```jsx
+import { Auth0Provider } from '@auth0/auth0-react';
+
+function App() {
+  // Determine custom domain based on environment or context
+  const auth0Domain = process.env.REACT_APP_AUTH0_DOMAIN || 'login.example.com';
+
+  return (
+    <Auth0Provider
+      domain={auth0Domain}
+      clientId={process.env.REACT_APP_AUTH0_CLIENT_ID}
+      authorizationParams={{
+        redirect_uri: window.location.origin
+      }}
+    >
+      <MyApp />
+    </Auth0Provider>
+  );
+}
+```
+
+### Auth0.js
+
+For applications using [Auth0.js](https://github.com/auth0/auth0.js):
+
+```javascript
+const webAuth = new auth0.WebAuth({
+  domain: 'login.example.com',
+  clientID: 'YOUR_CLIENT_ID',
+  redirectUri: window.location.origin + '/callback',
+  responseType: 'code',
+  scope: 'openid profile email'
+});
+
+// Initiate login
+webAuth.authorize();
+```
+
+### Node.js (Express)
+
+For Node.js applications using [express-openid-connect](https://github.com/auth0/express-openid-connect):
+
+```javascript
+const { auth } = require('express-openid-connect');
+
+app.use(
+  auth({
+    authRequired: false,
+    auth0Logout: true,
+    issuerBaseURL: 'https://login.example.com',  // Your custom domain
+    baseURL: 'http://localhost:3000',
+    clientID: 'YOUR_CLIENT_ID',
+    secret: 'YOUR_CLIENT_SECRET'
+  })
+);
+```
+
+For multi-tenant scenarios:
+
+```javascript
+const { auth } = require('express-openid-connect');
+
+// Middleware to determine custom domain per request
+app.use((req, res, next) => {
+  // Extract tenant identifier from subdomain, path, or header
+  const tenant = req.subdomains[0] || 'default';
+
+  // Map tenant to custom domain
+  const domainMap = {
+    'customer1': 'login.customer1.com',
+    'customer2': 'login.customer2.com',
+    'default': 'login.example.com'
+  };
+
+  req.auth0Domain = domainMap[tenant] || domainMap.default;
+  next();
+});
+
+// Dynamic auth configuration
+app.use((req, res, next) => {
+  auth({
+    authRequired: false,
+    auth0Logout: true,
+    issuerBaseURL: `https://${req.auth0Domain}`,
+    baseURL: req.protocol + '://' + req.get('host'),
+    clientID: process.env.AUTH0_CLIENT_ID,
+    secret: process.env.AUTH0_CLIENT_SECRET
+  })(req, res, next);
+});
+```
+
+### Mobile SDKs
+
+#### iOS (Swift)
+
+Using [Auth0.swift](https://github.com/auth0/Auth0.swift):
+
+```swift
+import Auth0
+
+let auth0 = Auth0
+    .webAuth(clientId: "YOUR_CLIENT_ID", domain: "login.example.com")
+
+auth0
+    .scope("openid profile email")
+    .start { result in
+        switch result {
+        case .success(let credentials):
+            print("Obtained credentials: \(credentials)")
+        case .failure(let error):
+            print("Failed with: \(error)")
+        }
+    }
+```
+
+For dynamic domain selection:
+
+```swift
+import Auth0
+
+class AuthService {
+    private let clientId = "YOUR_CLIENT_ID"
+
+    func getAuth0Domain() -> String {
+        // Determine domain based on app configuration
+        if let savedDomain = UserDefaults.standard.string(forKey: "auth0Domain") {
+            return savedDomain
+        }
+        return "login.example.com" // Default
+    }
+
+    func login(completion: @escaping (Result<Credentials, Error>) -> Void) {
+        Auth0
+            .webAuth(clientId: clientId, domain: getAuth0Domain())
+            .scope("openid profile email")
+            .start { result in
+                completion(result)
+            }
+    }
+}
+```
+
+#### Android (Kotlin)
+
+Using [Auth0.Android](https://github.com/auth0/Auth0.Android):
+
+```kotlin
+import com.auth0.android.Auth0
+import com.auth0.android.authentication.AuthenticationAPIClient
+import com.auth0.android.provider.WebAuthProvider
+import com.auth0.android.result.Credentials
+
+val account = Auth0.getInstance(
+    "YOUR_CLIENT_ID",
+    "login.example.com"  // Your custom domain
+)
+
+WebAuthProvider.login(account)
+    .withScheme("demo")
+    .withScope("openid profile email")
+    .start(this, object : Callback<Credentials, AuthenticationException> {
+        override fun onSuccess(credentials: Credentials) {
+            // Handle success
+        }
+
+        override fun onFailure(exception: AuthenticationException) {
+            // Handle failure
+        }
+    })
+```
+
+For multi-domain support:
+
+```kotlin
+class AuthManager(private val context: Context) {
+    private val clientId = "YOUR_CLIENT_ID"
+
+    private fun getAuth0Domain(): String {
+        // Retrieve from shared preferences or app config
+        val prefs = context.getSharedPreferences("auth", Context.MODE_PRIVATE)
+        return prefs.getString("auth0_domain", "login.example.com") ?: "login.example.com"
+    }
+
+    fun login(callback: Callback<Credentials, AuthenticationException>) {
+        val account = Auth0.getInstance(clientId, getAuth0Domain())
+
+        WebAuthProvider.login(account)
+            .withScheme("demo")
+            .withScope("openid profile email")
+            .start(context, callback)
+    }
+}
+```
+
+#### React Native
+
+Using [react-native-auth0](https://github.com/auth0/react-native-auth0):
+
+```javascript
+import Auth0 from 'react-native-auth0';
+
+const auth0 = new Auth0({
+  domain: 'login.example.com',
+  clientId: 'YOUR_CLIENT_ID'
+});
+
+// Login
+auth0.webAuth
+  .authorize({
+    scope: 'openid profile email'
+  })
+  .then(credentials => {
+    console.log('Logged in!');
+  })
+  .catch(error => {
+    console.log(error);
+  });
+```
+
+### Flutter
+
+Using [flutter_auth0](https://github.com/auth0/auth0-flutter):
+
+```dart
+import 'package:auth0_flutter/auth0_flutter.dart';
+
+final auth0 = Auth0(
+  'login.example.com',
+  'YOUR_CLIENT_ID'
+);
+
+// Login
+try {
+  final credentials = await auth0.webAuthentication().login();
+  print('Logged in successfully');
+} catch (e) {
+  print('Login failed: $e');
+}
+```
+
+## Management SDKs
+
+Management SDKs are used to interact with the Auth0 Management API. When using custom domains, you may need to include the `auth0-custom-domain` header or use the [default domain](/docs/customize/custom-domains/multiple-custom-domains/default-domain).
+
+### Node.js Management SDK
+
+```javascript
+import { ManagementClient, CustomDomainHeader } from "auth0";
+
+// Global custom domain (sent on all whitelisted requests)
+const management = new ManagementClient({
+  domain: 'tenant.auth0.com',
+  clientId: 'YOUR_M2M_CLIENT_ID',
+  clientSecret: 'YOUR_M2M_CLIENT_SECRET',
+  withCustomDomainHeader: 'login.example.com', 
+});
+
+// List users (whitelisted endpoint - header is sent automatically)
+const users = await management.users.getAll();
+
+// Per-request override (takes precedence over global)
+const reqOptions = {
+  ...CustomDomainHeader("specific-user-request.exampleco.com"),
+};
+const response = await management.users.getAll({}, reqOptions);
+```
+
+### Python Management SDK
+
+```python
+from auth0.management import ManagementClient, CustomDomainHeader
+
+# Global custom domain (sent on all whitelisted requests)
+client = ManagementClient(
+    domain='tenant.auth0.com',
+    client_id='YOUR_M2M_CLIENT_ID',
+    client_secret='YOUR_M2M_CLIENT_SECRET',
+    custom_domain='login.example.com',
+)
+
+# List users (whitelisted endpoint - header is sent automatically)
+users = client.users.list()
+
+# Per-request override (takes precedence over global)
+client.users.create(
+    connection='Username-Password-Authentication',
+    email='user@example.com',
+    password='SecurePass123!',
+    request_options=CustomDomainHeader('login.brand2.com'),
+)
+```
+
+### Go Management SDK
+
+```go
+import (
+    "context"
+    management "github.com/auth0/go-auth0/v2/management/client"
+    "github.com/auth0/go-auth0/v2/management/option"
+)
+
+// Client-level: auto-applies custom domain header to whitelisted endpoints
+mgmt, err := management.New(
+    "{yourDomain}",
+    option.WithClientCredentials("{yourClientId}", "{yourClientSecret}"),
+    option.WithCustomDomainHeader("login.example.com"),
+)
+if err != nil {
+    // Handle error
+}
+
+// List users (whitelisted endpoint - header is sent automatically)
+userList, err := mgmt.Users.List(context.Background(), nil)
+
+// Per-request override (takes precedence over client-level)
+userList, err := mgmt.Users.List(
+    context.Background(),
+    nil,
+    option.WithCustomDomainHeader("specific-request.exampleco.com"),
+)
+```
+
+## Token validation
+
+When using custom domains, update your token validation to accept the custom domain as the issuer.
+
+### Node.js (Express)
+
+Using [express-jwt](https://github.com/auth0/express-jwt) or [jose](https://github.com/panva/jose):
+
+```javascript
+const { expressjwt } = require('express-jwt');
+const { expressJwtSecret } = require('jwks-rsa');
+
+app.use(
+  expressjwt({
+    secret: expressJwtSecret({
+      cache: true,
+      rateLimit: true,
+      jwksUri: 'https://login.example.com/.well-known/jwks.json'  // Custom domain
+    }),
+    audience: 'YOUR_API_IDENTIFIER',
+    issuer: 'https://login.example.com/',  // Custom domain as issuer
+    algorithms: ['RS256']
+  })
+);
+```
+
+For multiple custom domains:
+
+```javascript
+const validIssuers = [
+  'https://login.brand1.com/',
+  'https://login.brand2.com/',
+  'https://login.example.com/'
+];
+
+app.use(
+  expressjwt({
+    secret: expressJwtSecret({
+      cache: true,
+      rateLimit: true,
+      jwksRequestsPerMinute: 5,
+      jwksUri: (req) => {
+        // Extract issuer from token to determine JWKS URI
+        const token = req.headers.authorization?.split(' ')[1];
+        if (token) {
+          const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+          return `${payload.iss}.well-known/jwks.json`;
+        }
+        return 'https://login.example.com/.well-known/jwks.json';
+      }
+    }),
+    audience: 'YOUR_API_IDENTIFIER',
+    issuer: validIssuers,  // Accept multiple issuers
+    algorithms: ['RS256']
+  })
+);
+```
+
+### Python (Flask)
+
+Using [python-jose](https://github.com/mpdavis/python-jose):
+
+```python
+from jose import jwt
+from functools import wraps
+from flask import request, jsonify
+
+def get_token_auth_header():
+    auth = request.headers.get('Authorization', None)
+    if not auth:
+        raise Exception('Authorization header is expected')
+
+    parts = auth.split()
+    if parts[0].lower() != 'bearer':
+        raise Exception('Authorization header must start with Bearer')
+    elif len(parts) == 1:
+        raise Exception('Token not found')
+    elif len(parts) > 2:
+        raise Exception('Authorization header must be Bearer token')
+
+    return parts[1]
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = get_token_auth_header()
+
+        # Support multiple custom domains
+        valid_issuers = [
+            'https://login.brand1.com/',
+            'https://login.brand2.com/',
+            'https://login.example.com/'
+        ]
+
+        try:
+            # Get JWKS from custom domain
+            unverified = jwt.get_unverified_header(token)
+            issuer = jwt.get_unverified_claims(token)['iss']
+
+            if issuer not in valid_issuers:
+                raise Exception('Invalid issuer')
+
+            jwks_uri = f"{issuer}.well-known/jwks.json"
+            jwks = requests.get(jwks_uri).json()
+
+            payload = jwt.decode(
+                token,
+                jwks,
+                algorithms=['RS256'],
+                audience='YOUR_API_IDENTIFIER',
+                issuer=valid_issuers
+            )
+        except Exception as e:
+            return jsonify({'error': str(e)}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
+```
+
+### Java (Spring Boot)
+
+Using Spring Security:
+
+```java
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Value("${auth0.audience}")
+    private String audience;
+
+    @Value("${auth0.custom-domain}")
+    private String customDomain;
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http
+            .authorizeRequests()
+            .mvcMatchers("/api/public").permitAll()
+            .mvcMatchers("/api/private").authenticated()
+            .and()
+            .oauth2ResourceServer()
+            .jwt()
+            .decoder(jwtDecoder());
+    }
+
+    @Bean
+    JwtDecoder jwtDecoder() {
+        String issuerUri = "https://" + customDomain + "/";
+
+        NimbusJwtDecoder jwtDecoder = JwtDecoders.fromIssuerLocation(issuerUri);
+
+        // Validate audience
+        OAuth2TokenValidator<Jwt> audienceValidator = new AudienceValidator(audience);
+        OAuth2TokenValidator<Jwt> withIssuer = JwtValidators.createDefaultWithIssuer(issuerUri);
+        OAuth2TokenValidator<Jwt> withAudience = new DelegatingOAuth2TokenValidator<>(withIssuer, audienceValidator);
+
+        jwtDecoder.setJwtValidator(withAudience);
+
+        return jwtDecoder;
+    }
+}
+```
+
+## Environment-specific configuration
+
+Use environment variables to manage custom domains across environments:
+
+### .env file structure
+
+```bash
+# Development
+AUTH0_DOMAIN=dev.example.com
+AUTH0_CLIENT_ID=dev_client_id
+AUTH0_CLIENT_SECRET=dev_client_secret
+
+# Staging
+# AUTH0_DOMAIN=staging.example.com
+# AUTH0_CLIENT_ID=staging_client_id
+# AUTH0_CLIENT_SECRET=staging_client_secret
+
+# Production
+# AUTH0_DOMAIN=login.example.com
+# AUTH0_CLIENT_ID=prod_client_id
+# AUTH0_CLIENT_SECRET=prod_client_secret
+```
+
+### Loading configuration
+
+```javascript
+require('dotenv').config();
+
+const auth0Config = {
+  domain: process.env.AUTH0_DOMAIN,
+  clientId: process.env.AUTH0_CLIENT_ID,
+  clientSecret: process.env.AUTH0_CLIENT_SECRET
+};
+```
+
+## Troubleshooting
+
+### Common issues
+
+<table class="table">
+<thead>
+<tr>
+<th><strong>Issue</strong></th>
+<th><strong>Cause</strong></th>
+<th><strong>Solution</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Invalid issuer error</td>
+<td>Token validation expects canonical domain but receives custom domain</td>
+<td>Update token validation to accept custom domain as issuer</td>
+</tr>
+<tr>
+<td>JWKS fetch fails</td>
+<td>JWKS URI points to canonical domain</td>
+<td>Update JWKS URI to use custom domain: `https://custom-domain/.well-known/jwks.json`</td>
+</tr>
+<tr>
+<td>Redirect URI mismatch</td>
+<td>Callback URL doesn't match configured redirect URIs</td>
+<td>Add custom domain callback URL to application settings</td>
+</tr>
+<tr>
+<td>Cross-origin errors (CORS)</td>
+<td>Custom domain not in allowed origins</td>
+<td>Add custom domain to Allowed Web Origins in application settings</td>
+</tr>
+<tr>
+<td>Lock fails to load</td>
+<td>Missing `configurationBaseUrl`</td>
+<td>Add `configurationBaseUrl` parameter with regional CDN URL</td>
+</tr>
+</tbody>
+</table>
+
+## Best practices
+
+1. **Use environment variables**: Store custom domains in environment-specific configuration files
+2. **Validate multiple issuers**: If using multiple custom domains, configure token validation to accept all as valid issuers
+3. **Update callback URLs**: Ensure all custom domains are added to Allowed Callback URLs in application settings
+4. **Test thoroughly**: Test authentication through each custom domain before going to production
+5. **Monitor token issuers**: Log and monitor the `iss` claim in tokens to ensure correct custom domain usage
+6. **Document domain mappings**: Maintain clear documentation of which applications use which custom domains
+7. **Handle failures gracefully**: Implement proper error handling for authentication failures
+8. **Cache JWKS**: Cache JWKS data to improve performance and reduce requests
+
+## Learn more
+
+* [Multiple Custom Domains](/docs/customize/custom-domains/multiple-custom-domains)
+* [Default Custom Domain](/docs/customize/custom-domains/multiple-custom-domains/default-domain)
+* [Configure Features to Use Custom Domains](/docs/customize/custom-domains/configure-features-to-use-custom-domains)
+* [Auth0 SDKs](/docs/troubleshoot/customer-support/product-support-matrix#auth0-sdks)
