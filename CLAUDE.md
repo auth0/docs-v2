@@ -9,6 +9,7 @@ This is a **Mintlify-based documentation monorepo** for Auth0. It contains multi
 - **`main/`** - Primary Auth0 documentation (https://auth0.com/docs)
 - **`auth4genai/`** - Auth0 for AI Agents documentation (https://auth0.com/ai/docs)
 - **`ui/`** - Shared React/Vite component library used across documentation sites
+- **`universal-components/`** - Shared React/Vite component library used for interactive components documentations
 
 Each documentation site (`main`, `auth4genai`) operates independently with its own `docs.json` Mintlify configuration file.
 
