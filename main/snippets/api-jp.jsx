@@ -92,3 +92,30 @@ export const MyAccountApiSection = () => {
     </div>
   );
 };
+
+export const MyOrganizationApiSection = () => {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
+      {/* Left column */}
+      <div>
+        <p>
+          Auth0 My Organization API は、安全でOrganization範囲に対応したインターフェイスを提供し、
+          ビジネス顧客が自身のOrganizationをAuth0テナント内で管理できるようにします。このAPIは、
+          組み込み型委任管理やAPI優先統合の技術的な基盤として機能します。
+          詳細については、<a href="/docs/manage-users/my-organization-api">こちらのドキュメント</a>をご覧ください。
+        </p>
+      </div>
+
+      {/* Right column */}
+      <div>
+        <p>例を挙げます。</p>
+        <ul className="space-y-2 !mt-0">
+          <li>Auth0 Organizationの詳細（名前、ブランディング、表示名）</li>
+          <li>Organization固有の構成、所有権、関係</li>
+          <li>IDプロバイダー（IdP）およびSCIMプロビジョニング</li>
+          <li>ドメインおよびホームレルムディスカバリー（HRD）の設定</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
