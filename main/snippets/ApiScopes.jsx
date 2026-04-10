@@ -43,13 +43,19 @@ export const Scopes = ({ scopes = [] }) => {
             </div>
             {scopes.map((scope, index) => {
               return (
-                <div
+                <span
                   class="flex items-center px-2 py-0.5 rounded-md bg-gray-100/50 dark:bg-white/5 text-gray-600 dark:text-gray-200 font-medium break-all"
+                  style={{
+                    lineHeight: '1rem',
+                    fontSize: '0.75rem',
+                    fontFamily:
+                      'var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                  }}
                   data-component-part="field-info-pill"
                   key={index}
                 >
-                  <span>{scope}</span>
-                </div>
+                  {scope}
+                </span>
               );
             })}
           </div>

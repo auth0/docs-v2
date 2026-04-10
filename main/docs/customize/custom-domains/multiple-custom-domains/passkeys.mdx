@@ -1,0 +1,470 @@
+---
+description: Learn how passkeys and WebAuthn work with multiple custom domains in Auth0.
+title: Passkeys with Multiple Custom Domains
+---
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+[Passkeys](/docs/secure/multi-factor-authentication/fido-authentication-with-webauthn/configure-webauthn-with-passkeys) provide a phishing-resistant, passwordless authentication experience using WebAuthn. When using [multiple custom domains](/docs/customize/custom-domains/multiple-custom-domains), passkeys are enrolled on a per-domain basis due to WebAuthn's security model.
+
+## How passkeys work with custom domains
+
+### WebAuthn Relying Party ID (RPID)
+
+WebAuthn uses a Relying Party Identifier (RPID) to scope passkey credentials. The RPID determines:
+
+* **Where passkeys can be used**: Passkeys are bound to the domain where they were created
+* **Security boundaries**: Prevents passkeys from being used on unauthorized domains
+* **User experience**: Users must enroll passkeys separately for each custom domain
+
+### Per-domain enrollment
+
+With multiple custom domains, each domain has its own RPID, which means:
+
+* A passkey enrolled on `login.brand1.com` **cannot** be used on `login.brand2.com`
+* Users who authenticate through different custom domains need to enroll passkeys for each domain
+* Each domain's passkeys are managed independently
+
+## Understanding the passkey user experience
+
+### Single-brand, single-domain
+
+**Setup**: One custom domain serving one brand
+
+**User experience**:
+1. User visits `login.example.com`
+2. User enrolls a passkey
+3. User can use the passkey for all future logins through `login.example.com`
+
+**Complexity**: Low - straightforward passkey experience
+
+### Multi-brand, separate domains
+
+**Setup**: Multiple brands, each with their own custom domain
+
+**User experience**:
+1. User visits `login.brand1.com` and enrolls a passkey
+2. Same user later visits `login.brand2.com` (different brand)
+3. Previously enrolled passkey is not available
+4. User must enroll a new passkey for `login.brand2.com`
+
+**Complexity**: Medium - users need separate passkeys per brand
+
+**Best practice**: Communicate to users that each brand requires separate passkey enrollment
+
+### Multi-tenant with common domain
+
+**Setup**: Multiple customers, with a common custom domain for shared services.
+
+**User experience**:
+1. Most users authenticate through the common domain
+2. Users enroll passkeys once for the common domain
+3. Passkeys work consistently for most authentication scenarios
+4. Special cases (customer-specific domains) require separate enrollment
+
+**Complexity**: Low to Medium - most users have consistent experience
+
+## Configuration
+
+### Enable passkeys for your tenant
+
+Before using passkeys with custom domains, ensure passkeys are enabled:
+
+1. Navigate to **Auth0 Dashboard** > **Security** > **Multi-factor Auth**
+2. Enable **WebAuthn with FIDO Security Keys**
+3. Configure passkey settings
+
+### Configure custom domains for passkeys
+
+Each custom domain automatically gets its own RPID:
+
+* **RPID format**: The custom domain itself (e.g., `login.example.com`)
+* **No additional configuration required**: Auth0 automatically configures the RPID for each verified custom domain
+
+### Verify RPID configuration
+
+To verify the RPID for a custom domain:
+
+1. Navigate to **Auth0 Dashboard** > **Branding** > **Custom Domains**
+2. Select your custom domain
+3. In the domain details, the RPID will be displayed
+
+## Implementation patterns
+
+### Prompt for passkey enrollment per domain
+
+Guide users to enroll passkeys for each custom domain they use:
+
+```javascript
+import { createAuth0Client } from '@auth0/auth0-spa-js';
+
+async function setupPasskeyEnrollment() {
+  const auth0 = await createAuth0Client({
+    domain: 'login.example.com',
+    clientId: 'YOUR_CLIENT_ID'
+  });
+
+  // Check if user is authenticated
+  const isAuthenticated = await auth0.isAuthenticated();
+
+  if (isAuthenticated) {
+    // Check if passkey is enrolled for this domain
+    const user = await auth0.getUser();
+
+    if (!user.passkey_enrolled) {
+      // Prompt user to enroll passkey
+      showPasskeyEnrollmentPrompt();
+    }
+  }
+}
+
+function showPasskeyEnrollmentPrompt() {
+  // Display UI to encourage passkey enrollment
+  const banner = document.createElement('div');
+  banner.innerHTML = `
+    <div class="passkey-prompt">
+      <p>Set up passkey for faster, more secure login on this site</p>
+      <button onclick="enrollPasskey()">Set Up Passkey</button>
+    </div>
+  `;
+  document.body.prepend(banner);
+}
+```
+
+### Track passkey enrollment by domain
+
+Store which domains a user has enrolled passkeys for:
+
+```javascript
+// In your Auth0 Action (Post-Login)
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+  const authMethods = event.authentication?.methods || [];
+
+  // Check if user authenticated with passkey
+  const usedPasskey = authMethods.some(method =>
+    method.name === 'webauthn' || method.name === 'passkey'
+  );
+
+  if (usedPasskey) {
+    // Track which domains user has enrolled passkeys for
+    const enrolledDomains = event.user.app_metadata?.passkey_domains || [];
+
+    if (domain && !enrolledDomains.includes(domain)) {
+      enrolledDomains.push(domain);
+      api.user.setAppMetadata('passkey_domains', enrolledDomains);
+    }
+
+    // Add claim to token
+    api.idToken.setCustomClaim('passkey_enrolled', true);
+    api.idToken.setCustomClaim('passkey_domain', domain);
+  } else {
+    // User didn't use passkey
+    api.idToken.setCustomClaim('passkey_enrolled', false);
+  }
+};
+```
+
+Then in your application:
+
+```javascript
+async function checkPasskeyEnrollment() {
+  const auth0 = await createAuth0Client({
+    domain: window.CUSTOM_DOMAIN,
+    clientId: 'YOUR_CLIENT_ID'
+  });
+
+  const isAuthenticated = await auth0.isAuthenticated();
+
+  if (isAuthenticated) {
+    const user = await auth0.getUser();
+    const claims = await auth0.getIdTokenClaims();
+
+    // Check if passkey is enrolled for current domain
+    const passkeyEnrolledHere = claims.passkey_enrolled &&
+                                 claims.passkey_domain === window.CUSTOM_DOMAIN;
+
+    if (!passkeyEnrolledHere) {
+      // Prompt user to enroll passkey for this domain
+      promptPasskeyEnrollment();
+    }
+  }
+}
+```
+
+### Domain-specific enrollment pages
+
+Create dedicated enrollment pages for each custom domain:
+
+```javascript
+// Enrollment page for Brand 1
+// URL: https://login.brand1.com/enroll-passkey
+
+import { createAuth0Client } from '@auth0/auth0-spa-js';
+
+async function enrollPasskeyForBrand1() {
+  const auth0 = await createAuth0Client({
+    domain: 'login.brand1.com',
+    clientId: 'YOUR_CLIENT_ID'
+  });
+
+  try {
+    // Trigger passkey enrollment
+    await auth0.loginWithPopup({
+      authorizationParams: {
+        acr_values: 'http://schemas.openid.net/pape/policies/2007/06/multi-factor',
+        prompt: 'login'
+      }
+    });
+
+    alert('Passkey enrolled successfully for Brand 1!');
+  } catch (error) {
+    console.error('Passkey enrollment failed:', error);
+  }
+}
+```
+
+### Contextual enrollment prompts
+
+Show passkey enrollment prompts based on user behavior. Key considerations:
+
+- Track when users dismiss enrollment prompts (store in `localStorage`)
+- Check `logins_count` from user metadata to show prompts after multiple visits
+- Verify passkey isn't already enrolled for the current domain
+
+```javascript
+async function shouldShowEnrollmentPrompt(auth0, customDomain) {
+  const storageKey = `passkey_prompt_dismissed_${customDomain}`;
+
+  // Don't show if user dismissed it
+  if (localStorage.getItem(storageKey)) return false;
+
+  const claims = await auth0.getIdTokenClaims();
+  const passkeyEnrolled = claims.passkey_enrolled &&
+                          claims.passkey_domain === customDomain;
+
+  if (passkeyEnrolled) return false;
+
+  // Show prompt after 3rd login
+  const user = await auth0.getUser();
+  return (user.logins_count || 0) >= 3;
+}
+```
+
+## User communication
+
+### Inform users about per-domain enrollment
+
+Clearly communicate to users that passkeys are domain-specific:
+
+**Example messaging**:
+
+> "For security, passkeys are specific to each login portal. You'll need to set up a passkey separately for each brand's login page you use."
+
+**Enrollment prompt example**:
+
+```html
+<div class="passkey-info-banner">
+  <h3>Set up faster login with passkey</h3>
+  <p>
+    This passkey will work for login.example.com.
+    If you use other login portals, you'll need to set up passkeys separately for each one.
+  </p>
+  <button onclick="enrollPasskey()">Set Up Passkey</button>
+  <button onclick="dismissPrompt()">Not Now</button>
+</div>
+```
+
+### Help documentation
+
+Provide clear help documentation:
+
+**FAQ entry example**:
+
+**Q: Why do I need to set up a passkey again?**
+
+A: Passkeys are tied to specific domains for security. If you're logging in through a different portal (e.g., Brand A vs Brand B), you'll need to set up a passkey for each one. This keeps your accounts secure by ensuring passkeys only work where they should.
+
+**Q: Do I need a different device for each passkey?**
+
+A: No! You can use the same device (phone, computer, or hardware key) for passkeys on different domains. Each passkey is just a separate credential stored on your device.
+
+## Limitations and considerations
+
+### Current limitations
+
+<table class="table">
+<thead>
+<tr>
+<th><strong>Limitation</strong></th>
+<th><strong>Impact</strong></th>
+<th><strong>Workaround</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No cross-domain passkey sharing</td>
+<td>Users must enroll passkeys separately for each custom domain</td>
+<td>Use a common domain for most authentication, or guide users to enroll on each domain</td>
+</tr>
+<tr>
+<td>Cannot transfer passkeys between domains</td>
+<td>Migrating to a new custom domain requires re-enrollment</td>
+<td>Plan migration carefully, communicate with users, provide re-enrollment flow</td>
+</tr>
+<tr>
+<td>Related origins not yet supported</td>
+<td>Cannot share passkeys across subdomains or related domains</td>
+<td>Planned for future release - use per-domain enrollment for now</td>
+</tr>
+</tbody>
+</table>
+
+### Related origins (future feature)
+
+Auth0 plans to support WebAuthn related origins, which will allow passkey sharing across specified domains. This feature will:
+
+* Allow you to configure domains as "related" for passkey purposes
+* Enable users to use a passkey enrolled on `login.brand1.com` on `login.brand2.com` if configured as related
+* Provide more flexibility for multi-brand implementations
+
+**Status**: Planned for post-GA release
+
+## Migration scenarios
+
+### Migrating from single custom domain to multiple
+
+**Before**: Single custom domain with passkeys enrolled
+
+**After**: Multiple custom domains for different brands
+
+**Challenge**: Existing passkeys only work on the original domain
+
+**Migration approach**:
+
+1. **Keep original domain active**: Maintain the original custom domain as the common domain
+2. **Gradual rollout**: Introduce new custom domains gradually
+3. **User notification**: Inform users they'll need to enroll passkeys on new domains
+4. **Provide re-enrollment flow**: Make it easy for users to enroll passkeys on new domains
+5. **Monitor adoption**: Track passkey enrollment rates per domain
+
+**Communication template**:
+
+> "We're introducing brand-specific login pages! Your existing passkey will continue to work on [original domain]. When you visit our new login pages, you'll be prompted to set up a passkey for faster login there too."
+
+### Migrating between custom domains
+
+**Scenario**: Changing from `old-domain.com` to `new-domain.com`
+
+**Challenge**: Passkeys cannot be transferred
+
+**Migration steps**:
+
+1. **Parallel operation**: Run both domains simultaneously during transition
+2. **Detect enrolled passkeys**: Track which users have passkeys on old domain
+3. **Prompt re-enrollment**: When users log in via new domain, prompt passkey enrollment
+4. **Grace period**: Keep old domain active for a transition period
+5. **Sunset old domain**: After adoption, decommission old domain
+
+```javascript
+// In your Auth0 Action
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+  const oldDomain = 'old-domain.com';
+  const newDomain = 'new-domain.com';
+
+  // Check if user had passkey on old domain
+  const hadOldPasskey = event.user.app_metadata?.passkey_domains?.includes(oldDomain);
+
+  // User is on new domain but doesn't have passkey enrolled yet
+  if (domain === newDomain && hadOldPasskey) {
+    const newDomainPasskeys = event.user.app_metadata?.passkey_domains?.includes(newDomain);
+
+    if (!newDomainPasskeys) {
+      // Set a flag to prompt re-enrollment
+      api.idToken.setCustomClaim('should_enroll_passkey', true);
+      api.idToken.setCustomClaim('migrated_from', oldDomain);
+    }
+  }
+};
+```
+
+## Testing
+
+### Test passkey enrollment per domain
+
+1. **Set up test custom domains**: Configure multiple custom domains in a development tenant
+2. **Test enrollment flow**: Enroll a passkey through one custom domain
+3. **Verify isolation**: Confirm the passkey doesn't work on other custom domains
+4. **Test re-enrollment**: Enroll passkeys on additional domains
+5. **Cross-browser testing**: Test on different browsers and devices
+
+### Automated testing
+
+```javascript
+describe('Passkey Enrollment with Multiple Custom Domains', () => {
+  it('should enroll passkey on domain 1', async () => {
+    await navigateTo('https://login.brand1.com');
+    await login();
+    await enrollPasskey();
+    expect(await isPasskeyEnrolled()).toBe(true);
+  });
+
+  it('should not have passkey on domain 2', async () => {
+    await navigateTo('https://login.brand2.com');
+    await login();
+    expect(await isPasskeyEnrolled()).toBe(false);
+  });
+
+  it('should enroll separate passkey on domain 2', async () => {
+    await navigateTo('https://login.brand2.com');
+    await login();
+    await enrollPasskey();
+    expect(await isPasskeyEnrolled()).toBe(true);
+  });
+});
+```
+
+## Best practices
+
+1. **Use a common domain**: Use a common custom domain to minimize the number of domains requiring passkey enrollment
+2. **Clear communication**: Inform users about per-domain enrollment requirements
+3. **Prompt strategically**: Show enrollment prompts after users demonstrate engagement (e.g., 3+ logins)
+4. **Track enrollment**: Monitor which users have enrolled passkeys on which domains
+5. **Provide help**: Offer clear documentation and support for passkey management
+6. **Test thoroughly**: Test passkey flows on all custom domains before production deployment
+7. **Plan migrations**: When changing custom domains, plan for user re-enrollment
+8. **Monitor adoption**: Track passkey enrollment and usage rates per domain
+
+## Troubleshooting
+
+### Passkey not working on custom domain
+
+**Symptoms**: User enrolled passkey but cannot use it
+
+**Possible causes**:
+* User is on a different custom domain than where they enrolled
+* Browser compatibility issues
+* Passkey was deleted from device
+
+**Resolution**:
+1. Confirm user is on the correct custom domain
+2. Check browser support for WebAuthn
+3. Guide user to re-enroll passkey if needed
+
+### User confused about multiple enrollments
+
+**Symptoms**: User reports "passkey not working" when switching domains
+
+**Cause**: User doesn't understand per-domain enrollment
+
+**Resolution**:
+1. Provide clear messaging about per-domain passkeys
+2. Show which domains user has enrolled passkeys for
+3. Prompt enrollment when user visits a new domain
+
+## Learn more
+
+* [Passkeys Overview](/docs/secure/multi-factor-authentication/fido-authentication-with-webauthn/configure-webauthn-with-passkeys)
+* [Multiple Custom Domains](/docs/customize/custom-domains/multiple-custom-domains)
+* [WebAuthn Specification](https://www.w3.org/TR/webauthn/)
+* [Passkeys.dev](https://passkeys.dev/)
