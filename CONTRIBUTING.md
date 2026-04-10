@@ -1,6 +1,6 @@
 # Auth0 Docs Contribution Guide
 
-Thanks for your interest in contributing to Auth0's docs!
+Thanks for your interest in contributing to Auth0's docs! You're amazing yayyyy!
 
 ## Before you start
 
