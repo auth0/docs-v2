@@ -94,3 +94,30 @@ export const MyAccountApiSection = () => {
     </div>
   );
 };
+
+export const MyOrganizationApiSection = () => {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
+      {/* Left column */}
+      <div>
+        <p>
+          L’API My Organization d’Auth0 offre une interface sécurisée, limitée à l’organization, qui permet 
+          à vos clients professionnels de gérer leurs propres organizations au sein de votre locataire Auth0. 
+          Cette API constitue la base technique de l’administration déléguée intégrée et des intégrations API-first. 
+          Pour plus d’informations, consultez la documentation <a href="/docs/manage-users/my-organization-api">ici</a>.
+        </p>
+      </div>
+
+      {/* Right column */}
+      <div>
+        <p>Voici quelques exemples :</p>
+        <ul className="space-y-2 !mt-0">
+          <li>Détails de l’Organization Auth0 (nom, image de marque, nom d’affichage)</li>
+          <li>Configuration, propriété, et relations propres à l’organization</li>
+          <li>Fournisseurs d’identité (IdP) et fourniture SCIM</li>
+          <li>Configuration des domaines et découverte du domaine d’origine (HRD)</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
