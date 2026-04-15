@@ -25,7 +25,7 @@
 
 ## Checklist
 
-- [ ] I've read and followed [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+- [ ] I've read and followed [`CONTRIBUTING.md`](https://github.com/auth0/docs-v2/blob/main/CONTRIBUTING.md).
 - [ ] I've tested the site build for this change locally.
 - [ ] I've made appropriate docs updates for any code or config changes.
 - [ ] I've coordinated with the Product Docs and/or Docs Management team about non-trivial changes.

@@ -1,3 +1,4 @@
+import { loadAdobeScript } from './adobe';
 import { loadHeapScript } from './analytics';
 import { config } from './config';
 import { getCookies } from './cookies';
@@ -5,7 +6,7 @@ import { getCookies } from './cookies';
 declare global {
   interface Window {
     OneTrust: {
-      IsAlertBoxClosedAndValid: () => boolean;
+      IsAlertBoxClosed: () => boolean;
     };
     OptanonWrapper: () => void;
     OnetrustActiveGroups: string;
@@ -25,10 +26,12 @@ export function initOneTrust(): void {
   script.setAttribute('data-domain-script', config.oneTrust.domainId);
   script.type = 'text/javascript';
   script.async = true;
+  script.crossOrigin = 'anonymous';
 
   // Set the OneTrust callback to handle consent changes
   window.OptanonWrapper = () => {
-    if (window.OnetrustActiveGroups) {
+    // checks whether alert box is closed and valid + active groups are defined
+    if (window.OneTrust.IsAlertBoxClosed() && window.OnetrustActiveGroups) {
       const consents = window.OnetrustActiveGroups.split(',').filter((c) => c);
       // load allowed scripts based on consents
       loadAllowedScripts(new Set(consents.map((group) => `C000${group}`)));
@@ -40,6 +43,8 @@ export function initOneTrust(): void {
 
   // load analytics scripts content with type text/plain
   loadHeapScript();
+
+  loadAdobeScript();
 
   const consentsMap = parseConsentCookie();
 
@@ -103,7 +108,7 @@ function loadAllowedScripts(consents: Set<string>) {
       .replace('consent-required:', '')
       .split('-');
 
-      return consentsRequired.every((cr) => consents.has(cr));
+    return consentsRequired.every((cr) => consents.has(cr));
   });
 
   // Re-inject scripts now with js type

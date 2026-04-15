@@ -57,6 +57,7 @@ export function heap(heapId: string): void {
   script.type = 'text/plain';
   script.classList.add('consent-required:C0002'); // needed for one-trust
   script.async = true;
+  script.crossOrigin = 'anonymous';
 
   document.body.append(script);
 }
