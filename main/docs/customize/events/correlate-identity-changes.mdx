@@ -1,0 +1,175 @@
+---
+description: React to identity changes in Auth0 by updating CRM, billing, or third-party systems with Event Streams.
+title: Correlate Identity Changes with External Systems
+---
+
+With Event Streams, you can react to identity changes in Auth0 and propagate those changes to external systems such as CRM platforms, billing services, or SaaS licensing tools. Rather than polling the Management API for updates, your integration receives events in real time and correlates them with records in your downstream systems.
+
+## Why correlate identity changes
+
+Correlating Auth0 identity events with external systems is useful when you need to:
+
+* Update a CRM record when a user's email or profile data changes.
+* Notify a billing or licensing system when an account is deactivated or deleted.
+* Trigger compliance workflows when user attributes change, such as consent or role updates.
+* Keep user segments in marketing platforms aligned with current identity data.
+
+## How it works
+
+1. Auth0 publishes an event when a user profile is created, updated, or deleted.
+2. Your Event Stream delivers that event to a destination (webhook, AWS EventBridge, or Auth0 Action).
+3. Your handler maps the Auth0 user to a record in the external system and applies the relevant update.
+
+The following event types are relevant for data correlation:
+
+| Event type | When it fires |
+| --- | --- |
+| `user.created` | A new user profile is created in Auth0. |
+| `user.updated` | An existing user profile is modified. |
+| `user.deleted` | A user profile is removed from Auth0. |
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+* An Auth0 tenant on an **Enterprise** plan with Events enabled.
+* An active Event Stream subscribed to the event types you need. To learn more, read [Create an Event Stream](/docs/customize/events/create-an-event-stream).
+* API credentials for the external system you plan to update (for example, a CRM API key or OAuth token).
+
+## Implement identity correlation
+
+The sections below demonstrate how to correlate Auth0 events with a CRM platform using a webhook handler. The same pattern applies to any external system with a REST API.
+
+### Map Auth0 users to external records
+
+Most external systems identify contacts by email address or an external ID stored in Auth0 `app_metadata`. Define a lookup function that resolves the external record for a given Auth0 user.
+
+```javascript wrap lines
+async function findCrmContact(user) {
+    const externalId = user.app_metadata?.crm_contact_id;
+
+    if (externalId) {
+        return externalId;
+    }
+
+    // Fall back to email-based lookup
+    const response = await fetch(
+        `https://api.example-crm.com/contacts?email=${encodeURIComponent(user.email)}`,
+        { headers: { "Authorization": `Bearer ${CRM_API_TOKEN}` } }
+    );
+
+    const results = await response.json();
+    return results.length > 0 ? results[0].id : null;
+}
+```
+
+### Handle user.updated
+
+When a user profile changes, update the matching CRM contact with the new data.
+
+```javascript wrap lines
+async function handleUserUpdated(user) {
+    const contactId = await findCrmContact(user);
+
+    if (!contactId) {
+        console.log(`No CRM contact found for user ${user.user_id}, skipping.`);
+        return;
+    }
+
+    await fetch(`https://api.example-crm.com/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            email: user.email,
+            name: user.name,
+            phone: user.phone_number
+        })
+    });
+}
+```
+
+### Handle user.deleted
+
+When a user is removed from Auth0, deactivate or flag the corresponding record in your external system.
+
+```javascript wrap lines
+async function handleUserDeleted(user) {
+    const contactId = await findCrmContact(user);
+
+    if (!contactId) {
+        return;
+    }
+
+    await fetch(`https://api.example-crm.com/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status: "deactivated" })
+    });
+}
+```
+
+### Route events by type
+
+Use a top-level router to dispatch each event to the correct handler.
+
+```javascript wrap lines
+app.post("/webhook", async (req, res) => {
+    const { type, data } = req.body;
+    const user = data.object;
+
+    try {
+        switch (type) {
+            case "user.created":
+                await handleUserCreated(user);
+                break;
+            case "user.updated":
+                await handleUserUpdated(user);
+                break;
+            case "user.deleted":
+                await handleUserDeleted(user);
+                break;
+            default:
+                console.log(`Unhandled event type: ${type}`);
+        }
+
+        res.sendStatus(204);
+    } catch (err) {
+        console.error("Error processing event:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+```
+
+<Note>
+Return an HTTP `2XX` response as quickly as possible. If your external API calls are slow, place the event on an internal queue and process it asynchronously. To learn more, read [Events Best Practices](/docs/customize/events/events-best-practices).
+</Note>
+
+## Handle edge cases
+
+When correlating identity data across systems, consider the following:
+
+* **Missing external records.** A `user.updated` event may arrive for a user that does not yet exist in your external system. Decide whether to create the record on the fly or log it for manual review.
+* **Rate limits on external APIs.** If Auth0 delivers a burst of events (for example, during a bulk import), your handler may exceed the external API's rate limits. Use an asynchronous queue with backoff to stay within limits.
+* **Partial data.** Not every `user.updated` event includes all profile fields. Apply only the fields present in the event payload to avoid overwriting data with empty values.
+
+## Verify correlation
+
+After you deploy your handler, create or update a test user in Auth0 and confirm:
+
+1. The corresponding record in your external system reflects the change.
+2. Delete the test user in Auth0. Confirm the external record is deactivated or removed.
+3. Review your handler logs for any errors or skipped events.
+
+To learn more about testing Event Streams, read [Event Testing, Observability, and Failure Recovery](/docs/customize/events/event-testing-observability-and-failure-recovery).
+
+## Learn more
+
+* [Event Types](/docs/customize/events/event-types)
+* [Create an Event Stream](/docs/customize/events/create-an-event-stream)
+* [Events Best Practices](/docs/customize/events/events-best-practices)

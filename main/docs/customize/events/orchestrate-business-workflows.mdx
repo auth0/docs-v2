@@ -1,0 +1,223 @@
+---
+description: Trigger downstream business workflows such as onboarding, provisioning, and CRM updates when identity changes occur in Auth0.
+title: Orchestrate Business Workflows
+---
+
+With Event Streams and Auth0 Actions, you can turn identity lifecycle changes into automated business workflows. When a user is created, updated, or deleted in Auth0, an Action runs server-side code that calls external APIs, meaning you can build complete pipelines without deploying your own middleware.
+
+This guide walks through an end-to-end example: provisioning users from a corporate identity provider (IdP) through Auth0 Inbound SCIM and forwarding those changes to a CRM platform with an Event Stream Action.
+
+## Why automate identity workflows
+
+Automating identity-driven workflows is useful when you need to:
+
+* Onboard new employees into business applications the moment they are provisioned in your IdP.
+* Update CRM contacts, SaaS licenses, or internal tools when user attributes change.
+* Deprovision access across downstream systems when a user is removed.
+* Remove manual steps from processes that depend on identity lifecycle events.
+
+## Architecture overview
+
+The pipeline in this guide uses four components:
+
+1. **Corporate IdP (for example, Okta)** — the source of truth for employee identities.
+2. **Auth0 Inbound SCIM** — receives provisioning events from the IdP and creates or updates users in Auth0.
+3. **Event Stream with an Auth0 Action** — listens for user lifecycle events and runs server-side code.
+4. **External system (for example, HubSpot CRM)** — the destination that receives the transformed data.
+
+The flow works as follows:
+
+1. An administrator assigns a user to an application in the corporate IdP.
+2. The IdP pushes the change to Auth0 through SCIM.
+3. Auth0 creates or updates the user profile and publishes an event.
+4. The Event Stream triggers an Action that calls the external system's API.
+
+You can substitute any external system that exposes a REST API. The pattern is the same whether you target HubSpot, Salesforce, Segment, Braze, or an internal service.
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+* An Auth0 tenant on an **Enterprise** plan with Events enabled.
+* A corporate IdP that supports SCIM provisioning (for example, Okta or Microsoft Entra ID).
+* Auth0 Inbound SCIM configured for the relevant connection. To learn more, read [Inbound SCIM](/docs/manage-users/user-accounts/manage-user-accounts-with-inbound-scim).
+* An API key or OAuth credentials for the external system you plan to call.
+
+## Set up SCIM provisioning
+
+If you have not already configured Inbound SCIM, complete the following steps to connect your IdP to Auth0.
+
+<Tabs>
+<Tab title="Okta">
+
+1. In the Auth0 Dashboard, navigate to **Authentication > Enterprise** and select your SAML or OIDC enterprise connection.
+2. Select the **Provisioning** tab and enable **Inbound SCIM**.
+3. Generate a SCIM token and copy it.
+4. In Okta, open the application you use to federate with Auth0.
+5. Select the **Provisioning** tab, then select **Configure API Integration**.
+6. Enable the integration, paste the Auth0 SCIM endpoint URL and token, and select **Save**.
+7. Under **To App**, enable **Create Users**, **Update User Attributes**, and **Deactivate Users**.
+
+</Tab>
+<Tab title="Other IdPs">
+
+Refer to your IdP's documentation for configuring outbound SCIM provisioning. You need:
+
+* The Auth0 SCIM endpoint URL from the **Provisioning** tab on your enterprise connection.
+* A SCIM token generated in the Auth0 Dashboard.
+
+</Tab>
+</Tabs>
+
+After you save the configuration, assign a test user to the application in your IdP. Confirm the user appears in Auth0 under **User Management > Users**.
+
+## Create the Event Stream Action
+
+With SCIM provisioning active, Auth0 publishes `user.created`, `user.updated`, and `user.deleted` events. Next, create an Event Stream with an Auth0 Action that forwards these events to your external system.
+
+### Create the Event Stream
+
+1. Navigate to **Auth0 Dashboard > Event Streams**.
+2. Select **Create Event Stream**.
+3. Select **Auth0 Actions** as the stream type.
+4. Enter a descriptive name (for example, `CRM Sync`).
+5. Subscribe to `user.created`, `user.updated`, and `user.deleted`.
+
+### Write the Action handler
+
+In the Action editor, write a handler that maps each event type to the corresponding API call on your external system. The example below targets HubSpot CRM.
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const userData = event.message.data.object;
+    const HUBSPOT_TOKEN = event.secrets.HUBSPOT_TOKEN;
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+
+    const headers = {
+        "Authorization": `Bearer ${HUBSPOT_TOKEN}`,
+        "Content-Type": "application/json"
+    };
+
+    switch (eventType) {
+        case "user.created": {
+            const response = await fetch(BASE_URL, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    properties: {
+                        email: userData.email,
+                        firstname: userData.given_name,
+                        lastname: userData.family_name
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HubSpot create failed: ${response.status}`);
+            }
+            break;
+        }
+        case "user.updated": {
+            // Search for an existing contact by email
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({
+                        properties: {
+                            firstname: userData.given_name,
+                            lastname: userData.family_name
+                        }
+                    })
+                });
+            }
+            break;
+        }
+        case "user.deleted": {
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "DELETE",
+                    headers
+                });
+            }
+            break;
+        }
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+```
+
+### Store the API key as a secret
+
+1. In the Action editor, select **Secrets** (the key icon).
+2. Add a secret named `HUBSPOT_TOKEN` with the value of your HubSpot private app access token.
+
+Using secrets keeps credentials out of your Action source code. To learn more, read [Action Secrets](/docs/customize/actions/write-your-first-action#add-a-secret).
+
+### Save and deploy
+
+Select **Save Draft**, then **Deploy**. The Action is now bound to your Event Stream and runs each time a subscribed event fires.
+
+## Verify the pipeline
+
+1. In your corporate IdP, assign a test user to the application connected to Auth0.
+2. Confirm the user appears in Auth0 under **User Management > Users**.
+3. Confirm a corresponding contact is created in your external system.
+4. Update the user's name in the IdP and verify the change propagates to both Auth0 and the external system.
+5. Unassign the user from the application in the IdP. Confirm the user is deprovisioned in Auth0 and the contact is removed from the external system.
+
+If events are not arriving, check the Event Stream's delivery logs in the Auth0 Dashboard. To learn more, read [Event Testing, Observability, and Failure Recovery](/docs/customize/events/event-testing-observability-and-failure-recovery).
+
+## Extend the pattern
+
+The architecture in this guide is not specific to HubSpot. You can apply the same pattern to any system with a REST API:
+
+* **Salesforce** — create or update leads and contacts.
+* **Segment** — send `identify` and `track` calls for downstream analytics.
+* **Braze** — update user profiles for marketing campaigns.
+* **Internal services** — call internal microservices to provision accounts, assign licenses, or trigger onboarding workflows.
+
+To target a different system, update the Action handler with the appropriate API endpoints and authentication method.
+
+## Learn more
+
+* [Event Types](/docs/customize/events/event-types)
+* [Create an Event Stream](/docs/customize/events/create-an-event-stream)
+* [Events Best Practices](/docs/customize/events/events-best-practices)
+* [Inbound SCIM](/docs/manage-users/user-accounts/manage-user-accounts-with-inbound-scim)
