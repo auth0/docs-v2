@@ -1,0 +1,209 @@
+name: Auto Merge
+
+# Automatically approves and enables auto-merge for API documentation and
+# Events Catalog PRs created by the auth0-docs-automation GitHub App.
+#
+# Safety gates (all must pass before approval):
+#   1. PR author is auth0-docs-automation[bot] on a chore/* branch
+#   2. All changed files are within allowed API documentation paths
+#   3. Deleted MDX files do not exceed threshold of 5
+#   4. main/docs.json (if changed) is valid JSON with expected navigation structure
+#
+# Auto-merge fires only after all required status checks pass (e.g. Semgrep).
+#
+# Prerequisites:
+#   - Enable auto-merge on this repository: Settings > General > Allow auto-merge
+#
+# Note: do NOT add this workflow's job as a required status check — a failing
+# validation should alert the team via Slack but still allow manual merge.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+    branches: [main]
+    paths:
+      - 'main/docs/api/**'
+      - 'main/docs/fr-ca/api/**'
+      - 'main/docs/ja-jp/api/**'
+      - 'main/docs/oas/**'
+      - 'main/docs/events/**'
+      - 'main/docs/fr-ca/events/**'
+      - 'main/docs/ja-jp/events/**'
+      - 'main/docs.json'
+
+jobs:
+  automerge:
+    name: Validate and Auto-Merge
+    runs-on: ubuntu-22.04-2cpu-8ram-75ssd
+    timeout-minutes: 10
+    concurrency:
+      group: automerge-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    if: >-
+      github.event.pull_request.merged == false &&
+      github.event.pull_request.user.type == 'Bot' &&
+      github.event.pull_request.user.login == 'auth0-docs-automation[bot]' &&
+      startsWith(github.event.pull_request.head.ref, 'chore/')
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Validate changed files
+        id: validate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          FILES_JSON=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate)
+
+          # All changed files must be under allowed documentation paths
+          INVALID=$(echo "$FILES_JSON" | jq -r '
+            .[] | select(
+              (
+                (.filename | test("^main/docs/(api|fr-ca/api|ja-jp/api|oas|events|fr-ca/events|ja-jp/events)/")) or
+                .filename == "main/docs.json"
+              ) | not
+            ) | .filename
+          ')
+
+          if [ -n "$INVALID" ]; then
+            {
+              echo 'block_reason<<EOF'
+              echo "Files outside allowed paths: $(echo "$INVALID" | head -3 | paste -sd,)"
+              echo EOF
+            } >> "$GITHUB_OUTPUT"
+            echo "can_auto_merge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Count deleted MDX files — threshold: 5
+          # A large number of deletions indicates a potential pipeline bug
+          # (see: auth0/docs-v2#819) and requires human review.
+          DELETED_MDX=$(echo "$FILES_JSON" | jq '
+            [.[] | select(.status == "removed" and (.filename | endswith(".mdx")))] | length
+          ')
+          echo "Deleted MDX files: $DELETED_MDX"
+
+          if [ "$DELETED_MDX" -gt 5 ]; then
+            {
+              echo 'block_reason<<EOF'
+              echo "$DELETED_MDX MDX files deleted (threshold: 5)"
+              echo EOF
+            } >> "$GITHUB_OUTPUT"
+            echo "can_auto_merge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Validate docs.json structure if it is part of this PR
+          DOCS_JSON_IN_PR=$(echo "$FILES_JSON" | jq '[.[] | select(.filename == "main/docs.json")] | length')
+          if [ "$DOCS_JSON_IN_PR" -gt 0 ]; then
+            gh api "repos/$REPO/contents/main/docs.json?ref=$HEAD_SHA" --jq '.content' \
+              | base64 -d \
+              | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    langs = data['navigation']['languages']
+    assert len(langs) > 0, 'navigation.languages is empty'
+    for lang in langs:
+        assert isinstance(lang, dict) and 'language' in lang, \
+            f'Invalid language entry: {lang}'
+    print(f'docs.json valid — {len(langs)} language(s)')
+except Exception as e:
+    print(f'docs.json validation failed: {e}', file=sys.stderr)
+    sys.exit(1)
+              " || {
+              {
+                echo 'block_reason<<EOF'
+                echo "docs.json failed structural validation"
+                echo EOF
+              } >> "$GITHUB_OUTPUT"
+              echo "can_auto_merge=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            }
+          fi
+
+          echo "can_auto_merge=true" >> "$GITHUB_OUTPUT"
+          echo "block_reason=" >> "$GITHUB_OUTPUT"
+
+      - name: Post ready-to-merge comment
+        if: steps.validate.outputs.can_auto_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          EXISTING=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.body | contains("Ready to auto-merge")) | select(.user.type == "Bot")] | length')
+
+          if [ "$EXISTING" -eq 0 ]; then
+            gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+              -X POST \
+              -f body="## Ready to auto-merge
+
+All safety checks passed. This PR will be merged automatically once all required status checks complete."
+          fi
+
+      - name: Enable auto-merge
+        if: steps.validate.outputs.can_auto_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          OWNER=$(echo "$REPO" | cut -d/ -f1)
+          REPO_NAME=$(echo "$REPO" | cut -d/ -f2)
+
+          PR_ID=$(gh api graphql \
+            -f query='query($owner:String!, $name:String!, $number:Int!) {
+              repository(owner:$owner, name:$name) {
+                pullRequest(number:$number) { id }
+              }
+            }' \
+            -f owner="$OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" \
+            --jq '.data.repository.pullRequest.id')
+
+          gh api graphql \
+            -f query='mutation($id:ID!) {
+              enablePullRequestAutoMerge(input: {pullRequestId:$id, mergeMethod:SQUASH}) {
+                clientMutationId
+              }
+            }' \
+            -f id="$PR_ID" \
+            || { echo "::error::Failed to enable auto-merge"; exit 1; }
+
+      - name: Approve PR
+        if: steps.validate.outputs.can_auto_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            -X POST \
+            -f event=APPROVE \
+            -f body="Approved automatically — all safety checks passed."
+
+      - name: Alert Slack on blocked PR
+        if: steps.validate.outputs.can_auto_merge == 'false'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WORKFLOW_NOTIFICATION_WEBHOOK }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BLOCK_REASON: ${{ steps.validate.outputs.block_reason }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg url    "$PR_URL" \
+            --arg num    "$PR_NUMBER" \
+            --arg reason "$BLOCK_REASON" \
+            '{pull_request_link: $url, source: "Auto Merge Blocked",
+              description: ("PR #" + $num + " blocked from auto-merge.\nReason: " + $reason + "\nManual review required.")}')
+          curl -s --max-time 10 -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+          exit 1
