@@ -1,0 +1,220 @@
+---
+description: Pull events from Auth0 on your own schedule using the Server-Sent Events (SSE) based Cursor API.
+title: Consume Events with the Cursor API
+---
+
+The Cursor API provides a pull-based alternative to Event Streams. Instead of Auth0 pushing events to a destination, your application opens a long-lived connection to `GET /api/v2/events` and receives events as a Server-Sent Events (SSE) stream. You control when to connect, how to resume after a disconnection, and how fast to consume events.
+
+This approach is useful when you need to:
+
+* Process events at your own pace without standing up a webhook endpoint.
+* Replay events from a specific point in time for backfill or recovery.
+* Integrate with systems that prefer polling over push-based delivery.
+
+## How the Cursor API works
+
+When your application connects to the Cursor API, it receives a stream of SSE messages. Each message includes an `id` field that acts as a **cursor** (also called an offset). If the connection drops, your application reconnects and provides the last cursor it received. Auth0 resumes delivery from that point, so no events are lost.
+
+The SSE stream includes the following message types:
+
+| Message type | Purpose |
+| --- | --- |
+| `:connected` | Confirms the connection is established. This is an SSE comment, not a data event. |
+| `retry: <ms>` | Tells the SSE client how long to wait before reconnecting after a disconnect. |
+| `event: <type>` (for example, `user.created`) | A real event with full payload in the `data` field. |
+| `event: offset-only` | A progress marker for sparse streams. Updates the cursor without delivering event data. |
+| `:` (comment) | A heartbeat that keeps the connection alive. No action required. |
+| `event: error` | A terminal error. The stream closes after this message. |
+
+### Example SSE stream
+
+```text wrap lines
+:connected
+
+retry: 2000
+
+event: user.created
+id: MTIzNDIzNDEzCg==
+data: {"offset":"MTIzNDIzNDEzCg==","event":{"id":"evt_abc123","type":"user.created","time":"2025-06-01T12:00:00Z","data":{"object":{"user_id":"auth0|123","email":"jane@example.com"}}}}
+
+event: offset-only
+id: 4LcuTXmVDASuNRQt
+data: {"offset":"4LcuTXmVDASuNRQt"}
+
+: heartbeat
+
+event: user.updated
+id: NTY3ODkwMTIzCg==
+data: {"offset":"NTY3ODkwMTIzCg==","event":{"id":"evt_def456","type":"user.updated","time":"2025-06-01T12:05:00Z","data":{"object":{"user_id":"auth0|123","email":"jane.doe@example.com"}}}}
+```
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+* An Auth0 tenant on an **Enterprise** plan with Events enabled.
+* A Management API access token with the `read:events` scope. To learn more, read [Management API Access Tokens](/docs/secure/tokens/access-tokens/management-api-access-tokens).
+
+## Connect to the Cursor API
+
+Open an SSE connection to the events endpoint on your tenant. The following example uses `curl`:
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    "https://YOUR_DOMAIN/api/v2/events"
+```
+
+### Query parameters
+
+Use query parameters to filter or resume the stream:
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `from` | string | A cursor (offset) returned in a previous `id` field. Delivery resumes after this offset. |
+| `from_timestamp` | string | An ISO 8601 timestamp. Returns events that occurred at or after this time. Mutually exclusive with `from`. |
+| `event_type` | string | Comma-separated list of event types to include (for example, `user.created,user.updated`). |
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    "https://YOUR_DOMAIN/api/v2/events?event_type=user.created,user.updated&from_timestamp=2025-06-01T00:00:00Z"
+```
+
+## Resume after a disconnection
+
+SSE connections can drop for many reasons: network issues, server restarts, or token expiration. To resume without missing events, provide the last cursor your application received.
+
+There are two ways to supply the cursor:
+
+* **`Last-Event-ID` header** — the standard SSE reconnection mechanism. Most SSE client libraries set this header automatically when reconnecting.
+* **`from` query parameter** — use this when your client does not support the `Last-Event-ID` header.
+
+If both are provided, the `Last-Event-ID` header takes precedence.
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    -H "Last-Event-ID: MTIzNDIzNDEzCg==" \
+    "https://YOUR_DOMAIN/api/v2/events"
+```
+
+<Note>
+Persist the latest `id` value from every message (including `offset-only` messages) to durable storage. If your application restarts, use the persisted cursor to resume delivery from where you left off.
+</Note>
+
+## Handle message types
+
+### Real events
+
+Messages where the `event` field matches a known event type (for example, `user.created`) contain the full event payload in the `data` field. Parse the JSON and process the event according to your business logic.
+
+### Offset-only messages
+
+During periods with low event volume, Auth0 sends `offset-only` messages to advance the cursor. These messages do not contain an event payload. Update your stored cursor when you receive them so that a future reconnection does not replay events you have already passed.
+
+### Error messages
+
+An `event: error` message signals a terminal issue such as an expired cursor or a server-side problem. After receiving this message, the stream closes. Your application should log the error, then reconnect with the appropriate cursor or a fresh `from_timestamp`.
+
+### Heartbeats
+
+Lines that begin with `:` are SSE comments used as heartbeats. They keep the connection alive through proxies and load balancers. No processing is required.
+
+## Implement a consumer
+
+The following Node.js example demonstrates a minimal Cursor API consumer that processes events and persists the cursor to a file.
+
+```javascript wrap lines
+const EventSource = require("eventsource");
+const fs = require("fs");
+
+const CURSOR_FILE = "./cursor.txt";
+const AUTH0_DOMAIN = "YOUR_DOMAIN";
+const TOKEN = "YOUR_MANAGEMENT_API_TOKEN";
+
+function loadCursor() {
+    try {
+        return fs.readFileSync(CURSOR_FILE, "utf8").trim();
+    } catch {
+        return null;
+    }
+}
+
+function saveCursor(cursor) {
+    fs.writeFileSync(CURSOR_FILE, cursor);
+}
+
+function connect() {
+    const cursor = loadCursor();
+    let url = `https://${AUTH0_DOMAIN}/api/v2/events?event_type=user.created,user.updated,user.deleted`;
+
+    if (cursor) {
+        url += `&from=${encodeURIComponent(cursor)}`;
+    }
+
+    const es = new EventSource(url, {
+        headers: {
+            "Authorization": `Bearer ${TOKEN}`
+        }
+    });
+
+    // Handle real events
+    for (const type of ["user.created", "user.updated", "user.deleted"]) {
+        es.addEventListener(type, (msg) => {
+            const payload = JSON.parse(msg.data);
+            console.log(`Received ${type}:`, payload.event.id);
+
+            // Process the event here
+
+            saveCursor(msg.lastEventId);
+        });
+    }
+
+    // Handle offset-only progress markers
+    es.addEventListener("offset-only", (msg) => {
+        saveCursor(msg.lastEventId);
+    });
+
+    // Handle terminal errors
+    es.addEventListener("error", (msg) => {
+        if (msg.data) {
+            const errorPayload = JSON.parse(msg.data);
+            console.error("Stream error:", errorPayload.error);
+        }
+        es.close();
+
+        // Reconnect after a delay
+        setTimeout(connect, 5000);
+    });
+}
+
+connect();
+```
+
+<Note>
+The `eventsource` npm package implements the SSE protocol and handles reconnection automatically using the `Last-Event-ID` header. If you use a different SSE library, verify that it supports automatic reconnection and cursor forwarding.
+</Note>
+
+## Error responses
+
+The Cursor API returns standard HTTP status codes when the connection cannot be established:
+
+| Status code | Meaning |
+| --- | --- |
+| `200` | Connection established. Events begin streaming. |
+| `400` | Invalid request. The cursor value is malformed or the requested event type is not supported. |
+| `401` | Missing or invalid access token. |
+| `403` | The access token does not include the `read:events` scope. |
+| `410` | The cursor has expired. Use a `from_timestamp` value to resume from a specific point in time. |
+| `429` | Rate limit exceeded. Wait and retry using the interval from the `Retry-After` header. |
+
+## Learn more
+
+* [Event Types](/docs/customize/events/event-types)
+* [Create an Event Stream](/docs/customize/events/create-an-event-stream)
+* [Events Best Practices](/docs/customize/events/events-best-practices)
+* [Management API Access Tokens](/docs/secure/tokens/access-tokens/management-api-access-tokens)

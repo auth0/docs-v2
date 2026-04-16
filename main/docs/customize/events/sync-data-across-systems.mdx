@@ -1,0 +1,168 @@
+---
+description: Keep an external database or data warehouse synchronized with identity changes in Auth0 by consuming Event Streams.
+title: Synchronize Data Across Systems
+---
+
+With Event Streams, you can keep a copy of your Auth0 identity data in an external system such as a relational database, data warehouse, or search index. When a user profile is created, updated, or deleted in Auth0, an event is delivered to your stream destination so your external system can apply the same change.
+
+## Why synchronize identity data
+
+Maintaining a local copy of identity data is useful when you need to:
+
+* Run analytics, reporting, or compliance queries without calling the Management API.
+* Power search experiences that require low-latency lookups across user attributes.
+* Feed data pipelines that join identity records with other business data.
+* Maintain a backup of user profile state for disaster recovery.
+
+## How it works
+
+1. Auth0 publishes an event each time a user profile changes.
+2. Your Event Stream delivers that event to a destination (webhook, AWS EventBridge, or Auth0 Action).
+3. Your handler inspects the event type and applies the corresponding write operation to the external system.
+
+The following event types are relevant for data synchronization:
+
+| Event type | When it triggers |
+| --- | --- |
+| `user.created` | A new user profile is created in Auth0. |
+| `user.updated` | An existing user profile is modified. |
+| `user.deleted` | A user profile is removed from Auth0. |
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+* An Auth0 tenant on an **Enterprise** plan with Events enabled.
+* An active Event Stream subscribed to `user.created`, `user.updated`, and `user.deleted`. To learn more, read [Create an Event Stream](/docs/customize/events/create-an-event-stream).
+* An external data store (for example, PostgreSQL, MySQL, or a data warehouse) that you can write to from your handler.
+
+## Implement data synchronization
+
+The sections below demonstrate how to handle each event type in a webhook handler. The same logic applies if you use an Auth0 Action or process events from AWS EventBridge.
+
+### Handle user.created
+
+When Auth0 s a `user.created` event, insert a new row in your database.
+
+```javascript wrap lines
+async function handleUserCreated(user, time) {
+    const { user_id, email, name, nickname, created_at, updated_at } = user;
+
+    const query = `
+        INSERT INTO users (user_id, email, name, nickname, created_at, updated_at, last_event_processed)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `;
+    const values = [user_id, email, name, nickname, created_at, updated_at, time];
+
+    await pool.query(query, values);
+}
+```
+
+### Handle user.updated
+
+When Auth0 triggers a `user.updated` event, update the matching row. Compare the event timestamp against the `last_event_processed` column to avoid overwriting with stale data.
+
+```javascript wrap lines
+async function handleUserUpdated(user, time) {
+    const { user_id, email, name, nickname, updated_at } = user;
+
+    const query = `
+        UPDATE users
+        SET email = $1, name = $2, nickname = $3, updated_at = $4, last_event_processed = $5
+        WHERE user_id = $6 AND last_event_processed < $5
+    `;
+    const values = [email, name, nickname, updated_at, time, user_id];
+
+    await pool.query(query, values);
+}
+```
+
+<Note>
+Events can arrive out of order. Always compare timestamps before applying updates to prevent stale data from overwriting newer records. To learn more, read [Events Best Practices](/docs/customize/events/events-best-practices).
+</Note>
+
+### Handle user.deleted
+
+When Auth0 triggers a `user.deleted` event, remove or soft-delete the matching row.
+
+```javascript wrap lines
+async function handleUserDeleted(user) {
+    const { user_id } = user;
+
+    const query = `DELETE FROM users WHERE user_id = $1`;
+
+    await pool.query(query, [user_id]);
+}
+```
+
+### Route events by type
+
+Use a top-level router to dispatch each event to the correct handler.
+
+```javascript wrap lines
+app.post("/webhook", async (req, res) => {
+    const { type, time, data } = req.body;
+    const user = data.object;
+
+    try {
+        switch (type) {
+            case "user.created":
+                await handleUserCreated(user, time);
+                break;
+            case "user.updated":
+                await handleUserUpdated(user, time);
+                break;
+            case "user.deleted":
+                await handleUserDeleted(user);
+                break;
+            default:
+                console.log(`Unhandled event type: ${type}`);
+        }
+
+        res.sendStatus(204);
+    } catch (err) {
+        console.error("Error processing event:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+```
+
+<Note>
+Return an HTTP `2XX` response as quickly as possible. If your handler needs to perform slow operations, place the event on an internal queue and process it asynchronously. To learn more, read [Events Best Practices](/docs/customize/events/events-best-practices).
+</Note>
+
+## Guard against duplicates and ordering issues
+
+Event Streams provide at-least-once delivery, which means your handler may receive the same event more than once. To handle this safely:
+
+* **Track event IDs.** Store each processed event `id` and skip any event you have already handled.
+* **Compare timestamps.** Each event payload includes `created_at` and `updated_at` fields on the `data.object`. Use these fields to determine whether an incoming event is newer than what your system has already recorded.
+* **Use idempotent writes.** Structure your database operations so that applying the same event twice produces the same result. For example, use `INSERT ... ON CONFLICT DO UPDATE` in PostgreSQL.
+
+```sql wrap lines
+INSERT INTO users (user_id, email, name, nickname, created_at, updated_at, last_event_processed)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (user_id) DO UPDATE
+SET email = EXCLUDED.email,
+    name = EXCLUDED.name,
+    nickname = EXCLUDED.nickname,
+    updated_at = EXCLUDED.updated_at,
+    last_event_processed = EXCLUDED.last_event_processed
+WHERE users.last_event_processed < EXCLUDED.last_event_processed;
+```
+
+## Verify synchronization
+
+After you deploy your handler, create a test user in Auth0 and confirm:
+
+1. A new row appears in your external database with the correct profile data.
+2. Update the user's name or email in Auth0. Confirm the database row reflects the change.
+3. Delete the user in Auth0. Confirm the row is removed (or marked as deleted) in your database.
+
+To learn more about testing Event Streams, read [Event Testing, Observability, and Failure Recovery](/docs/customize/events/event-testing-observability-and-failure-recovery).
+
+## Learn more
+
+* [Event Types](/docs/customize/events/event-types)
+* [Create an Event Stream](/docs/customize/events/create-an-event-stream)
+* [Events Best Practices](/docs/customize/events/events-best-practices)
