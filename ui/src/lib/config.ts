@@ -16,6 +16,10 @@ export interface EnvConfig {
     enabled: boolean;
     domainId: string;
   };
+  adobeTagManager: {
+    enabled: boolean;
+    loaderScript: string;
+  };
 }
 
 type Env = 'prod' | 'staging' | 'dev' | 'local';
@@ -38,6 +42,11 @@ const devConfig: EnvConfig = {
     enabled: true,
     domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf-test',
   },
+  adobeTagManager: {
+    enabled: true,
+    loaderScript:
+      'https://assets.adobedtm.com/6bb3f7663515/7006851c9849/launch-b7216a0e70ca-development.min.js',
+  },
 };
 
 const env: { [key in Env]: EnvConfig } = {
@@ -59,6 +68,11 @@ const env: { [key in Env]: EnvConfig } = {
       enabled: true,
       domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf',
     },
+    adobeTagManager: {
+      enabled: true,
+      loaderScript:
+        'https://assets.adobedtm.com/6bb3f7663515/7006851c9849/launch-af624fe9e34f.min.js',
+    },
   },
   staging: {
     apiBaseUrl: 'https://sus.auth0.com/docs/v2',
@@ -78,10 +92,15 @@ const env: { [key in Env]: EnvConfig } = {
       enabled: true,
       domainId: '96e22fd8-d619-4cdd-a3c6-d51529d21faf',
     },
+    adobeTagManager: {
+      enabled: true,
+      loaderScript:
+        'https://assets.adobedtm.com/6bb3f7663515/7006851c9849/launch-e2cf6c285fa0-staging.min.js',
+    },
   },
   dev: devConfig,
   local: {
-    ... devConfig,
+    ...devConfig,
     apiBaseUrl: 'http://localhost:7200/docs/v2',
     dashboardBaseUrl: 'https://manage.local.dev.auth0.com',
   },
@@ -93,12 +112,15 @@ const hostEnvMap: { [key: string]: Env } = {
 
   'sus.auth0.com': 'staging',
   'docs-staging.mintlify.app': 'staging',
+  'docs-staging.mintlify-auth0.app': 'staging',
 
   'tus.auth0.com': 'dev',
   'docs-dev.mintlify.app': 'dev',
+  'docs-dev.mintlify-auth0.app': 'dev',
 
   localhost: 'local',
   '127.0.0.1': 'local',
+  'manage.local.dev.auth0.com': 'local',
 };
 
 const getEnv = (): EnvConfig => {
