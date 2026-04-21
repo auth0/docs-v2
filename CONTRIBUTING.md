@@ -66,7 +66,7 @@ We one use piece of custom front matter:
 
 The path and name of a file determine the slug for the corresponding page.
 
-To add a page to the navigation, you need to [manually add it to the `docs.json`](https://www.mintlify.com/docs/organize/navigation) for that site.
+To add a page to the navigation, you need to [manually add it to the configuration](https://www.mintlify.com/docs/organize/navigation) for that site.
 
 ### Components
 
