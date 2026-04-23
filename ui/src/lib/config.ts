@@ -28,7 +28,7 @@ const devConfig: EnvConfig = {
   apiBaseUrl: 'https://tus.auth0.com/docs/v2',
   dashboardBaseUrl: 'https://manage.tus.auth0.com',
   heapAnalytics: {
-    enabled: true,
+    enabled: false,
     appId: '2269341915',
   },
   sentry: {
@@ -54,7 +54,7 @@ const env: { [key in Env]: EnvConfig } = {
     apiBaseUrl: 'https://auth0.com/docs/v2',
     dashboardBaseUrl: 'https://manage.auth0.com',
     heapAnalytics: {
-      enabled: true,
+      enabled: false,
       appId: '1279799279',
     },
     sentry: {
@@ -78,7 +78,7 @@ const env: { [key in Env]: EnvConfig } = {
     apiBaseUrl: 'https://sus.auth0.com/docs/v2',
     dashboardBaseUrl: 'https://manage.sus.auth0.com',
     heapAnalytics: {
-      enabled: true,
+      enabled: false,
       appId: '2269341915',
     },
     sentry: {
