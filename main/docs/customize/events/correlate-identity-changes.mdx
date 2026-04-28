@@ -32,13 +32,13 @@ The following event types are relevant for data correlation:
 
 Before you begin, make sure you have:
 
-* An Auth0 tenant on an **Enterprise** plan with Events enabled.
+* An Auth0 tenant with Events enabled. To learn more about plan availability, read [Create an Event Stream](/docs/customize/events/create-an-event-stream).
 * An active Event Stream subscribed to the event types you need. To learn more, read [Create an Event Stream](/docs/customize/events/create-an-event-stream).
 * API credentials for the external system you plan to update (for example, a CRM API key or OAuth token).
 
 ## Implement identity correlation
 
-The sections below demonstrate how to correlate Auth0 events with a CRM platform using a webhook handler. The same pattern applies to any external system with a REST API.
+The sections below demonstrate how to correlate Auth0 events with a CRM platform. The handler functions are the same regardless of your Event Stream destination. The [Route events by type](#route-events-by-type) section shows how to dispatch events for both webhook and Auth0 Action destinations.
 
 ### Map Auth0 users to external records
 
@@ -116,7 +116,10 @@ async function handleUserDeleted(user) {
 
 ### Route events by type
 
-Use a top-level router to dispatch each event to the correct handler.
+Use a top-level router to dispatch each event to the correct handler. The examples below show how to route events for webhook and Auth0 Action destinations.
+
+<Tabs>
+<Tab title="Webhook">
 
 ```javascript wrap lines
 app.post("/webhook", async (req, res) => {
@@ -150,6 +153,33 @@ app.post("/webhook", async (req, res) => {
 Return an HTTP `2XX` response as quickly as possible. If your external API calls are slow, place the event on an internal queue and process it asynchronously. To learn more, read [Events Best Practices](/docs/customize/events/events-best-practices).
 </Note>
 
+</Tab>
+<Tab title="Auth0 Action">
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const user = event.message.data.object;
+
+    switch (eventType) {
+        case "user.created":
+            await handleUserCreated(user);
+            break;
+        case "user.updated":
+            await handleUserUpdated(user);
+            break;
+        case "user.deleted":
+            await handleUserDeleted(user);
+            break;
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+```
+
+</Tab>
+</Tabs>
+
 ## Handle edge cases
 
 When correlating identity data across systems, consider the following:
@@ -157,6 +187,108 @@ When correlating identity data across systems, consider the following:
 * **Missing external records.** A `user.updated` event may arrive for a user that does not yet exist in your external system. Decide whether to create the record or log it for manual review.
 * **Rate limits on external APIs.** If Auth0 delivers a burst of events (for example, during a bulk import), your handler may exceed the external API's rate limits. Use an asynchronous queue with backoff to stay within limits.
 * **Partial data.** Not every `user.updated` event includes all profile fields. Apply only the fields present in the event payload to avoid overwriting data with empty values.
+
+## Example: Correlate with HubSpot CRM
+
+The following Auth0 Action demonstrates a complete correlation handler that creates, updates, and deletes contacts in HubSpot CRM. The Action uses the HubSpot Contacts API to search for existing contacts by email and apply the corresponding operation.
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const userData = event.message.data.object;
+    const HUBSPOT_TOKEN = event.secrets.HUBSPOT_TOKEN;
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+
+    const headers = {
+        "Authorization": `Bearer ${HUBSPOT_TOKEN}`,
+        "Content-Type": "application/json"
+    };
+
+    switch (eventType) {
+        case "user.created": {
+            const response = await fetch(BASE_URL, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    properties: {
+                        email: userData.email,
+                        firstname: userData.given_name,
+                        lastname: userData.family_name
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HubSpot create failed: ${response.status}`);
+            }
+            break;
+        }
+        case "user.updated": {
+            // Search for an existing contact by email
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({
+                        properties: {
+                            firstname: userData.given_name,
+                            lastname: userData.family_name
+                        }
+                    })
+                });
+            }
+            break;
+        }
+        case "user.deleted": {
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "DELETE",
+                    headers
+                });
+            }
+            break;
+        }
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+```
+
+To store the HubSpot API key securely, add a secret named `HUBSPOT_TOKEN` in the Action editor. To learn more, read [Action Secrets](/docs/customize/actions/write-your-first-action#add-a-secret).
 
 ## Verify correlation
 
