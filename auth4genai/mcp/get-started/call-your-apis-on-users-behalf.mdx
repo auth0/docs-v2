@@ -25,13 +25,9 @@ import RunMcpServerPython from "/snippets/mcp/get-started/call-your-apis/run-mcp
 import ExchangeAccessTokenJs from "/snippets/mcp/get-started/call-your-apis/exchange-access-token-js.mdx";
 import ExchangeAccessTokenPython from "/snippets/mcp/get-started/call-your-apis/exchange-access-token-python.mdx";
 
-<Note>
-When you purchase the Auth0 for AI Agents add-on, you can use your subscription tier’s maximum Authentication API rate limit for OBO token exchanges. For example, if you are on [Private Cloud 100 RPS](https://auth0.com/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-100-rps-private-cloud), you can exceed the OBO token exchange rate limit of 30 RPS and leverage the full 100 RPS capacity for your OBO token exchange requests. The Authentication API limit is shared and acts as the global ceiling for all Authentication API requests, including logins, token refreshes, and token exchanges combined.
-</Note>
+Auth0 implements the On-Behalf-Of (OBO) token exchange ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) to enable MCP servers to preserve user identity and permissions when calling downstream APIs. In the OBO token exchange flow, the MCP server acts in a dual role: as a resource server when receiving requests from the client, and as a client when calling your downstream API on the user’s behalf.
 
-Auth0 implements the On-Behalf-Of (OBO) token exchange ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) to enable MCP servers to preserve user identity and permissions when calling downstream APIs. In this flow, the MCP server acts in a dual role: as a resource server when receiving requests from the client, and as a client when calling your upstream API on the user's behalf.
-
-To call your APIs on a user's behalf, the MCP server must exchange the Auth0 access token it receives from the MCP client for a new access token with a different audience. The original token has the MCP server as its audience, while the new token has your downstream API as its audience.
+To call your APIs on a user’s behalf, the MCP server must exchange the Auth0 access token it receives from the MCP client for a new access token with a different audience. The original token has the MCP server as its audience, while the new token has your downstream API as its audience.
 
 <Frame>
   <img
@@ -46,10 +42,15 @@ To call your APIs on a user's behalf, the MCP server must exchange the Auth0 acc
   />
 </Frame>
 
-By the end of this quickstart, you should have an MCP server that can:
+<Note>
+When you purchase the Auth0 for AI Agents add-on, you can use your subscription tier’s maximum Authentication API rate limit for OBO token exchanges. For example, if you are on [Private Cloud 100 RPS](https://auth0.com/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-100-rps-private-cloud), you can exceed the OBO token exchange rate limit of 30 RPS and leverage the full 100 RPS capacity for your OBO token exchange requests. The Authentication API limit is shared and acts as the global ceiling for all Authentication API requests, including logins, token refreshes, and token exchanges combined.
+</Note>
 
-* Exchange an Auth0 access token for a new access token with a different audience using the OBO token exchange.
-* Verify the access token using the `@auth0/auth0-api-js` library (which uses `jose` under the hood) or the `auth0-api-python` library for Python against your tenant JWKS, enforcing issuer, audience, and RS256.
+By the end of this quickstart, you will have:
+
+* An MCP server that calls your protected APIs on behalf of authenticated users using OBO token exchange
+* Token verification configured to enforce security policies (issuer, audience, algorithm)
+* A working example demonstrating the end-to-end OBO token exchange flow from client to MCP server to downstream API
 
 <MCPGetStartedPrerequisites />
 
@@ -63,12 +64,12 @@ By the end of this quickstart, you should have an MCP server that can:
 
 ## Set up the Auth0 applications and APIs
 
-To call downstream APIs, the MCP server uses the OBO token exchange to obtain an access token with the audience set to the API rather than the MCP server itself. The MCP server acts in a dual role:
+The MCP server's dual role requires two configurations in Auth0:
 
-1. To the MCP client (e.g., an IDE, an AI assistant), the MCP server acts as a resource server (an API).
-2. To the underlying API (e.g., your own API), the MCP server acts as a client.
+1. As a resource server: An API that the MCP client calls
+2. As a client: An application that can exchange tokens to call downstream APIs
 
-As a result, you need to set up the MCP server twice on your Auth0 tenant, both as an API and as a client.
+Let's set up both configurations.
 
 ### Create an API to represent your MCP server
 
@@ -78,9 +79,12 @@ As a result, you need to set up the MCP server twice on your Auth0 tenant, both 
 
 ### Create an application for your MCP server
 
-To enable your MCP server to act as a client to obtain an Auth0 access token with the OBO token exchange, you need to create an application linked to your MCP server. The application needs to have the same identifier as your MCP server and an `app_type` set to `resource_server`. 
+Create an application that allows your MCP server to act as a client for the OBO token exchange. This application must:
+- Have the same identifier as your MCP server API (`resource_server_identifier`)
+- Use `app_type: resource_server` to link it to the MCP server
+- Enable OBO token exchange in the `token_exchange` configuration
 
-The following code sample creates an application linked to your MCP server with the OBO token exchange grant enabled:
+The following command creates an application linked to your MCP server with OBO token exchange enabled:
 
 ```shell wrap lines
 auth0 api post clients --data '{
@@ -94,20 +98,21 @@ auth0 api post clients --data '{
 }' | jq -c '{client_id, client_secret}' > auth0-app-details.json
 ```
 
-If successful, Auth0 returns a JSON object with the `client_id` and `client_secret` of the newly-created MCP server application. These credentials will be used to configure the MCP server environment.
+Save the `client_id` and `client_secret` from the output; you'll need them to configure your MCP server environment.
 
-### Create a first-party API to call from the MCP server
+### Create a downstream API
 
-Create a protected first-party API that your MCP server tools can call on an authenticated user's behalf.
+Create the protected API that your MCP server will call on the user's behalf. This API represents your business logic API (e.g., a calendar API, document API, etc.).
 
-The following code sample configures a protected first-party API with the following characteristics:
-- Enables [skipping user consent](https://auth0.com/docs/get-started/applications/third-party-applications/user-consent-and-third-party-applications#skip-consent-for-first-party-applications)
-- Creates [client grants](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants) for client and user-delegated access, enabling the MCP server application to call the API on both its own and a user's behalf
+The following command creates an API with the following configurations:
+- Client grants: Gives the MCP server [user-delegated and client access](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants) the API
+- Scope enforcement: Requires specific permissions (`read:private`)
+- First-party status: Skips user consent for your own applications
 
 ```shell
 auth0 api post resource-servers --data '{
   "identifier": "http://localhost:8787/",
-  "name": "Protected First Party API",
+  "name": "Protected Downstream API",
   "signing_alg": "RS256",
   "enforce_policies": true,
   "scopes": [
@@ -125,7 +130,7 @@ auth0 api post resource-servers --data '{
 }'
 ```
 
-Save the `Audience` from the command output; you'll need it in a later step.
+Save the API identifier (audience) from the output; you'll configure it in your environment variables as `API_AUTH0_AUDIENCE`.
 
 ## Sample app
 <Tabs>
@@ -155,7 +160,11 @@ Save the `Audience` from the command output; you'll need it in a later step.
       </Tab>
     </Tabs>
 
-    The sample app uses the OBO token exchange with a `greet` tool that calls your protected API on the authenticated user's behalf.
+    The sample app demonstrates the complete OBO flow with a `greet` tool that:
+    1. Receives an authenticated request from an MCP client
+    2. Exchanges the token for downstream API access
+    3. Calls your protected API on the user's behalf
+    4. Returns the result
 
     ## Install packages
 
@@ -199,7 +208,11 @@ Save the `Audience` from the command output; you'll need it in a later step.
       </Tab>
     </Tabs>
 
-    The sample app uses the OBO token exchange with a `greet` tool that calls your protected API on the authenticated user's behalf.
+    The sample app demonstrates the complete OBO flow with a `greet` tool that:
+    1. Receives an authenticated request from an MCP client
+    2. Exchanges the token for downstream API access
+    3. Calls your protected API on the user's behalf
+    4. Returns the result
 
       ## Install packages
 
