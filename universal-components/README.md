@@ -65,7 +65,7 @@ Both packages are installed via `pnpm` and used throughout the docs-v2 project f
 Example:
 
 ```tsx
-import { DomainTableView } from "@auth0/universal-components-react/spa";
+import { DomainTableView } from "@auth0/universal-components-react";
 
 export function DomainsPage() {
   return <DomainTableView />;
