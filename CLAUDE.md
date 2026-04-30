@@ -200,22 +200,26 @@ Native to Web SSO is currently available in Early Access. To use this feature, y
 - Must include legal agreement links and Product Release Stages reference
 - Used when features require explicit Free Trial terms acceptance
 
-**`<Callout>`** - For plan-based restrictions, Enterprise features, and important context:
+**`<Callout>`** (no attributes) - For plan-based restrictions and top-of-page "Before you Begin" prerequisites:
 ```mdx
-<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+<Callout>
 These security options are available to Enterprise customers only. To upgrade your plan, contact Auth0 Sales.
 </Callout>
 ```
 - Standard for Professional/Enterprise plan restrictions
 - Used for features like Tenant ACL, Self-Service SSO, etc.
-- Always use `icon="file-lines" color="#0EA5E9" iconType="regular"` for consistency
+- Used for prerequisite callouts at the top of a page ("Before you Begin")
 
-**`<Note>`** - For supplementary information or clarifications:
+**`<Callout icon="file-lines" color="#0EA5E9" iconType="regular">`** - Replaces `<Note>` for supplementary information, edge cases, and contextual clarifications:
 ```mdx
-<Note>
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
 Both approaches can be used together for defense-in-depth security. Monitor your tenant logs regularly to detect suspicious registration patterns.
-</Note>
+</Callout>
 ```
+- Use instead of `<Note>` — the icon attributes correct the visual rendering
+- For additional context, edge cases, and clarifications that support the main content
+
+**`<Note>`** - **Do not use.** Use `<Callout icon="file-lines" color="#0EA5E9" iconType="regular">` instead. The `<Note>` component renders with incorrect icons.
 
 For brief inline notes, you can also use markdown blockquote style:
 ```mdx
@@ -404,10 +408,10 @@ There are two approaches you can implement:
 
 ### Best Practices
 
-1. **Use Callout for plan restrictions** - Always use `<Callout>` (not Warning) for Enterprise/Professional plan features
+1. **Use Callout (plain) for plan restrictions and prerequisites** - Use `<Callout>` without attributes for Enterprise/Professional plan features and "Before you Begin" prerequisites at the top of a page
 2. **Use Warning ONLY for Early Access** - Features requiring legal agreement acceptance
 3. **Use Info for contextual help** - Help users understand why something might not work as expected
-4. **Use Note for supplementary info** - Additional context, tips, or clarifications
+4. **Use Callout for supplementary info** - Use `<Callout icon="file-lines" color="#0EA5E9" iconType="regular">` for additional context, edge cases, and clarifications. Do not use `<Note>`
 5. **Use Tip for productivity** - Shortcuts, helpful hints, or time-saving suggestions
 6. **Use Steps for tutorials** - Sequential instructions in quickstart and how-to guides
 7. **Use Tabs for implementation methods** - Dashboard vs API, different SDKs for same action
