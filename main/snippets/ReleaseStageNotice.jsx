@@ -5,12 +5,11 @@ export const ReleaseStageNotice = ({
     contact,
     terms
 }) => {
-    let stageText = "a product release stage";
-    if (stage == "beta") {
-        stageText = "Beta";
-    } else if (stage == "ea") {
-        stageText = "Early Access";
-    }
+    const stageTextMap = {
+        "beta": "Beta",
+        "ea": "Early Access",
+    };
+    const stageText = stageTextMap[stage] || "a product release stage";
 
     const prsLink = "/docs/troubleshoot/product-lifecycle/product-release-stages";
     const linkify = (text, url) => {
@@ -19,9 +18,9 @@ export const ReleaseStageNotice = ({
         )
     };
 
-    const includeDeets = (enterprise, contact, terms) => {
-        const hasDeets = terms || enterprise || contact;
-        if (!hasDeets) return null;
+    const includeDetails = (enterprise, contact, terms) => {
+        const hasDetails = terms || enterprise || contact;
+        if (!hasDetails) return null;
 
         return (
         <span data-as="p">
@@ -38,7 +37,7 @@ export const ReleaseStageNotice = ({
                 <strong>The {feature} feature is in {linkify(stageText, prsLink)}.</strong>
             </span>
 
-            {includeDeets(enterprise, contact, terms)}
+            {includeDetails(enterprise, contact, terms)}
         </Warning>
     )
 }
