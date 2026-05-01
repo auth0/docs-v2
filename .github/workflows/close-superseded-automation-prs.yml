@@ -1,0 +1,86 @@
+name: Close superseded automation PRs
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close-superseded:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      AUTOUPDATE_LABELS_ALLOWLIST: "authn-explorer-autoupdate,events-catalog-autoupdate,management-explorer-autoupdate,myaccount-explorer-autoupdate,myorg-explorer-autoupdate"
+    steps:
+      - name: Check preconditions
+        id: check
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Do not run if triggering PR is not created by the automation bot
+          if [[ "$PR_AUTHOR" != "auth0-docs-automation[bot]" ]]; then
+            echo "Author is '$PR_AUTHOR', not 'auth0-docs-automation[bot]'. Skipping."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Do not run if triggering PR is not a `main` docs site PR (indicated by the "main-docs" label)
+          if ! echo "$PR_LABELS" | jq -e 'index("main-docs")' > /dev/null; then
+            echo "PR does not have the 'main-docs' label. Skipping."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Count how many autoupdate labels from the allowlist are present on the PR. If there are zero, skip.
+          # If there are more than one, skip (to avoid ambiguity about which label to use in the next step).
+          ALLOWLIST=$(echo "$AUTOUPDATE_LABELS_ALLOWLIST" | tr ',' '\n' | jq -R . | jq -sc .)
+          AUTOUPDATE_LABELS=$(echo "$PR_LABELS" | jq -r --argjson allowlist "$ALLOWLIST" '.[] | select(. as $l | $allowlist | index($l))')
+          COUNT=$(echo "$AUTOUPDATE_LABELS" | grep -c . || true)
+
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "No autoupdate label found on this PR. Skipping."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$COUNT" -gt 1 ]]; then
+            echo "Multiple autoupdate labels found: $(echo "$AUTOUPDATE_LABELS" | tr '\n' ' '). Cannot determine which to use. Skipping."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "autoupdate_label=$(echo "$AUTOUPDATE_LABELS" | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Close superseded PRs
+        if: steps.check.outputs.should_run == 'true'
+        env:
+          AUTOUPDATE_LABEL: ${{ steps.check.outputs.autoupdate_label }}
+          CURRENT_PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          OLD_PRS=$(gh pr list \
+            --repo "$REPO" \
+            --author "auth0-docs-automation[bot]" \
+            --state open \
+            --label "main-docs" \
+            --label "$AUTOUPDATE_LABEL" \
+            --json number \
+            --jq '.[].number')
+
+          for PR_NUMBER in $OLD_PRS; do
+            if [[ "$PR_NUMBER" -eq "$CURRENT_PR" ]]; then
+              continue
+            fi
+
+            COMMENT="Closed by [automation](${RUN_URL}). Reason: Superseded by [#${CURRENT_PR}](https://github.com/${REPO}/pull/${CURRENT_PR})."
+
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+            gh pr close "$PR_NUMBER" --repo "$REPO"
+
+            echo "Closed PR #${PR_NUMBER} (superseded by #${CURRENT_PR})."
+          done
