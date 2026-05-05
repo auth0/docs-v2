@@ -24,7 +24,7 @@ export const ReleaseStageNotice = ({
 
         return (
         <span data-as="p">
-            { enterprise && "This feature requries an Enterprise plan. " } 
+            { enterprise && "This feature requires an Enterprise plan. " } 
             { contact && ("To participate, contact " + contact + ". ") }
             { terms && (<>By using this feature, you agree to the applicable Free Trial terms in Okta's {linkify("Master Subscription Agreement", "https://www.okta.com/legal")}.</>) }
         </span>
