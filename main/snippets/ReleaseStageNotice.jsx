@@ -1,7 +1,7 @@
 export const ReleaseStageNotice = ({
     feature,
     stage,
-    enterprise,
+    plans,
     contact,
     terms
 }) => {
@@ -18,13 +18,13 @@ export const ReleaseStageNotice = ({
         )
     };
 
-    const includeDetails = (enterprise, contact, terms) => {
-        const hasDetails = terms || enterprise || contact;
+    const includeDetails = (plans, contact, terms) => {
+        const hasDetails = terms || plans || contact;
         if (!hasDetails) return null;
 
         return (
         <span data-as="p">
-            { enterprise && "This feature requires an Enterprise plan. " } 
+            { plans && (<>This feature is available for {linkify(`${plans} plans`, "https://auth0.com/pricing")}. </>) }
             { contact && ("To participate, contact " + contact + ". ") }
             { terms && (<>By using this feature, you agree to the applicable Free Trial terms in Okta's {linkify("Master Subscription Agreement", "https://www.okta.com/legal")}.</>) }
         </span>
@@ -37,7 +37,7 @@ export const ReleaseStageNotice = ({
                 <strong>The {feature} feature is in {linkify(stageText, prsLink)}.</strong>
             </span>
 
-            {includeDetails(enterprise, contact, terms)}
+            {includeDetails(plans, contact, terms)}
         </Warning>
     )
 }
