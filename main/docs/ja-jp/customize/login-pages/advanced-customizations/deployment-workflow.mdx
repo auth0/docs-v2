@@ -1,0 +1,95 @@
+---
+description: ACULデプロイメントワークフローについて学ぶ
+title: ACULデプロイメントワークフロー
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+このワークフローには、以下が必要です。
+    * [ユニバーサルログイン](docs/ja-jp/authenticate/login/auth0-universal-login)と[カスタムドメイン](/docs/ja-jp/customize/custom-domains)が構成されたAuth0開発テナント。
+    * Auth0の[ファーストパーティアプリケーション](/docs/ja-jp/get-started/auth0-overview/create-applications#create-applications)。
+    * Auth0テナントで[Identifier First認証](/docs/ja-jp/authenticate/login/auth0-universal-login/identifier-first)が有効になっていること。
+    * IAMロールとS3バケットを作成し、CloudFrontを構成する権限を持つAWSアカウント。
+    * カスタムログイン画面を含むGitHubリポジトリ。
+</Callout>
+
+ACUL本番環境デプロイメントワークフローは、ACUL画面のビルドとデプロイメントを行い、テナントがそれらを使用できるように構成します。GitHub Actionsを使用して以下を行います。
+
+    * 画面アセットバンドルをビルド
+        * ワークフローは[config/deploy_config.yml](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/deploy_config.yml)ファイルを読み取り、デプロイメントの対象としてマークされている画面を特定します。
+        * デプロイメントの対象が見つかった場合、ワークフローはViteを使用してコードを`/dist`ディレクトリに出力することで、ACULアセットをビルドします。
+    * アセットをAWS S3にアップロード
+        * ワークフローは[OpenID Connect (OIDC)](docs/ja-jp/authenticate/protocols/openid-connect-protocol)を使用してAWSで安全に認証します。 
+        * `/dist`ディレクトリの内容をS3バケットにアップロードします。
+    * Auth0テナントを構成 
+        * ワークフローは、[Auth0 CLI](https://auth0.github.io/auth0-cli/)とM2Mアプリケーションを使用して、テナント内の画面を構成します。
+        * [config/screen-to-prompt-mapping.js](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/screen-to-prompt-mapping.js)ファイルを使用して、各画面を適切なAuth0画面にマッピングします。
+        * CloudFront CDNのアセットを参照するように、Auth0画面のカスタマイズ設定を更新します。
+
+構成が完了すると、プロジェクトの`main`ブランチへの`git push`によってGitHubワークフローが開始されます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+ACUL本番環境デプロイメントワークフロー例の全体像については、Githubの「[ACUL GITHUB ACTIONS]」(https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/GITHUB_ACTIONS.md)をご覧ください。
+</Callout>
+
+### 1. Auth0を構成する
+
+ [マシンツーマシン](/docs/ja-jp/get-started/auth0-overview/create-applications/machine-to-machine-apps)アプリケーションを作成し、テナント設定を更新する権限をGitHubワークフローに付与します。
+
+1. [［Auth0 Dashboard］>［アプリケーション］](https://manage.auth0.com/#/applications)に移動します。
+2. **［アプリケーションの作成］**を選択します。
+3. **［マシンツーマシンアプリケーション］**を選択します。
+4. **［名前］**にわかりやすい名前を追加します。例：`GitHub ACUL Deployment`。
+5. **［作成］**を選択します。
+6. **［マシンツーマシンアプリケーションの認可］**で、**［Auth0 Management API］**を選択します。
+7. 次に挙げる権限を選択します。
+    * `read:branding`
+    * `update:branding`
+    * `read:prompts`
+    * `update:prompts`
+    * `read:custom_domains`
+8. **［認可］**を選択します。
+9. **［設定］**タブに移動して、次の内容を書き留めます。
+    * `Domain`
+    * `Client ID`
+    * `Client Secret`
+
+### 2. Amazon Web Servicesでアセットをアップロードして提供する
+
+アセットをアップロードして提供するには、AWS S3バケットが必要であり、CloudFrontをCDNとして設定する必要があります。
+
+ * **AWS S3バケットを作成**します。パブリックアクセスをすべてブロックして、このバケットをプライベートにします。このプライベートバケットにアセットを保存します。
+ * **CloudFrontディストリビューションを設定**します。このCDNはアセットを安全に提供します。オリジンアクセスコントロール（OAC）を使用して、S3バケットを`Origin`として使用するように設定する必要があります。
+
+### 3. GitHub Action用のAWS IAMロールを作成する
+
+AWSで**IAMロール**を作成し、AWS S3にファイルをアップロードする権限をGitHub Actionsに付与します。
+
+ <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+* このIAMロールは、Webアイデンティティ（OIDC）を使用し、`token.actions.githubusercontent.com`を信頼する必要があります。
+* このロールには、S3バケットに対する`s3:PutObject`、`s3:DeleteObject`、`s3:ListBucket`の権限を付与するポリシーが必要です。
+</Callout>
+
+### 4. GitHubリポジトリを構成する
+
+次の手順でGitHubリポジトリを構成します。
+
+1. **［GitHub］>［設定］**に移動します。
+2. **［シークレットと変数］**を選択し、**［アクション］**を選択します。
+3. **［新しいリポジトリシークレット］**を選択します。
+
+次のリポジトリシークレットを追加します。
+
+    * `AWS_S3_ARN`：作成したIAMロールのARN。
+    * `S3_BUCKET_NAME`：S3バケットの名前。
+    * `AWS_REGION`：S3バケットが配置されているリージョン。例：`us-east-1`
+    * `S3_CDN_URL`：CloudFrontディストリビューションのドメイン名。末尾にスラッシュをつけないでください。例：https://d1234abcdef.cloudfront.net
+    * `AUTH0_DOMAIN`：Auth0テナントドメイン。
+    * `AUTH0_CLIENT_ID`：M2MアプリケーションのクライアントID。
+    * `AUTH0_CLIENT_SECRET`：M2Mアプリケーションのクライアントシークレット。
+
+### 5. デプロイメントを構成する
+`.github/config/`ディレクトリにある構成ファイルを編集することで、どの画面をデプロイするかを制御できます。
+
+* [`config/deploy_config.yml`](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/deploy_config.yml)：メインコントロールパネルです。デプロイする画面は`true`に設定し、スキップする画面は`false`に設定します。
+* [`config/screen-to-prompt-mapping.js`](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/screen-to-prompt-mapping.js)：内部画面ディレクトリ名をマッピングします。例：`mfa-sms-challenge` を公式Auth0プロンプト名`mfa-sms`にマッピングします。
+* [`config/context-configuration.js`](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/context-configuration.js)：Auth0コンテキストデータを定義します。例：ブランディング設定はカスタム画面で利用可能にする必要があります。

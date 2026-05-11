@@ -7,6 +7,7 @@ import { NavActions } from '@/components';
 import { initFeedbackListeners } from '@/lib/feedback';
 import { overrideHistoryMethods } from '@/lib/history';
 import { initOneTrust } from '@/lib/one-trust';
+import { initSentry } from '@/lib/sentry';
 import { initRootStore } from '@/stores';
 
 function mountApp(root: HTMLElement) {
@@ -36,6 +37,9 @@ async function main() {
 
   // Initialize one-trust for cookie-consent management
   initOneTrust();
+
+  // Initialize sentry for error tracking and monitoring
+  initSentry();
 
   // Initialize feedback listeners for Mintlify documentation pages
   initFeedbackListeners();

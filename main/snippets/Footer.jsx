@@ -1,7 +1,7 @@
 export const Footer = () => {
   const footerData = {
     socials: {
-      "x-twitter": "https://twitter.com/auth0",
+      "x-twitter": "https://x.com/auth0",
       github: "https://github.com/auth0",
       linkedin: "https://www.linkedin.com/company/auth0",
     },
@@ -13,7 +13,7 @@ export const Footer = () => {
           { label: "Code Samples & Guides", href: "https://developer.auth0.com/resources" },
           { label: "Zero Index Newsletter", href: "https://auth0.com/blog/newsletter" },
           { label: "Blog", href: "https://auth0.com/blog" },
-          { label: "Changelog", href: "https://auth0.com/docs/deploy/changelog" },
+          { label: "Changelog", href: "https://auth0.com/changelog" },
         ],
       },
       {
@@ -47,6 +47,11 @@ export const Footer = () => {
           { label: "Careers", href: "https://www.okta.com/company/careers" },
           { label: "Okta + Auth0", href: "https://www.okta.com/okta-and-auth0" },
           { label: "About us", href: "https://auth0.com/about" },
+          { label: "Status", href: "https://status.auth0.com/" },
+          { label: "Legal", href: "https://www.okta.com/legal/" },
+          { label: "Privacy", href: "https://www.okta.com/legal/privacy-policy/" },
+          { label: "Terms", href: "https://www.okta.com/legal/terms-of-service/" },
+          { label: "Your Privacy Choices", href: "https://auth0.com/your-privacy-choices" },
         ],
       },
     ],
@@ -66,12 +71,12 @@ export const Footer = () => {
               <img
                 className="nav-logo w-auto relative object-contain block dark:hidden max-w-48 h-[26px]"
                 alt="Auth0 Docs"
-                src="/docs/logo/light.svg"
+                src="/docs/images/logo/light.svg"
               />
               <img
                 className="nav-logo w-auto relative object-contain hidden dark:block max-w-48 h-[26px]"
                 alt="Auth0 Docs"
-                src="/docs/logo/dark.svg"
+                src="/docs/images/logo/dark.svg"
               />
             </a>
             <div className="gap-4 min-w-[140px] max-w-[492px] flex-wrap h-fit flex justify-end md:justify-start">

@@ -27,7 +27,7 @@ export function heap(heapId: string): void {
   heap.load=function(e,t){window.heap.envId=e,window.heap.clientConfig=t=t||{},
   window.heap.clientConfig.shouldFetchServerConfig=!1;
   var a=document.createElement("script");
-  a.type="text/javascript",a.async=!0,a.src="https://cdn.us.heap-api.com/config/"+e+"/heap_config.js";
+  a.type="text/javascript",a.async=!0,a.crossOrigin="anonymous",a.src="https://cdn.us.heap-api.com/config/"+e+"/heap_config.js";
   var r=document.getElementsByTagName("script")[0];r.parentNode.insertBefore(a,r);
   var n=["init",
   "startTracking",
@@ -57,6 +57,7 @@ export function heap(heapId: string): void {
   script.type = 'text/plain';
   script.classList.add('consent-required:C0002'); // needed for one-trust
   script.async = true;
+  script.crossOrigin = 'anonymous';
 
   document.body.append(script);
 }
