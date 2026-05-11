@@ -1,0 +1,191 @@
+---
+title: Configure and Use Online Refresh Tokens
+description: How to configure and use Online Refresh Tokens.
+---
+
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="Online Refresh Tokens"
+    stage="beta"
+    enterprise="true"
+/>
+
+## Configure ORTs
+
+Online Refresh Tokens (ORTs) must be enabled at the [API (Resource Server)](/docs/get-started/apis/api-settings) level using the Auth0 Dashboard or the Management API.
+
+### Configure using the Dashboard
+
+1. Navigate to [Dashboard > Applications > API](https://manage.auth0.com/#/apis).
+2. Select the API you want to configure.
+3. In the **Settings** tab, enable the **Allow Online Access** toggle.
+
+   <Frame>![Dashboard Applications APIs Settings Allow Online Access](/docs/images/refresh-tokens/allow-online-access.png)</Frame>
+
+4. Select **Save**.
+
+To review and configure idle timeout and absolute lifetime values for sessions, review the [Tenant Session Expiration](https://manage.auth0.com/#/tenant/advanced) settings. To learn more, read [Configure Session lifetime](/docs/manage-users/sessions/configure-session-lifetime).
+
+### Configure using the Management API
+
+To enable ORTs, make a `PATCH` call to the [Update Resource Server](/docs/api/management/v2/resource-servers/patch-resource-servers-by-id) endpoint:
+
+```bash
+curl --request PATCH \
+  --url 'https://<YOUR_DOMAIN>/api/v2/resource-servers/<YOUR_RESOURCE_SERVER_ID>' \
+  --header 'authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>' \
+  --header 'content-type: application/json' \
+  --data '{"allow_online_access": true}'
+```
+
+To verify the configuration, make a `GET` call to the resource server:
+
+```bash
+curl --request GET \
+  --url 'https://<YOUR_DOMAIN>/api/v2/resource-servers/<YOUR_RESOURCE_SERVER_ID>' \
+  --header 'authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>'
+```
+
+The response includes the `allow_online_access` property:
+
+```json
+{
+  "id": "resource-server-id",
+  "name": "My API",
+  "identifier": "https://my-api.example.com",
+  "allow_online_access": true,
+  ...
+}
+```
+
+## Get an ORT
+
+To get an ORT, include the `online_access` [scope](/docs/get-started/apis/scopes) in your authorization request using the [Authorization Code Flow](/docs/get-started/authentication-and-authorization-flow/authorization-code-flow) or [Authorization Code Flow with PKCE](/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce).
+
+```bash
+https://<YOUR_DOMAIN>/authorize \
+    audience=<YOUR_API_AUDIENCE> \
+    scope=openid profile online_access \
+    response_type=code \
+    client_id=<YOUR_CLIENT_ID> \
+    redirect_uri=<https://YOUR_APP/callback> \
+    state=<OPAQUE_VALUE>
+```
+
+After the user authenticates, exchange the authorization code for tokens:
+
+```bash
+curl --request POST \
+  --url 'https://<YOUR_DOMAIN>/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data grant_type=authorization_code \
+  --data 'client_id=<YOUR_CLIENT_ID>' \
+  --data 'code=<YOUR_AUTHORIZATION_CODE>' \
+  --data 'redirect_uri=<https://YOUR_APP/callback>' \
+  --data 'code_verifier=<YOUR_CODE_VERIFIER>'
+```
+
+The token response includes the ORT:
+
+```json
+{
+  "access_token": "eyJ...",
+  "id_token": "eyJ...",
+  "refresh_token": "ORT...",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+ORTs are prefixed with `ORT` to distinguish them from refresh tokens. However, you should treat the token as opaque and not rely on its internal structure.
+</Callout>
+
+## Use an ORT
+
+Exchange the ORT for a new [access token](/docs/secure/tokens/access-tokens) when the current access token expires or is about to expire:
+
+```bash
+curl --request POST \
+  --url 'https://<YOUR_DOMAIN>/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data grant_type=refresh_token \
+  --data 'client_id=<YOUR_CLIENT_ID>' \
+  --data 'refresh_token=<YOUR_ONLINE_REFRESH_TOKEN>'
+```
+
+The response contains a new access token.
+If your request includes an `openid` scope, the response includes a new [ID token](/docs/secure/tokens/id-tokens):
+
+```json
+{
+  "access_token": "eyJ...",
+  "id_token": "eyJ...",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Auth0 does not issue a new `refresh_token` and as ORTs do not rotate, you continue using the same ORT for subsequent exchanges.
+</Callout>
+
+### Session extension behavior
+
+Each successful token exchange:
+
+* **Resets the session idle timeout:** The idle timeout is restored to its full duration.
+* **Does not extend absolute lifetime:** The session's absolute expiration remains unchanged.
+* **Maintains SSO:** Other applications can get tokens via SSO as long as the session is alive.
+
+## Revoke an ORT
+
+When you revoke an ORT, it terminates the entire Auth0 session, not just the token. This invalidates all ORTs bound to that session and ends SSO for the user.
+
+```bash
+curl --request POST \
+  --url 'https://<YOUR_DOMAIN>/oauth/revoke' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data 'client_id=<YOUR_CLIENT_ID>' \
+  --data 'token=<YOUR_ONLINE_REFRESH_TOKEN>'
+```
+
+## Use ORTs with Actions
+
+You can use ORTs with Auth0 [Actions](/docs/customize/actions/actions-overview) and the [post-login trigger](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger). 
+
+Using Actions you can:
+* Use the `event.refresh_token` object to determine if the token is an ORT.
+* Access session specific data using the `event.session` object to make decisions based on the current session state
+
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  // Check if token is an Online refresh token
+  
+  if (event.refresh_token?.access == 'online') {
+    // The token is an ORT, you can then reference event.session and api.session
+    console.log('Exchanging Online Refresh Token bound to Session ID: ', event.session?.id);
+    // Pull the session metadata and add it in the tokens
+    // Assuming the session metadata was stored previously
+    const importantInformation = event.session?.metadata?.importantInformation;
+    api.accessToken.setCustomClaim('info', importantInformation);
+    api.idToken.setCustomClaim('info', importantInformation);
+  }
+};
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Auth0 revokes the entire user session rather than just the token, when the `api.refreshToken.revoke()` method is used with an ORT. 
+</Callout>
+
+## Learn more
+
+* [Online Refresh Tokens](/docs/secure/tokens/refresh-tokens/online-refresh-tokens/online-refresh-tokens)
+* [Refresh Token Rotation](/docs/secure/tokens/refresh-tokens/refresh-token-rotation)
+* [Get Refresh Tokens](/docs/secure/tokens/refresh-tokens/get-refresh-tokens)
+* [Use Refresh Tokens](/docs/secure/tokens/refresh-tokens/use-refresh-tokens)
+* [Session Lifecycle](/docs/manage-users/sessions/session-lifecycle)
+* [Configure Silent Authentication](/docs/authenticate/login/configure-silent-authentication)
+* [Token Best Practices](/docs/secure/tokens/token-best-practices)
