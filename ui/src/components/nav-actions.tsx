@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 
 import { cn } from '@/lib/utils';
@@ -14,8 +14,11 @@ const NavActions = observer(({ className }: { className?: string }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isLgUp = useBreakpoint('lg');
   const user = sessionStore.user;
+  const [isPositioned, setIsPositioned] = useState(false);
 
-  useEffect(() => {
+  // Use useLayoutEffect to calculate position synchronously before paint
+  // This prevents visible layout shift
+  useLayoutEffect(() => {
     const updatePosition = () => {
       const referenceDiv = isLgUp
         ? document.querySelector('.topbar-right-container')
@@ -28,6 +31,7 @@ const NavActions = observer(({ className }: { className?: string }) => {
       if (wrapperRef.current) {
         const iconsWidth = isLgUp ? 30 + 16 : -8; // icon width + margin
         wrapperRef.current.style.right = `${window.innerWidth - right + iconsWidth}px`;
+        setIsPositioned(true);
       }
     };
 
@@ -46,6 +50,9 @@ const NavActions = observer(({ className }: { className?: string }) => {
       ref={wrapperRef}
       className={cn(
         'adu:fixed adu:top-0 adu:z-30 adu:flex adu:h-14 adu:items-center adu:gap-3',
+        // Hide until positioned to prevent layout shift flash
+        !isPositioned && 'adu:opacity-0',
+        isPositioned && 'adu:opacity-100 adu:transition-opacity adu:duration-75',
         className,
       )}
     >
