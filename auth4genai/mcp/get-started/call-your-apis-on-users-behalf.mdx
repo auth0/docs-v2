@@ -25,9 +25,9 @@ import RunMcpServerPython from "/snippets/mcp/get-started/call-your-apis/run-mcp
 import ExchangeAccessTokenJs from "/snippets/mcp/get-started/call-your-apis/exchange-access-token-js.mdx";
 import ExchangeAccessTokenPython from "/snippets/mcp/get-started/call-your-apis/exchange-access-token-python.mdx";
 
-To call your APIs on behalf of your users, the MCP server needs to exchange the Auth0 access token it received from the MCP client (with the audience set to the MCP server itself) for a new Auth0 access token with the audience set to your API.
+Auth0 implements the On-Behalf-Of (OBO) token exchange ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) to enable MCP servers to preserve user identity and permissions when calling downstream APIs. In the OBO token exchange flow, the MCP server acts in a dual role: as a resource server when receiving requests from the client, and as a client when calling your downstream API on the user’s behalf.
 
-In Auth0, this is called Custom Token Exchange and uses [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html). This flow involves the MCP server acting as both a resource server (for the client) and a client (for the upstream API).
+To call your APIs on a user’s behalf, the MCP server must exchange the Auth0 access token it receives from the MCP client for a new access token with a different audience. The original token has the MCP server as its audience, while the new token has your downstream API as its audience.
 
 <Frame>
   <img
@@ -42,10 +42,11 @@ In Auth0, this is called Custom Token Exchange and uses [RFC 8693](https://www.r
   />
 </Frame>
 
-By the end of this quickstart, you should have an MCP server that can:
+By the end of this quickstart, you will have:
 
-* Exchange an Auth0 access token for another Auth0 access token with a different audience using Custom Token Exchange
-* Verify the access token using the `@auth0/auth0-api-js` library (which uses `jose` under the hood) or the `auth0-api-python` library for Python against your tenant JWKS, enforcing issuer, audience, and RS256
+* An MCP server that calls your protected APIs on behalf of authenticated users using the OBO token exchange
+* Token verification and exchange using the `@auth0/auth0-api-js` library (JavaScript) or `auth0-api-python` library (Python)
+* A working example demonstrating the end-to-end OBO token exchange flow from client to MCP server to downstream API
 
 <MCPGetStartedPrerequisites />
 
@@ -57,14 +58,14 @@ By the end of this quickstart, you should have an MCP server that can:
 <MCPGetStartedCreateRoles />
 </AccordionGroup>
 
-## Set up the Auth0 Applications and APIs
+## Set up the Auth0 applications and APIs
 
-When an MCP server needs to call underlying APIs, it needs to perform a Custom Token Exchange to obtain an access token with the audience set to the API rather than the MCP server itself. Because of this architecture, the MCP server acts in a dual role.
+The MCP server's dual role requires two configurations in Auth0:
 
-1. To the MCP client (e.g., an IDE, an AI assistant), the MCP server acts as a **Resource Server** (an API).
-2. To the underlying API (e.g., your own API), the MCP server acts as a **Client**.
+1. As a resource server: An API that the MCP client calls
+2. As a client: An application that can exchange tokens to call downstream APIs
 
-Because of this, you will set up the MCP server twice on your Auth0 tenant, both as an API and as a Client.
+Let's set up both configurations.
 
 ### Create an API to represent your MCP server
 
@@ -72,9 +73,14 @@ Because of this, you will set up the MCP server twice on your Auth0 tenant, both
 
 <AssignPermissionsToRoles />
 
-### Create an Application for your MCP server
+### Create an application for your MCP server
 
-In the custom token exchange scenario, the MCP server acts as a client in order to obtain an Auth0 access token with custom token exchange:
+Create an application that allows your MCP server to act as a client for the OBO token exchange. This application must:
+- Have the same identifier as your MCP server API (`resource_server_identifier`)
+- Use `app_type: resource_server` to link it to the MCP server
+- Enable OBO token exchange in the `token_exchange` configuration
+
+The following command creates an application linked to your MCP server with OBO token exchange enabled:
 
 ```shell wrap lines
 auth0 api post clients --data '{
@@ -83,32 +89,44 @@ auth0 api post clients --data '{
   "oidc_conformant": true,
   "resource_server_identifier": "http://localhost:3001/",
   "token_exchange": {
-    "allow_any_profile_of_type": ["custom_authentication"]
+    "allow_any_profile_of_type": ["on_behalf_of_token_exchange"]
   }
 }' | jq -c '{client_id, client_secret}' > auth0-app-details.json
 ```
 
-The output of the command will be a JSON object with the `client_id` and `client_secret` of the newly created client, which will be used in the next steps to configure the MCP server environment.
+Save the `client_id` and `client_secret` from the output; you'll need them to configure your MCP server environment.
 
-And finally, because you need an API to call to, let's create one.
+### Create a downstream API
 
-### Create a first-party API to call from the MCP server
+Create the protected API that your MCP server will call on the user's behalf. This API represents your business logic API (e.g., a calendar API, document API, etc.).
 
-Since your objective is to have the MCP server make a tool call that calls a protected first-party API you need to configure an API in Auth0, this will be your upstream API:
+The following command creates an API with the following configurations:
+- Client grants: Gives the MCP server [user-delegated and client access](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants) the API
+- Scope enforcement: Requires specific permissions (`read:private`)
+- First-party status: Skips user consent for your own applications
 
 ```shell
 auth0 api post resource-servers --data '{
   "identifier": "http://localhost:8787/",
-  "name": "Protected First Party API",
+  "name": "Protected Downstream API",
   "signing_alg": "RS256",
   "enforce_policies": true,
   "scopes": [
     {"value": "read:private", "description": "Private scope"}
-  ]
-}' | jq -r '"Audience: " + .identifier'
+  ],
+  "subject_type_authorization": {
+    "user": {
+        "policy": "require_client_grant"
+    },
+    "client": {
+        "policy": "require_client_grant"
+    }
+  },
+  "skip_consent_for_verifiable_first_party_clients": false
+}'
 ```
 
-Save the `Audience` from the command output; you'll need it in a later step.
+Save the API identifier (audience) from the output; you'll configure it in your environment variables as `API_AUTH0_AUDIENCE`.
 
 ## Sample app
 <Tabs>
@@ -120,29 +138,33 @@ Save the `Audience` from the command output; you'll need it in a later step.
 
         <DownloadQuickstartButton
           category="auth-for-mcp"
-          framework="fastmcp-mcp-customtokenexchange-js"
+          framework="fastmcp-mcp-on-behalf-of-tokenexchange-js"
         />
 
         Once downloaded, extract the files and open the project in your preferred IDE.
       </Tab>
       <Tab title="Clone GitHub repository">
-        Clone the repository and navigate to the sample app folder which includes a FastMCP MCP server with an Auth0 integration and a protected API built with
+        Clone the repository and navigate to the sample app folder, which includes a FastMCP MCP server with an Auth0 integration and a protected API built with
         [Fastify](https://fastify.dev/).
 
         ```shell wrap lines
         git clone https://github.com/auth0-samples/auth0-ai-samples.git
-        cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-customtokenexchange-js
+        cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-on-behalf-of-tokenexchange-js
         ```
 
         Once cloned, open the project in your preferred IDE.
       </Tab>
     </Tabs>
 
-    The sample app demonstrates custom token exchange with a `greet` tool that calls your protected API on behalf of the authenticated user.
+    The sample app demonstrates the complete OBO flow with a `greet` tool that:
+    1. Receives an authenticated request from an MCP client
+    2. Exchanges the token for downstream API access
+    3. Calls your protected API on the user's behalf
+    4. Returns the result
 
     ## Install packages
 
-    Ensure you have npm installed or follow the instructions to [install npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) in its documentation. In the `fastmcp-mcp-customtokenexchange-js` directory, install the required packages:
+    Make sure you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm). Then, in the `fastmcp-mcp-on-behalf-of-tokenexchange-js` directory, install the required packages:
 
     ```shell
     npm install
@@ -150,12 +172,6 @@ Save the `Audience` from the command output; you'll need it in a later step.
 
     ## Create your environment file
     <CreateEnvFile/>
-
-    ## Use Custom Token Exchange Action
-    <CustomTokenExchangeAction/>
-
-    ## Set up the token exchange profile
-    <CreateProfile />
 
     ## Run the MCP server and the API
     <RunMcpServerJs/>
@@ -171,7 +187,7 @@ Save the `Audience` from the command output; you'll need it in a later step.
 
         <DownloadQuickstartButton
           category="auth-for-mcp"
-          framework="fastmcp-mcp-customtokenexchange-python"
+          framework="fastmcp-mcp-on-behalf-of-tokenexchange-python"
         />
 
         Once downloaded, extract the files and open the project in your preferred IDE.
@@ -181,18 +197,22 @@ Save the `Audience` from the command output; you'll need it in a later step.
 
         ```shell wrap lines
         git clone https://github.com/auth0-samples/auth0-ai-samples.git
-        cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-customtokenexchange-python
+        cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-on-behalf-of-tokenexchange-python
         ```
 
         Once cloned, open the project in your preferred IDE.
       </Tab>
     </Tabs>
 
-    The sample app demonstrates custom token exchange with a `greet` tool that calls your protected API on behalf of the authenticated user.
+    The sample app demonstrates the complete OBO flow with a `greet` tool that:
+    1. Receives an authenticated request from an MCP client
+    2. Exchanges the token for downstream API access
+    3. Calls your protected API on the user's behalf
+    4. Returns the result
 
       ## Install packages
 
-      Ensure you have poetry installed or follow the instructions to [install poetry](https://python-poetry.org/docs/) in its documentation. In the `fastmcp-mcp-customtokenexchange-python` directory, install the required packages:
+      Make sure you have [poetry installed](https://python-poetry.org/docs/). Then, in the `fastmcp-mcp-on-behalf-of-tokenexchange-python` directory, install the required packages:
 
       ```shell
       poetry install
@@ -200,12 +220,6 @@ Save the `Audience` from the command output; you'll need it in a later step.
 
       ## Create your environment file
       <CreateEnvFile/>
-
-      ## Use Custom Token Exchange Action
-      <CustomTokenExchangeAction/>
-
-      ## Set up the token exchange profile
-      <CreateProfile />
 
       ## Run the MCP server and the API
       <RunMcpServerPython/>
