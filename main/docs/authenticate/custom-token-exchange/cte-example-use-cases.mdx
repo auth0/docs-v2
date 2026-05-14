@@ -338,6 +338,186 @@ curl --location 'https://{yourDomain}.auth0.com/oauth/token' \
 
 Read [code samples](#code-samples) for a more detailed example on how to validate opaque refresh token with the legacy IdP.
 
+### Use Case: AI agent acting on behalf of a user via MCP
+
+GearUp is exposing a Model Context Protocol (MCP) server that allows AI agents to rent cars on behalf of end users. An external AI agent platform authenticates both the end user and the AI agent, then provides a token to GearUp's MCP server. The MCP server uses Custom Token Exchange to convert this external token into an Auth0 access token that can securely consume GearUp's APIs, with full visibility into the delegation chain.
+
+The issued token identifies the end user as the subject (`sub`) and uses the `act` claim to trace the delegation: the MCP server's client ID as the outermost actor, and the AI agent's identifier nested within. This allows GearUp's APIs to enforce authorization policies that account for who is acting on behalf of the user.
+
+1. The AI agent platform authenticates the user and issues a token that identifies both the user and the agent.
+2. The MCP server calls Auth0's `/oauth/token` endpoint using a [Custom Token Exchange request](/docs/get-started/authentication-and-authorization-flow/token-exchange-flow/call-your-api-using-the-custom-token-exchange-flow), passing the platform token as `subject_token`.
+3. The CTE Action validates the subject token, extracts the user and agent identifiers, sets the user, and calls `api.authentication.setActor()` to build the delegation chain.
+4. Auth0 issues tokens with the `act` claim reflecting the full delegation context.
+
+The CTE Action is responsible for building the actor object passed to `setActor()`, including deciding on nesting structure and any custom claims. See the [CTE API Object documentation](/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger/custom-token-exchange-api-object#api-authentication-setactor-actorobject) for constraints on nesting levels and custom properties.
+
+```javascript lines expandable
+const jwksUri = "https://ai-platform.example.com/.well-known/jwks.json";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDATE the platform token received in the subject_token
+  const { isValid, payload } = await validateToken(event.transaction.subject_token);
+
+  if (!isValid) {
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // 2. AUTHORIZE — verify the agent is allowed to act on behalf of this user
+  const isAuthorized = await checkDelegationPolicy(payload.agent_id, payload.user_id);
+  if (!isAuthorized) {
+    api.access.deny("unauthorized_actor", "Agent is not authorized to act on behalf of this user");
+    return;
+  }
+
+  // 3. SET THE ACTOR — build the delegation chain:
+  //    outermost: the MCP server (this application)
+  //    nested: the AI agent that initiated the request
+  api.authentication.setActor({
+    sub: event.client.client_id,
+    sub_profile: "service",
+    act: {
+      sub: payload.agent_id,
+      sub_profile: "ai_agent",
+      agent_name: payload.agent_name
+    }
+  });
+
+  // 4. SET THE USER identified by the subject token
+  api.authentication.setUserById(payload.user_id);
+
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+
+  async function checkDelegationPolicy(agentId, userId) {
+    // Implement your delegation policy check here.
+    // For example, verify the agent has been granted consent
+    // to act on behalf of this user for the requested scopes.
+    return true;
+  }
+};
+```
+
+The issued access token will include the nested `act` claim:
+
+```json lines
+{
+  "sub": "auth0|end_user_id",
+  "aud": "https://api.gearup.com",
+  "act": {
+    "sub": "mcp_server_client_id",
+    "sub_profile": "service",
+    "act": {
+      "sub": "agent_12345",
+      "sub_profile": "ai_agent",
+      "agent_name": "travel-assistant"
+    }
+  }
+}
+```
+
+GearUp's APIs can inspect the `act` claim to apply authorization policies specific to delegated access — for example, restricting certain operations when the request originates from an AI agent, or logging the full delegation chain for audit purposes.
+
+### Use Case: Support agent acting on behalf of a customer
+
+GearUp's support agents need to access customer data and perform actions via GearUp's backend APIs on behalf of customers. The support tool authenticates the agent, then uses Custom Token Exchange to obtain an access token representing the customer with the agent tracked as the actor.
+
+In this case, the agent's Auth0 ID token is sent as the `actor_token` in the request. When `actor_token_type` is set to `urn:ietf:params:oauth:token-type:id_token`, Auth0 automatically validates the token (signature, expiry, issuer) and populates `event.transaction.actor_token_user` with the agent's profile. This eliminates the need for custom validation code for the actor token.
+
+<Note>
+Using an Auth0 ID token as the `actor_token` is not mandatory. When `actor_token_type` is a custom value, the Action must validate the actor token via custom code — similar to how subject tokens are validated. The automatic population of `event.transaction.actor_token_user` only applies to Auth0 ID tokens.
+</Note>
+
+1. The support tool authenticates the agent with Auth0 and obtains the agent's ID token.
+2. The support tool calls Auth0's `/oauth/token` using a [Custom Token Exchange request](/docs/get-started/authentication-and-authorization-flow/token-exchange-flow/call-your-api-using-the-custom-token-exchange-flow), including the customer identifier as `subject_token` and the agent's ID token as `actor_token`.
+3. The CTE Action validates the subject token, verifies the actor has the right to act on behalf of this customer, and calls `api.authentication.setActor()`.
+4. Auth0 issues tokens with the `act` claim identifying the support agent.
+
+The CTE Action decides what to include in the actor object, including any custom properties and nesting levels. See the [CTE API Object documentation](/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger/custom-token-exchange-api-object#api-authentication-setactor-actorobject) for constraints.
+
+```javascript lines expandable
+const jwksUri = "https://gearup.com/.well-known/jwks.json";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDATE the customer token received in the subject_token
+  const { isValid, payload } = await validateToken(event.transaction.subject_token);
+
+  if (!isValid) {
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // 2. AUTHORIZE the actor — verify the agent has the right to act on behalf of this customer
+  const actorUser = event.transaction.actor_token_user;
+  if (!actorUser) {
+    api.access.deny("invalid_request", "Actor token is required for this profile");
+    return;
+  }
+
+  const isAuthorized = await checkDelegationPolicy(actorUser.user_id, payload.sub);
+  if (!isAuthorized) {
+    api.access.deny("unauthorized_actor", "Agent is not authorized to act on behalf of this user");
+    return;
+  }
+
+  // 3. SET THE ACTOR to include the act claim in issued tokens
+  api.authentication.setActor({
+    sub: actorUser.user_id,
+    sub_profile: "human",
+    role: "support"
+  });
+
+  // 4. SET THE USER for the transaction (the customer being acted upon)
+  api.authentication.setUserById(payload.sub);
+
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+
+  async function checkDelegationPolicy(agentId, customerId) {
+    // Implement your delegation policy check here.
+    // For example, verify the agent belongs to the support team
+    // and is assigned to this customer's region.
+    return true;
+  }
+};
+```
+
+The issued access token will include the `act` claim:
+
+```json lines
+{
+  "sub": "auth0|customer_user_id",
+  "aud": "https://api.gearup.com",
+  "act": {
+    "sub": "auth0|support_agent_id",
+    "sub_profile": "human",
+    "role": "support"
+  }
+}
+```
+
+Downstream APIs can inspect the `act` claim to apply authorization policies specific to delegated access, such as restricting write operations or logging activity for audit purposes.
+
+### Important considerations for delegated authorization
+
+<Note>
+Auth0 does not notify the subject user when a delegated authorization token is issued on their behalf. If your use case requires user notification (for example, informing a customer that a support agent accessed their account), you must implement that notification logic yourself — either within your CTE Action, a Post-Login Action, or in your downstream services.
+</Note>
+
 ## Code samples
 
 The following code samples show best practices for common scenarios for validating incoming subject tokens in a secure and performant way.
