@@ -1,14 +1,17 @@
 import { useEffect, useRef } from 'react';
 
-export const JsonLd = ({ data }) => {
+export const JsonLd = () => {
   const scriptRef = useRef(null);
 
   useEffect(() => {
     if (scriptRef.current) {
-      const safeJson = JSON.stringify(data).replace(/</g, '\\u003c');
-      scriptRef.current.text = safeJson;
+      const data = {
+        '@context': 'https://schema.org',
+        '@type': 'HowTo',
+      };
+      scriptRef.current.text = JSON.stringify(data).replace(/</g, '\\u003c');
     }
-  }, [data]);
+  }, []);
 
   return <script type="application/ld+json" ref={scriptRef} />;
 };
