@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export const JsonLd = () => {
+export const HowToSchema = () => {
   const scriptRef = useRef(null);
 
   useEffect(() => {
