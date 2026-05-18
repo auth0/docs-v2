@@ -1,6 +1,6 @@
 ---
 name: Auth0
-description: Use when adding authentication to any application — detects your framework, sets up Auth0, and provides production-ready integration guides for 23 frameworks and platforms.
+description: Use when adding authentication to any application — detects your framework, sets up Auth0, and provides production-ready integration guides for 25 frameworks and platforms.
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
@@ -44,6 +44,7 @@ Start here — this skill detects your framework and routes to the correct integ
 - **auth0-fastapi-api** — Python FastAPI JWT validation with `auth0-fastapi-api`
 - **auth0-springboot-api** — Spring Boot API JWT validation with `auth0-springboot-api`
 - **auth0-aspnetcore-api** — ASP.NET Core API JWT validation with `Auth0.AspNetCore.Authentication`
+- **go-jwt-middleware** — Go API JWT validation with `go-jwt-middleware`
 
 ## Mobile
 
@@ -51,6 +52,10 @@ Start here — this skill detects your framework and routes to the correct integ
 - **auth0-expo** — Expo managed workflow with `react-native-auth0`
 - **auth0-android** — Android (Kotlin/Java) with `Auth0.Android`
 - **auth0-swift** — iOS, macOS, tvOS, watchOS, visionOS with `Auth0.swift`
+
+## Developer Tools
+
+- **auth0-cli** — Auth0 CLI for tenant management, app configuration, and CI/CD automation
 
 ## Advanced Features
 
