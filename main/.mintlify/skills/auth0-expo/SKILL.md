@@ -4,6 +4,14 @@ description: Use when adding authentication to Expo (React Native) mobile apps �
 license: Proprietary
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
+    requires:
+      bins:
+        - gh
+        - node
 ---
 
 # Auth0 Expo Integration
@@ -76,18 +84,11 @@ Add authentication to Expo (React Native) applications using `react-native-auth0
 >
 > After the script completes, proceed to **Step 2 (Verify Expo Dev Client)**.
 
-#### Manual Setup (User-Provided Credentials)
+#### Manual Setup
 
-> **Agent instruction:** Ask the user for their Auth0 credentials using `AskUserQuestion`:
+> **Agent instruction:** If the user has not provided their Auth0 Domain and Client ID, ask them using `AskUserQuestion`. They can find both in the [Auth0 Dashboard](https://manage.auth0.com/) under **Applications > Applications > your app > Settings**. If they don't have an Auth0 app yet, they should create one with type **Native**.
 >
-> "I need your Auth0 credentials to set up authentication. Please provide:
->
-> 1. **Auth0 Domain** (e.g., `your-tenant.us.auth0.com`)
-> 2. **Client ID** (a 32-character alphanumeric string)
->
-> You can find both in the [Auth0 Dashboard](https://manage.auth0.com/) under **Applications > Applications > your app > Settings**. If you don't have an Auth0 app yet, create one with type **Native** and copy the domain and client ID from the settings page."
->
-> Then write the configuration to app.json and proceed to **Step 2**.
+> Once provided, configure the Auth0 plugin in app.json and proceed to **Step 2**.
 
 ### 2. Verify Expo Dev Client
 
@@ -260,6 +261,7 @@ export default function App() {
 - [auth0-quickstart](/auth0-quickstart) — Set up an Auth0 account and application
 - [auth0-react-native](/auth0-react-native) — Bare React Native CLI projects
 - [auth0-mfa](/auth0-mfa) — Configure multi-factor authentication
+- [auth0-cli](/auth0-cli) — Manage Auth0 resources from the terminal
 
 ## References
 
