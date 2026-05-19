@@ -5,7 +5,7 @@ export const SectionsWithCards = ({ sections }) => {
     .map((s) => ({
       ...s,
       items: s.items.filter((it) =>
-        it.name.toLowerCase().includes(query.toLowerCase())
+        it.name.toLowerCase().includes(query.toLowerCase()),
       ),
     }))
     .filter((s) => s.items.length > 0);
@@ -28,8 +28,8 @@ export const SectionsWithCards = ({ sections }) => {
     const tertiaryLabel = quickstart
       ? "Quickstart"
       : docs
-      ? "Documentation"
-      : "";
+        ? "Documentation"
+        : "";
 
     return (
       <article className="libraries_card rounded-3xl transition-shadow mb-4">
@@ -65,6 +65,7 @@ export const SectionsWithCards = ({ sections }) => {
                     border border-emerald-700 text-emerald-700 bg-emerald-200
                     dark:border-emerald-400 dark:text-emerald-300 dark:bg-emerald-900/30
                   "
+                  style={{ border: "none !important" }}
                 >
                   {badge}
                 </span>
@@ -433,12 +434,12 @@ export const SectionCard = ({ item }) => {
               </>
             )}
 
-            <div className="min-w-0">
+            <div className="min-w-0 truncate">
               <h4 className="text-base md:text-lg font-semibold text-gray-900 dark:text-white truncate !m-0 leading-snug">
                 {title}
               </h4>
               {!!subtext && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 truncate !m-0 leading-tight">
+                <p className="!text-sm text-gray-500 dark:text-gray-400 truncate !m-0 leading-tight">
                   {subtext}
                 </p>
               )}
@@ -447,18 +448,12 @@ export const SectionCard = ({ item }) => {
 
           <div className="flex flex-col items-end gap-0.5 shrink-0">
             {!!badge && (
-              <span
-                className="
-                  inline-flex items-center rounded-full px-1.5 py-[0.5px] text-[10px] font-medium
-                  border border-emerald-700 text-emerald-700 bg-emerald-200
-                  dark:border-emerald-400 dark:text-emerald-300 dark:bg-emerald-900/30
-                "
-              >
+              <span className="inline-flex items-center rounded-full px-1.5 h-5 text-base font-semibold">
                 {badge}
               </span>
             )}
             {!!date && (
-              <span className="mr-[5px] text-[10px] text-gray-500 dark:text-gray-400">
+              <span className="mr-[5px] !text-xs font-medium text-gray-500 dark:text-gray-400">
                 on {date.replace(/^on\s+/i, "")}
               </span>
             )}
@@ -469,55 +464,39 @@ export const SectionCard = ({ item }) => {
       <div className="libraries_card_divider" />
 
       <div className="px-4 md:px-5 pt-3 pb-4">
-        <div className="libraries_cards flex items-center justify-between w-full gap-3">
-          {github && (
-            <a
-              href={github.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="
-                no_external_icon inline-flex items-center gap-1.5 text-xs font-medium
-                !text-black dark:!text-white
-                !no-underline !border-0
-                transition-colors duration-200
-                hover:!text-neutral-700 dark:hover:!text-neutral-200
-              "
-              style={{ borderBottom: "none !important" }}
-            >
-              <Icon icon="github" className="w-3 h-3 shrink-0" />
-              <span className="leading-none">Github</span>
-            </a>
-          )}
+        <div className="flex flex-col gap-3 w-full">
+          <div className="libraries_cards flex items-center w-full gap-5">
+            {github && (
+              <a
+                href={github.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="github" className="w-3 h-3 shrink-0" />
+                <span className="w-full">Github</span>
+              </a>
+            )}
 
-          {sample && (
-            <a
-              href={sample.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="
-                no_external_icon inline-flex items-center gap-1.5 text-xs font-medium
-                !text-black dark:!text-white
-                !no-underline !border-0
-                transition-colors duration-200
-                hover:!text-neutral-700 dark:hover:!text-neutral-200
-              "
-              style={{ borderBottom: "none !important" }}
-            >
-              <Icon icon="download" className="w-3 h-3 shrink-0" />
-              <span className="leading-none">Sample App</span>
-            </a>
-          )}
+            {sample && (
+              <a
+                href={sample.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="download" className="w-3 h-3 shrink-0" />
+                <span className="w-full">Sample App</span>
+              </a>
+            )}
+          </div>
 
           {tertiary && (
             <a
               href={tertiary.url}
-              className="
-                no_external_icon inline-flex items-center gap-1.5 text-xs font-medium
-                !text-black dark:!text-white
-                !no-underline !border-0
-                transition-colors duration-200
-                hover:!text-neutral-700 dark:hover:!text-neutral-200
-              "
+              className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
               style={{ borderBottom: "none !important" }}
             >
               {tertiaryLabel === "Quickstart" ? (
@@ -525,7 +504,7 @@ export const SectionCard = ({ item }) => {
               ) : (
                 <Icon icon="file-lines" className="w-3 h-3 shrink-0" />
               )}
-              <span className="leading-none">{tertiaryLabel}</span>
+              <span className="w-full">{tertiaryLabel}</span>
             </a>
           )}
         </div>
