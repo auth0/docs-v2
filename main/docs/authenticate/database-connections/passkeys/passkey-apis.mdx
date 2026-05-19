@@ -1,0 +1,498 @@
+---
+title: "Passkey APIs for Embedded Applications"
+description: "Build native and web embedded passkey authentication using Auth0's Passkey APIs."
+---
+
+Passkeys are a phishing-resistant alternative to traditional forms of authentication (such as username and password) that offer an easier and more secure user experience. They are modeled from FIDO® W3C Web Authentication (WebAuthn) and Client to Authenticator Protocol (CTAP) [specifications](https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#intro).
+
+Auth0 currently supports passkeys as an authentication method for database connections with two methods of implementation:
+
+* [Universal Login passkeys](/docs/authenticate/database-connections/passkeys) for web-based applications.
+* Passkey APIs for native mobile applications (iOS, Android) and web applications.
+* [Embedded Login for web-based and native applications](/docs/authenticate/passwordless/implement-login/embedded-login)
+
+## How it works
+
+The Passkey APIs use a combination of the Auth0 Authentication API and platform-specific credential APIs to embed challenge flows directly into your application. For native mobile apps, this means using iOS or Android platform APIs. For web applications, this means using the WebAuthn browser API. This allows you to create an integrated signup and login experience that does not rely on redirecting users through their browsers to complete authentication.
+
+The following example demonstrates what a new user may experience during the passkey signup flow:
+
+1. A new user launches your mobile application and accesses the login screen. Since they are a new user, they select the Sign Up button.
+2. On the next screen, the user enters their email address and selects Create Account.
+3. Next, the user is asked if they want to create a passkey for your application. To proceed, the user selects Continue.
+4. To generate a passkey, the user must locally authenticate on their device using biometrics or another authentication method, such as entering a PIN.
+5. After local authentication is complete, a new passkey is saved to the user's device and synced with their passkey provider, such as iCloud Keychain or Google Password Manager.
+6. After the passkey is saved, the user continues your new user registration process to finalize their account.
+
+Once this process is complete, the user can authenticate with their saved passkey the next time they log in to your application.
+
+## Before you begin
+
+### Configure a custom domain
+
+Native passkeys require the use of a <Tooltip tip="Custom Domain: Third-party domain with a specialized, or vanity, name." cta="View Glossary" href="/docs/glossary?term=custom+domain">custom domain</Tooltip>. Before proceeding, ensure you have configured a custom domain for your tenant. To learn more, review [Custom Domains](/docs/customize/custom-domains).
+
+### Configure your passkey policy
+
+Before you can implement native passkeys for Android or iOS applications, you must configure a passkey policy in your Auth0 tenant. To prepare your tenant, follow the steps in [Configure Passkey Policy](/docs/authenticate/database-connections/passkeys/configure-passkey-policy).
+
+### Prepare your application
+
+All applications using the Passkey APIs must add the `Passkey` grant and configure their Relying Party ID. Depending on your platform, you may also need to configure additional settings through your <Tooltip tip="Auth0 Dashboard: Auth0's main product to configure your services." cta="View Glossary" href="/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip> or the <Tooltip tip="Management API: A product to allow customers to perform administrative tasks." cta="View Glossary" href="/docs/glossary?term=Management+API">Management API</Tooltip>.
+
+<Tabs>
+<Tab title="iOS">
+**Configure Device Settings in Auth0 Dashboard:**
+1. Navigate to [Applications > Applications](https://manage.auth0.com/#/applications) and select your application.
+2. At the bottom of the Settings tab, select **Advanced Settings**, then choose the **Device Settings** tab.
+3. In the **iOS** section, enter your:
+   - Team ID
+   - Bundle ID
+4. Click **Save Changes**.
+
+**Apple App Site Association file:**
+Auth0 automatically hosts the `apple-app-site-association` file on your tenant's custom domain at `https://YOUR_CUSTOM_DOMAIN/.well-known/apple-app-site-association` based on the Team ID and Bundle ID you configure. You do not need to host this file yourself.
+
+**Configure Associated Domains entitlement:**
+In Xcode, enable the Associated Domains entitlement and add an entry for your custom domain (format: `webcredentials:YOUR_CUSTOM_DOMAIN`).
+</Tab>
+<Tab title="Android">
+**Configure Device Settings in Auth0 Dashboard:**
+1. Navigate to [Applications > Applications](https://manage.auth0.com/#/applications) and select your application.
+2. At the bottom of the Settings tab, select **Advanced Settings**, then choose the **Device Settings** tab.
+3. In the **Android** section, enter your:
+   - Package name
+   - SHA-256 fingerprint (of your app's signing certificate)
+4. Click **Save Changes**.
+
+**Digital Asset Links file:**
+Auth0 automatically hosts the `assetlinks.json` file on your tenant's custom domain at `https://YOUR_CUSTOM_DOMAIN/.well-known/assetlinks.json` based on the package name and SHA-256 fingerprint you configure. You do not need to host this file yourself.
+</Tab>
+<Tab title="Web">
+**Configure Allowed Web Origins:**
+1. Navigate to [Applications > Applications](https://manage.auth0.com/#/applications) and select your application.
+2. In the Settings tab, scroll to **Allowed Web Origins**.
+3. Add your web application's origin (e.g., `https://YOUR_CUSTOM_DOMAIN`).
+4. Click **Save Changes**.
+
+**No app association files needed for web applications.** Web apps use the WebAuthn browser API, which handles origin validation automatically.
+
+**Ensure rpId matches your origin:** The rpId returned by Auth0 must match your web app's origin for the WebAuthn flow to succeed.
+</Tab>
+</Tabs>
+
+**Add the Passkey grant (all platforms):**
+1. In the Advanced Settings section, select the **Grant Types** tab.
+2. Enable the **Passkey** grant, then select **Save Changes**.
+
+Alternatively, use the Management API:
+Call the [Update a Client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) endpoint and:
+* Update `grant_types` to include `urn:okta:params:oauth:grant-type:webauthn`.
+* For native apps, use the `mobile` object to specify iOS and Android device settings as needed.
+
+#### Relying Party ID (rpId)
+
+For end users to authenticate with a single passkey across different application types or application types with different subdomains, set the Relying Party ID to the root or parent domain. To learn more, read [Passkeys](/docs/authenticate/database-connections/passkeys).
+
+## Implement passkey flows
+
+You can define the following passkey flows for your application:
+
+* [Signup flow](#signup-flow): Allows new users to generate and save a passkey during the user registration process.
+* [Login flow](#login-flow): Allows an existing user who has already enrolled in passkeys to authenticate with their saved passkey during the login process.
+* [Enrollment flow](#enrollment-flow): Allows existing users to add a passkey to their account after authentication.
+
+### Signup flow
+
+A user initiates the passkey signup flow when they first attempt to log in to your application.
+
+If the user provides an identifier that already exists, it's recommended that you prompt the user to complete the login flow instead. Otherwise, the action will fail.
+
+#### Step 1: Request signup challenge
+
+Your application initiates the signup challenge by calling the `POST /passkey/register` endpoint:
+
+```text lines
+POST /passkey/register
+Content-Type: application/json
+
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "realm": "OPTIONAL_CONNECTION",
+  "user_profile": {
+    "email": "user@example.com",
+    "name": "John Doe"
+  }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+* If you do not specify a `realm`, your tenant's default directory is used.
+* By default, email is the required identifier. If you have enabled [Flexible Identifiers](/docs/authenticate/database-connections/activate-and-configure-attributes-for-flexible-identifiers) for your database connection, you may use a combination of `email`, `phone_number`, or `username` instead.
+</Callout>
+
+Auth0 returns `PublicKeyCredentialCreationOptions` along with an `auth_session` ID:
+
+```json lines
+{
+  "authn_params_public_key": {
+    "challenge": "GENERATED_CHALLENGE_FOR_THIS_SESSION",
+    "timeout": 60000,
+    "rp": {
+      "id": "YOUR_CUSTOM_DOMAIN",
+      "name": "YOUR_CUSTOM_DOMAIN"
+    },
+    "pubKeyCredParams": [
+      { "type": "public-key", "alg": -8 },
+      { "type": "public-key", "alg": -7 },
+      { "type": "public-key", "alg": -257 }
+    ],
+    "authenticatorSelection": {
+      "residentKey": "required",
+      "userVerification": "preferred"
+    },
+    "user": {
+      "id": "GENERATED_ID",
+      "name": "USER_EMAIL",
+      "displayName": "USER_EMAIL_OR_NAME"
+    }
+  },
+  "auth_session": "SESSION_ID"
+}
+```
+
+#### Step 2: Create passkey on device
+
+Your application uses the returned `PublicKeyCredentialCreationOptions` to create a passkey on the user's device. The method depends on your platform:
+
+<Tabs>
+<Tab title="iOS">
+Use `ASAuthorizationPlatformPublicKeyCredentialProvider` to create the credential with Face ID, Touch ID, or device PIN.
+
+Review [iOS registration documentation](https://developer.apple.com/documentation/authenticationservices/supporting-passkeys#Register-a-new-account-on-a-service).
+</Tab>
+<Tab title="Android">
+Use `CredentialManager` to create the credential with biometric or device PIN authentication.
+
+Review [Android registration documentation](https://developer.android.com/identity/passkeys/create-passkeys).
+</Tab>
+<Tab title="Web">
+Use `navigator.credentials.create()` with the `PublicKeyCredentialCreationOptions` returned from Auth0.
+
+Review [MDN Web Authentication API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API).
+</Tab>
+</Tabs>
+
+#### Step 3: Exchange credentials for tokens
+
+Your application uses the credential information from the registration process to call the `POST /oauth/token` endpoint:
+
+```text lines
+POST /oauth/token
+Content-Type: application/json
+
+{
+  "grant_type": "urn:okta:params:oauth:grant-type:webauthn",
+  "client_id": "YOUR_CLIENT_ID",
+  "realm": "OPTIONAL_CONNECTION",
+  "scope": "openid profile email",
+  "audience": "YOUR_API_IDENTIFIER",
+  "auth_session": "SESSION_ID_FROM_STEP_1",
+  "authn_response": {
+    "id": "BASE64URL_ID",
+    "rawId": "BASE64URL_RAWID",
+    "type": "public-key",
+    "authenticatorAttachment": "platform",
+    "response": {
+      "clientDataJSON": "BASE64URL_CLIENT_DATA_JSON",
+      "attestationObject": "BASE64URL_ATTESTATION_OBJECT"
+    }
+  }
+}
+```
+
+Auth0 creates a new user account and returns the requested tokens:
+
+```json lines
+{
+  "access_token": "eyJz93a...TJVA95w",
+  "refresh_token": "GEz...NaYM",
+  "id_token": "eyJ0exA...f1jrv3",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Native Passkey registration is not currently supported when SMS/Email OTP verification is required on the same connection during signup.
+</Callout>
+
+For exhaustive parameter documentation, see the [Authentication API explorer](/api/authentication).
+
+### Login flow
+
+An existing user initiates the passkey login flow when they attempt to log in to your application. This flow only applies to existing users who have saved passkeys to their accounts during initial signup.
+
+#### Step 1: Request login challenge
+
+Your application initiates the login challenge by calling the `POST /passkey/challenge` endpoint:
+
+```text lines
+POST /passkey/challenge
+Content-Type: application/json
+
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "realm": "OPTIONAL_CONNECTION"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+If you do not specify a `realm`, your tenant's default directory is used.
+</Callout>
+
+Auth0 returns `PublicKeyCredentialRequestOptions` along with an `auth_session`:
+
+```json lines
+{
+  "authn_params_public_key": {
+    "challenge": "GENERATED_CHALLENGE_FOR_THIS_SESSION",
+    "timeout": 60000,
+    "rpId": "YOUR_CUSTOM_DOMAIN",
+    "userVerification": "preferred"
+  },
+  "auth_session": "SESSION_ID"
+}
+```
+
+#### Step 2: Retrieve passkey from device
+
+Your application uses the returned `PublicKeyCredentialRequestOptions` to retrieve a passkey from the user's device. The method depends on your platform:
+
+<Tabs>
+<Tab title="iOS">
+Use `ASAuthorizationPlatformPublicKeyCredentialProvider` to retrieve the credential with Face ID, Touch ID, or device PIN.
+
+Review [iOS login documentation](https://developer.apple.com/documentation/authenticationservices/supporting-passkeys#Connect-to-a-service-with-an-existing-account).
+</Tab>
+<Tab title="Android">
+Use `CredentialManager` to retrieve the credential with biometric or device PIN authentication.
+
+Review [Android login documentation](https://developer.android.com/identity/passkeys/sign-in-with-passkeys).
+</Tab>
+<Tab title="Web">
+Use `navigator.credentials.get()` with the `PublicKeyCredentialRequestOptions` returned from Auth0.
+
+Review [MDN Web Authentication API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API).
+</Tab>
+</Tabs>
+
+#### Step 3: Exchange credentials for tokens
+
+Your application uses the credential information from the login process to call the `POST /oauth/token` endpoint:
+
+```text lines
+POST /oauth/token
+Content-Type: application/json
+
+{
+  "grant_type": "urn:okta:params:oauth:grant-type:webauthn",
+  "client_id": "YOUR_CLIENT_ID",
+  "realm": "OPTIONAL_CONNECTION",
+  "scope": "openid profile email",
+  "audience": "YOUR_API_IDENTIFIER",
+  "auth_session": "SESSION_ID_FROM_STEP_1",
+  "authn_response": {
+    "id": "BASE64URL_ID",
+    "rawId": "BASE64URL_RAWID",
+    "type": "public-key",
+    "authenticatorAttachment": "platform",
+    "response": {
+      "authenticatorData": "BASE64URL_AUTHENTICATORDATA",
+      "clientDataJSON": "BASE64URL_CLIENTDATAJSON",
+      "signature": "BASE64URL_SIGNATURE",
+      "userHandle": "BASE64URL_USERHANDLE"
+    },
+    "clientExtensionResults": {}
+  }
+}
+```
+
+Auth0 authenticates the credentials and returns the requested tokens:
+
+```json lines
+{
+  "access_token": "eyJz93a...TJVA95w",
+  "refresh_token": "GEz...NaYM",
+  "id_token": "eyJ0exA...f1jrv3",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+For exhaustive parameter documentation, see the [Authentication API explorer](/api/authentication).
+
+### Enrollment flow
+
+Enrolling a new passkey for an existing, authenticated user uses the My Account API. This flow is useful when you want to allow users to add a passkey to their account after they've already authenticated with another method—for example, during onboarding or from a settings page.
+
+#### Prerequisites
+
+Before initiating the enrollment flow, ensure you have:
+
+1. An access token with the `create:me:authentication_methods` scope for the `/me` endpoint.
+2. Activated the My Account API for your tenant.
+
+For complete setup instructions, see [My Account API](/docs/manage-users/my-account-api).
+
+#### Step 1: Initiate passkey enrollment
+
+Your authenticated application calls the `POST /me/v1/authentication-methods` endpoint with the access token:
+
+```text lines
+POST /me/v1/authentication-methods
+Authorization: Bearer YOUR_ACCESS_TOKEN
+Content-Type: application/json
+
+{
+  "type": "passkey",
+  "connection": "CONNECTION_NAME"
+}
+```
+
+Auth0 returns a challenge and session ID:
+
+```json lines
+{
+  "authn_params_public_key": {
+    "challenge": "GENERATED_CHALLENGE",
+    "timeout": 60000,
+    "rp": {
+      "id": "YOUR_CUSTOM_DOMAIN",
+      "name": "YOUR_CUSTOM_DOMAIN"
+    },
+    "pubKeyCredParams": [
+      { "type": "public-key", "alg": -8 },
+      { "type": "public-key", "alg": -7 },
+      { "type": "public-key", "alg": -257 }
+    ],
+    "authenticatorSelection": {
+      "residentKey": "required",
+      "userVerification": "preferred"
+    },
+    "user": {
+      "id": "GENERATED_ID",
+      "name": "USER_IDENTIFIER",
+      "displayName": "USER_DISPLAY_NAME"
+    }
+  },
+  "auth_session": "SESSION_ID"
+}
+```
+
+#### Step 2: Create passkey on device
+
+Your application uses the returned `PublicKeyCredentialCreationOptions` to create a passkey on the user's device, following the same platform-specific steps as the signup flow:
+
+<Tabs>
+<Tab title="iOS">
+Use `ASAuthorizationPlatformPublicKeyCredentialProvider` to create the credential with Face ID, Touch ID, or device PIN.
+
+Review [iOS registration documentation](https://developer.apple.com/documentation/authenticationservices/supporting-passkeys#Register-a-new-account-on-a-service).
+</Tab>
+<Tab title="Android">
+Use `CredentialManager` to create the credential with biometric or device PIN authentication.
+
+Review [Android registration documentation](https://developer.android.com/identity/passkeys/create-passkeys).
+</Tab>
+<Tab title="Web">
+Use `navigator.credentials.create()` with the `PublicKeyCredentialCreationOptions` returned from Auth0.
+
+Review [MDN Web Authentication API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API).
+</Tab>
+</Tabs>
+
+#### Step 3: Verify passkey enrollment
+
+Once the user has created the passkey with their authenticator, call the `POST /me/v1/authentication-methods/passkey|new/verify` endpoint to complete the enrollment:
+
+```text lines
+POST /me/v1/authentication-methods/passkey|new/verify
+Authorization: Bearer YOUR_ACCESS_TOKEN
+Content-Type: application/json
+
+{
+  "auth_session": "SESSION_ID_FROM_STEP_1",
+  "authn_response": {
+    "id": "BASE64URL_ID",
+    "rawId": "BASE64URL_RAWID",
+    "type": "public-key",
+    "authenticatorAttachment": "platform",
+    "response": {
+      "clientDataJSON": "BASE64URL_CLIENT_DATA_JSON",
+      "attestationObject": "BASE64URL_ATTESTATION_OBJECT"
+    }
+  }
+}
+```
+
+Once this step completes successfully, the passkey is enrolled for the user and can be used for future authentications.
+
+For exhaustive parameter documentation and an interactive try-it-out, see the [My Account API explorer](/api/myaccount).
+
+## Using passkeys across native and web
+
+A passkey created in one of your applications can be used to sign in to your other applications — including across native and web — when those applications share the same Relying Party ID (rpId). This works because passkey providers (iCloud Keychain, Google Password Manager, 1Password, Dashlane, and others) sync credentials across the user's devices within the same provider.
+
+### How users move between platforms
+
+In most cases, users do not need to scan a QR code or use a second device. The flow depends on whether the passkey is already available on the device they're using:
+
+- **Same provider, different device** (most common): A user enrolls a passkey on your iOS app; their iCloud Keychain syncs it to their Mac, where they can sign in to your web app immediately. Same applies to Android passkeys synced via Google Password Manager to Chrome on a Chromebook or Windows PC signed into the same Google account.
+- **Cross-ecosystem or shared device** (less common): If the passkey isn't available on the device the user is on (for example, an iPhone passkey being used on a Windows PC, or a public computer), the browser offers a QR code to authenticate via the user's phone using [hybrid transport (CTAP 2.2)](https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html). The user keeps their passkey on their phone; the QR code only bridges the two devices for that one sign-in.
+
+### Choose your Relying Party ID carefully
+
+The rpId determines which origins can use a passkey. Auth0 sets the rpId to your custom domain by default. Choose the rpId that best matches the scope across which you want passkeys to work — and no broader.
+
+**Recommended:** Use a parent domain that scopes to your authentication and product surfaces, such as `auth.example.com` or `accounts.example.com`. A passkey created with `rpId=auth.example.com` works on `auth.example.com` and any subdomain of it (for example, `app.auth.example.com`, `m.auth.example.com`).
+
+**Avoid using your eTLD+1 (registrable apex) as the rpId** — for example, `example.com`. Setting the rpId at this level lets every subdomain of `example.com` request and use those passkeys, including marketing sites, third-party-hosted services, or domains operated by other teams. This expands the trust boundary far beyond your authentication surface.
+
+For deeper guidance, refer to:
+
+- [Passkeys.dev — Server-side: Relying Party ID](https://passkeys.dev/docs/advanced/server/) for rpId selection trade-offs
+- [Web.dev — Choosing the Relying Party ID](https://web.dev/articles/webauthn-rp-id) for browser-side considerations
+- [FIDO Alliance — User experience guidelines for passkeys](https://fidoalliance.org/ux-guidelines-passkeys/) for user-facing design patterns
+
+### Multi-domain and brand scenarios
+
+If you serve multiple brand domains (e.g., `login.brand1.com` and `login.brand2.com`), passkeys do not automatically work across them — each domain has its own rpId. See [Passkeys with Multiple Custom Domains](/docs/customize/custom-domains/multiple-custom-domains/passkeys) for guidance on per-domain enrollment, communication, and migration patterns.
+
+### Configuration checklist
+
+Once you've chosen an rpId, ensure all your applications share it:
+
+1. **Use one custom domain** as the rpId across every native and web application that should share passkeys.
+2. **Native apps**: configure Device Settings in the Auth0 Dashboard with your iOS Team ID/Bundle ID and Android package name/SHA-256 fingerprint. Auth0 hosts the `apple-app-site-association` and `assetlinks.json` files on your custom domain automatically.
+3. **Web apps**: serve your web origin from the rpId or a subdomain of it, and add it to **Allowed Web Origins** for CORS.
+
+## References
+
+The following resources can be referenced when implementing passkey authentication for your application:
+
+* **Auth0 APIs**
+  + [Authentication API explorer](/api/authentication) — Passkey authentication endpoints
+  + [My Account API explorer](/api/myaccount) — Passkey enrollment endpoints
+  + [My Account API guide](/docs/manage-users/my-account-api) — Activation, scopes, and CORS
+
+* **Platform Documentation**
+  + [Apple Developer: Supporting passkeys](https://developer.apple.com/documentation/authenticationservices/supporting-passkeys)
+  + [Android Developers: Create passkeys](https://developer.android.com/identity/passkeys/create-passkeys)
+  + [Android Developers: Sign in with passkeys](https://developer.android.com/identity/passkeys/sign-in-with-passkeys)
+  + [MDN Web Authentication API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API)
+  + [WebAuthn specification](https://www.w3.org/TR/webauthn-3/)
+
+* **Additional Resources**
+  + [passkeys.dev](https://passkeys.dev) — Comprehensive passkey implementation guide
+  + [FIDO Alliance UX Guidelines](https://fidoalliance.org/ux-guidelines-passkeys/) — User experience best practices
