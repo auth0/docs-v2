@@ -1,0 +1,648 @@
+---
+title: Add Login to Your Flutter Windows Application
+sidebarTitle: Flutter Windows
+description: This guide demonstrates how to integrate Auth0 with a Flutter Windows desktop application using the Auth0 Flutter SDK (beta).
+mode: wide
+'og:title': 'Auth0 Flutter SDK Quickstarts: Add Login to Your Flutter Windows Application'
+'twitter:title': 'Auth0 Flutter SDK Quickstarts: Add Login to Your Flutter Windows Application'
+---
+
+import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
+
+export const envSnippet = `AUTH0_DOMAIN={yourDomain}
+AUTH0_CLIENT_ID={yourClientId}`;
+
+<Accordion title="Use AI to integrate Auth0" defaultOpen>
+
+Use the following prompt with your AI coding tool (Cursor, Copilot, Claude Code, etc.) to integrate Auth0 into your application:
+
+> Add Auth0 authentication to my Flutter Windows app. Use the auth0_flutter SDK.
+> Follow the Auth0 Flutter Windows quickstart: https://auth0.com/docs/quickstart/native/flutter-windows/interactive
+
+Or install the Auth0 agent skills directly:
+
+```shell
+npx skills add auth0/agent-skills --skill auth0-quickstart --skill auth0-flutter
+```
+
+This will automatically:
+- Create an Auth0 application in your dashboard
+- Fetch your credentials
+- Configure the Auth0 SDK in your app
+- Add login, logout, and user profile display
+
+</Accordion>
+
+<Note>
+**Prerequisites:**
+- Flutter SDK 3.24.0+ and Dart 3.5.0+
+- Windows 10 or newer
+- Visual Studio 2022 with **Desktop development with C++** workload
+- Auth0 account — [sign up free](https://auth0.com/signup)
+
+This feature is in **beta** (`auth0_flutter` 2.1.0-beta.1). The API may change before general availability.
+</Note>
+
+This guide walks you through adding login, logout, and user profile display to a Flutter Windows desktop app using the `auth0_flutter` SDK with OAuth 2.0 Authorization Code Flow + PKCE.
+
+## Get Started
+
+<Steps>
+  <Step title="Create a Flutter Windows project" stepNumber={1}>
+    Create a new Flutter project with Windows platform support.
+
+    ```shellscript
+    flutter create --platforms=windows my_app
+    cd my_app
+    ```
+
+    Verify Windows is available:
+
+    ```shellscript
+    flutter devices
+    ```
+
+    You should see a Windows desktop device listed.
+
+    <Tip>
+      Run `flutter doctor` to verify your environment is set up correctly and Visual Studio 2022 with C++ desktop development is detected.
+    </Tip>
+  </Step>
+
+  <Step title="Install the Auth0 Flutter SDK" stepNumber={2}>
+    Add the beta version of the SDK that includes Windows support:
+
+    ```shellscript
+    flutter pub add auth0_flutter:2.1.0-beta.1
+    flutter pub add flutter_dotenv
+    ```
+
+    Your `pubspec.yaml` should include:
+
+    ```yaml pubspec.yaml lines
+    dependencies:
+      auth0_flutter: 2.1.0-beta.1
+      flutter_dotenv: ^5.1.0
+    ```
+
+    <Tip>
+      The Auth0 Flutter SDK requires **Flutter 3.24.0+** and **Dart 3.5.0+**. The Windows platform additionally requires **Visual Studio 2022** with the C++ desktop development workload.
+    </Tip>
+  </Step>
+
+  <Step title="Configure Auth0" stepNumber={3}>
+    Create or configure an Auth0 application with the callback URLs required for Windows desktop authentication.
+
+    <Tabs>
+      <Tab title="Quick Setup">
+        Create a **Native** application in your Auth0 Dashboard with the following settings:
+
+        | Field | Value |
+        |-------|-------|
+        | Allowed Callback URLs | `auth0flutter://callback` |
+        | Allowed Logout URLs | `auth0flutter://callback` |
+
+        Your credentials:
+        - **Domain:** `{yourDomain}`
+        - **Client ID:** `{yourClientId}`
+      </Tab>
+
+      <Tab title="CLI">
+        ```shellscript
+        auth0 apps create \
+          --name "My Flutter Windows App" \
+          --type native \
+          --callbacks "auth0flutter://callback" \
+          --logout-urls "auth0flutter://callback"
+        ```
+      </Tab>
+
+      <Tab title="Dashboard">
+        1. Go to [Auth0 Dashboard](https://manage.auth0.com/) → **Applications > Applications**
+        2. Select **Create Application**
+        3. Name it "My Flutter Windows App" and choose **Native** as the application type
+        4. Go to the **Settings** tab of your new application
+        5. Set **Allowed Callback URLs** to `auth0flutter://callback`
+        6. Set **Allowed Logout URLs** to `auth0flutter://callback`
+        7. Scroll down and click **Save Changes**
+        8. Copy the **Domain** and **Client ID** values from the top of Application Settings
+      </Tab>
+    </Tabs>
+
+    <Info>
+      The `auth0flutter://callback` URL is a custom scheme that routes the browser callback back to your desktop application after authentication completes.
+    </Info>
+  </Step>
+
+  <Step title="Configure environment variables" stepNumber={4}>
+    Create a `.env` file in the root of your project:
+
+    <AuthCodeBlock children={envSnippet} language="shellscript" filename=".env" />
+
+    Add the `.env` file to your Flutter assets in `pubspec.yaml`:
+
+    ```yaml pubspec.yaml lines
+    flutter:
+      assets:
+        - .env
+    ```
+
+    <Warning>
+      Never commit your `.env` file to version control. Add it to `.gitignore`.
+    </Warning>
+  </Step>
+
+  <Step title="Configure the Windows runner" stepNumber={5}>
+    The Windows authentication flow requires callback plumbing in your app's runner. The Flutter plugin does not automatically receive protocol-scheme activations from the OS — you must add single-instance enforcement and URI forwarding.
+
+    Replace the contents of `windows/runner/main.cpp`:
+
+    ```cpp windows/runner/main.cpp expandable lines
+    #include <flutter/dart_project.h>
+    #include <flutter/flutter_view_controller.h>
+    #include <windows.h>
+
+    #include <iostream>
+    #include <string>
+    #include <thread>
+
+    #include "flutter_window.h"
+    #include "utils.h"
+
+    // --- Auth0 single-instance and callback handling ---
+    static const wchar_t* kMutexName = L"auth0flutter_single_instance_mutex";
+    static const wchar_t* kPipeName = L"\\\\.\\pipe\\auth0flutter_pipe";
+    static const wchar_t* kCallbackPrefix = L"auth0flutter://callback";
+
+    // Forward a URI to the already-running instance via named pipe
+    bool ForwardUriToRunningInstance(const std::wstring& uri) {
+      HANDLE hPipe = CreateFileW(kPipeName, GENERIC_WRITE, 0, NULL,
+                                 OPEN_EXISTING, 0, NULL);
+      if (hPipe == INVALID_HANDLE_VALUE) return false;
+
+      DWORD bytesWritten;
+      WriteFile(hPipe, uri.c_str(), (DWORD)(uri.size() * sizeof(wchar_t)),
+               &bytesWritten, NULL);
+      CloseHandle(hPipe);
+      return true;
+    }
+
+    // Start a pipe server thread to receive forwarded URIs
+    void StartPipeServer() {
+      std::thread([]() {
+        while (true) {
+          HANDLE hPipe = CreateNamedPipeW(
+              kPipeName, PIPE_ACCESS_INBOUND,
+              PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+              1, 4096, 4096, 0, NULL);
+
+          if (hPipe == INVALID_HANDLE_VALUE) break;
+
+          if (ConnectNamedPipe(hPipe, NULL) ||
+              GetLastError() == ERROR_PIPE_CONNECTED) {
+            wchar_t buffer[2048] = {};
+            DWORD bytesRead;
+            if (ReadFile(hPipe, buffer, sizeof(buffer) - sizeof(wchar_t),
+                         &bytesRead, NULL)) {
+              std::wstring uri(buffer);
+              if (uri.find(kCallbackPrefix) == 0) {
+                SetEnvironmentVariableW(L"PLUGIN_STARTUP_URL", uri.c_str());
+              }
+            }
+          }
+          DisconnectNamedPipe(hPipe);
+          CloseHandle(hPipe);
+        }
+      }).detach();
+    }
+
+    int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
+                          _In_ wchar_t* command_line, _In_ int show_command) {
+      // Single-instance enforcement
+      HANDLE hMutex = CreateMutexW(NULL, TRUE, kMutexName);
+      bool alreadyRunning = (hMutex && GetLastError() == ERROR_ALREADY_EXISTS);
+
+      // Check if launched with a callback URI
+      int argc;
+      LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+      std::wstring startupUri;
+      if (argc > 1) {
+        std::wstring arg(argv[1]);
+        if (arg.find(kCallbackPrefix) == 0) {
+          startupUri = arg;
+        }
+      }
+      LocalFree(argv);
+
+      // If another instance is running, forward the URI and exit
+      if (alreadyRunning) {
+        if (!startupUri.empty()) {
+          ForwardUriToRunningInstance(startupUri);
+        }
+        ReleaseMutex(hMutex);
+        CloseHandle(hMutex);
+        return 0;
+      }
+
+      // Set startup URI as env var for the plugin to read
+      if (!startupUri.empty()) {
+        SetEnvironmentVariableW(L"PLUGIN_STARTUP_URL", startupUri.c_str());
+      }
+
+      // Start pipe server to receive URIs from future instances
+      StartPipeServer();
+
+      // --- Standard Flutter initialization ---
+      ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+      flutter::DartProject project;
+      std::vector<std::string> command_line_arguments =
+          GetCommandLineArguments();
+      project.set_dart_entrypoint_arguments(
+          std::move(command_line_arguments));
+
+      FlutterWindow window(project);
+      Win32Window::Point origin(10, 10);
+      Win32Window::Size size(1280, 720);
+      if (!window.Create(L"My App", origin, size)) {
+        return EXIT_FAILURE;
+      }
+      window.SetQuitOnClose(true);
+
+      ::MSG msg;
+      while (::GetMessage(&msg, nullptr, 0, 0)) {
+        ::TranslateMessage(&msg);
+        ::DispatchMessage(&msg);
+      }
+
+      ::CoUninitialize();
+      ReleaseMutex(hMutex);
+      CloseHandle(hMutex);
+      return EXIT_SUCCESS;
+    }
+    ```
+
+    This code:
+    - Enforces single-instance via a Windows mutex
+    - Captures `auth0flutter://callback` URIs passed as command-line arguments
+    - Forwards URIs from secondary launches to the running instance via a named pipe
+    - Sets the `PLUGIN_STARTUP_URL` environment variable for the Auth0 plugin to read
+  </Step>
+
+  <Step title="Register the custom URL scheme" stepNumber={6}>
+    Register `auth0flutter` as a custom URL scheme so Windows routes callback URIs to your app.
+
+    Create a file `windows/url_scheme.reg`:
+
+    ```reg windows/url_scheme.reg lines
+    Windows Registry Editor Version 5.00
+
+    [HKEY_CURRENT_USER\Software\Classes\auth0flutter]
+    @="URL:Auth0 Flutter Protocol"
+    "URL Protocol"=""
+
+    [HKEY_CURRENT_USER\Software\Classes\auth0flutter\shell]
+
+    [HKEY_CURRENT_USER\Software\Classes\auth0flutter\shell\open]
+
+    [HKEY_CURRENT_USER\Software\Classes\auth0flutter\shell\open\command]
+    @="\"C:\\path\\to\\your\\app.exe\" \"%1\""
+    ```
+
+    Replace `C:\path\to\your\app.exe` with the actual path to your built executable. During development this is typically:
+
+    ```text
+    build\windows\x64\runner\Debug\my_app.exe
+    ```
+
+    Double-click the `.reg` file to import it into the Windows Registry.
+
+    <Info>
+      For production distribution, register the custom URL scheme programmatically in your app's installer (MSIX, Inno Setup, etc.) rather than relying on a `.reg` file.
+    </Info>
+
+    **Verify the scheme works:**
+
+    Open Command Prompt and run:
+
+    ```shellscript
+    start auth0flutter://test
+    ```
+
+    Your app should launch (or come to the foreground if already running).
+  </Step>
+
+  <Step title="Implement login and logout" stepNumber={7}>
+    Create `lib/auth_service.dart` to handle Windows authentication:
+
+    ```dart lib/auth_service.dart lines
+    import 'package:auth0_flutter/auth0_flutter.dart';
+    import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+    class AuthService {
+      late final Auth0 _auth0;
+      Credentials? _credentials;
+
+      AuthService() {
+        _auth0 = Auth0(
+          dotenv.env['AUTH0_DOMAIN']!,    // From Application Settings → Domain
+          dotenv.env['AUTH0_CLIENT_ID']!, // From Application Settings → Client ID
+        );
+      }
+
+      Credentials? get credentials => _credentials;
+      bool get isAuthenticated => _credentials != null;
+
+      Future<void> login() async {
+        final result = await _auth0.windowsWebAuthentication().login(
+          appCustomURL: 'auth0flutter://callback', // Must match registered scheme
+          authTimeout: const Duration(minutes: 5),
+        );
+        _credentials = result;
+      }
+
+      Future<void> logout() async {
+        await _auth0.windowsWebAuthentication().logout(
+          appCustomURL: 'auth0flutter://callback',
+        );
+        _credentials = null;
+      }
+    }
+    ```
+
+    <Info>
+      Unlike mobile platforms, the Windows implementation does **not** automatically store credentials. You must manage persistence manually if you need sessions to survive app restarts. See the Advanced Usage section below.
+    </Info>
+  </Step>
+
+  <Step title="Show user profile information" stepNumber={8}>
+    Create the main app UI in `lib/main.dart`:
+
+    ```dart lib/main.dart expandable lines
+    import 'dart:async';
+
+    import 'package:flutter/material.dart';
+    import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+    import 'auth_service.dart';
+
+    Future<void> main() async {
+      await dotenv.load();
+      runApp(const MyApp());
+    }
+
+    class MyApp extends StatelessWidget {
+      const MyApp({super.key});
+
+      @override
+      Widget build(BuildContext context) {
+        return MaterialApp(
+          title: 'Auth0 Flutter Windows',
+          home: const HomeScreen(),
+        );
+      }
+    }
+
+    class HomeScreen extends StatefulWidget {
+      const HomeScreen({super.key});
+
+      @override
+      State<HomeScreen> createState() => _HomeScreenState();
+    }
+
+    class _HomeScreenState extends State<HomeScreen> {
+      final AuthService _authService = AuthService();
+      bool _isLoading = false;
+
+      Future<void> _login() async {
+        setState(() => _isLoading = true);
+        try {
+          await _authService.login();
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Login failed: $e')),
+            );
+          }
+        } finally {
+          if (mounted) setState(() => _isLoading = false);
+        }
+      }
+
+      Future<void> _logout() async {
+        setState(() => _isLoading = true);
+        try {
+          await _authService.logout();
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Logout failed: $e')),
+            );
+          }
+        } finally {
+          if (mounted) setState(() => _isLoading = false);
+        }
+      }
+
+      @override
+      Widget build(BuildContext context) {
+        final credentials = _authService.credentials;
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('Auth0 Flutter Windows')),
+          body: Center(
+            child: _isLoading
+                ? const CircularProgressIndicator()
+                : credentials == null
+                    ? ElevatedButton(
+                        onPressed: _login,
+                        child: const Text('Log In'),
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (credentials.user.pictureUrl != null)
+                            CircleAvatar(
+                              backgroundImage: NetworkImage(
+                                credentials.user.pictureUrl!.toString(),
+                              ),
+                              radius: 40,
+                            ),
+                          const SizedBox(height: 16),
+                          Text(
+                            credentials.user.name ?? 'Unknown',
+                            style: Theme.of(context).textTheme.headlineSmall,
+                          ),
+                          Text(credentials.user.email ?? ''),
+                          const SizedBox(height: 24),
+                          ElevatedButton(
+                            onPressed: _logout,
+                            child: const Text('Log Out'),
+                          ),
+                        ],
+                      ),
+          ),
+        );
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Run your application" stepNumber={9}>
+    Build and run the app:
+
+    ```shellscript
+    flutter run -d windows
+    ```
+
+    **Expected flow:**
+
+    1. App launches with a **Log In** button
+    2. Click **Log In** → your system browser opens the Auth0 Universal Login page
+    3. Complete authentication in the browser
+    4. Browser redirects to `auth0flutter://callback` → your app comes to the foreground
+    5. User's name, email, and profile picture are displayed
+
+    <Warning>
+      Ensure the custom URL scheme is registered (Step 6) before testing. Without it, the browser callback cannot reach your application.
+    </Warning>
+  </Step>
+</Steps>
+
+<Check>
+  **Checkpoint**
+
+  You should now have a fully functional Auth0 login experience in your Flutter Windows application. The app opens the system browser for Auth0 Universal Login, receives the callback via the custom URL scheme, and displays the authenticated user's profile.
+</Check>
+
+---
+
+## Troubleshooting & Advanced Usage
+
+<Accordion title="Common Issues & Solutions">
+  ### Browser opens but app doesn't receive callback
+
+  **Symptom**: Auth0 login succeeds in browser but the app never receives the credentials.
+
+  **Fix:**
+  1. Open Registry Editor → `HKEY_CURRENT_USER\Software\Classes\auth0flutter\shell\open\command` and confirm the path to your `.exe`
+  2. Test with `start auth0flutter://test` in Command Prompt — your app should launch
+  3. Ensure `windows/runner/main.cpp` includes the pipe server and mutex code
+  4. Check that no stale instances are running in Task Manager
+  5. Rebuild completely: `flutter clean && flutter run -d windows`
+
+  ### Authentication times out after 5 minutes
+
+  **Symptom**: Login appears to hang and eventually fails.
+
+  **Fix:** The app never received the callback URI. Verify:
+  1. The registry entry points to the correct executable path
+  2. The mutex name `auth0flutter_single_instance_mutex` is consistent in `main.cpp`
+  3. No firewall or antivirus is blocking the named pipe
+  4. Kill all stale instances and rebuild
+
+  ### Second app instance launches instead of forwarding URI
+
+  **Symptom**: A new window opens instead of the existing app receiving the callback.
+
+  **Fix:**
+  1. Kill all running instances in Task Manager
+  2. Ensure the mutex name is consistent in `main.cpp`
+  3. Rebuild: `flutter clean && flutter run -d windows`
+
+  ### WindowsWebAuthentication not found
+
+  **Symptom**: Compilation error referencing `windowsWebAuthentication`.
+
+  **Fix:** Ensure your `pubspec.yaml` specifies the beta version:
+  ```yaml
+  dependencies:
+    auth0_flutter: 2.1.0-beta.1
+  ```
+  Run `flutter pub get` to update.
+
+  ### Callback URL mismatch error
+
+  **Symptom**: Error "redirect_uri_mismatch" from Auth0.
+
+  **Fix:**
+  1. Verify **Allowed Callback URLs** in [Auth0 Dashboard](https://manage.auth0.com/) → Application Settings is exactly `auth0flutter://callback`
+  2. Ensure the `appCustomURL` parameter in your code matches: `'auth0flutter://callback'`
+  3. Check for trailing slashes or whitespace
+</Accordion>
+
+<Accordion title="Persisting Credentials">
+  The Windows implementation does **not** automatically store credentials like mobile platforms do. To persist sessions across app restarts, use `flutter_secure_storage`:
+
+  ```shellscript
+  flutter pub add flutter_secure_storage
+  ```
+
+  ```dart lib/credential_storage.dart expandable lines
+  import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+  class CredentialStorage {
+    final _storage = const FlutterSecureStorage();
+
+    Future<void> save({
+      required String accessToken,
+      required String idToken,
+    }) async {
+      await _storage.write(key: 'access_token', value: accessToken);
+      await _storage.write(key: 'id_token', value: idToken);
+    }
+
+    Future<String?> getAccessToken() async {
+      return await _storage.read(key: 'access_token');
+    }
+
+    Future<void> clear() async {
+      await _storage.delete(key: 'access_token');
+      await _storage.delete(key: 'id_token');
+    }
+  }
+  ```
+
+  Call `save()` after login, `clear()` after logout, and check for stored tokens on app startup to restore the session.
+</Accordion>
+
+<Accordion title="Using an Intermediary Server">
+  When Auth0 redirects directly to a custom scheme, the browser may show a prompt or leave a blank tab. For a smoother experience, use an intermediary HTTPS server:
+
+  1. Set up a server endpoint (e.g., `https://your-app.example.com/callback`) that redirects to `auth0flutter://callback?code=...&state=...`
+  2. In [Auth0 Dashboard](https://manage.auth0.com/) → Application Settings, set **Allowed Callback URLs** to `https://your-app.example.com/callback`
+  3. Pass both URLs to the login method:
+
+  ```dart
+  final result = await auth0.windowsWebAuthentication().login(
+    appCustomURL: 'auth0flutter://callback',
+    redirectUrl: 'https://your-app.example.com/callback',
+  );
+  ```
+
+  The server page can display "Redirecting..." and close itself for a cleaner experience.
+</Accordion>
+
+<Accordion title="Custom Scopes and Audience">
+  Request additional scopes or an API audience:
+
+  ```dart
+  final result = await auth0.windowsWebAuthentication().login(
+    appCustomURL: 'auth0flutter://callback',
+    scopes: {'openid', 'profile', 'email', 'read:messages'},
+    audience: 'https://your-api.example.com',
+  );
+  ```
+
+  Configure the API in [Auth0 Dashboard](https://manage.auth0.com/) → **Applications > APIs** before using the `audience` parameter.
+</Accordion>
+
+---
+
+## Next Steps
+
+- [Auth0 Flutter SDK on GitHub](https://github.com/auth0/auth0-flutter) — source code and issue tracker
+- [Auth0 Flutter SDK on pub.dev](https://pub.dev/packages/auth0_flutter) — API reference
+- [Flutter quickstart (Android, iOS, macOS, Web)](https://auth0.com/docs/quickstart/native/flutter) — other platform guides
+- [Token Storage Best Practices](https://auth0.com/docs/secure/tokens/token-storage) — secure credential management
+- [Auth0 Universal Login](https://auth0.com/docs/authenticate/login/auth0-universal-login) — customize the login experience
