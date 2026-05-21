@@ -1,0 +1,247 @@
+---
+mode: wide
+title: "ASP.NET Web API (OWIN): Authorization"
+description: "Add Auth0 JWT authorization to an ASP.NET OWIN API using the standard JWT middleware with protected endpoints"
+sidebarTitle: ASP.NET Web API (OWIN)
+---
+import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
+
+{/* <Card title="View on Github" href="https://github.com/auth0-samples/auth0-aspnet-owin-webapi-samples/tree/master/Quickstart/Sample" icon="github">
+System requirements: Microsoft Visual Studio 2015 Update 3 | System.IdentityModel.Tokens.Jwt NuGet Package v5.2.2 | Microsoft.Owin.Security.Jwt NuGet Package V4.0.0
+</Card> */}
+
+<Info>
+  **New to Auth0?** Learn [how Auth0 works](/docs/get-started/auth0-overview) and read about [implementing API authentication and authorization](/docs/get-started/authentication-and-authorization-flow) using the OAuth 2.0 framework.
+</Info>
+
+## Get Started
+
+Auth0 allows you to add authorization to any kind of application. This guide demonstrates how to integrate Auth0 with any new or existing ASP.NET OWIN Web API application using the `Microsoft.Owin.Security.Jwt` package. Each Auth0 API uses the API Identifier, which your application needs to validate the access token.
+
+This example demonstrates:
+
+* How to check for a JSON Web Token (JWT) in the `Authorization` header of an incoming HTTP request.
+* How to check if the token is valid, using the [JSON Web Key Set (JWKS)](/docs/secure/tokens/json-web-tokens/json-web-key-sets) for your Auth0 account. To learn more about validating Access Tokens, see [Validate Access Tokens](/docs/secure/tokens/access-tokens/validate-access-tokens).
+
+<Steps>
+  <Step title="Create an API" stepNumber={1}>
+    In the [APIs](https://manage.auth0.com/#/apis) section of the Auth0 dashboard, click **Create API**. Provide a name and an identifier for your API, for example, `https://quickstarts/api`. You will use the identifier as an `audience` later, when you are configuring the Access Token verification. Leave the **Signing Algorithm** as **RS256**.
+
+    <Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+    By default, your API uses RS256 as the algorithm for signing tokens. Since RS256 uses a private/public keypair, it verifies the tokens against the public key for your Auth0 account. The public key is in the [JSON Web Key Set (JWKS)](/docs/secure/tokens/json-web-tokens/json-web-key-sets) format, and can be accessed [here](https://{yourDomain}/.well-known/jwks.json).
+  </Step>
+  <Step title="Define permissions" stepNumber={2}>
+    Permissions let you define how resources can be accessed on behalf of the user with a given access token. For example, you might choose to grant read access to the `messages` resource if users have the manager access level, and a write access to that resource if they have the administrator access level.
+
+    You can define allowed permissions in the **Permissions** view of the Auth0 Dashboard's [APIs](https://manage.auth0.com/#/apis) section.
+
+    <Frame>![Configure Permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+    <Info>
+      This example uses the `read:messages` scope.
+    </Info>
+  </Step>
+  <Step title="Configure the sample project" stepNumber={3}>
+    The sample code has an `appsettings` section in `Web.config` which configures it to use the correct Auth0 **Domain** and **API Identifier** for your API. If you download the code from this page it will be automatically filled. If you use the example from Github, you will need to fill it yourself.
+
+    ```xml web.config lines
+    <appSettings>
+      <add key="Auth0Domain" value="{yourDomain}" />
+      <add key="Auth0ApiIdentifier" value="{yourApiIdentifier}" />
+    </appSettings>
+    ```
+  </Step>
+  <Step title="Install dependencies" stepNumber={4}>
+    To use Auth0 Access Tokens with ASP.NET you will use the OWIN JWT Middleware which is available in the `Microsoft.Owin.Security.Jwt` NuGet package.
+
+    ```bash lines
+    Install-Package Microsoft.Owin.Security.Jwt
+    ```
+  </Step>
+  <Step title="Verify the token signature" stepNumber={5}>
+    As the OWIN JWT middleware doesn't use Open ID Connect Discovery by default, you will need to provide a custom `IssuerSigningKeyResolver`. To do this, add the following to the `Support/OpenIdConnectSigningKeyResolver.cs` file:
+
+    <Info>
+      Such a custom resolver was previously published as part of the `Auth0.OpenIdConnectSigningKeyResolver` package through Nuget. As [this package is not available anymore](https://github.com/auth0/auth0-aspnet-owin/blob/master/SECURITY-NOTICE.md), you will need to provide this yourself.
+    </Info>
+
+    ```cs OpenIdConnectSigningKeyResolver.cs lines
+    public class OpenIdConnectSigningKeyResolver
+    {
+        private readonly OpenIdConnectConfiguration openIdConfig;
+
+        public OpenIdConnectSigningKeyResolver(string authority)
+        {
+            var cm = new ConfigurationManager<OpenIdConnectConfiguration>($"{authority.TrimEnd('/')}/.well-known/openid-configuration", new OpenIdConnectConfigurationRetriever());
+            openIdConfig = AsyncHelper.RunSync(async () => await cm.GetConfigurationAsync());
+        }
+
+        public SecurityKey[] GetSigningKey(string kid)
+        {
+            return new[] { openIdConfig.JsonWebKeySet.GetSigningKeys().FirstOrDefault(t => t.KeyId == kid) };
+        }
+    }
+    ```
+
+    The `OpenIdConnectSigningKeyResolver` will automatically download the JSON Web Key Set used to sign the RS256 tokens from the OpenID Connect Configuration endpoint (at `/.well-known/openid-configuration`). You can then use it subsequently to resolve the Issuer Signing Key, as will be demonstrated in the JWT registration code below.
+  </Step>
+  <Step title="Configure JWT authentication" stepNumber={6}>
+    Go to the `Configuration` method of your `Startup` class and add a call to `UseJwtBearerAuthentication` passing in the configured `JwtBearerAuthenticationOptions`.
+
+    The `JwtBearerAuthenticationOptions` needs to specify your Auth0 API Identifier in the `ValidAudience` property, and the full path to your Auth0 domain as the `ValidIssuer`. You will need to configure the `IssuerSigningKeyResolver` to use the instance of `OpenIdConnectSigningKeyResolver` to resolve the signing key:
+
+    ```cs Startup.cs lines
+    public void Configuration(IAppBuilder app)
+    {
+        var domain = $"https://{ConfigurationManager.AppSettings["Auth0Domain"]}/";
+        var apiIdentifier = ConfigurationManager.AppSettings["Auth0ApiIdentifier"];
+        var keyResolver = new OpenIdConnectSigningKeyResolver(domain);
+
+        app.UseJwtBearerAuthentication(
+            new JwtBearerAuthenticationOptions
+            {
+                AuthenticationMode = AuthenticationMode.Active,
+                TokenValidationParameters = new TokenValidationParameters()
+                {
+                    ValidAudience = apiIdentifier,
+                    ValidIssuer = domain,
+                    IssuerSigningKeyResolver = (token, securityToken, kid, parameters) => keyResolver.GetSigningKey(kid)
+                }
+            });
+
+        // Configure Web API
+        WebApiConfig.Configure(app);
+    }
+    ```
+
+    <Warning>
+      ### Do not forget the trailing backslash
+
+      Please ensure that the URL specified for `ValidIssuer` contains a trailing backslash as this needs to match exactly with the issuer claim of the JWT. This is a common misconfiguration error which will cause your API calls to not be authenticated correctly.
+    </Warning>
+  </Step>
+  <Step title="Validate scopes" stepNumber={7}>
+    The JWT middleware above verifies that the Access Token included in the request is valid; however, it doesn't yet include any mechanism for checking that the token has the sufficient **scope** to access the requested resources.
+
+    Create a class called `ScopeAuthorizeAttribute` which inherits from `System.Web.Http.AuthorizeAttribute`. This Authorization Attribute will check that the `scope` claim issued by your Auth0 tenant is present, and if so it will ensure that the `scope` claim contains the requested scope.
+
+    ```cs ScopeAuthorizeAttribute.cs lines
+    public class ScopeAuthorizeAttribute : AuthorizeAttribute
+    {
+        private readonly string scope;
+
+        public ScopeAuthorizeAttribute(string scope)
+        {
+            this.scope = scope;
+        }
+
+        public override void OnAuthorization(HttpActionContext actionContext)
+        {
+            base.OnAuthorization(actionContext);
+
+            // Get the Auth0 domain, in order to validate the issuer
+            var domain = $"https://{ConfigurationManager.AppSettings["Auth0Domain"]}/";
+
+            // Get the claim principal
+            ClaimsPrincipal principal = actionContext.ControllerContext.RequestContext.Principal as ClaimsPrincipal;
+
+            // Get the scope claim. Ensure that the issuer is for the correct Auth0 domain
+            var scopeClaim = principal?.Claims.FirstOrDefault(c => c.Type == "scope" && c.Issuer == domain);
+            if (scopeClaim != null)
+            {
+                // Split scopes
+                var scopes = scopeClaim.Value.Split(' ');
+
+                // Succeed if the scope array contains the required scope
+                if (scopes.Any(s => s == scope))
+                    return;
+            }
+
+            HandleUnauthorizedRequest(actionContext);
+        }
+    }
+    ```
+  </Step>
+  <Step title="Protect API endpoints" stepNumber={8}>
+    The routes shown below are available for the following requests:
+
+    * `GET /api/public`: available for non-authenticated requests
+    * `GET /api/private`: available for authenticated requests containing an access token with no additional scopes
+    * `GET /api/private-scoped`: available for authenticated requests containing an access token with the `read:messages` scope granted
+
+    The JWT middleware integrates with the standard ASP.NET Authentication and Authorization mechanisms, so you only need to decorate your controller action with the `[Authorize]` attribute to secure an endpoint. To ensure that a scope is present in order to call a particular API endpoint, decorate the action with the `ScopeAuthorize` attribute and pass the name of the required `scope` in the `scope` parameter.
+
+    ```cs ApiController.cs lines
+    [RoutePrefix("api")]
+    public class ApiController : ApiController
+    {
+        [HttpGet]
+        [Route("public")]
+        public IHttpActionResult Public()
+        {
+            return Json(new
+            {
+                Message = "Hello from a public endpoint!"
+            });
+        }
+
+        [HttpGet]
+        [Route("private")]
+        [Authorize]
+        public IHttpActionResult Private()
+        {
+            return Json(new
+            {
+                Message = "Hello from a private endpoint! You need to be authenticated to see this."
+            });
+        }
+
+        [HttpGet]
+        [Route("private-scoped")]
+        [ScopeAuthorize("read:messages")]
+        public IHttpActionResult Scoped()
+        {
+            return Json(new
+            {
+                Message = "Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this."
+            });
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Check>
+  **Checkpoint**
+
+  Now that you have configured your application, run your application and verify that:
+
+  - `GET /api/public` is available for non-authenticated requests.
+  - `GET /api/private` is available for authenticated requests.
+  - `GET /api/private-scoped` is available for authenticated requests containing an access token with the `read:messages` scope.
+</Check>
+
+
+## Additional Resources
+
+<CardGroup cols={3}>
+  <Card title="Sample Application" icon="github" href="https://github.com/auth0-samples/auth0-aspnet-owin-webapi-samples/tree/master/Quickstart/Sample">
+    Complete sample application for this quickstart
+  </Card>
+  <Card title="Identity Providers" icon="plug" href="/docs/authenticate/identity-providers">
+    Configure other identity providers
+  </Card>
+  <Card title="Multifactor Authentication" icon="shield" href="/docs/secure/multi-factor-authentication">
+    Enable multifactor authentication
+  </Card>
+  <Card title="Attack Protection" icon="lock" href="/docs/secure/attack-protection">
+    Learn about attack protection
+  </Card>
+  <Card title="Rules" icon="code" href="/docs/customize/rules">
+    Extend Auth0 with custom logic
+  </Card>
+  <Card title="Community Forum" icon="comments" href="https://community.auth0.com/">
+    Get help from the Auth0 community
+  </Card>
+</CardGroup>
