@@ -1,0 +1,325 @@
+---
+title: Get Started with the Experiment Center API
+description: Learn how to create and activate your first A/B experiment using the Auth0 Management API.
+sidebarTitle: Get Started
+---
+
+<Callout icon="flask" color="#7549F2" iconType="regular">
+
+Experiment Center is currently in Beta. This feature is available to select design partners only and is not supported for production use. To learn more about Auth0's product release cycle, read [Product Release Stages](/docs/troubleshoot/product-lifecycle/product-release-stages).
+
+</Callout>
+
+This guide walks you through creating a percentage-based A/B experiment using the Management API. By the end, you will have an active experiment that assigns 90% of traffic to control and 10% to a treatment variation.
+
+## Prerequisites
+
+- A Management API token with the following scopes: `create:experimentation`, `read:experimentation`, `update:experimentation`, `delete:experimentation`
+- Your tenant must be enabled for the Experiment Center Beta (contact your Auth0 account team)
+
+## Base URL
+
+All Experiment Center endpoints are under:
+
+```
+https://{yourDomain}/api/v2/experimentation/
+```
+
+## Step 1: Create a feature flag
+
+A feature flag defines the feature you are testing. It contains typed configuration parameters with default values (the baseline state).
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/feature-flags' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "name": "Passkey Enrollment Prompt",
+    "parameters": {
+      "show_passkey_prompt": {
+        "type": "boolean",
+        "value": false,
+        "description": "Whether to show the passkey enrollment prompt"
+      },
+      "prompt_style": {
+        "type": "string",
+        "value": "none",
+        "description": "Visual style for the prompt (none, modal, inline)"
+      }
+    }
+  }'
+```
+
+The response includes the flag's `feature_flag_id` (prefixed identifier, e.g., `flg_...`). Save this value for the following steps.
+
+## Step 2: Create variations
+
+Variations represent the different treatments within a feature flag. The control variation uses empty overrides (inherits the baseline). The treatment variation specifies which parameters differ.
+
+### Create the control variation
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/feature-flags/{featureFlagId}/variations' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "name": "Control (No Prompt)",
+    "overrides": {}
+  }'
+```
+
+### Create the treatment variation
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/feature-flags/{featureFlagId}/variations' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "name": "Treatment (Passkey Modal)",
+    "overrides": {
+      "show_passkey_prompt": { "value": true },
+      "prompt_style": { "value": "modal" }
+    }
+  }'
+```
+
+Save both `variation_id` values from the responses.
+
+## Step 3: Activate the feature flag
+
+A feature flag must be in `active` status before any experiment referencing it can be activated. Activation requires at least 2 variations.
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/feature-flags/{featureFlagId}/status' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "status": "active"
+  }'
+```
+
+## Step 4: Create the experiment
+
+An experiment references a feature flag and defines how traffic is allocated across variations.
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/experiments' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "name": "Passkey Enrollment Q1",
+    "feature_flag_id": "{featureFlagId}",
+    "authentication_flow": "pre_login",
+    "allocation_strategy": "percentage",
+    "allocations": [
+      {
+        "variation_id": "{controlVariationId}",
+        "weight": 90,
+        "is_control": true
+      },
+      {
+        "variation_id": "{treatmentVariationId}",
+        "weight": 10,
+        "is_control": false
+      }
+    ],
+    "assignment_config": {
+      "subject": "device"
+    }
+  }'
+```
+
+Save the `experiment_id` from the response.
+
+<Callout icon="circle-info" color="#0EA5E9" iconType="regular">
+
+Allocation weights must sum to 100. Exactly one allocation must have `is_control: true`.
+
+</Callout>
+
+## Step 5: Validate the experiment
+
+Before activating, you can check whether the experiment passes all validation rules:
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/experiments/{experimentId}/validate' \
+  --header 'authorization: Bearer {managementApiToken}'
+```
+
+The response includes `is_valid` (boolean) and an `errors` array. If `is_valid` is `true`, you are ready to activate.
+
+Common validation errors:
+
+| Error code | Cause |
+| --- | --- |
+| `experiment_invalid_allocation_weights` | Weights do not sum to 100 |
+| `experiment_missing_control` | No allocation has `is_control: true` |
+| `variation_not_from_flag` | A variation ID does not belong to the referenced feature flag |
+| `feature_flag_not_active` | The referenced feature flag is not in `active` status |
+| `experiment_active_limit_exceeded` | Another experiment is already active (Beta: one per tenant) |
+
+## Step 6: Activate the experiment
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/experiments/{experimentId}/status' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "status": "active"
+  }'
+```
+
+Once active, the experiment engine resolves the experiment on every authentication transaction and assigns variations using deterministic hashing. The `started_at` timestamp is set automatically.
+
+## Test with query parameters
+
+You can force a specific variation during testing by passing query parameters on the `/authorize` URL:
+
+```
+https://{yourDomain}/authorize?client_id={clientId}&experiment_id={experimentId}&variation_id={variationId}&...
+```
+
+| Parameter | Description |
+| --- | --- |
+| `experiment_id` | Force enrollment in a specific experiment |
+| `variation_id` | Force a specific variation (requires `experiment_id`) |
+| `segment_id` | Force a specific segment match (requires `experiment_id`) |
+
+Query parameter overrides work for experiments in any status, including `draft`. This enables a testing workflow where you create an experiment, verify both variants render correctly using query params, and then activate.
+
+<Callout icon="circle-info" color="#0EA5E9" iconType="regular">
+
+Query parameters influence variant assignment only. They do not grant access to experiment data or bypass tenant security policies.
+
+</Callout>
+
+## Verify enriched tenant logs
+
+Once the experiment is active and auth transactions are flowing, verify that tenant log events contain experiment metadata:
+
+1. Navigate to **Auth0 Dashboard > Monitoring > Logs** or use the [Management API logs endpoint](/docs/api/management/v2).
+2. Look for recent authentication events (successful login, signup).
+3. Confirm the event details include: `experiment_id`, `variant_id`, and `segment_id`.
+
+These enriched events also flow through any [log streaming](/docs/customize/log-streams) destinations you have configured (Datadog, Splunk, S3, etc.). Pull the data into your analytics tool to compare outcomes across variations.
+
+## Use experiment context in your code
+
+Once the experiment is active, experiment context is injected into runtime surfaces automatically.
+
+### ACUL components
+
+Enable experiment context on a screen by adding `experiment_center` to the screen's `context_configuration`:
+
+```bash
+curl --request PATCH \
+  --url 'https://{yourDomain}/api/v2/prompts/{prompt}/screen/{screen}/rendering' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "context_configuration": ["experiment_center"]
+  }'
+```
+
+Then read the context in your ACUL component:
+
+```jsx
+export default function LoginScreen({ experiment_center, ...props }) {
+  const showPasskey = experiment_center?.config?.show_passkey_prompt?.value;
+
+  return (
+    <div>
+      <LoginForm {...props} />
+      {showPasskey && <PasskeyEnrollment />}
+    </div>
+  );
+}
+```
+
+### Actions
+
+Read experiment context from the event object in post_login, pre_user_registration, or post_user_registration triggers:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment_center;
+  if (!ec?.experiment_id) return;
+
+  const showPasskey = ec.config?.show_passkey_prompt?.value;
+  if (showPasskey) {
+    api.redirect.sendUserTo("https://example.com/enroll-passkey", {
+      query: { experiment_id: ec.experiment_id, variation_id: ec.variation_id }
+    });
+  }
+};
+```
+
+### Forms
+
+Pass experiment context to Forms via the `vars` property in an Action:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment_center;
+  if (ec?.experiment_id) {
+    api.prompt.render("my-form-id", {
+      vars: {
+        variation_id: ec.variation_id,
+        show_passkey_prompt: ec.config?.show_passkey_prompt?.value
+      }
+    });
+  }
+};
+```
+
+Reference the variables in your Form template using `{{vars.variation_id}}` or `{{vars.show_passkey_prompt}}`.
+
+## Complete the experiment
+
+When you are ready to conclude the experiment:
+
+```bash
+curl --request POST \
+  --url 'https://{yourDomain}/api/v2/experimentation/experiments/{experimentId}/status' \
+  --header 'authorization: Bearer {managementApiToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+    "status": "completed"
+  }'
+```
+
+The `ended_at` timestamp is set automatically. The experiment configuration (including the winning variation's overrides) is retained so you can reference it while applying the configuration change to your tenant.
+
+<Callout icon="circle-info" color="#0EA5E9" iconType="regular">
+
+Promotion is manual at Beta. After completing the experiment, update your tenant configuration to match the winning variation's behavior. Automated promotion is a future capability.
+
+</Callout>
+
+## Experiment lifecycle reference
+
+| Status | Description |
+| --- | --- |
+| `draft` | Created but not running. Can be tested via query parameter overrides. |
+| `active` | Running. Variant assignment and context injection active for all auth transactions. |
+| `paused` | Temporarily suspended. No new assignments; in-flight sessions continue. |
+| `completed` | Concluded. Configuration retained for reference during manual promotion. |
+| `archived` | Soft-deleted via DELETE. Hidden from default list views. |
+
+Allowed transitions: `draft` &rarr; `active`, `active` &rarr; `paused`, `paused` &rarr; `active`, `active`/`paused` &rarr; `completed`, `draft`/`paused`/`completed` &rarr; `archived`.
+
+A completed experiment cannot be reactivated. Create a new experiment to run again.
+
+## Learn more
+
+- [Experiment Center Overview](/docs/customize/experiment-center/experiment-center)
+- [Actions Overview](/docs/customize/actions/actions-overview)
+- [Advanced Customizations for Universal Login (ACUL)](/docs/customize/login-pages/advanced-customizations)
+- [Log Streams](/docs/customize/log-streams)
