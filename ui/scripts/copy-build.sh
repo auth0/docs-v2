@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Bump patch only if the version field hasn't been manually changed already
 BASE_VER=$(git show HEAD:package.json | jq -r '.version')
 CUR_VER=$(jq -r '.version' package.json)
