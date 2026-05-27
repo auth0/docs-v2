@@ -1,0 +1,174 @@
+---
+description: Learn how to migrate from the legacy Guardian phone configuration to the Unified Phone Experience using the Auth0 Terraform Provider.
+title: Migrate to Unified Phone Experience with Terraform
+---
+
+Migrate your tenant from the legacy Guardian phone configuration to the Unified Phone Experience using the Auth0 Terraform Provider. After migration, all multi-factor authentication (MFA) phone notifications route through a single tenant-level phone provider.
+
+<Warning>
+
+This migration requires two separate `terraform apply` operations. Attempting to complete it in a single apply causes 403 errors from Auth0 APIs because the legacy phone configuration and the Unified Phone Experience flag cannot be active at the same time.
+
+</Warning>
+
+## Prerequisites
+
+- Auth0 Terraform Provider v1.41.0 or later
+
+## Step 1: Add new resources and clean up legacy configuration
+
+In this step, you introduce the `auth0_phone_provider` resource, strip legacy attributes from `auth0_guardian`, and temporarily set `phone_consolidated_experience` to `false` to keep the tenant stable during the apply.
+
+### Set phone_consolidated_experience to false
+
+In your `auth0_tenant` resource, explicitly set the flag to `false`. This ensures the tenant does not route through the Unified Phone Experience while you make changes.
+
+```hcl wrap lines
+resource "auth0_tenant" "main" {
+    # ... other tenant settings ...
+
+    phone_consolidated_experience = false
+}
+```
+
+### Add the auth0_phone_provider resource
+
+Create a tenant-level phone provider. Auth0 supports one phone provider per tenant. This provider handles delivery for all phone-based flows once the Unified Phone Experience is enabled.
+
+<Tabs>
+  <Tab title="Twilio">
+
+```hcl wrap lines
+resource "auth0_phone_provider" "default" {
+    name = "twilio"
+
+    configuration {
+        delivery_methods = ["text", "voice"]
+        default_from     = "YOUR_DEFAULT_PHONE_NUMBER"
+        sid              = var.twilio_sid
+        mssid            = var.twilio_messaging_service_sid
+    }
+
+    credentials {
+        auth_token = var.twilio_auth_token
+    }
+}
+```
+
+To send SMS only, set `delivery_methods` to `["text"]`.
+
+  </Tab>
+  <Tab title="Custom Action-based provider">
+
+```hcl wrap lines
+resource "auth0_phone_provider" "default" {
+    name = "custom"
+
+    configuration {
+        delivery_methods = ["text"]
+    }
+}
+```
+
+For custom providers, Auth0 expects a pre-existing Action with the `custom-phone-provider` trigger already deployed. The Action handles the actual delivery logic. Terraform does not manage the Action's existence as part of the `auth0_phone_provider` resource lifecycle.
+
+  </Tab>
+</Tabs>
+
+### (Optional) Add auth0_branding_phone_notification_template
+
+If you use `enrollment_message` or `verification_message` on the legacy Guardian phone block to customize OTP message text, you can replicate that behavior with the `auth0_branding_phone_notification_template` resource.
+
+```hcl wrap lines
+resource "auth0_branding_phone_notification_template" "default" {
+    # Refer to the Auth0 Terraform Provider docs for available template variables
+}
+```
+
+### Clean up the auth0_guardian phone block
+
+Remove all legacy provider-specific attributes from the `phone` block. After cleanup, the block should contain only `enabled` and `message_types`.
+
+**Before:**
+
+```hcl wrap lines
+resource "auth0_guardian" "default" {
+    phone {
+        enabled       = true
+        provider      = "twilio"
+        message_types = ["sms"]
+
+        options {
+            enrollment_message   = "Your enrollment code is {{code}}"
+            verification_message = "Your verification code is {{code}}"
+        }
+
+        twilio_config {
+            sid                   = var.twilio_sid
+            auth_token            = var.twilio_auth_token
+            from                  = "YOUR_DEFAULT_PHONE_NUMBER"
+            messaging_service_sid = var.twilio_messaging_service_sid
+        }
+    }
+}
+```
+
+**After:**
+
+```hcl wrap lines
+resource "auth0_guardian" "default" {
+    phone {
+        enabled       = true
+        message_types = ["sms"]
+    }
+}
+```
+
+### Plan and apply
+
+Review the plan carefully before applying. You should see:
+
+- `auth0_phone_provider.default` created
+- `auth0_guardian.default` updated (attributes removed)
+- `auth0_tenant.main` updated (`phone_consolidated_experience = false`)
+- `auth0_branding_phone_notification_template.default` created (if added)
+
+```bash wrap lines
+terraform plan
+terraform apply
+```
+
+## Step 2: Enable the Unified Phone Experience
+
+Once Step 1 applies cleanly, set `phone_consolidated_experience` to `true`. This activates the Unified Phone Experience and routes all MFA phone notifications through the `auth0_phone_provider` you configured in Step 1.
+
+```hcl wrap lines
+resource "auth0_tenant" "main" {
+    # ... other tenant settings ...
+
+    phone_consolidated_experience = true
+}
+```
+
+Apply the change:
+
+```bash wrap lines
+terraform plan
+terraform apply
+```
+
+After this applies, Auth0 uses the tenant-level phone provider for all MFA phone factor deliveries. The legacy Guardian phone API endpoints are no longer in use.
+
+## Troubleshooting
+
+### 403 Forbidden errors during terraform apply
+
+This typically means `phone_consolidated_experience` was already `true` when trying to manage legacy Guardian phone attributes. Make sure Step 1 applies with `phone_consolidated_experience = false` before Step 2.
+
+### Custom provider not delivering messages
+
+Verify that the Action with the `custom-phone-provider` trigger exists and is deployed in Auth0 before applying. Terraform does not manage the Action's existence as part of the `auth0_phone_provider` resource lifecycle.
+
+### OTP messages not arriving after migration
+
+Confirm the `auth0_phone_provider` credentials are correct and that `delivery_methods` includes `"text"` for SMS. If you previously used a Messaging Service SID, ensure `mssid` is set on the new provider.
