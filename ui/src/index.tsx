@@ -9,6 +9,7 @@ import { overrideHistoryMethods } from '@/lib/history';
 import { initOneTrust } from '@/lib/one-trust';
 import { initSentry } from '@/lib/sentry';
 import { initRootStore } from '@/stores';
+import { addAssistantEventListeners } from '@/lib/assistant-event-listeners';
 
 function mountApp(root: HTMLElement) {
   createRoot(root).render(
@@ -43,6 +44,9 @@ async function main() {
 
   // Initialize feedback listeners for Mintlify documentation pages
   initFeedbackListeners();
+
+  // Adds resize event dispatching to assistant chat screen
+  addAssistantEventListeners();
 
   // Mount the main application
   mountApp(root);
