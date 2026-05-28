@@ -1,0 +1,201 @@
+---
+description: Uso de la API de autenticación de Auth0 con sus aplicaciones PHP.
+title: 'PHP: Uso de la API de autenticación con Auth0-PHP'
+---
+
+El SDK de PHP de Auth0 proporciona una clase `Auth0\SDK\API\Authentication` que incluye los métodos que puede usar para acceder directamente a la [API de autenticación](https://auth0.com/docs/api/authentication). Tenga en cuenta que esta interfaz está pensada para aplicaciones más avanzadas y, por lo general, no ofrece un mecanismo para llevar un seguimiento de las sesiones de usuario. Para la mayoría de los casos de uso, le convendrá trabajar con la [clase base de Auth0](/es/docs/libraries/auth0-php/auth0-php-basic-use).
+
+En este artículo, encontrará ejemplos de operaciones de autenticación habituales.
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+La documentación siguiente supone que seguiste los pasos de las [secciones de Instalación y primeros pasos](/es/docs/libraries/auth0-php) y continúa a partir del código proporcionado allí.
+
+<div id="authorization-code-flow">
+  ## Flujo de código de autorización
+</div>
+
+Un [flujo de código de autorización](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow) es la forma básica de conceder a los usuarios acceso a su aplicación. Este flujo es el mismo que se utiliza en la [página de uso básico de Auth0-PHP](/es/docs/libraries/auth0-php/auth0-php-basic-use). Si necesita un control más preciso sobre el proceso de inicio de sesión o de callback, esta sección explica cómo usar la API de autenticación directamente.
+
+Los usuarios deben autenticarse con Auth0 para generar un código de autorización. Esto se hace redirigiéndolos al endpoint `/authorize` de su dominio del inquilino. El siguiente código aparecería en una página que requiere autenticación:
+
+```php lines
+// 👆 Continuamos desde la guía de "introducción" enlazada en "Requisitos previos" arriba. Añade esto al archivo index.php que creaste allí.
+
+// Configura una sesión PHP, que usaremos como almacén de sesión personalizado para el usuario autenticado.
+session_start();
+
+// $user será null si no hay sesión disponible; de lo contrario, contendrá datos de usuario.
+$user = $_SESSION['user'] ?? null;
+
+// ¿El usuario ya se ha autenticado con nosotros?
+if ($user === null) {
+    // Genera bytes pseudoaleatorios criptográficamente seguros para usar como valor de mitigación de CSRF.
+    // Guarda esto para recuperarlo después de la autenticación.
+    $_SESSION['state'] = bin2hex(random_bytes(16));
+
+    // Genera la URL de autorización y redirige al usuario a ella.
+    header('Location: ' . $auth0->authentication()->getLoginLink($_SESSION['state']));
+    exit;
+}
+
+echo '<h1>Sensitive data!</h1>';
+```
+
+El proceso anterior hace lo siguiente:
+
+1. Comprobamos si hay un usuario autenticado almacenado en nuestro controlador de sesión personalizado. Su aplicación podría gestionar las sesiones de usuario de forma distinta.
+2. Si no hay ninguna sesión, debemos iniciar sesión redirigiendo al usuario a la página de Universal Login.
+3. Establecemos un valor de estado con la solicitud de inicio de sesión y luego verificamos ese valor cuando se devuelve el código de autorización en la URL de callback. Lo almacenamos en nuestra sesión de PHP con la clave &#39;state&#39;.
+4. La llamada a `getLoginLink()` construye el enlace `/authorize` correcto con el tipo de respuesta adecuado (`code` en este caso), el URI de redirección (donde la aplicación procesará la respuesta, como se explica a continuación) y el estado (del paso anterior).
+5. A continuación, redirigimos a esta URL y esperamos a que el usuario vuelva a ser redirigido a nuestra aplicación.
+
+Después de la autenticación, el usuario vuelve a ser redirigido a nuestra aplicación en la URL de callback, que se gestiona de la siguiente manera:
+
+```php lines expandable
+// 👆 Continuamos desde la guía de "introducción" enlazada en "Requisitos previos" arriba. Añade esto al archivo index.php que creaste allí.
+
+// Asegúrate de que la sesión PHP esté abierta para poder recuperar el estado almacenado y compararlo.
+session_start();
+
+// Extrae los parámetros `code` y `state` de la consulta de la solicitud, si están presentes.
+$code = filter_var($_GET['code'] ?? null, FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+$state = filter_var($_GET['state'] ?? null, FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+
+// Verifica si hay un code en la consulta de la solicitud.
+if ($code === null) {
+    die('No authorization code found.');
+}
+
+// Verifica si hay un state presente y compáralo con el que generamos y almacenamos antes de redirigir al usuario.
+if ($state === null || $state !== $_SESSION['state']) {
+    die('Invalid state.');
+}
+
+// Ya comparamos los estados; ahora debemos descartar este valor almacenado.
+unset($_SESSION['state']);
+
+// Intenta obtener un access_token con el code devuelto y el URI de redirección original. (Esto devuelve un PSR-7 ResponseInterface.)
+$response = $auth0->authentication()->codeExchange($code);
+
+// ¿El código de estado de la respuesta indica un error?
+if ($response->getStatusCode() !== 200) {
+    die("Code exchange failed.");
+}
+
+// Decodifica la respuesta JSON en un array de PHP:
+$response = json_decode(response->getBody()->__toString(), true, 512, JSON_THROW_ON_ERROR);
+
+// Crea un array para almacenar la información de la sesión.
+$session = [
+    'id_token' => $response['id_token'] ?? null,
+    'access_token' => $response['access_token'] ?? null,
+    'scope' => $response['scope'] ?? null,
+    'refresh_token' => $response['refresh_token'] ?? null,
+    'expires_in' => $response['expires_in'] ?? null,
+    'user' => null
+];
+
+// Recuperamos un token de ID; ¡vamos a procesarlo!
+if ($session['id_token'] !== null) {
+    // El SDK de Auth0 incluye una utilidad de procesamiento de tokens que aprovecharemos para esto:
+    $token = new \Auth0\SDK\Token($auth0->configuration(), $session['id_token'], \Auth0\SDK\Token::TYPE_ID_TOKEN);
+
+    // Verifica el token y valida sus claims. Lanzarán una \Auth0\SDK\Exception\InvalidTokenException si alguna verificación falla.
+    $token->verify();
+    $token->validate();
+
+    $session['user'] => $token->toArray();
+}
+
+// Almacena el estado de la sesión autenticada.
+$_SESSION['user'] = $session;
+
+// Mostramos los claims/identidad del usuario como demostración de un flujo de autenticación exitoso:
+print_r($session['user']);
+```
+
+Veamos el proceso en detalle:
+
+1. Buscamos un parámetro `code` en la query de la solicitud. Si no está presente, abortamos la autenticación.
+2. Verificamos que tengamos un valor `state` y nos aseguramos de que coincida con el que generamos. [Esto es importante para evitar ataques CSRF.](/es/docs/secure/attack-protection)
+3. Intentamos intercambiar el código con la llamada c`odeExchange()`, asegurándonos de pasar el `code` que Auth0 le dio a nuestra aplicación cuando nos devolvió al usuario autenticado.
+4. Si esto se completa correctamente, sabemos que el intercambio fue exitoso y que tenemos un ID Token y un Token de acceso, entre otros posibles valores.
+5. Validamos el ID Token y usamos las claims para la identidad del usuario.
+6. Si este último paso se completa correctamente, guardamos el usuario y redirigimos de vuelta a nuestros datos sensibles.
+
+<div id="client-credentials-flow">
+  ## Flujo de credenciales de cliente
+</div>
+
+El [flujo de credenciales de cliente](/es/docs/get-started/authentication-and-authorization-flow/client-credentials-flow) otorga a una aplicación acceso a una API específica en función de los alcances configurados en el Dashboard. Así es como las aplicaciones pueden, por ejemplo, hacer llamadas a la <Tooltip tip="Management API: Un producto que permite a los clientes realizar tareas administrativas." cta="Ver glosario" href="/es/docs/glossary?term=Management+API">Management API</Tooltip>. Si la autenticación se completa correctamente, se emitirá un <Tooltip tip="Token de acceso: Credencial de autorización, en forma de una cadena opaca o JWT, usada para acceder a una API." cta="Ver glosario" href="/es/docs/glossary?term=Access+Token">Token de acceso</Tooltip> para la API solicitada.
+
+Primero, habilite la concesión **Client Credentials** en la pestaña **Advanced settings &gt; Grant Types** de la página de configuración de la aplicación.
+
+A continuación, autorice la aplicación para la API que esté usando en la pestaña **Machine to Machine Applications** de la página **Settings** de la API. Asegúrese de seleccionar todos los alcances necesarios (y solo esos) y haga clic en **Update**. Vuelva a la pestaña **Settings** y copie el valor de **Identifier**. Debe agregar este valor a la clave `AUTH0_MANAGEMENT_AUDIENCE` de su archivo `.env`.
+
+Solicite un Token de acceso para la API con el siguiente ejemplo:
+
+```php lines
+// 👆 Continuamos desde la guía de "introducción" enlazada en "Requisitos previos" arriba.
+
+// Iniciar un intercambio de credenciales de cliente:
+$response = $auth0->authentication()->clientCredentials([
+    'audience' => $_ENV['AUTH0_MANAGEMENT_AUDIENCE']
+]);
+
+// ¿El código de estado de la respuesta indica un error?
+if ($response->getStatusCode() !== 200) {
+    die("Code exchange failed.");
+}
+
+// Decodificar la respuesta JSON en un array de PHP:
+$response = json_decode(response->$getBody()->__toString(), true, 512, JSON_THROW_ON_ERROR);
+
+// Mostrar la respuesta en el navegador
+print_r($response, true);
+```
+
+Si la autorización se completó correctamente, deberías ver lo siguiente:
+
+```php lines
+Array
+(
+    [access_token] => eyJ0eXAi...eyJpc3Mi...QoB2c24w
+    [scope] => read:users read:clients ...
+    [expires_in] => 86400
+    [token_type] => Bearer
+)
+```
+
+Consulta [Uso de la Management API con Auth0-PHP](/es/docs/libraries/auth0-php/using-the-management-api-with-auth0-php) para obtener más información sobre cómo utilizar este Token de acceso.
+
+<div id="single-sign-on-logout">
+  ## Cierre de sesión de inicio de sesión único
+</div>
+
+Aunque destruir la sesión local con `session_destroy()` bastaría para desautenticar a un usuario de su aplicación, también debe cerrar la sesión de su usuario final en Auth0. Esto garantiza que, la próxima vez que el usuario vea un formulario de inicio de sesión de Auth0, se le pedirá que introduzca sus credenciales para iniciar sesión.
+Primero, determine a dónde debe dirigirse el usuario una vez completado el cierre de sesión. Guarde esto en la configuración de la aplicación de Auth0, en el campo &quot;Allowed Logout URLs&quot;. Además, agregue una clave `AUTH0_LOGOUT_RETURN_URL` con esta URL como valor en su archivo `.env`.
+Agregue lo siguiente al código de cierre de sesión de su aplicación:
+
+```php lines
+// 👆 Continuamos desde la guía de "introducción" enlazada en "Requisitos previos" arriba.
+
+// Desautenticar la sesión local del usuario en tu aplicación.
+session_destroy();
+
+// Redirigir a la URL de cierre de sesión de Auth0 para finalizar su sesión de Auth0:
+header("Location: " . $auth0->authentication()->getLogoutLink($_ENV['AUTH0_LOGOUT_RETURN_URL']);
+```
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [PHP: Introducción a Auth0-PHP](/es/docs/libraries/auth0-php)
+* [PHP: Inicio y cierre de sesión, y devolución de perfiles de usuario con Auth0-PHP](/es/docs/libraries/auth0-php/auth0-php-basic-use)
+* [PHP: Uso de la Management API con Auth0-PHP](/es/docs/libraries/auth0-php/using-the-management-api-with-auth0-php)
+* [PHP: Validación de JWT (JSON Web Tokens) con Auth0-PHP](/es/docs/libraries/auth0-php/validating-jwts-with-auth0-php)
+* [PHP: Solución de problemas de la integración con Auth0-PHP](/es/docs/libraries/auth0-php/troubleshoot-auth0-php-library)

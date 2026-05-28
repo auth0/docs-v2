@@ -1,0 +1,216 @@
+---
+description: サイレント認証を使用して、ユーザーのアプリケーションへのログイン状態を維持する方法を説明します。
+title: サイレント認証の設定
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+[OpenID Connect protocol](/ja/docs/authenticate/protocols/openid-connect-protocol) は、認証リクエストで `prompt=none` パラメーターをサポートしており、アプリケーションはこれによって <Tooltip tip="認可サーバー: ユーザーのアクセス境界の定義に関与する一元化されたサーバーです。たとえば、認可サーバーはユーザーが利用できるデータ、タスク、機能を制御できます。" cta="用語集を表示" href="/ja/docs/glossary?term=authorization+server">認可サーバー</Tooltip> がユーザー操作 (認証、同意、または <Tooltip tip="認可サーバー: ユーザーのアクセス境界の定義に関与する一元化されたサーバーです。たとえば、認可サーバーはユーザーが利用できるデータ、タスク、機能を制御できます。" cta="用語集を表示" href="/ja/docs/glossary?term=MFA">MFA</Tooltip> など) を一切表示してはならないことを示せます。Auth0 は、要求されたレスポンスをアプリケーションに返すか、ユーザーがまだ認証されていない場合や、続行前に何らかの同意またはプロンプトが必要な場合はエラーを返します。
+
+SPA で [Implicit Flow](/ja/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post) を使用すると、明示的な緩和策が必要となるセキュリティ上の課題が生じます。SPA でセッションを更新するには、Silent Authentication と組み合わせて [Authorization Code Flow with PKCE](/ja/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) を使用できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  ブラウザーにおけるユーザープライバシー制御の最近の進展により、サードパーティ Cookie へのアクセスが妨げられ、ユーザーエクスペリエンスに悪影響が生じています。そのため、ブラウザーベースのフローでは [リフレッシュトークンローテーション](/ja/docs/secure/tokens/refresh-tokens/refresh-token-rotation) を使用する必要があります。これにより、SPA でリフレッシュトークンを安全に使用できるほか、ITP のようなブラウザープライバシー技術による UX の中断を招くことなく、エンドユーザーはリソースにシームレスにアクセスできます。
+</Callout>
+
+<div id="initiate-silent-authentication-requests">
+  ## サイレント認証リクエストを開始する
+</div>
+
+サイレント認証リクエストを開始するには、ユーザーを [Auth0 の認証 API の `/authorize` エンドポイント](https://auth0.com/docs/api/authentication#authorize-application) にリダイレクトする際に、`prompt=none` パラメーターを追加します。 (認証リクエストに含まれる各パラメーターは、アプリの要件に応じて異なります。)
+
+例:
+
+export const codeExample = `GET https://{yourDomain}/authorize
+    ?response_type=id_token token&
+    client_id=...&
+    redirect_uri=...&
+    state=...&
+    scope=openid...&
+    nonce=...&
+    audience=...&
+    response_mode=...&
+    prompt=none`;
+
+<AuthCodeBlock children={codeExample} language="json" />
+
+`prompt=none` パラメーターを指定すると、Auth0 は指定された `response_mode` を使用して、成功またはエラーのいずれかの結果を、指定された `redirect_uri` (コールバック URL) に直ちに返します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  該当する [Rules](/ja/docs/customize/rules) は、サイレント認証プロセスの一部として実行されます。
+</Callout>
+
+<div id="response-modes">
+  ### レスポンスモード
+</div>
+
+`response_mode` パラメーターは、Auth0 が認可レスポンスをアプリケーションにどのように返すかを指定します。サイレント認証では、次のモードを使用できます。
+
+| モード           | 配信方法                             | ユースケース                            |
+| ------------- | -------------------------------- | --------------------------------- |
+| `query`       | クエリ文字列 (`?code=...`)             | サーバー側で処理する Authorization Code フロー |
+| `fragment`    | URL フラグメント (`#access_token=...`) | Implicit フロー (レガシー)               |
+| `web_message` | `postMessage()` API              | **SPA に推奨** - ページ遷移は不要            |
+
+`web_message` を使用する場合、Auth0 は非表示の iframe 内に HTML ページをレンダリングし、[HTML5 Web Messaging API](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) を使用して結果をアプリケーションに返します。これにより、画面に表示されるページリダイレクトや state の消失なしで、サイレント認証を実行できます。
+
+<Note>
+  `response_mode=web_message` を使用するには、[アプリケーション設定](https://manage.auth0.com/#/applications) の **Allowed Web Origins** フィールドにアプリケーションの URL を追加する必要があります。すべてのレスポンスモードの詳細については、[OAuth 2.0 Authorization Framework](/ja/docs/authenticate/protocols/oauth#authorization-endpoint) を参照してください。
+</Note>
+
+<div id="successful-authentication-responses">
+  ### 認証成功時のレスポンス
+</div>
+
+ユーザーがすでに Auth0 にログインしており、追加のインタラクティブなプロンプトが不要な場合、Auth0 は、ユーザーがログインページから手動で認証した場合とまったく同じレスポンスを返します。レスポンスの形式は、使用する `response_mode` によって異なります。
+
+<Tabs>
+  <Tab title="web_message">
+    PKCE を使用する Authorization Code Flow (`response_type=code`) で `response_mode=web_message` を使用すると、Auth0 は authorization code をアプリケーションに postMessage する HTML ページを返します。
+
+    ```html
+    <script>
+      window.parent.postMessage({
+        type: 'authorization_response',
+        response: {
+          code: 'SplX...GT',
+          state: 'your_state_value'
+        }
+      }, 'https://yourApp.com');
+    </script>
+    ```
+
+    アプリケーション (または SDK) はこのメッセージを受信し、code をトークンに交換します。ユーザーに有効なセッションがない場合、Auth0 は代わりにエラーを postMessage します。
+
+    ```html
+    <script>
+      window.parent.postMessage({
+        type: 'authorization_response',
+        response: {
+          error: 'login_required',
+          error_description: 'Login required',
+          state: 'your_state_value'
+        }
+      }, 'https://yourApp.com');
+    </script>
+    ```
+  </Tab>
+
+  <Tab title="fragment">
+    `response_mode=fragment` (`response_type=id_token token` を使用する Implicit Flow のデフォルト) を使用すると、Auth0 は URL フラグメントにトークンを含めてリダイレクトします。
+
+    ```text
+    GET https://yourApp.com/callback
+        #id_token=eyJhbG...&
+        access_token=eyJhbG...&
+        state=your_state_value&
+        expires_in=86400
+    ```
+  </Tab>
+
+  <Tab title="query">
+    `response_mode=query` (`response_type=code` を使用する Authorization Code Flow のデフォルト) を使用すると、Auth0 はクエリ文字列に code を含めてリダイレクトします。
+
+    ```text
+    GET https://yourApp.com/callback
+        ?code=SplX...GT&
+        state=your_state_value
+    ```
+  </Tab>
+</Tabs>
+
+これらのレスポンスは、`prompt=none` パラメーターを使用せずに直接ログインした場合と形式上は同一です。唯一の違いは、`prompt=none` を使用すると、ユーザーの操作なしでレスポンスが即座に返されることです。
+
+<div id="error-responses">
+  ### エラーレスポンス
+</div>
+
+ユーザーが <Tooltip tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインすると、他のアプリケーションにも自動的にログインされるサービス。" cta="用語集を表示" href="/ja/docs/glossary?term=Single+Sign-on">シングルサインオン</Tooltip> (SSO) でログインしていなかった場合、または SSO セッションの有効期限が切れていた場合、Auth0 は同じ `response_mode` を使ってエラーを返します。リダイレクトベースのモード (`fragment` または `query`) の場合:
+
+```text
+GET https://your_callback_url/
+    #error=ERROR_CODE&
+    error_description=ERROR_DESCRIPTION&
+    state=...
+```
+
+`web_message` モードでは、上記の例のように、エラーは `postMessage()` を通じて送信されます。
+
+`ERROR_CODE` に指定可能な値は、[OpenID Connect specification](https://openid.net/specs/openid-connect-core-1_0.html#AuthError) で定義されています。
+
+| Response               | Description                                                                                                                                                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `login_required`       | ユーザーが Auth0 にログインしていないため、サイレント認証はできません。このエラーは、テナント レベルの **Log In Session Management** 設定の構成によって発生することがあります。特に、**Require log in after** 設定で指定した期間が経過すると発生する場合があります。詳しくは、[Configure Session Lifetime Settings](/ja/docs/manage-users/sessions/configure-session-lifetime-settings) を参照してください。 |
+| `consent_required`     | ユーザーは Auth0 にログインしていますが、アプリケーションを認可するには同意が必要です。                                                                                                                                                                                                                                          |
+| `interaction_required` | ユーザーは Auth0 にログインしており、アプリケーションも認可済みですが、認証を完了する前に別の場所にリダイレクトされる必要があります。たとえば、[redirect rule](/ja/docs/customize/rules/redirect-users) を使用している場合です。                                                                                                                                            |
+
+これらのエラーのいずれかが返された場合、認証するには、`prompt=none` パラメーターを付けずにユーザーを Auth0 のログインページにリダイレクトする必要があります。
+
+<div id="renew-expired-tokens">
+  ## 期限切れのトークンを更新する
+</div>
+
+ユーザーが Auth0 で有効なセッションを引き続き保持している限り、サイレント認証リクエストを行って新しいトークンを取得できます。[auth0.js の `checkSession` メソッド](/ja/docs/libraries/auth0js) は、SPA 向けに `response_mode=web_message` を使用したサイレントトークンリクエストを hidden iframe で実行します。SPA では、Auth0.js が結果 (トークンまたはエラー code) を処理し、アプリケーションが指定したコールバック関数を通じてその情報を渡します。これにより、UX を損なうことなく処理できるため、ページの再読み込みや state の消失は発生しません。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Safari ブラウザーに関するその他の重要な制限事項と回避策については、[Safari 使用時にトークンを更新する](/ja/docs/troubleshoot/authentication-issues/renew-tokens-when-using-safari) を参照してください。
+</Callout>
+
+<div id="access-token-expiration">
+  ### アクセストークンの有効期限
+</div>
+
+<Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を表示" href="/ja/docs/glossary?term=Access+Tokens">アクセストークン</Tooltip> はアプリケーションからは中身を確認できません。つまり、アプリケーションはアクセストークンの内容を調べて有効期限を判断できません。
+
+アクセストークンがいつ期限切れになるかを判断する方法は 2 つあります。
+
+* Auth0 から返される `expires_in` レスポンスパラメーターを確認する。
+* 有効期限は考慮しない。代わりに、API がアプリケーションからのリクエストを拒否した場合 (401 など) にアクセストークンを更新する。
+
+[Implicit Flow](/ja/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post) の場合、`expires_in` パラメーターは、認証が成功すると Auth0 からハッシュパラメーターとして返されます。[Authorization Code Flow with PKCE](/ja/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) の場合は、認可コード交換の実行時にバックエンドサーバーに返されます。
+
+`expires_in` パラメーターは、アクセストークンの有効期間 (秒数) を示すため、アクセストークンの有効期限切れを事前に把握するために使用できます。
+
+<div id="error-responses">
+  ### エラーレスポンス
+</div>
+
+`web_message` 通信の実行中にタイムアウトが発生したことを示す `timeout` エラーレスポンスを受け取る場合があります。このエラーは通常、クロスオリジン認証へのフォールバックに関連しています。解決するには、<Tooltip tip="Auth0 のサービスを構成するための主要な製品である Auth0 Dashboard。" cta="用語集を表示" href="/ja/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip> を使用して、サイレント認証を実行するすべての URL を、アプリケーションの **Allowed Web Origins** フィールドに追加してください。
+
+<div id="poll-with-checksession">
+  ## checkSession() を使用したポーリング
+</div>
+
+複数のアプリケーションをまたぐ一部のシナリオでは、シングルログアウトが必要になることがあります (あるアプリケーションでユーザーがログアウトした際に、他のアプリケーションでもログアウトさせる必要がある場合) 。このような場合、アプリケーションを設定して `checkSession()` を使って Auth0 に定期的に問い合わせ、セッションが存在するかどうかを確認できます。セッションが存在しない場合は、そのユーザーをアプリケーションからログアウトできます。同じポーリング方法は、SSO シナリオでサイレント認証を実装する場合にも使用できます。
+
+将来この呼び出しにレート制限が適用された場合の問題を避けるため、`checkSession()` の呼び出し間隔は少なくとも 15 分空ける必要があります。
+
+<div id="silent-authentication-with-multi-factor-authentication">
+  ## MFA を使用したサイレント認証
+</div>
+
+状況によっては、同じブラウザーからログインするたびにユーザーに [多要素認証 (MFA)](/ja/docs/secure/multi-factor-authentication) を求めたくない場合があります。そのためには、セッションごとに MFA が 1 回だけ実行されるようルールを設定します。これは、`allowRememberBrowser` を `true` に設定しなくても、ユーザーのセッション中に SPA で有効期間の短いアクセストークンを更新するためのサイレント認証 (`prompt=none`) を行えるため、有用です。
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  const authMethods = event.authentication?.methods || []
+
+  const completedMfa = !!authMethods.find((method) => method.name === 'mfa')
+
+  if (!completedMfa) {
+    api.multifactor.enable('any', { allowRememberBrowser: true })
+  }
+};
+```
+
+詳細については、[認証リクエストの頻度を変更する](/ja/docs/secure/multi-factor-authentication/customize-mfa)を参照してください。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [リフレッシュトークンローテーション](/ja/docs/secure/tokens/refresh-tokens/refresh-token-rotation)
+* [リフレッシュトークンローテーションを設定する](/ja/docs/secure/tokens/refresh-tokens/configure-refresh-token-rotation)
+* [無効なトークンエラーのトラブルシューティング](/ja/docs/troubleshoot/basic-issues/invalid-token-errors)
+* [APIコールを確認する](/ja/docs/troubleshoot/authentication-issues/check-api-calls)
+* [多要素認証の問題をトラブルシューティングする](/ja/docs/troubleshoot/authentication-issues/troubleshoot-mfa-issues)

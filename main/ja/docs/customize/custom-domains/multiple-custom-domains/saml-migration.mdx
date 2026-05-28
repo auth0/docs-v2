@@ -1,0 +1,129 @@
+---
+description: 既存の SAML フェデレーション接続を従来の Auth0 カスタムドメインから新しいカスタムドメインに移行し、テナントで Multiple Custom Domain（MCD）機能を利用できるようにします。
+title: カスタムドメインの SAML 移行
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+import {AuthCodeGroup} from "/snippets/ja/AuthCodeGroup.jsx";
+
+既存の SAML フェデレーション接続 を従来の Auth0 カスタムドメインから新しいドメインへ移行することで、テナントで Multiple Custom Domain (MCD) 機能を活用できるようになります。
+
+外部 IDプロバイダー (IdP) では古いドメインがハードコードされていることが多いため、古いドメインに送信される SAML レスポンスをインターセプトし、それを新しいカスタムドメインへ安全に振り向けるスマート リバースプロキシをデプロイする必要があります。
+
+これにより、フェデレーション ユーザーをシームレスに移行でき、IdP 側で必須の設定更新を待たずに、新しいドメインをすぐに使用できます。 
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+このプロセスでは、Terraform を使用した Auth0 コンポーネントの設定と、プロキシ ロジック用の Cloudflare Worker のデプロイが必要です。
+
+移行を開始する前に、以下の要件を確認してください。
+
+* MCD が有効化された Enterprise プランのテナント。
+* Auth0 テナントに設定された、検証済みのカスタム ドメインが 2 つあること:
+  1. **既存のレガシー ドメイン** (プロキシ用) 
+  2. **新しいターゲット ドメイン** (アプリケーション用) 
+* Terraform CLI と `Node.js/npm` がインストールされていること。
+* カスタム ドメインをホストしているドメインにアクセスできる Cloudflare アカウント。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+この移行戦略では、スマートなリバースプロキシを使用して、従来のカスタムドメインから新しいドメインへの移行を橋渡しします。このプロキシは古いドメインにデプロイされ、外部のIDプロバイダー (IdP) から送信される SAML 認証レスポンスを受信して処理します。
+
+これが必要なのは、IdP の設定が古いドメインのエンドポイントにハードコードされているためです。プロキシは、SAML ペイロード内の制御フィールド (`Destination` や `Recipient` など) を書き換え、新しいカスタムドメインを正しく反映させます。
+
+最後に、プロキシはこの修正済みのペイロードを新しいドメインのログインエンドポイントに転送します。これにより、IdP パートナー側で手動の設定変更を行うことなく、ダウンタイムなしで新しいドメインへ切り替えられます。
+
+<div id="setup-and-configuration">
+  ## セットアップと設定
+</div>
+
+移行のセットアップと設定を行うには、次の手順に従います。
+
+1. 移行用リポジトリをクローンします。
+
+```bash
+git clone https://github.com/abbaspour/auth0-mcd-federation-migration.git
+cd auth0-mcd-federation-migration
+```
+
+2. 依存関係をインストールします。
+
+```bash
+npm install
+```
+
+3. 必要な認証情報とドメイン情報を記載した `terraform.auto.tfvars` ファイルを、`tf` ディレクトリ内に作成します。
+
+```bash
+# Auth0 サービスプロバイダー（SP）変数
+auth0_domain = "your-sp-tenant.auth0.com"
+auth0_existing_custom_domain = "oldfed.example.com"
+auth0_new_custom_domain = "id.example2.com"
+auth0_tf_client_id = "your-sp-client-id"
+auth0_tf_client_secret = "your-sp-client-secret"
+
+# Auth0 IDプロバイダー（IdP）変数
+auth0_idp_domain = "your-idp-tenant.auth0.com"
+auth0_idp_tf_client_id = "your-idp-client-id"
+auth0_idp_tf_client_secret = "your-idp-client-secret"
+
+# Cloudflare 変数
+cloudflare_api_key = "your-cloudflare-api-key"
+cloudflare_email = "your-cloudflare-email"
+cloudflare_zone_id = "your-cloudflare-zone-id"
+```
+
+4. Terraform を初期化し、適用します。
+
+```bash
+cd tf
+terraform init
+terraform apply
+```
+
+これにより、必要なSAMLアプリケーションと接続が作成され、Cloudflare 経由で DNS が設定され、Worker 用の環境変数が準備されます。
+
+<div id="deploy-the-cloudflare-worker">
+  ### Cloudflare Worker をデプロイする
+</div>
+
+このプロキシは、SAML レスポンスのインターセプトとリダイレクトのロジックを担います。デプロイするには、次の手順に従います。
+
+1. Cloudflare プロキシをデプロイします。
+
+```bash
+cd ..
+npx wrangler deploy
+```
+
+2. ワーカーは、Terraform の出力から必要な環境変数 (`AUTH0_EDGE_LOCATION` や `NEW_SP_DOMAIN` など) を自動的に取得します。
+
+<div id="temporarily-update-saml-connection-parameters">
+  ### SAML 接続パラメーターを一時的に更新する
+</div>
+
+SAML レスポンスは、新しいドメインに再送信される前に、まず古いドメインで受信されます。そのため、不一致エラーを回避するには、SAML 接続で想定される検証パラメーターを一時的に古いドメインのコールバック URL に向ける必要があります。
+
+1. サービスプロバイダーのテナント用に、`read:connections` および `update:connections` スコープを持つ Management API アクセストークンを取得します。
+
+   ```bash
+   cd bin/
+   export access_token='<sp-tenant-management-api-token>'
+   ```
+
+2. 宛先 URL を更新します。
+
+   ```bash
+   ./sp-set-destination-url.sh -i <saml-connection-id> -d https://oldfed.example.com/login/callback
+   ```
+
+3. 受信者 URL を更新します。
+
+   ```bash
+   ./sp-set-recipient-url.sh -i <saml-connection-id> -r https://oldfed.example.com/login/callback
+   ```

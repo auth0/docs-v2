@@ -1,0 +1,540 @@
+---
+title: "Échange de jeton On-Behalf-Of"
+description: "Apprenez à utiliser l’échange de jeton On-Behalf-Of (OBO) pour permettre aux services intermédiaires de préserver l’identité et les autorisations de l’utilisateur lorsqu’ils appellent des API en aval."
+validatedOn: 2026-04-30
+---
+
+L’échange de jeton On-Behalf-Of (OBO) ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) permet aux services intermédiaires de préserver l’identité et les autorisations de l’utilisateur lorsqu’ils appellent des API en aval.
+
+Lorsqu’une application doit appeler une API en aval, elle peut utiliser :
+
+* [Client Credentials Flow](/fr-CA/docs/get-started/authentication-and-authorization-flow/client-credentials-flow) : l’application agit en son propre nom et s’authentifie elle-même. La requête peut avoir été initiée par un utilisateur, mais ce contexte sera perdu. Le service en aval ne connaît que l’identité de l’application appelante.
+* Échange de jeton On-Behalf-Of (OBO) : l’application reçoit un jeton associé aux scopes de l’utilisateur et peut l’échanger contre un nouveau jeton pour appeler des services en aval. Cela préserve l’identité et le contexte de l’utilisateur final d’origine tout au long de la chaîne d’appels.
+
+Par exemple, si un utilisateur déclenche un appel vers le service A, qui appelle ensuite le service B, l’échange de jeton OBO permet au service A d’échanger le jeton d’accès de l’utilisateur contre un nouveau jeton qui :
+
+* Préserve l’identité et les autorisations de l’utilisateur d’origine
+* Est limité spécifiquement au service B
+* Permet au service B de prendre des décisions d’autorisation en fonction de l’utilisateur final
+
+Les échanges de jeton OBO déclenchent le déclencheur Action [`post-login`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger), où :
+
+* Le [`event.transaction.protocol`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object#param-protocol) est défini sur `oauth2-token-exchange`.
+* Le [`event.transaction.actor`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object#param-actor) suit l’ensemble de la chaîne de délégation.
+
+Comme dans un flux de connexion standard, les scopes renvoyés pour les appels aux API en aval sont basés sur les stratégies de [Role-Based Access Control (RBAC)](/fr-CA/docs/manage-users/access-control/rbac) de l’utilisateur.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Si vous achetez le module complémentaire Auth0 for AI Agents, vous pouvez utiliser la limite de débit maximale de l’Authentication API de votre niveau d’abonnement pour les échanges de jeton OBO. Par exemple, si vous utilisez [Private Cloud 100 RPS](/fr-CA/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-100-rps-private-cloud), vous pouvez dépasser la limite de débit de 30 RPS pour les échanges de jeton OBO et utiliser la pleine capacité de 100 RPS pour vos requêtes d’échange de jeton OBO. La limite de l’Authentication API est partagée et agit comme plafond global pour toutes les requêtes à l’Authentication API, y compris les connexions, les actualisations de jetons et les échanges de jetons combinés. Communiquez avec votre Technical Account Manager pour en savoir plus.
+</Callout>
+
+<div id="use-cases">
+  ## Cas d&#39;utilisation
+</div>
+
+Les cas d&#39;utilisation courants de l&#39;échange de jetons OBO incluent :
+
+* des serveurs MCP qui doivent appeler des API propriétaires au nom de l&#39;utilisateur
+* des microservices qui doivent appeler des services en aval au nom de l&#39;utilisateur
+
+Pour permettre à vos applications d&#39;appeler des API tierces au nom de l&#39;utilisateur, utilisez [Token Vault](/fr-CA/docs/secure/call-apis-on-users-behalf/token-vault).
+
+<div id="how-it-works">
+  ## Fonctionnement
+</div>
+
+L’échange de jetons OBO permet aux services intermédiaires d’échanger un jeton utilisateur reçu contre un nouveau jeton dont la portée est limitée à un service en aval. Le nouveau jeton préserve l’identité de l’utilisateur d’origine tout en assurant le suivi de la chaîne des services impliqués dans la charge utile du JSON Web Token (JWT).
+
+<div id="example-mcp-server-calls-first-party-api">
+  ### Exemple : le serveur MCP appelle une API propriétaire
+</div>
+
+Un utilisateur s’authentifie avec Auth0 auprès d’une application, qui appelle ensuite un serveur MCP, lequel doit à son tour appeler une API propriétaire.
+
+<div id="step-1-user-authentication">
+  #### Étape 1 : Authentification de l’utilisateur
+</div>
+
+Lorsque l’utilisateur se connecte, Auth0 émet un jeton d’accès pour le serveur MCP avec les claims suivants dans le payload du JWT :
+
+```json
+{
+  "sub": "auth0|user123",
+  "aud": "https://mcp-server.example.com",
+  "azp": "spa_client_id" // ou "client_id" selon le dialecte du jeton
+}
+```
+
+| Claim                                                                                                              | Valeur                           | Description                          |
+| ------------------------------------------------------------------------------------------------------------------ | -------------------------------- | ------------------------------------ |
+| `sub`                                                                                                              | `auth0\|user123`                 | L’identité de l’utilisateur final    |
+| `aud`                                                                                                              | `https://mcp-server.example.com` | Jeton destiné au serveur MCP         |
+| `azp` (ou `client_id` selon le [profil du jeton d’accès](/fr-CA/docs/secure/tokens/access-tokens/access-token-profiles)) | `spa_client_id`                  | L’application qui a demandé le jeton |
+
+<div id="step-2-obo-exchange">
+  #### Étape 2 : échange OBO
+</div>
+
+À l’aide de l’échange de jetons OBO, le serveur MCP présente le jeton de l’utilisateur à Auth0 et demande un jeton d’accès avec le scope de l’API propriétaire. Auth0 émet un nouveau jeton d’accès avec le scope de l’API et les revendications suivantes :
+
+```json
+{
+  "sub": "auth0|user123",
+  "aud": "https://first-party-api.example.com",
+  "azp": "mcp_server_client_id", // ou "client_id" selon le dialecte du jeton
+  "act": {
+    "sub": "mcp_server_client_id",
+    "act": {
+      "sub": "spa_client_id"
+    }
+  }
+}
+```
+
+| Revendication                                                                                                      | Valeur                                                                    | Description                                                                  |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `sub`                                                                                                              | `auth0\|user123`                                                          | Même identité utilisateur conservée                                          |
+| `aud`                                                                                                              | `https://first-party-api.example.com`                                     | Jeton destiné à l’API de première partie                                     |
+| `azp` (ou `client_id` selon le [profil du jeton d’accès](/fr-CA/docs/secure/tokens/access-tokens/access-token-profiles)) | `mcp_server_client_id`                                                    | Application qui a demandé le jeton (le serveur MCP qui a effectué l’échange) |
+| `act`                                                                                                              | `{"sub": "mcp_server_client_id",`<br />`"act": {"sub": "spa_client_id"}}` | Chaîne de délégation montrant tous les acteurs impliqués                     |
+
+<div id="the-act-claim">
+  #### La revendication `act`
+</div>
+
+La revendication `act` (acteur) permet de suivre l’ensemble de la chaîne de délégation. Chaque niveau `act` représente un service dans la chaîne d’appels, et le `act.sub` le plus externe identifie l’acteur actuel ayant effectué l’échange de jeton.
+
+Dans notre exemple :
+
+* `act.sub` le plus externe : `mcp_server_client_id` (le serveur MCP qui vient tout juste d’échanger le jeton)
+* `act.sub` imbriqué : `spa_client_id` (l’application d’origine)
+
+La revendication `azp` doit correspondre à la valeur du `act.sub` le plus externe et identifier le service qui a effectué l’échange de jeton le plus récemment.
+
+Si l’API propriétaire appelle un autre service en aval (`https://calendar-api.acme.com`), la chaîne de délégation s’étendrait :
+
+```json
+{
+  "sub": "auth0|user123",
+  "aud": "https://calendar-api.acme.com",
+  "azp": "first_party_api_client_id",
+  "act": {
+    "sub": "first_party_api_client_id",
+    "act": {
+      "sub": "mcp_server_client_id",
+      "act": {
+        "sub": "spa_client_id"
+      }
+    }
+  }
+}
+```
+
+La chaîne de délégation est limitée à cinq niveaux imbriqués. L’échange de jeton OBO échouera si le jeton du sujet comporte déjà cinq niveaux `act` imbriqués.
+
+```json
+400 Bad Request
+{
+  "error": "invalid_request",
+  "error_description": "Delegation chain (`act` claim) depth exceeds the maximum allowed limit of 4"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Mettez en cache les jetons d’accès pour toute la durée de vie du jeton au lieu de demander un nouveau jeton pour chaque appel à l’API. Les jetons d’accès peuvent être réutilisés jusqu’à leur expiration; des échanges de jetons répétés gaspillent des ressources, augmentent la latence et peuvent entraîner l’application de limites de débit.
+</Callout>
+
+<div id="user-mcp-server-api-flow">
+  ### Utilisateur &gt; serveur MCP &gt; flux API
+</div>
+
+Le diagramme suivant illustre un flux complet d’échange de jeton OBO dans lequel un serveur MCP appelle une API propriétaire au nom de l’utilisateur :
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client App
+    participant Auth0
+    participant MCP Server
+    participant First-Party API
+
+    Note over User,Auth0: Step 1: User Authentication
+    User->>Client App: Authenticates (Login)
+    Client App->>Auth0: Requests User Token
+    Auth0-->>Client App: Issues Token A<br/>(aud: MCP Server, sub: UserX)
+
+    Note over Client App,MCP Server: Step 2: Initial Request
+    Client App->>MCP Server: Call Endpoint (Token A)
+    Note right of Client App: Authorization: Bearer [Token A]
+
+    Note over MCP Server,Auth0: Step 3: Validation and Token Exchange
+    activate MCP Server
+    MCP Server->>MCP Server: Validates Token A
+    MCP Server->>Auth0: POST /oauth/token (Token Exchange)
+    Note right of MCP Server: client_id: MCP_Server_Client_ID<br/>subject_token: [Token A]<br/>audience: First-Party API
+    
+    Note over Auth0: Step 4: Token Issuance
+    activate Auth0
+    Auth0-->>MCP Server: Issues Token B<br/>(aud: First-Party API, sub: UserX)
+    deactivate Auth0
+    Note right of Auth0: Token B contains act claim<br/>showing MCP Server as the actor
+
+    Note over MCP Server,First-Party API: Step 5: Downstream Call
+    MCP Server->>First-Party API: Call Endpoint (Token B)
+    Note right of MCP Server: Authorization: Bearer [Token B]
+    
+    activate First-Party API
+    First-Party API->>First-Party API: Validates Token B<br/>Identifies subject as UserX
+    
+    First-Party API-->>MCP Server: 200 OK (Data)
+    deactivate First-Party API
+
+    MCP Server-->>Client App: 200 OK (Processed Data)
+    deactivate MCP Server
+```
+
+1. **Authentification de l’utilisateur** : L’utilisateur s’authentifie auprès de l’application cliente. Le serveur d’autorisation Auth0 émet le jeton A, avec un scope pour le serveur MCP.
+2. **Requête initiale** : L’application cliente appelle le serveur MCP en transmettant le jeton A dans l’en-tête `Authorization: Bearer`.
+3. **Validation et échange de jeton** : Le serveur MCP reçoit le jeton A, le valide et le transmet au point de terminaison `/oauth/token` du serveur d’autorisation Auth0. À l’aide de l’échange de jetons OBO, le serveur MCP présente le jeton A comme `subject_token` et demande un nouveau jeton pour l’API propriétaire.
+4. **Émission du jeton** : Le serveur d’autorisation Auth0 émet le jeton B. Le jeton B a le même `sub` (ID utilisateur) que le jeton A, mais le `aud` (audience) correspond maintenant à l’API propriétaire.
+5. **Appel au service en aval** : Le serveur MCP appelle l’API propriétaire à l’aide du jeton B. L’API valide le jeton B et constate que la requête est légitimement effectuée « au nom de » l’utilisateur d’origine.
+
+<div id="user-api1-api2-api3">
+  ### Utilisateur &gt; API1 &gt; API2 &gt; API3
+</div>
+
+Le diagramme suivant illustre le flux de bout en bout d’une chaîne de microservices qui effectue des appels en aval au nom de l’utilisateur :
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client App
+    participant Auth0
+    participant API1
+    participant API2
+    participant API3
+
+    Note over User,Auth0: Étape 1 : Authentification de l'utilisateur
+    User->>Client App: S'authentifie (Connexion)
+    Client App->>Auth0: Demande un jeton utilisateur
+    Auth0-->>Client App: Émet le jeton A<br/>(aud: API1, sub: UserX)
+
+    Note over Client App,API1: Étape 2 : Requête initiale
+    Client App->>API1: Call Endpoint (Token A)
+    Note right of Client App: Authorization: Bearer [Token A]
+
+    Note over API1,Auth0: Étape 3 : API1 délègue à API2
+    activate API1
+    API1->>API1: Valide le jeton A
+    API1->>Auth0: POST /oauth/token (Token Exchange)
+    Note right of API1: client_id: API1_ID<br/>subject_token: [Token A]<br/>audience: API2
+
+    Note over Auth0: Étape 4 : Émission du jeton
+    activate Auth0
+    Auth0-->>API1: Émet le jeton B<br/>(aud: API2, sub: UserX)
+    deactivate Auth0
+    Note right of Auth0: Le jeton B contient la revendication act<br/>indiquant API1 comme acteur
+
+    Note over API1,API2: Étape 5 : Appel en aval
+    API1->>API2: Call Endpoint (Token B)
+    Note right of API1: Authorization: Bearer [Token B]
+    activate API2
+    API2->>API2: Valide le jeton B<br/>Identifie le sujet comme UserX
+
+    Note over API2,Auth0: Étape 6 : API2 délègue à API3
+    API2->>Auth0: POST /oauth/token (Token Exchange)
+    Note right of API2: client_id: API2_ID<br/>subject_token: [Token B]<br/>audience: API3
+    activate Auth0
+
+    Note over Auth0: Étape 7 : Émission du jeton
+    Auth0-->>API2: Émet le jeton C<br/>(aud: API3, sub: UserX)
+    deactivate Auth0
+    Note right of Auth0: Le jeton C contient la revendication act<br/>indiquant API2 comme acteur
+
+    Note over API2,API3: Étape 8 : Appel en aval
+    API2->>API3: Call Endpoint (Token C)
+    Note right of API2: Authorization: Bearer [Token C]
+    activate API3
+    API3->>API3: Valide le jeton C<br/>Identifie le sujet comme UserX
+    API3-->>API2: 200 OK
+    deactivate API3
+
+    API2-->>API1: 200 OK (Données)
+    deactivate API2
+    API1-->>Client App: 200 OK (Données traitées)
+    deactivate API1
+```
+
+1. **Authentification de l’utilisateur** : L’utilisateur s’authentifie avec succès auprès d’une application cliente. Le serveur d’autorisation Auth0 émet le jeton A, dont le scope est défini pour API1.
+2. **Requête initiale** : L’application cliente appelle API1 en transmettant le jeton A dans l’en-tête `Authorization: Bearer`.
+3. **API1 délègue à API2** : API1 reçoit le jeton A, le valide, puis l’envoie au point de terminaison `/oauth/token` du serveur d’autorisation Auth0. À l’aide de l’échange de jetons OBO, API1 présente le jeton A comme `subject_token` et demande un nouveau jeton pour API2.
+4. **Émission du jeton** : Le serveur d’autorisation Auth0 accorde à API1 un nouveau jeton d’accès, le jeton B. Le jeton B a le même `sub` (id utilisateur) que le jeton A, mais le `aud` (audience) est maintenant API2.
+5. **Appel en aval** : API1 envoie une requête à API2 à l’aide du jeton B.
+6. **API2 délègue à API3** : API2 reçoit le jeton B, le valide, puis l’envoie au point de terminaison `/oauth/token` du serveur d’autorisation Auth0. À l’aide de l’échange de jetons OBO, API2 présente le jeton B comme `subject_token` et demande un nouveau jeton pour API3.
+7. **Émission du jeton** : Le serveur d’autorisation Auth0 accorde à API2 un nouveau jeton d’accès, le jeton C. Le jeton C a le même `sub` (id utilisateur) que les jetons A et B, mais le `aud` (audience) est maintenant API3.
+8. **Appel en aval** : API2 envoie une requête à API3 à l’aide du jeton C. API3 valide le jeton C et constate que la requête est bien effectuée « au nom de » l’utilisateur d’origine.
+
+<div id="prerequisites">
+  ## Prérequis
+</div>
+
+Seuls les clients d’API personnalisés associées à un serveur de ressources peuvent utiliser l’échange de jetons OBO. Un client d’API personnalisé est liée à un serveur de ressources lorsqu’elle partage le même identifiant.
+
+Les clients d’API personnalisés doivent respecter les exigences suivantes :
+
+* Définissez `app_type` sur `resource_server`.
+* Définissez `resource_server_identifier` sur l’identifiant valide du serveur de ressources, c.-à-d. `https://my-api.example.com`. Auth0 utilise l’identifiant du serveur de ressources comme paramètre audience dans les appels d’autorisation.
+
+Comme les clients d’API personnalisés sont des applications propriétaires, assurez-vous d’[ignorer le consentement de l’utilisateur](/fr-CA/docs/get-started/applications/confidential-and-public-applications/user-consent-and-third-party-applications#skip-consent-for-first-party-applications) pour les API auxquelles votre application propriétaire doit accéder.
+
+<div id="create-custom-api-client">
+  ### Créer un client d’API personnalisé
+</div>
+
+Vous pouvez créer un client d’API personnalisé à l’aide de l’Auth0 Dashboard ou de la Management API.
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Pour créer un client d’API personnalisé dans l’Auth0 Dashboard :
+
+    1. Accédez à [**Applications &gt; APIs**](https://manage.auth0.com/#/apis) et sélectionnez votre API de backend.
+
+    <Frame>![Mon API OBO de test](/docs/images/call_apis_on_users_behalf/my_test_obo_api.png)</Frame>
+
+    2. Sélectionnez **Add Application** et saisissez un nom d’application.
+    3. Sélectionnez **Add**.
+
+    Une fois l’application créée avec succès, ouvrez-la en sélectionnant **Configure Application**, puis faites défiler jusqu’à **Application Properties**. Le champ **Application Type** doit être **Custom API Client**.
+
+    <Frame>![Mon API OBO de test](/docs/images/call_apis_on_users_behalf/create_custom_api_client.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    Pour créer un client d’API personnalisé avec le même identifiant que votre serveur de ressources, envoyez une requête `POST` au point de terminaison [`/api/v2/clients`](https://auth0.com/docs/api/management/v2/clients/post-clients) avec le corps de requête suivant :
+
+    ```bash
+    curl --request POST 'https://{yourDomain}/api/v2/clients' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --data '{
+        "name": "Custom API Client",
+        "app_type": "resource_server",
+        "resource_server_identifier": "https://my-api.example.com"
+      }'
+    ```
+
+    | Paramètre                    | Description                                                                                                                                               |
+    | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `name`                       | Nom de votre client d’API personnalisé.                                                                                                                   |
+    | `app_type`                   | Type d’application de votre client d’API personnalisé. Définissez-le sur `resource_server`.                                                               |
+    | `resource_server_identifier` | Identifiant unique de votre client d’API personnalisé. Définissez-le sur l’audience de votre serveur de ressources, c.-à-d. `https://my-api.example.com`. |
+  </Tab>
+</Tabs>
+
+<div id="create-client-grant">
+  ### Créer un client grant
+</div>
+
+Vous devez créer un client grant avec délégation utilisateur entre le client d’API personnalisé et l’API en aval afin d’autoriser l’accès.
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. Accédez à [**Applications &gt; Applications**](https://manage.auth0.com/#/applications) et sélectionnez votre client d’API personnalisé.
+    2. Sous **API Access**, repérez votre serveur de ressources (c.-à-d. `https://my-api.example.com`) et sélectionnez **Edit**.
+    3. Sous **User-Delegated Access**, sélectionnez **Grant Access**, puis les autorisations à accorder, ou **Always grant all permissions**.
+    4. Sélectionnez **Save**.
+  </Tab>
+
+  <Tab title="Management API">
+    Effectuez une requête `POST` vers le point de terminaison [`/api/v2/client-grants`](https://auth0.com/docs/api/management/v2/client-grants/post-client-grants) avec le corps de requête suivant :
+
+    ```bash
+    curl --location 'https://{yourDomain}/api/v2/client-grants' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --data '{
+        "client_id": "YOUR_CLIENT_ID",
+        "audience": "https://my-api.example.com",
+        "scope": [
+          "read:item"
+        ],
+        "subject_type": "user"
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="configure-the-obo-token-exchange">
+  ### Configurer l’échange de jetons OBO
+</div>
+
+Découvrez comment configurer votre client d’API personnalisée pour utiliser l’octroi d’échange de jetons OBO.
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. Accédez à **Applications &gt; Applications** et sélectionnez votre client d’API personnalisée.
+    2. Sous **Token Exchange**, activez **On-Behalf-Of Token Exchange**.
+    3. Sélectionnez **Save**.
+
+    <Frame>![Mon API OBO de test](/docs/images/call_apis_on_users_behalf/configure_obo_token_exchange.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    Effectuez une requête `PATCH` au point de terminaison [`/api/v2/clients/{clientId}`](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) avec le corps de requête suivant :
+
+    ```bash
+    curl --location --request PATCH 'https://{yourDomain}/api/v2/clients/{clientId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --data '{
+        "token_exchange": {
+          "allow_any_profile_of_type": ["on_behalf_of_token_exchange"]
+        }
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="perform-obo-token-exchange">
+  ## Effectuer l’échange de jetons OBO
+</div>
+
+Pour effectuer l’échange de jetons OBO, vous pouvez utiliser [`auth0-api-js`](https://github.com/auth0/auth0-auth-js), [`auth0_api_python`](https://github.com/auth0/auth0-api-python) ou l’[API d’authentification](https://auth0.com/docs/api/authentication).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Mettez en cache les jetons d’accès pendant toute leur durée de validité au lieu de demander un nouveau jeton pour chaque appel d’API. Les jetons d’accès peuvent être réutilisés jusqu’à leur expiration ; des échanges de jetons répétés gaspillent des ressources, augmentent la latence et peuvent vous faire atteindre les limites de débit.
+</Callout>
+
+<Tabs>
+  <Tab title="JavaScript">
+    Avant de commencer, assurez-vous d&#39;avoir installé la bibliothèque [`auth0-api-js`](https://github.com/auth0/auth0-auth-js) et ses dépendances.
+
+    Commencez par initialiser `ApiClient` avec les identifiants de votre serveur MCP :
+
+    ```javascript
+    import { ApiClient } from '@auth0/auth0-api-js';
+
+    const apiClient = new ApiClient({
+      domain: 'YOUR_AUTH0_DOMAIN',
+      audience: 'YOUR_MCP_SERVER_AUDIENCE',
+      clientId: 'YOUR_CLIENT_ID',
+      clientSecret: 'YOUR_CLIENT_SECRET',
+    });
+    ```
+
+    Ensuite, utilisez la méthode `getTokenOnBehalfOf()` pour procéder à l’échange de jetons :
+
+    ```javascript
+    const result = await apiClient.getTokenOnBehalfOf(accessToken, {
+      audience: 'YOUR_DOWNSTREAM_API_AUDIENCE',
+      scope: 'read:private',  // Facultatif
+    });
+    ```
+
+    `getTokenOnBehalfOf()` renvoie un objet contenant :
+
+    * `accessToken` : le nouveau jeton pour votre API en aval
+    * `scope` : les scopes accordés
+    * `expiresIn` : le délai d’expiration du jeton, en secondes
+  </Tab>
+
+  <Tab title="Python">
+    Avant de commencer, assurez-vous d’avoir installé la bibliothèque [`auth0_api_python`](https://github.com/auth0/auth0-api-python) et ses dépendances.
+
+    Importez d’abord les classes nécessaires, puis initialisez `ApiClient` avec les informations d’identification de votre serveur MCP :
+
+    ```python
+    from auth0_api_python import ApiClient, ApiClientOptions
+
+    api_client = ApiClient(
+        ApiClientOptions(
+            domain='YOUR_AUTH0_DOMAIN',
+            audience='YOUR_MCP_SERVER_AUDIENCE',
+            client_id='YOUR_CLIENT_ID',
+            client_secret='YOUR_CLIENT_SECRET',
+        )
+    )
+    ```
+
+    Ensuite, utilisez la méthode `get_token_on_behalf_of()` pour effectuer l’échange de jetons :
+
+    ```python
+    result = await api_client.get_token_on_behalf_of(
+        access_token=access_token,
+        audience='YOUR_DOWNSTREAM_API_AUDIENCE',
+        scope='read:private'  # Facultatif
+    )
+    ```
+
+    `get_token_on_behalf_of()` retourne un dictionnaire contenant :
+
+    * `access_token` : le nouveau jeton pour votre API en aval
+    * `scope` : les scopes accordés
+    * `expires_in` : la durée de validité du jeton, en secondes
+  </Tab>
+
+  <Tab title="cURL">
+    Envoyez une requête `POST` au point de terminaison `/oauth/token` avec le corps de requête suivant :
+
+    ```bash
+    curl --location 'https://YOUR_DOMAIN.us.auth0.com/oauth/token' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "client_id": "YOUR_CLIENT_ID",
+        "client_secret": "YOUR_CLIENT_SECRET",
+        "subject_token": "AUTH0_SUBJECT_TOKEN",
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "audience": "https://my-api.example.com"
+      }'
+    ```
+
+    | Paramètre              | Exemple                                           | Description                                                                                                                                                                                                                                                                     |
+    | ---------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `grant_type`           | `urn:ietf:params:oauth:grant-type:token-exchange` | Obligatoire. Indique au serveur d’autorisation d’effectuer un échange plutôt qu’une ouverture de session standard.                                                                                                                                                              |
+    | `client_id`            | `<custom_api_client_id>`                          | Obligatoire. L’identifiant unique du service de niveau intermédiaire qui effectue la requête.                                                                                                                                                                                   |
+    | `client_secret`        | `<custom_api_client_secret>`                      | Facultatif. Le secret (ou l’assertion) utilisé pour authentifier le service de niveau intermédiaire lui-même. Vous pouvez utiliser n’importe quelle méthode d’authentification de l’application; toutefois, vous ne pouvez pas définir `token_endpoint_auth_method` sur `none`. |
+    | `subject_token`        | `<auth0_access_token>`                            | Obligatoire. Le jeton entrant de l’utilisateur ou de l’application que le service de niveau intermédiaire détient actuellement.                                                                                                                                                 |
+    | `subject_token_type`   | `urn:ietf:params:oauth:token-type:access_token`   | Obligatoire. Définit le format du `subject_token` (par exemple, un jeton d’accès plutôt qu’un ID Token).                                                                                                                                                                        |
+    | `requested_token_type` | `urn:ietf:params:oauth:token-type:access_token`   | Obligatoire. Indique le type de jeton que vous souhaitez recevoir en retour (généralement un jeton d’accès pour l’API suivante).                                                                                                                                                |
+    | `audience`             | `https://my-api.example.com`                      | Obligatoire. L’identifiant du service en aval qui recevra et validera le nouveau jeton.                                                                                                                                                                                         |
+    | `scope`                | `read:data write:data`                            | Facultatif. Une liste de permissions précises demandées pour l’appel en aval, séparées par des espaces.                                                                                                                                                                         |
+
+    Si la requête réussit, vous devriez recevoir une réponse semblable à la suivante :
+
+    ```json
+    {
+      "access_token": "YOUR_AUTH0_ACCESS_TOKEN",
+      "expires_in": 86400,
+      "token_type": "Bearer",
+      "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"
+    }
+    ```
+
+    | Parameter           | Example                                         | Description                                                                                                                                                                                                                                                |
+    | ------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `access_token`      | `eyJ...`                                        | Le « nouveau » jeton d’accès Auth0. Il s’agit du JWT ou de la chaîne opaque que le service intermédiaire utilisera pour appeler l’API en aval.                                                                                                             |
+    | `issued_token_type` | `urn:ietf:params:oauth:token-type:access_token` | Confirme le format du jeton renvoyé. Il correspond au `requested_token_type` de votre requête, ou à un sous-ensemble de celui-ci.                                                                                                                          |
+    | `token_type`        | `Bearer`                                        | Indique le schéma d’authentification dans l’en-tête `Authorization`. Pour OBO, il s’agit de `Bearer`, sauf si le service intermédiaire et l’API en aval utilisent DPoP, auquel cas `DPoP` est utilisé.                                                     |
+    | `expires_in`        | `3600`                                          | La durée de vie du jeton, en secondes, dépend de la configuration de l’API en aval. Notez qu’elle est souvent plus courte que celle du jeton utilisateur d’origine.                                                                                        |
+    | `scope`             | `read:data`                                     | Les autorisations précises accordées au jeton. Vous devez activer ces autorisations à l’aide d’un [octroi client d’accès délégué par l’utilisateur](/fr-CA/docs/get-started/applications/application-access-to-apis-client-grants#user-access-vs-client-access). |
+  </Tab>
+</Tabs>
+
+<div id="organizations-support">
+  ## Prise en charge des organisations
+</div>
+
+Lorsqu’un utilisateur s’authentifie dans le cadre d’une organisation, le jeton d’accès comprend une revendication `org_id`. L’échange de jetons OBO préserve ce contexte organisationnel tout au long de la chaîne de délégation.
+
+Lorsque Auth0 reçoit une demande d’échange de jetons OBO avec un jeton d’accès associé à une organisation, il valide :
+
+* que `org_id` existe dans votre locataire
+* que l’utilisateur (identifié par `sub`) est membre de cette organisation
+
+Si la validation échoue, Auth0 rejette la demande d’échange de jetons. Si elle réussit, Auth0 émet un nouveau jeton d’accès qui :
+
+* contient la même revendication `org_id` que le jeton d’origine
+* applique les mêmes politiques RBAC propres à l’organisation
+* rend le contexte organisationnel disponible dans le déclencheur Actions [`post-login`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object#event-organization) au moyen de la propriété `event.organization`

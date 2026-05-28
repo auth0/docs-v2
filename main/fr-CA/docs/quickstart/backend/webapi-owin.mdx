@@ -1,0 +1,263 @@
+---
+mode: wide
+title: "ASP.NET Web API (OWIN) : Autorisation"
+description: "Ajoutez l’autorisation JWT d’Auth0 à une API ASP.NET OWIN à l’aide du middleware JWT standard et de points de terminaison protégés"
+sidebarTitle: ASP.NET Web API (OWIN)
+---
+
+import {AuthCodeGroup} from "/snippets/fr-CA/AuthCodeGroup.jsx";
+
+{/* <Card title="Voir sur GitHub" href="https://github.com/auth0-samples/auth0-aspnet-owin-webapi-samples/tree/master/Quickstart/Sample" icon="github">
+  Configuration requise : Microsoft Visual Studio 2015 Update 3 | package NuGet System.IdentityModel.Tokens.Jwt v5.2.2 | package NuGet Microsoft.Owin.Security.Jwt v4.0.0
+  </Card> */}
+
+<Info>
+  **Vous découvrez Auth0?** Découvrez [comment fonctionne Auth0](/fr-CA/docs/get-started/auth0-overview) et renseignez-vous sur [la mise en œuvre de l’authentification et de l’autorisation des API](/fr-CA/docs/get-started/authentication-and-authorization-flow) à l’aide du protocole OAuth 2.0.
+</Info>
+
+<div id="get-started">
+  ## Pour commencer
+</div>
+
+Auth0 vous permet d’ajouter l’autorisation à n’importe quel type d’application. Ce guide montre comment intégrer Auth0 à une application Web API ASP.NET OWIN, nouvelle ou existante, à l’aide du package `Microsoft.Owin.Security.Jwt`. Chaque API Auth0 utilise un identifiant d’API, dont votre application a besoin pour valider le jeton d’accès.
+
+Cet exemple montre :
+
+* Comment vérifier la présence d’un JSON Web Token (JWT) dans l’en-tête `Authorization` d’une requête HTTP entrante.
+* Comment vérifier si le jeton est valide à l’aide du [JSON Web Key Set (JWKS)](/fr-CA/docs/secure/tokens/json-web-tokens/json-web-key-sets) de votre compte Auth0. Pour en savoir plus sur la validation des jetons d’accès, consultez [Validate Access Tokens](/fr-CA/docs/secure/tokens/access-tokens/validate-access-tokens).
+
+<Steps>
+  <Step title="Créer une API" stepNumber={1}>
+    Dans la section [APIs](https://manage.auth0.com/#/apis) du tableau de bord Auth0, cliquez sur **Create API**. Entrez un nom et un identifiant pour votre API, par exemple `https://quickstarts/api`. Vous utiliserez plus tard cet identifiant comme `audience`, au moment de configurer la vérification du jeton d’accès. Laissez **Signing Algorithm** à **RS256**.
+
+    <Frame>![Create API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+    Par défaut, votre API utilise RS256 comme algorithme de signature des jetons. Comme RS256 utilise une paire de clés privée/publique, les jetons sont vérifiés à l’aide de la clé publique de votre compte Auth0. La clé publique est au format [JSON Web Key Set (JWKS)](/fr-CA/docs/secure/tokens/json-web-tokens/json-web-key-sets) et est accessible [ici](https://\{yourDomain}/.well-known/jwks.json).
+  </Step>
+
+  <Step title="Définir les permissions" stepNumber={2}>
+    Les permissions vous permettent de définir comment les ressources peuvent être accessibles au nom de l’utilisateur à l’aide d’un jeton d’accès donné. Par exemple, vous pouvez choisir d’accorder un accès en lecture à la ressource `messages` si les utilisateurs ont le niveau d’accès de gestionnaire, et un accès en écriture à cette ressource s’ils ont le niveau d’accès d’administrateur.
+
+    Vous pouvez définir les permissions autorisées dans la vue **Permissions** de la section [APIs](https://manage.auth0.com/#/apis) du tableau de bord Auth0.
+
+    <Frame>![Configurer les permissions](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+    <Info>
+      Cet exemple utilise la portée `read:messages`.
+    </Info>
+  </Step>
+
+  <Step title="Configurer le projet d’exemple" stepNumber={3}>
+    Le code d’exemple comprend une section `appsettings` dans `Web.config` qui est configurée pour utiliser le bon **domaine** Auth0 et le bon **identifiant d’API** pour votre API. Si vous téléchargez le code à partir de cette page, ces valeurs seront automatiquement renseignées. Si vous utilisez l’exemple de GitHub, vous devrez les renseigner vous-même.
+
+    ```xml web.config lines
+    <appSettings>
+      <add key="Auth0Domain" value="{yourDomain}" />
+      <add key="Auth0ApiIdentifier" value="{yourApiIdentifier}" />
+    </appSettings>
+    ```
+  </Step>
+
+  <Step title="Installer les dépendances" stepNumber={4}>
+    Pour utiliser les jetons d’accès Auth0 avec ASP.NET, vous utiliserez l’intergiciel JWT OWIN, offert dans le package NuGet `Microsoft.Owin.Security.Jwt`.
+
+    ```bash lines
+    Install-Package Microsoft.Owin.Security.Jwt
+    ```
+  </Step>
+
+  <Step title="Vérifier la signature du jeton" stepNumber={5}>
+    Comme le middleware OWIN JWT n’utilise pas OpenID Connect Discovery par défaut, vous devrez fournir un `IssuerSigningKeyResolver` personnalisé. Pour ce faire, ajoutez ce qui suit au fichier `Support/OpenIdConnectSigningKeyResolver.cs` :
+
+    <Info>
+      Un tel résolveur personnalisé a déjà été publié dans le package `Auth0.OpenIdConnectSigningKeyResolver` sur NuGet. Comme [ce package n’est plus disponible](https://github.com/auth0/auth0-aspnet-owin/blob/master/SECURITY-NOTICE.md), vous devrez le fournir vous-même.
+    </Info>
+
+    ```cs OpenIdConnectSigningKeyResolver.cs lines
+    public class OpenIdConnectSigningKeyResolver
+    {
+        private readonly OpenIdConnectConfiguration openIdConfig;
+
+        public OpenIdConnectSigningKeyResolver(string authority)
+        {
+            var cm = new ConfigurationManager<OpenIdConnectConfiguration>($"{authority.TrimEnd('/')}/.well-known/openid-configuration", new OpenIdConnectConfigurationRetriever());
+            openIdConfig = AsyncHelper.RunSync(async () => await cm.GetConfigurationAsync());
+        }
+
+        public SecurityKey[] GetSigningKey(string kid)
+        {
+            return new[] { openIdConfig.JsonWebKeySet.GetSigningKeys().FirstOrDefault(t => t.KeyId == kid) };
+        }
+    }
+    ```
+
+    Le `OpenIdConnectSigningKeyResolver` téléchargera automatiquement le JSON Web Key Set utilisé pour signer les jetons RS256 à partir du point de terminaison de configuration OpenID Connect (à `/.well-known/openid-configuration`). Vous pourrez ensuite l’utiliser pour résoudre la clé de signature de l’émetteur, comme le montre le code d’enregistrement JWT ci-dessous.
+  </Step>
+
+  <Step title="Configurer l’authentification JWT" stepNumber={6}>
+    Accédez à la méthode `Configuration` de votre classe `Startup` et ajoutez un appel à `UseJwtBearerAuthentication` en lui transmettant les `JwtBearerAuthenticationOptions` configurées.
+
+    Les `JwtBearerAuthenticationOptions` doivent préciser l’identifiant de votre API Auth0 dans la propriété `ValidAudience`, ainsi que le chemin complet de votre domaine Auth0 dans `ValidIssuer`. Vous devrez configurer `IssuerSigningKeyResolver` pour utiliser l’instance de `OpenIdConnectSigningKeyResolver` afin de résoudre la clé de signature :
+
+    ```cs Startup.cs lines
+    public void Configuration(IAppBuilder app)
+    {
+        var domain = $"https://{ConfigurationManager.AppSettings["Auth0Domain"]}/";
+        var apiIdentifier = ConfigurationManager.AppSettings["Auth0ApiIdentifier"];
+        var keyResolver = new OpenIdConnectSigningKeyResolver(domain);
+
+        app.UseJwtBearerAuthentication(
+            new JwtBearerAuthenticationOptions
+            {
+                AuthenticationMode = AuthenticationMode.Active,
+                TokenValidationParameters = new TokenValidationParameters()
+                {
+                    ValidAudience = apiIdentifier,
+                    ValidIssuer = domain,
+                    IssuerSigningKeyResolver = (token, securityToken, kid, parameters) => keyResolver.GetSigningKey(kid)
+                }
+            });
+
+        // Configurer l'API Web
+        WebApiConfig.Configure(app);
+    }
+    ```
+
+    <Warning>
+      ### N’oubliez pas la barre oblique inverse à la fin
+
+      Assurez-vous que l’URL indiquée pour `ValidIssuer` se termine par une barre oblique inverse, car elle doit correspondre exactement à la revendication d’émetteur du JWT. Il s’agit d’une erreur de configuration fréquente qui empêchera l’authentification correcte de vos appels à l’API.
+    </Warning>
+  </Step>
+
+  <Step title="Valider les portées" stepNumber={7}>
+    L’intergiciel JWT ci-dessus vérifie que le jeton d’accès inclus dans la requête est valide; toutefois, il ne comprend pas encore de mécanisme permettant de vérifier que le jeton dispose du **scope** nécessaire pour accéder aux ressources demandées.
+
+    Créez une classe nommée `ScopeAuthorizeAttribute` qui hérite de `System.Web.Http.AuthorizeAttribute`. Cet attribut d’autorisation vérifiera que la revendication `scope` émise par votre tenant Auth0 est présente et, le cas échéant, s’assurera qu’elle contient le scope demandé.
+
+    ```cs ScopeAuthorizeAttribute.cs lines
+    public class ScopeAuthorizeAttribute : AuthorizeAttribute
+    {
+        private readonly string scope;
+
+        public ScopeAuthorizeAttribute(string scope)
+        {
+            this.scope = scope;
+        }
+
+        public override void OnAuthorization(HttpActionContext actionContext)
+        {
+            base.OnAuthorization(actionContext);
+
+            // Récupérer le domaine Auth0 pour valider l'émetteur
+            var domain = $"https://{ConfigurationManager.AppSettings["Auth0Domain"]}/";
+
+            // Récupérer le principal de revendication
+            ClaimsPrincipal principal = actionContext.ControllerContext.RequestContext.Principal as ClaimsPrincipal;
+
+            // Récupérer la revendication de portée. S'assurer que l'émetteur correspond au bon domaine Auth0
+            var scopeClaim = principal?.Claims.FirstOrDefault(c => c.Type == "scope" && c.Issuer == domain);
+            if (scopeClaim != null)
+            {
+                // Séparer les portées
+                var scopes = scopeClaim.Value.Split(' ');
+
+                // Réussir si le tableau de portées contient la portée requise
+                if (scopes.Any(s => s == scope))
+                    return;
+            }
+
+            HandleUnauthorizedRequest(actionContext);
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Sécuriser les points de terminaison de l’API" stepNumber={8}>
+    Les routes ci-dessous sont accessibles pour les requêtes suivantes :
+
+    * `GET /api/public` : accessible pour les requêtes non authentifiées
+    * `GET /api/private` : accessible pour les requêtes authentifiées contenant un jeton d’accès sans portée supplémentaire
+    * `GET /api/private-scoped` : accessible pour les requêtes authentifiées contenant un jeton d’accès auquel la portée `read:messages` a été accordée
+
+    Le middleware JWT s’intègre aux mécanismes standard d’authentification et d’autorisation d’ASP.NET. Il vous suffit donc de décorer l’action de votre contrôleur avec l’attribut `[Authorize]` pour sécuriser un point de terminaison. Pour vous assurer qu’une portée est présente avant d’appeler un point de terminaison d’API particulier, décorez l’action avec l’attribut `ScopeAuthorize` et passez le nom de la portée requise dans le paramètre `scope`.
+
+    ```cs ApiController.cs lines
+    [RoutePrefix("api")]
+    public class ApiController : ApiController
+    {
+        [HttpGet]
+        [Route("public")]
+        public IHttpActionResult Public()
+        {
+            return Json(new
+            {
+                Message = "Hello from a public endpoint!"
+            });
+        }
+
+        [HttpGet]
+        [Route("private")]
+        [Authorize]
+        public IHttpActionResult Private()
+        {
+            return Json(new
+            {
+                Message = "Hello from a private endpoint! You need to be authenticated to see this."
+            });
+        }
+
+        [HttpGet]
+        [Route("private-scoped")]
+        [ScopeAuthorize("read:messages")]
+        public IHttpActionResult Scoped()
+        {
+            return Json(new
+            {
+                Message = "Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this."
+            });
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Check>
+  **Point de contrôle**
+
+  Maintenant que vous avez configuré votre application, exécutez-la et vérifiez que :
+
+  * `GET /api/public` est accessible sans authentification.
+  * `GET /api/private` est accessible avec authentification.
+  * `GET /api/private-scoped` est accessible avec authentification lorsque le jeton d’accès inclut la portée `read:messages`.
+</Check>
+
+<div id="additional-resources">
+  ## Ressources supplémentaires
+</div>
+
+<CardGroup cols={3}>
+  <Card title="Exemple d’application" icon="github" href="https://github.com/auth0-samples/auth0-aspnet-owin-webapi-samples/tree/master/Quickstart/Sample">
+    Exemple d’application complet pour ce guide de démarrage rapide
+  </Card>
+
+  <Card title="Fournisseurs d’identité" icon="plug" href="/fr-CA/docs/authenticate/identity-providers">
+    Configurer d’autres fournisseurs d’identité
+  </Card>
+
+  <Card title="Authentification multifacteur" icon="shield" href="/fr-CA/docs/secure/multi-factor-authentication">
+    Activer l’authentification multifacteur
+  </Card>
+
+  <Card title="Protection contre les attaques" icon="lock" href="/fr-CA/docs/secure/attack-protection">
+    En savoir plus sur la protection contre les attaques
+  </Card>
+
+  <Card title="Règles" icon="code" href="/fr-CA/docs/customize/rules">
+    Étendre Auth0 avec une logique personnalisée
+  </Card>
+
+  <Card title="Forum de la communauté" icon="comments" href="https://community.auth0.com/">
+    Obtenir de l’aide auprès de la communauté Auth0
+  </Card>
+</CardGroup>

@@ -1,0 +1,181 @@
+---
+description: Regular Web Application シナリオのアプリケーション実装
+title: アプリケーション実装（Web アプリ + SSO）
+---
+
+それでは、Regular Web Application の実装を見ていきましょう。実装には ASP.NET Core を使用しており、コードは [この GitHub リポジトリ](https://github.com/auth0-samples/auth0-pnp-webapp-oidc) で確認できます。
+
+このサンプルには、社内従業員の認証に Active Directory 統合を使用し、外部委託業者向けには Auth0 のデータベース接続を使用するアプリケーションが含まれています。認可は、以降で詳しく説明するように、Rules とクレームを使用して実装されています。
+
+<div id="user-login">
+  ## ユーザーログイン
+</div>
+
+Auth0 は、アプリケーションのログインコンポーネントとして利用できる Lock ウィジェットを提供しています。これにより、独自のログイン画面を実装する必要はありません。Lock ウィジェットは、<Tooltip tip="Auth0 Dashboard: サービスを設定するための Auth0 の主要な製品です。" cta="用語集を表示" href="/ja/docs/glossary?term=Auth0+dashboard">Auth0 Dashboard</Tooltip> で設定したすべての接続 (データベース接続、ソーシャル接続、エンタープライズ接続) とシームレスに統合されます。
+
+Web アプリケーションと Auth0 を使用してログイン画面を実装する方法はいくつかあります。
+
+* **ホスト型 Lock**: Auth0 のインフラストラクチャでホストされる Lock ウィジェットのインスタンスを使用します。
+* **埋め込み型 Lock**: アプリケーションの Web ページ内に Lock ウィジェットを埋め込みます。Lock ウィジェット自体にはいくつかのカスタマイズオプションがあり、ページ上のその他の HTML は完全に制御できます。
+* **カスタム UI**: ログイン画面用に完全に独自の Web ページを開発します。カスタム HTML フォームはサーバーに POST され、サーバー側で Authentication API を使用してユーザーを認証します。カスタム UI を使用するタイミングの詳細については、[Lock または SDK を使用した Classic Login ページのカスタマイズ](/ja/docs/customize/login-pages/classic-login/customize-with-lock-sdk) を参照してください。
+
+<div id="automate-home-realm-discovery-hrd">
+  ### Home Realm Discovery (HRD) を自動化する
+</div>
+
+デフォルトでは、Lock はログインに使用できるすべての接続を表示します。複数の選択肢から適切な <Tooltip tip="IDプロバイダー（IdP）: デジタルアイデンティティを保存および管理するサービス。" cta="用語集を見る" href="/ja/docs/glossary?term=Identity+Providers">IDプロバイダー</Tooltip> を選択することを、Home Realm Discovery (HRD) と呼びます。ここでの選択肢は、Active Directory で認証する (社内従業員向け) か、データベース接続でメールアドレス/パスワード認証を使用する (外部委託先向け) かのいずれかです。
+
+ただし、ユーザーが IDプロバイダー (IdP) を選択する最初のステップを省き、毎回確認する代わりにシステム側で自動的に判別したい場合もあります。Lock では、次のオプションを利用できます。
+
+* **プログラムで IdP を識別する**: Auth0 で認証トランザクションを開始する際に、必要に応じて `connection` パラメーターを送信できます。この値は、Dashboard で定義された任意の接続に直接対応します。`/authorize` エンドポイントを呼び出して Hosted 版の Lock を使用している場合は、接続名を含む `connection` クエリ文字列パラメーターを渡せます。あるいは、埋め込み型 Lock を使用している場合は、`auth0.show({connections: ['{yourConnection}']});` と記述するだけです。
+
+  * `connection` の値を取得する実用的な方法はいくつかあります。その 1 つが **vanity URL** の使用です。たとえば、社内従業員は `https://internal.yoursite.com` を使用し、外部委託先は `https://external.yoursite.com` を使用します。
+* **メールアドレスのドメインを使用する**: Lock は、認証リクエストを振り分ける方法としてメールアドレスのドメインを使用できます。Auth0 の Enterprise 接続は `domains` にマッピングできます。接続でこの設定を行うと、マッピングされたドメインのメールアドレスを入力した際に、パスワード入力欄は自動的に無効になります。1 つの接続に複数のドメインを関連付けることもできます。
+
+このトピックの詳細については、[複数の接続オプションから選択する](/ja/docs/libraries/lock/selecting-from-multiple-connection-options) を参照してください。
+
+<div id="session-management">
+  ## セッション管理
+</div>
+
+セッション管理では、通常、次の 3 つのセッションレイヤーを考慮する必要があります。
+
+* **アプリケーション セッション**: 1 つ目は、アプリケーション内部のセッションです。ユーザーの認証に Auth0 を使用していても、そのユーザーがアプリケーションにログイン済みであることは、引き続きアプリケーション側で管理する必要があります。一般的な Web アプリケーションでは、これは cookie に情報を保存することで実現します。
+* **Auth0 セッション**: 次に、Auth0 もセッションを保持し、ユーザー情報を cookie に保存します。次回ユーザーが Auth0 Lock 画面にリダイレクトされると、そのユーザーの情報は記憶されています。
+* **IDプロバイダー セッション**: 最後のレイヤーは IDプロバイダー です。たとえば Facebook や Google です。ユーザーにこれらのプロバイダーでのサインインを許可していて、かつそのユーザーがすでにそのプロバイダーにサインインしている場合は、再度サインインを求められません。Auth0、ひいてはアプリケーションと情報を共有するための Permissions の許可のみを求められる場合があります。
+
+そのため、Web アプリケーションを開発する際には、ユーザーがその Web アプリケーションにログインしていることを管理する必要があります。これを行うには、cookie ベースのセッションを使用してユーザーのサインイン状態を追跡し、ユーザー関連の情報やトークンも保存します。
+
+<Info>
+  ### ユーザーのローカル アプリケーション セッションの有効期間はどのように制御しますか? それを Auth0 から制御できますか?
+
+  Web アプリは、ユーザーのローカル アプリケーション セッションを完全に制御できます。通常、その方法は使用している Web スタック (たとえば ASP.NET) によって異なります。ただし、どの方法でも最終的には 1 つ以上の cookie を使ってセッションを制御します。開発者は、Auth0 から返される JWT の IDトークン の有効期限を使ってセッションの有効期間を制御することも、これを完全に無視することもできます。開発者の中には、IDトークン 自体をセッション状態に保存し、その有効期限が切れた時点でユーザーのセッションを終了させる人もいます。
+
+  トークンの有効期限をローカル セッションの有効期限の判定に使う理由は、ユーザー セッションの有効期間を Auth0 Dashboard から一元的に制御できるためです。
+</Info>
+
+ログインフローは次のとおりです。
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/4bqozVk6fF4JrWRP1BJK7Y/1403eb1c0efb12552307358a26c6e7f7/login-flow.png)</Frame>
+
+1. **OIDC authentication flow を開始する**: ユーザーのブラウザーが、OIDC フローを開始するためのリクエストを Auth0 に送信します。
+2. **SSO Cookie を設定する**: Auth0 は、ユーザー情報を保存するための cookie を設定します。
+3. **code の交換を行い、IDトークン を返す**: Auth0 は Web サーバーにリクエストを返して code を返します。Web サーバーはその code を IDトークン と交換します。
+4. **認証 cookie を設定してレスポンスを送信する**: Web サーバーはブラウザーにレスポンスを返し、ユーザーのセッション情報を保存するためのアプリケーション認証 cookie を設定します。
+5. **以降のすべてのリクエストで認証 cookie が送信される**: アプリケーション認証 cookie は、ユーザーが認証済みであることの証明として、以降のすべてのリクエストで送信されます。
+
+<Info>
+  ### Auth0 の SSO セッションはアプリケーションのセッションにどのような影響を与えますか?
+
+  Auth0 は独自のシングルサインオン セッションを管理します。アプリケーションは、独自のローカル セッションを維持する際に、その SSO セッションを尊重するか無視するかを選択できます。Lock ウィジェットには、Auth0 の SSO セッションが存在するかどうかを検出し、同じユーザーとして再度ログインするかどうかをユーザーに確認する特別な機能もあります。
+
+  <Frame>![Lock Widget SSO](https://cdn2.auth0.com/docs/1.14516.0/media/articles/architecture-scenarios/web-app-sso/sso-login.png)</Frame>
+
+  その場合、実際の IdP に対して認証情報を再入力しなくてもサインインできます。ユーザーが改めて認証を行わなくても、アプリケーションは引き続き Auth0 との authentication flow を実行し、新しい IDトークン を取得します。これを使って、新しいローカル アプリケーション セッションを管理できます。
+</Info>
+
+**実装については** [**ASP.NET Core**](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/implementation-aspnetcore#configure-the-cookie-and-oidc-middleware) **を参照してください。**
+
+<div id="user-logout">
+  ## ユーザーのログアウト
+</div>
+
+ユーザーをログアウトさせる際は、前述した 3 つのセッションレイヤーを改めて考慮する必要があります。
+
+* **アプリケーションセッション**: セッションをクリアして、Web アプリケーションからユーザーをログアウトさせる必要があります。
+* **Auth0 セッション**: Auth0 からユーザーをログアウトさせる必要があります。そのためには、ユーザーを `https://{yourDomain}/v2/logout` にリダイレクトします。この URL にリダイレクトすると、Auth0 がそのユーザーに設定したすべての <Tooltip tip="シングルサインオン (SSO): ユーザーが 1 つのアプリケーションにログインすると、他のアプリケーションにも自動的にログインされるサービスです。" cta="用語集を見る" href="/ja/docs/glossary?term=single+sign-on">シングルサインオン</Tooltip> cookie がクリアされます。
+* **IDプロバイダーのセッション**: 一般的ではありませんが、Facebook や Google など、使用している IDプロバイダーからもユーザーを強制的にログアウトさせることができます。そのためには、ログアウト URL に `federated` クエリ文字列パラメーターを追加します: `https://{yourDomain}/v2/logout?federated`。
+
+ログアウト後にユーザーをリダイレクトするには、遷移先 URL を値とする `returnTo` クエリ文字列パラメーターを追加します: `https://{yourDomain}/v2/logout?returnTo=http://www.example.com`。なお、`returnTo` URL は **Allowed Logout URLs** に追加しておく必要があります。実装方法の詳細については、[ログアウト](/ja/docs/authenticate/login/logout) を参照してください。
+
+ログアウトフロー (フェデレーテッドログアウトを除く) は次のとおりです。
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/5t5iXTeGMUzyKHhqOAGRmp/d51797c6513686ea758f0613d01b55d4/logout-flow.png)</Frame>
+
+1. **ログアウトフローを開始**: ログアウトフローはブラウザーから開始されます。たとえば、ユーザーが **ログアウト** リンクをクリックすると、Web サーバーにリクエストが送信されます。
+2. **ユーザーのローカルセッションをクリア**: ユーザーのアプリケーションセッション / Cookie がクリアされます。
+3. **ブラウザーを Auth0 のログアウト先にリダイレクト**: ユーザーのブラウザーは Auth0 のログアウト URL にリダイレクトされます。
+4. **SSO Cookie をクリア**: Auth0 がユーザーの SSO Cookie をクリアします。
+5. **ログアウト後の URL にリダイレクト**: Auth0 はリダイレクトレスポンスを返し、ユーザーのブラウザーを `returnTo` クエリ文字列パラメーターで指定された URL にリダイレクトします。
+
+**実装については** [**ASP.NET Core**](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/implementation-aspnetcore#implement-the-logout) **を参照してください。**
+
+<div id="access-control">
+  ## アクセス制御
+</div>
+
+認可とは、アプリケーション内でユーザーがどのような操作を実行できるかを判断するプロセスを指します。
+
+認可は、Auth0 とは独立してアプリケーション内に直接実装することもできますし、利用可能な方法のいずれかを使用してユーザーの認可レベルを取得し、それらを <Tooltip tip="IDトークン: リソースへのアクセスではなく、クライアント自体を対象とした認証情報です。" cta="用語集を表示" href="/ja/docs/glossary?term=ID+Token">IDトークン</Tooltip> 内の認可クレームとして格納して、トークンの取得後にアプリケーション内でそれらのクレームを検証し、アクセスを制御することもできます。
+
+Auth0 を使用する場合、ユーザーの認可クレームを取得して設定する方法はいくつかあります。
+
+* [Auth0 Authorization Extension](/ja/docs/customize/extensions/authorization-extension) を設定して使用する。
+* Active Directory のグループを使用する。これらは、Active Directory のグループを Authorization Extension で定義したグループにマッピングすることで、Authorization Extension と組み合わせて使用できます。
+* [Rules](/ja/docs/customize/rules) を利用して、ユーザーのユーザープロファイルにメタデータを追加する。
+* Rule 内から外部サービスを呼び出す。
+
+このケースでは、会社ですでに Active Directory が設定されているため、Authorization Extension と Active Directory グループを組み合わせてアクセス制御を実施します。
+
+<Card title="Authorization extension">
+  現時点で、Authorization Extension は主に大まかな粒度の認可を実施するために設計されています。たとえば、ユーザーのグループメンバーシップに基づいてアプリケーションへのアクセスを制御する場合です。今回の例ではこの方法を利用していますが、必ずしも細かな粒度のアクセス制御 (たとえば、ユーザーがアプリケーション内で特定の操作を実行できるかどうか) を目的として設計されているわけではありません。
+</Card>
+
+すべてのユーザーは暗黙的に一般ユーザーになりますが、タイムシート管理者は `Admin` グループに割り当てられ、タイムシートを承認できるようになります。Authorization Extension では、既存のグループメンバーシップにグループをマッピングできます。
+
+すべてのタイムシート管理者は、Active Directory 上の `Timesheet Administrators` グループに割り当てられ、これが Timesheet Application 内の `Admin` グループに自動的にマッピングされます。
+
+Authorization Extension をインストールすると、バックグラウンドで Rule が作成され、次の処理が行われます。
+
+1. ユーザーのグループメンバーシップを判定する。
+2. ユーザーのグループメンバーシップ情報を `app_metadata` の一部として保存する。
+3. ユーザーのグループメンバーシップを発行されるトークンに追加する。
+4. ユーザーに現在のアプリケーションへのアクセスが許可されていることを確認する。
+
+<div id="install-the-authorization-extension">
+  ### Authorization Extension をインストールする
+</div>
+
+Authorization Extension をインストールするには、Auth0 Dashboard の [Extensions](https://manage.auth0.com/#/extensions) ビューに移動し、Auth0 Authorization Extension を選択してインストールします。
+
+インストールが完了すると、Installed Extensions にアプリが表示されます。
+
+初めて拡張機能を開くリンクをクリックすると、拡張機能が Auth0 アカウントにアクセスするための権限の付与を求められます。許可すると、Authorization Dashboard にリダイレクトされます。
+
+Authorization Dashboard を開いたら、ナビゲーションメニューのグループに移動し、`Admin` という名前の新しいグループを作成します。
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/6zOF0mCrLV2rwdpxn9JD1e/5d6e227c4a96260856afd8f94c4212d9/create-admin-group.png)</Frame>
+
+グループを追加したら、新しいグループをクリックしてグループ管理セクションに移動します。次に、Group Mappings タブを開き、新しいグループマッピングを追加します。これにより、`Timesheet Admins` グループ内のすべての Active Directory ユーザーが、先ほど作成した `Admin` グループにマッピングされます。
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/RaMHHJ1G9LoO5xoz3BJnN/b01c93948b1a54b599f1eb106bd8ef26/add-group-mapping.png)</Frame>
+
+**Save** をクリックすると、新しいマッピングが一覧に表示されます。
+
+<Frame>![undefined](/docs/images/cdy7uua7fh8z/1whRHGlsRhGhA6vcrsElsv/093716ca939c843729c3022c810ee6a7/view-group-mapping.png)</Frame>
+
+このマッピングを設定すると、あとは Active Directory の `Timesheet Admins` グループのメンバーシップを管理するだけで、それらのユーザーはアプリケーション内の `Admin` グループに自動的にマッピングされます。
+
+詳細については、[Authorization Extension documentation](/ja/docs/customize/extensions/authorization-extension) を参照してください。
+
+<div id="enforce-permissions-in-your-application">
+  ### アプリケーションでPermissionsを適用する
+</div>
+
+Authorization Extension をインストールすると、特定のユーザーに関するすべての認可関連設定を含む `authorization` クレームを追加する Auth0 の Rule も作成されます。ユーザーのグループは、`authorization` クレーム内の `groups` というサブクレームとして追加され、そのユーザーが所属するすべてのグループがこのクレームに配列として格納されます。以下は、グループが含まれる IDトークン の JSON ペイロードの例です。
+
+```json lines
+{
+  "sub": "1234567890",
+  "name": "John Doe",
+  "authorization": {
+    "groups": ["Admin"]
+  }
+}
+```
+
+そのため、アプリケーションでは、ユーザーの認証時に返されるIDトークンをデコードし、`authorization` クレームからそのユーザーが属するグループを抽出する必要があります。次に、それらのグループをほかのユーザー情報とともにユーザーのセッション内に保存し、後でそれらを参照して、グループメンバーシップに基づき、ユーザーが特定のアクションを実行するためのPermissionsを持っているかどうかを判断できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  実装については、[ASP.NET Core](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/implementation-aspnetcore#implement-admin-permissions)を参照してください。
+</Callout>

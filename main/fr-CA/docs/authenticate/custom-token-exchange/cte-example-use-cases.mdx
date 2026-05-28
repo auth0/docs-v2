@@ -1,0 +1,789 @@
+---
+description: Découvrez des exemples de cas d’utilisation de Custom Token Exchange avec des exemples de code pour l’implémentation.
+title: Exemples de cas d’utilisation
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-CA/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Custom Token Exchange (CTE)" stage="ea" plans="B2C Professional, B2B Professional, and Enterprise" terms="true" />
+
+Vous pouvez utiliser Custom Token Exchange pour gérer des scénarios d’intégration avancés où les stratégies habituelles de connexion fédérée fondées sur la redirection de l’utilisateur final ne peuvent pas être utilisées en raison de contraintes techniques ou d’expérience utilisateur. Le code fourni pour les cas d’utilisation est incomplet et vise uniquement à illustrer les étapes logiques à suivre dans votre propre code pour répondre au cas d’utilisation. Consultez les [exemples de code](#code-samples) pour des exemples plus détaillés.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 recommande d’utiliser, dans la mesure du possible, les mécanismes standard de connexion fédérée. Comme Custom Token Exchange vous permet de définir l’utilisateur pour la transaction, il vous offre plus de flexibilité, mais vous confère aussi la responsabilité supplémentaire de valider et de gérer la transaction de façon sécuritaire.
+</Callout>
+
+<div id="use-cases">
+  ## Cas d’utilisation
+</div>
+
+Cette section présente des exemples de cas d’utilisation et des extraits de code précis, accompagnés de recommandations pour mettre en œuvre votre scénario. Pour illustrer ces cas d’utilisation, nous utiliserons GearUp, une entreprise fictive de location de voitures.
+
+<div id="use-case-seamless-migration-into-auth0">
+  ### Cas d’utilisation : Migration transparente vers Auth0
+</div>
+
+GearUp a une application mobile utilisée par des millions de personnes et doit moderniser sa solution d’identité. L’entreprise a donc décidé de passer à Auth0. Cependant, elle veut éviter d’obliger les utilisateurs à se réauthentifier pendant la migration à partir de son ancien fournisseur d’identité, ou IdP, car cela complique l’expérience utilisateur.
+
+Pour résoudre ce problème et limiter les risques, GearUp effectue une migration progressive. Pour chaque utilisateur, l’entreprise souhaite échanger le Jeton d’actualisation de son ancien IdP contre un ensemble de jetons Auth0 comprenant un jeton d’accès, un jeton d’actualisation et un <Tooltip tip="ID Token : justificatif d’identité destiné au client lui-même, et non à l’accès à une ressource." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=ID+token">jeton d’identité</Tooltip>. Cela permet à son application de commencer, de façon transparente, à utiliser Auth0 comme IdP pour cet utilisateur, ainsi qu’à consommer les API de GearUp à l’aide de jetons émis par Auth0. Une fois l’échange effectué pour tous les utilisateurs, l’application sera entièrement migrée et l’ancien IdP pourra être déconnecté, le tout sans incidence sur les utilisateurs finaux ni sur les activités de GearUp.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/2Ke6p3yZl06KT4HHqtaVu9/5d9c5feb98d614d6d793fb01ccc03e92/Screenshot_2025-02-03_at_5.00.32_PM.png)</Frame>
+
+Comme prérequis, GearUp a effectué une [importation groupée d’utilisateurs](/fr-CA/docs/manage-users/user-migration/bulk-user-imports) dans son locataire Auth0, et l’application mobile dispose d’un ancien jeton d’actualisation valide pour chaque utilisateur à migrer.
+
+1. L’application mobile envoie une requête à Auth0 pour échanger l’ancien jeton d’actualisation, en le définissant comme jeton sujet.
+2. L’Action de profil Custom Token Exchange correspondante s’exécute. Elle valide le jeton d’actualisation auprès de l’ancien IdP et récupère l’ID utilisateur externe à partir du profil utilisateur. Elle applique ensuite la stratégie d’autorisation requise, puis définit l’utilisateur.
+3. Auth0 renvoie un jeton d’accès Auth0, un jeton d’identité et un jeton d’actualisation.
+4. L’application mobile peut maintenant utiliser les API de GearUp à l’aide de jetons Auth0 sans que l’utilisateur ait à se réauthentifier.
+
+L’exemple de code suivant montre comment implémenter cela dans l’Action Custom Token Exchange. Dans ce cas, puisque les profils utilisateur ont déjà été importés dans une connexion de base de données Auth0 :
+
+* Nous ne voulons pas créer l’utilisateur.
+* Nous ne voulons pas mettre à jour le profil utilisateur.
+
+Nous utilisons l’ID utilisateur de l’IdP externe pour définir l’utilisateur dans la connexion correspondante.
+
+```javascript lines expandable
+/**
+* Gestionnaire à exécuter lors d'une demande d'échange de jeton personnalisé
+* @param {Event} event - Détails sur la demande d'échange de jeton entrante.
+* @param {CustomTokenExchangeAPI} api - Méthodes et utilitaires pour définir le processus d'échange de jeton.
+*/
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+ // 1. VALIDER le refresh_token reçu dans le subject_token en l'utilisant pour obtenir
+ // le UserProfile depuis l'IdP externe
+ const { isValid, user } = await getUserProfile(
+   event.transaction.subject_token,
+   event.secrets.CLIENT_SECRET,
+ );
+
+ if (!isValid) {
+   // Marquer le jeton sujet comme invalide et faire échouer la transaction.
+   api.access.rejectInvalidSubjectToken("Invalid subject_token");
+ } else {
+   // 2. Appliquer votre STRATÉGIE D'AUTORISATION selon les besoins pour déterminer si la demande est valide.
+   // Utiliser api.access.deny() pour rejeter la transaction dans ces cas.
+
+   // 3. Une fois le profil obtenu, DÉFINIR L'UTILISATEUR dans la connexion cible
+   api.authentication.setUserByConnection(
+     connectionName,
+     {
+       // seul le user_id dans la connexion est nécessaire, car nous ne
+       // créons ni ne mettons à jour l'utilisateur
+       user_id: user.sub,
+     },
+     {
+       creationBehavior: "none",
+       updateBehavior: "none",
+     },
+   );
+ }
+};
+
+/**
+* Échanger le jeton d'actualisation et charger le profil utilisateur depuis l'IdP hérité
+* @param {string} refreshToken
+* @param {string} clientSecret
+* @returns {Promise<{ isValid: boolean, user?: object }>} Si le jeton d'actualisation a été échangé avec succès, retourne le profil utilisateur
+*/
+async function getUserProfile(refreshToken, clientSecret) {
+ // Ajoutez votre code ici. CONSULTEZ LES EXEMPLES DE CODE POUR DES EXEMPLES DÉTAILLÉS
+}
+```
+
+<div id="use-case-re-use-an-external-authentication-provider">
+  ### Cas d’utilisation : réutiliser un fournisseur d’authentification externe
+</div>
+
+Un autre cas d’utilisation consiste pour GearUp à s’associer à Air0, un important fournisseur de services de voyage, afin d’offrir ses services de location de voitures directement dans l’application monopage d’Air0. GearUp offre une bibliothèque JavaScript qui encapsule l’utilisation de ses API. Les API de GearUp peuvent ainsi être facilement consommées sur le site Web d’Air0, où les services de location de voitures sont offerts.
+
+Encore une fois, la solution doit être invisible pour les utilisateurs finaux en évitant une réauthentification auprès de GearUp. Pour résoudre ce problème, la bibliothèque JavaScript de GearUp peut effectuer un échange de jetons en utilisant le jeton d’identité externe d’Air0 comme entrée. Cela produit un jeton d’accès Auth0, généré et associé à l’utilisateur GearUp correspondant en fonction de son courriel. Une fois que la bibliothèque GearUp obtient le jeton d’accès, elle peut commencer à utiliser les API de GearUp pour offrir des services de location de voitures directement sur le site Web d’Air0.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/34AVzwyYARK6fn2IEnLsQn/409082d736d8495b637626406977fb1f/Screenshot_2025-02-03_at_5.08.47_PM.png)</Frame>
+
+Comme préalable, GearUp a configuré l’IdP Air0 comme une connexion d’entreprise fédérée ou sociale, afin que l’utilisateur puisse s’authentifier au moyen d’une connexion fédérée ou, sinon, au moyen de Custom Token Exchange, comme suit :
+
+1. L’application monopage récupère le jeton d’identité auprès de l’IdP externe une fois l’utilisateur authentifié.
+2. Elle demande ensuite l’échange du jeton d’identité en le définissant comme jeton sujet.
+3. L’Action de profil Custom Token Exchange correspondante s’exécute. Elle valide le jeton d’identité et en extrait l’ID utilisateur ainsi que d’autres attributs du profil. Elle applique ensuite la stratégie d’autorisation requise, puis définit l’utilisateur.
+4. Auth0 renvoie un jeton d’accès Auth0, un jeton d’identité et un jeton d’actualisation.
+5. Le code JavaScript exécuté dans la SPA peut maintenant utiliser les API client à l’aide des jetons Auth0, sans que l’utilisateur ait à se réauthentifier.
+
+Le code suivant montre comment implémenter cela dans l’Action Custom Token Exchange. Dans ce cas :
+
+* Nous utilisons l’ID utilisateur de l’IdP externe pour définir l’utilisateur dans la connexion correspondante.
+* Nous voulons créer l’utilisateur s’il n’existe pas encore.
+* Nous ne voulons pas remplacer le profil utilisateur si un ensemble plus complet d’attributs est obtenu au moyen d’une connexion fédérée, au cas où l’utilisateur existerait déjà.
+* Nous ne voulons pas vérifier les courriels lors de la création des utilisateurs.
+
+```javascript lines expandable
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * Gestionnaire à exécuter lors d'une demande d'échange de jeton personnalisé
+ * @param {Event} event - Détails sur la demande d'échange de jeton entrante.
+ * @param {CustomTokenExchangeAPI} api - Méthodes et utilitaires pour définir le processus d'échange de jeton.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDER le id_token reçu dans le subject_token
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // Marquer le jeton sujet comme invalide et faire échouer la transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. Appliquer votre STRATÉGIE D'AUTORISATION selon les besoins pour déterminer si la demande est valide.
+    // Utiliser api.access.deny() pour rejeter la transaction dans ces cas.
+
+    // 3. DÉFINIR L'UTILISATEUR dans la connexion cible.
+    // Nous ne souhaitons pas vérifier les courriels lors de la création des utilisateurs
+    // Cet exemple suppose que subject_token (id_token) contient des revendications OIDC standard. D'autres mappages personnalisés
+    // sont également possibles.
+    api.authentication.setUserByConnection(
+      'Enterprise-OIDC',
+      {
+          user_id: formattedUserId,
+          email: subject_token.email,
+          email_verified: subject_token.email_verified,
+          phone_number: subject_token.phone_number,
+          phone_verified: subject_token.phone_number_verified,
+          username: subject_token.preferred_username,
+          name: subject_token.name,
+          given_name: subject_token.given_name,
+          family_name: subject_token.family_name,
+          nickname: subject_token.nickname,
+          verify_email: false
+      },
+      {
+          creationBehavior: 'create_if_not_exists',
+          updateBehavior: 'none'
+      }
+    );
+  }
+
+  /**
+   * Valider le jeton sujet
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Charge utile du jeton
+   */
+  async function validateToken(subjectToken) {
+    // Ajoutez votre code ici. CONSULTEZ LES EXEMPLES DE CODE POUR DES EXEMPLES DÉTAILLÉS
+  }
+};
+```
+
+Consultez les [exemples de code](#code-samples) pour obtenir un exemple plus détaillé de la façon de valider de façon sécurisée les <Tooltip tip="JSON Web Token (JWT) : format standard des ID Token (et souvent des Jetons d’accès) utilisé pour représenter de façon sécurisée des claims entre deux parties." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=JWTs">JWTs</Tooltip>.
+
+<div id="use-case-get-auth0-tokens-for-another-audience">
+  ### Cas d’utilisation : obtenir des jetons Auth0 pour une autre audience
+</div>
+
+GearUp veut améliorer la façon dont il autorise les appels entre ses microservices internes afin de traiter les requêtes d’API. Il veut une stratégie centralisée qui contrôle les ressources que chaque service peut consommer. Ce problème peut aussi être résolu à l’aide de l’échange de jetons.
+
+Lorsque la requête d’API arrive d’abord au service A, celui-ci échange le jeton d’accès reçu contre un nouveau qui lui permet de consommer le service B comme nouvelle audience. Si la stratégie d’autorisation qui régit l’échange de jetons le permet, le service A récupère le nouveau jeton et peut alors consommer le service B. L’ID de l’utilisateur demeure inchangé dans le nouveau jeton, ce qui permet de conserver le bon contexte utilisateur tout au long du processus.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/5Zw7yaJGct9eHAl4rdf72D/42274a5896851a16bea402ac52037f52/Screenshot_2025-02-03_at_5.17.14_PM.png)</Frame>
+
+L’application GearUp a d’abord obtenu un jeton d’accès pour consommer l’API A au nom d’un utilisateur :
+
+1. L’application envoie la requête à l’API A avec le jeton d’accès initial.
+2. Le service backend de l’API A valide le jeton d’accès et demande un échange en le définissant comme jeton sujet pour obtenir un nouveau jeton d’accès permettant de consommer l’API B.
+3. L’Action de profil Custom Token Exchange correspondante s’exécute. Elle valide le jeton d’accès et récupère dans le jeton l’ID utilisateur Auth0. Elle applique ensuite la stratégie d’autorisation requise et, enfin, définit l’utilisateur.
+4. Auth0 renvoie un jeton d’accès Auth0 pour consommer l’audience de l’API B.
+5. Le service backend de l’API A appelle l’API B à l’aide du nouveau jeton d’accès, qui est toujours associé au même utilisateur.
+
+Le code suivant montre comment implémenter cela dans l’Action Custom Token Exchange. Dans ce cas :
+
+* Nous utilisons l’ID utilisateur Auth0 pour définir l’utilisateur; il n’est donc pas nécessaire de le définir dans le contexte d’une connexion.
+* Nous ne voulons ni créer ni mettre à jour l’utilisateur.
+
+Consultez [Valider les JWT signés avec des clés asymétriques](#validate-jwts-signed-with-asymmetric-keys) pour obtenir des exemples de code plus détaillés sur ce cas d’utilisation.
+
+```javascript lines expandable
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * Gestionnaire à exécuter lors d'une demande d'échange de token personnalisé
+ * @param {Event} event - Détails sur la demande d'échange de token entrante.
+ * @param {CustomTokenExchangeAPI} api - Méthodes et utilitaires pour définir le processus d'échange de token.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // 1. VALIDER l'access_token reçu dans le subject_token
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // Marquer le subject token comme invalide et faire échouer la transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. Appliquer votre STRATÉGIE D'AUTORISATION selon les besoins pour déterminer si la demande est valide.
+    // Utiliser api.access.deny() pour rejeter la transaction dans ces cas.
+
+    // 3. DÉFINIR L'UTILISATEUR
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Valider le subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Charge utile du token
+   */
+  async function validateToken(subjectToken) {
+    // Ajoutez votre code ici. CONSULTEZ LES EXEMPLES DE CODE POUR DES EXEMPLES DÉTAILLÉS
+  }
+};
+```
+
+Consultez les [exemples de code](#code-samples) pour voir un exemple plus détaillé de validation sécurisée des JWT.
+
+<div id="use-case-perform-mfa-during-custom-token-exchange">
+  ### Cas d’utilisation : Effectuer une MFA pendant un Custom Token Exchange
+</div>
+
+En s’appuyant sur le [cas d’utilisation : réutiliser un fournisseur d’authentification externe](#use-case%3A-re-use-an-external-authentication-provider), GearUp veut maintenant vérifier la présence de l’utilisateur lorsqu’un jeton provenant du fournisseur d’authentification externe est utilisé. Cela est nécessaire pour atténuer les risques de sécurité, comme le vol de jeton ou les scénarios où la MFA n’est pas prise en charge par l’authentificateur externe. GearUp dispose de deux options pour y parvenir : mettre en œuvre une stratégie MFA à l’échelle de l’organisation ou déclencher la MFA par programmation à l’aide d’une Action Post Login.
+
+L’exemple suivant utilise une Action PostLogin pour déclencher l’authentification MFA pendant la transaction de Custom Token Exchange. Pour en savoir plus sur l’utilisation de l’octroi MFA avec des API intégrées, consultez la [documentation](/fr-CA/docs/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa) sur l’utilisation de ROPG avec la MFA, puisque Custom Token Exchange suit le même modèle.
+
+Commencez par définir l’Action en utilisant `api.multifactor.enable()` pour déclencher un défi MFA. Cette fonction est décrite dans la [documentation de l’API Post Login](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object).
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.multifactor.enable('any');
+};
+
+We can now send a token exchange request:
+
+curl --location 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+--data-urlencode 'audience=https://api.gearup.com' \
+--data-urlencode 'scopes=openid offline_access gearup-scope1 gearup-scope2' \
+--data-urlencode 'subject_token_type=urn:gearup:external-idp' \
+--data-urlencode 'subject_token=t8e7S2D9trQm73e .... iqBR3GjxDtbDVjpfQU' \
+--data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+--data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+```
+
+Cela provoque une erreur `mfa_required` qui retourne un jeton MFA :
+
+```json lines
+403 Forbidden
+{
+  "error": "mfa_required",
+  "error_description": "Multifactor authentication required",
+  "mfa_token": "<YOUR_MFA_TOKEN>"
+}
+```
+
+Avec le `mfa_token` renvoyé, l’application peut ensuite appeler l’API MFA pour lancer une demande d’authentification et vérifier un facteur :
+
+Commencez par renvoyer une liste d’authentificateurs :
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/mfa/authenticators' \
+--header 'Authorization: Bearer <YOUR_MFA_TOKEN>' \
+
+
+[
+    {
+        "id": "sms|dev_1MHoE3huPRB5dcDJ",
+        "authenticator_type": "oob",
+        "active": true,
+        "oob_channel": "sms",
+        "name": "XXXXXXXX6220"
+    },
+    {
+        "id": "email|dev_QLGL8cGsvFFnOloK",
+        "authenticator_type": "oob",
+        "active": true,
+        "oob_channel": "email",
+        "name": "dloz********@gmai*****"
+    }
+]
+```
+
+Deuxièmement, utilisez l’id de l’authentificateur pour déclencher une demande de vérification :
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/mfa/challenge' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+--data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+--data-urlencode 'mfa_token=<YOUR_MFA_TOKEN>' \
+--data-urlencode 'authenticator_id=sms|dev_1MHoE3huPRB5dcDJ' \
+--data-urlencode 'challenge_type=oob'
+```
+
+Le challenge génère la réponse suivante :
+
+```json lines
+{
+  "challenge_type": "oob",
+  "oob_code": "<YOUR_OOB_CODE>",
+  "binding_method": "prompt"
+}
+```
+
+Utilisez le `mfa_token` et le `oob_code` (s’il est renvoyé) pour terminer le processus de vérification à l’aide du point de terminaison de jeton et obtenir des jetons :
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=http://auth0.com/oauth/grant-type/mfa-oob' \
+--data-urlencode 'mfa_token=<YOUR_MFA_TOKEN>' \
+--data-urlencode 'oob_code=<YOUR_OOB_CODE>' \
+--data-urlencode 'binding_code=<YOUR_USER_CODE>'
+```
+
+Consultez les [exemples de code](#code-samples) pour voir un exemple plus détaillé de la validation d’un jeton d’actualisation opaque avec l’IdP hérité.
+
+<div id="use-case-support-agent-acting-on-behalf-of-an-end-user">
+  ### Cas d’utilisation : agent de soutien agissant au nom d’un utilisateur final
+</div>
+
+Les agents de soutien de GearUp doivent accéder aux données des utilisateurs finaux et effectuer des actions au moyen des API du backend de GearUp au nom de l’utilisateur final. L’outil de soutien authentifie l’agent, puis utilise le Custom Token Exchange pour obtenir un jeton d’accès représentant l’utilisateur final, tout en consignant l’agent comme acteur.
+
+<Frame>![](/docs/images/custom-token-exchange/Support-agent-acting-on-behalf-of-an-end-user.png)</Frame>
+
+Dans ce cas, le jeton d’identité Auth0 de l’agent est envoyé comme `actor_token` dans la requête, et un JWT signé identifiant l’utilisateur final est envoyé comme `subject_token`. Lorsque `actor_token_type` est défini sur `urn:ietf:params:oauth:token-type:id_token`, Auth0 valide automatiquement le jeton (signature, expiration, émetteur) et remplit `event.transaction.actor_token_user` avec le profil de l’agent. Cela évite d’avoir à écrire du code de validation personnalisé pour le jeton d’acteur.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  L’utilisation d’un jeton d’identité Auth0 comme `actor_token` n’est pas obligatoire. Lorsque `actor_token_type` a une valeur personnalisée, l’Action doit valider le jeton d’acteur au moyen d’un code personnalisé, comme pour la validation des `subject_token`. Le remplissage automatique de `event.transaction.actor_token_user` s’applique uniquement aux jetons d’identité Auth0.
+</Callout>
+
+1. L’outil de soutien authentifie l’agent auprès d’Auth0 et obtient le jeton d’identité de l’agent.
+2. L’outil de soutien appelle le point de terminaison `/oauth/token` d’Auth0 à l’aide d’une [requête de Custom Token Exchange](/fr-CA/docs/get-started/authentication-and-authorization-flow/token-exchange-flow/call-your-api-using-the-custom-token-exchange-flow), en incluant un JWT signé avec l’identifiant de l’utilisateur final comme `subject_token` et le jeton d’identité de l’agent comme `actor_token`.
+3. L’[Action de Custom Token Exchange](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger) valide le jeton sujet, vérifie que l’acteur est autorisé à agir au nom de l’utilisateur final et appelle `api.authentication.setActor()`.
+4. Auth0 émet des jetons avec la revendication `act` qui identifie l’agent de soutien.
+5. L’agent de soutien utilise l’API au nom de l’utilisateur final. Les API peuvent inspecter la revendication `act` pour appliquer des politiques d’autorisation propres à l’accès délégué, par exemple en limitant les opérations d’écriture ou en journalisant l’activité à des fins d’audit.
+
+L’Action de Custom Token Exchange détermine ce qui est inclus dans l’objet acteur, y compris les propriétés personnalisées et les niveaux d’imbrication. Consultez la [documentation sur l’objet API du Custom Token Exchange](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger/custom-token-exchange-api-object) pour connaître les contraintes.
+
+```javascript lines expandable
+const jwksUri = "https://gearup.com/.well-known/jwks.json";
+
+/**
+ * Gestionnaire à exécuter lors d'une demande d'échange de token personnalisé
+ * @param {Event} event - Détails sur la demande d'échange de token entrante.
+ * @param {CustomTokenExchangeAPI} api - Méthodes et utilitaires pour définir le processus d'échange de token.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDER le token de l'utilisateur final reçu dans le subject_token
+  const { isValid, payload } = await validateToken(event.transaction.subject_token);
+
+  if (!isValid) {
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // 2. AUTORISER l'acteur — vérifier que l'agent a le droit d'agir au nom de cet utilisateur final
+  const actorUser = event.transaction.actor_token_user;
+  if (!actorUser) {
+    api.access.deny("invalid_request", "Actor token is required for this profile");
+    return;
+  }
+
+  const isAuthorized = await checkDelegationPolicy(actorUser.user_id, payload.sub);
+  if (!isAuthorized) {
+    api.access.deny("unauthorized_actor", "Agent is not authorized to act on behalf of this user");
+    return;
+  }
+
+  // 3. DÉFINIR L'ACTEUR pour inclure la revendication act dans les tokens émis
+  api.authentication.setActor({
+    sub: actorUser.user_id,
+    sub_profile: "human",
+    role: "support"
+  });
+
+  // 4. DÉFINIR L'UTILISATEUR pour la transaction (l'utilisateur final sur lequel l'action est effectuée)
+  api.authentication.setUserById(payload.sub);
+
+  async function validateToken(subjectToken) {
+    // Ajoutez votre code ici. CONSULTEZ LES EXEMPLES DE CODE POUR DES EXEMPLES DÉTAILLÉS
+  }
+
+  async function checkDelegationPolicy(agentId, userId) {
+    // Implémentez votre vérification de stratégie de délégation ici.
+    // Par exemple, vérifiez que l'agent fait partie de l'équipe de support
+    // et qu'il est assigné à la région de cet utilisateur.
+    return true;
+  }
+};
+```
+
+Le jeton d’accès émis contiendra la revendication `act` :
+
+```json lines
+{
+  "sub": "auth0|end_user_id",
+  "aud": "https://api.gearup.com",
+  "act": {
+    "sub": "auth0|support_agent_id",
+    "sub_profile": "human",
+    "role": "support"
+  }
+}
+```
+
+<div id="important-considerations-for-delegated-authorization">
+  ### Considérations importantes relatives à l’autorisation déléguée
+</div>
+
+Lorsque vous implémentez une autorisation déléguée avec Custom Token Exchange, suivez ces directives :
+
+* **Implémentez la logique d’autorisation dans votre Action Custom Token Exchange** pour vérifier que l’acteur est autorisé à accéder au compte de l’utilisateur visé. Par exemple, vous pourriez appliquer des règles d’autorisation pour que seuls certains acteurs puissent effectuer un accès délégué, ou vérifier que l’utilisateur cible a un billet de soutien actif afin d’éviter tout accès arbitraire à des comptes utilisateur.
+
+* **Validez les scopes demandés** afin de vous assurer que seul l’ensemble minimal de scopes requis pour l’autorisation déléguée est émis. Vous pouvez également vous assurer que certaines opérations sensibles ne peuvent jamais être effectuées dans le contexte d’une autorisation déléguée.
+
+* **Assurez-vous que vos API utilisent le contexte de délégation** dans la revendication `act` du jeton d’accès. Vous devriez conserver dans vos API des journaux d’audit des actions effectuées par un acteur délégué, et vous assurer de pouvoir déterminer clairement quel acteur a exécuté des opérations au nom de l’utilisateur.
+
+* **À des fins d’audit**, vous pouvez utiliser les détails de l’acteur dans les journaux du locataire Auth0. Les transactions Custom Token Exchange réussies (événements de journal `secte`) incluent la propriété `actor` avec `sub` ainsi que toute information `actor` imbriquée.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 n’avise pas l’utilisateur final lorsqu’un jeton d’autorisation déléguée est émis en son nom. Si votre cas d’utilisation exige une notification à l’utilisateur ou un consentement explicite avant qu’un accès délégué n’ait lieu, envisagez d’utiliser [Client Initiated Backchannel Authentication (CIBA)](/fr-CA/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-ciba-flow) pour envoyer une demande de consentement à l’appareil de l’utilisateur final avant d’effectuer l’échange de jeton. Pour des besoins de notification plus simples, vous pouvez implémenter une logique de notification dans votre Action Custom Token Exchange, une Action Post-Login ou vos services en aval.
+</Callout>
+
+<div id="code-samples">
+  ## Exemples de code
+</div>
+
+Les exemples de code suivants présentent les bonnes pratiques pour les scénarios courants afin de valider les jetons de sujet reçus de façon sécurisée et efficace.
+
+Utilisez des algorithmes et des clés asymétriques chaque fois que possible, puisque vous n’avez pas à partager de secret avec Auth0. Cela simplifie aussi la rotation des clés, par exemple lorsque vous exposez un point de terminaison d’URI JWKS pour publier les clés publiques applicables.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Il vous incombe de veiller à ce que les jetons de sujet soient protégés par un algorithme robuste et des clés/secrets offrant une entropie suffisante.
+</Callout>
+
+<div id="validate-jwts-signed-with-asymmetric-keys">
+  ### Validez les JWT signés avec des clés asymétriques
+</div>
+
+Tenez compte des recommandations suivantes :
+
+* Utilisez la méthode Actions [`api.cache ()`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger/custom-token-exchange-api-object) pour éviter d’avoir à récupérer les clés de signature pour chaque transaction.
+* Respectez les pratiques exemplaires décrites dans la [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt)
+* Utilisez les algorithmes RS*, PS*, ES* ou Ed25519
+* N’utilisez pas et n’acceptez pas l’algorithme none
+* Utilisez RSA avec une longueur minimale de 2 048 bits.
+
+```javascript lines expandable
+const { jwtVerify, importJWK } = require("jose");
+
+const jwksUri = "https://example.com/.well-known/jwks.json";
+const fetchTimeout = 5000; // 5 seconds
+
+const validIssuer = "urn:my-issuer"; // Replace with your issuer
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Set the user in the current request as authenticated, using the user ID from the subject token.
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Validate the subject token
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    try {
+      const { payload, protectedHeader } = await jwtVerify(
+        subjectToken,
+        async (header) => await getPublicKey(header.kid),
+        {
+          issuer: validIssuer,
+        },
+      );
+
+      // Perform additional validation on the token payload as required
+
+      return { isValid: true, payload };
+    } catch (/** @type {any} */ error) {
+      if (error.message === "Error fetching JWKS") {
+        throw new Error("Internal error - retry later");
+      } else {
+        console.log("Token validation failed:", error.message);
+        return { isValid: false };
+      }
+    }
+  }
+
+  /**
+   * Obtenir la clé publique à utiliser pour la vérification des clés. Charger depuis le cache des Actions si disponible, sinon
+   * récupérer la clé depuis le point de terminaison JWKS et la stocker dans le cache.
+   * @param {string} kid - kid (Key ID) de la clé à utiliser pour la vérification
+   * @returns {Promise<Object>}
+   */
+  async function getPublicKey(kid) {
+    const cachedKey = api.cache.get(kid);
+    let keyData;
+
+    if (!cachedKey) {
+      console.log(`Key ${kid} not found in cache`);
+      keyData = await fetchKeyFromJWKS(kid);
+      // Cache the stringified version
+      api.cache.set(kid, JSON.stringify(keyData), { ttl: 600000 });
+    } else {
+      // Parse the raw JWK object from cache
+      keyData = JSON.parse(cachedKey.value);
+    }
+
+    //Convert the raw JWK object to a KeyLike object
+    return await importJWK(keyData, keyData.alg);
+  }
+
+  /**
+   * Fetch public signing key from the provided JWKS endpoint, to use for token verification
+   * @param {string} kid - kid (Key ID) of the key to be used for verification
+   * @returns {Promise<object>}
+   */
+  async function fetchKeyFromJWKS(kid) {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), fetchTimeout);
+
+    /** @type {any} */
+    const response = await fetch(jwksUri);
+
+    if (!response.ok) {
+      console.log(`Error fetching JWKS. Response status: ${response.status}`);
+      throw new Error("Error fetching JWKS");
+    }
+    const jwks = await response.json();
+    const key = jwks.keys.find((key) => key.kid === kid);
+    if (!key) {
+      throw new Error("Key not found in JWKS");
+    }
+    return key;
+  }
+};
+```
+
+<div id="validate-jwts-signed-with-symmetric-keys">
+  ### Valider les JWT signés avec des clés symétriques
+</div>
+
+Suivez les recommandations suivantes :
+
+* Utilisez les [secrets d’Actions](/fr-CA/docs/customize/actions/write-your-first-action#add-a-secret) pour stocker vos secrets symétriques en toute sécurité.
+* Respectez les bonnes pratiques de la [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt)
+* Utilisez des algorithmes sécurisés tels que HS256, ainsi que des secrets aléatoires à entropie élevée (p. ex. d’une longueur d’au moins 256 bits)
+
+```javascript lines expandable
+const { jwtVerify } = require("jose");
+
+const validIssuer = "urn:my-issuer"; // Remplacez par votre émetteur
+
+/**
+ * Gestionnaire à exécuter lors d'une demande d'échange de token personnalisé
+ * @param {Event} event - Détails sur la demande d'échange de token entrante.
+ * @param {CustomTokenExchangeAPI} api - Méthodes et utilitaires pour définir le processus d'échange de token.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // Initialiser la clé symétrique partagée à partir des secrets Actions
+  const encoder = new TextEncoder();
+  const symmetricKey = encoder.encode(event.secrets.SHARED_SECRET);
+
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+    symmetricKey,
+  );
+
+  // Appliquez votre stratégie d'autorisation selon les besoins pour déterminer si la demande est valide.
+  // Utilisez api.access.deny() pour rejeter la transaction dans ces cas.
+
+  if (!isValid) {
+    // Marquer le token sujet comme invalide et faire échouer la transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Définir l'utilisateur de la demande actuelle comme authentifié, en utilisant l'ID utilisateur du token sujet.
+    api.authentication.setUserById(payload.sub);
+  }
+};
+
+/**
+ * Valider le token sujet
+ * @param {string} subjectToken
+ * @param {Uint8Array} symmetricKey
+ * @returns {Promise<{ isValid: boolean, payload?: object }>} Charge utile du token
+ */
+async function validateToken(subjectToken, symmetricKey) {
+  try {
+    // Valider que le token est correctement signé avec la clé symétrique partagée
+    // Vérifie également qu'il n'est pas expiré, à condition qu'il inclue un attribut 'exp'.
+    const { payload, protectedHeader } = await jwtVerify(
+      subjectToken,
+      symmetricKey,
+      {
+        issuer: validIssuer,
+      },
+    );
+
+    return { isValid: true, payload };
+  } catch (/** @type {any} */ error) {
+    console.log("Token validation failed:", error.message);
+    return { isValid: false };
+  }
+}
+```
+
+<div id="validate-opaque-token-with-an-external-service">
+  ### Valider un jeton opaque auprès d’un service externe
+</div>
+
+Utilisez les [secrets d’Action](/fr-CA/docs/customize/actions/write-your-first-action#add-a-secret) pour stocker de façon sécurisée le <Tooltip tip="Secret client : secret utilisé par une application pour s’authentifier auprès du serveur d’autorisation; il ne doit être connu que de l’application et du serveur d’autorisation et doit être suffisamment aléatoire pour qu’on ne puisse pas le deviner." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=client+secret">secret client</Tooltip> de votre IdP externe.
+
+```javascript lines expandable
+const tokenEndpoint = "EXTERNAL_TOKEN_ ENDPOINT";
+const userInfoEndpoint = "EXTERNAL_USER_INFO_ENDPOINT";
+const clientId = "EXTERNAL_CLIENT_ID";
+const connectionName = "YOUR_CONNECTION_NAME";
+const fetchTimeout = 5000; // 5 secondes
+
+/**
+ * Gestionnaire à exécuter lors d'une demande d'échange de jeton personnalisé
+ * @param {Event} event - Détails sur la demande d'échange de jeton entrante.
+ * @param {CustomTokenExchangeAPI} api - Méthodes et utilitaires pour définir le processus d'échange de jeton.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, user } = await getUserProfile(
+    event.transaction.subject_token,
+    event.secrets.CLIENT_SECRET,
+  );
+
+  if (!isValid) {
+    // Marquer le jeton sujet comme invalide et faire échouer la transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // Appliquez votre stratégie d'autorisation selon les besoins pour déterminer si la demande est valide.
+  // Utilisez api.access.deny() pour rejeter la transaction dans ces cas.
+
+  // Une fois le profil obtenu, on définit l'utilisateur dans la connexion cible
+  api.authentication.setUserByConnection(
+    connectionName,
+    {
+      // seul le user_id dans la connexion est nécessaire, car nous ne
+      // créons ni ne mettons à jour l'utilisateur
+      user_id: user.sub,
+    },
+    {
+      creationBehavior: "none",
+      updateBehavior: "none",
+    },
+  );
+};
+
+/**
+ * Échanger le jeton d'actualisation et charger le profil utilisateur depuis l'IdP hérité
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, user?: object }>} Si le jeton d'actualisation a été échangé avec succès, retourne le profil utilisateur
+ */
+async function getUserProfile(refreshToken, clientSecret) {
+  const { isValid, accessToken } = await refreshAccessToken(
+    refreshToken,
+    clientSecret,
+  );
+  if (!isValid) {
+    return { isValid: false };
+  }
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  const response = await fetch(userInfoEndpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    console.log(`Failed to fetch user info. Status: ${response.status}`);
+    throw new Error("Error fetching user info");
+  }
+
+  const userProfile = await response.json();
+
+  return { isValid: true, user: userProfile };
+}
+
+/**
+ * Utiliser le jeton d'actualisation avec l'IdP hérité pour le valider et obtenir un jeton d'accès
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, accessToken?: string }>} Si le jeton d'actualisation a été échangé avec succès, retourne le jeton d'accès
+ */
+async function refreshAccessToken(refreshToken, clientSecret) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  let response;
+
+  try {
+    response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+  } catch (error) {
+    console.error("Error refreshing token");
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json();
+    console.error("Error refreshing token:", errorBody.error);
+
+    // Si nous recevons une erreur indiquant que le jeton d'actualisation est invalide (par exemple, une erreur invalid_grant),
+    // nous devons alors indiquer explicitement un jeton invalide en utilisant api.access.rejectInvalidSubjectToken
+    // pour prévenir les attaques par force brute sur le jeton d'actualisation en activant la limitation des IP suspectes.
+    // Pour les autres erreurs indiquant une erreur générique lors de la demande à l'IdP, nous devons lever
+    // une erreur pour signaler une défaillance transitoire.
+    if (errorBody.error === "invalid_grant") {
+      return { isValid: false };
+    } else {
+      throw new Error("Error refreshing token");
+    }
+  }
+
+  // Analyser la réponse, sous la forme { access_token: "...", expires_in: ..., }
+  const data = await response.json();
+  console.log("Successfully exchanged refresh token");
+  return { isValid: true, accessToken: data.access_token };
+}
+```

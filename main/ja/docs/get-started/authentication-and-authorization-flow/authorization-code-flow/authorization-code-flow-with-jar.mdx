@@ -1,0 +1,158 @@
+---
+description: JWT-Secured Authorization Requests（JAR）を Authorization Code Flow で使用する方法を説明します。
+title: JWT-Secured Authorization Requests（JAR）を使用した Authorization Code Flow
+validatedOn: 2026-03-03
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Highly Regulated Identity 機能を使用するには、Highly Regulated Identity アドオン付きの Enterprise Plan が必要です。詳細については、[Auth0 Pricing](https://auth0.com/pricing/) を参照してください。
+</Callout>
+
+[JWT-Secured Authorization Request (JAR)](https://datatracker.ietf.org/doc/html/rfc9101) は、認可リクエストパラメーターの完全性と真正性を保護する OAuth 2.0 プロトコルの拡張仕様です。パラメーターを署名付きの [JSON Web Token (JWT)](/ja/docs/secure/tokens/json-web-tokens) に含めることで、通信経路上の第三者による機密性の高いリクエストデータの改ざんや閲覧を防止できます。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+JAR を使用する前に、次を行う必要があります。
+
+1. [RSA 鍵ペアを生成する](/ja/docs/secure/application-credentials/generate-rsa-key-pair)
+2. [JWT で保護された認可リクエストを設定する](/ja/docs/get-started/applications/configure-jar) の説明に従って、公開鍵を Auth0 Dashboard にアップロードして登録する
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+`scope` や `redirect_uri` などのパラメーターを URL にプレーンテキストで渡す代わりに、クライアントアプリケーションはそれらをリクエストオブジェクトとして署名付きの [JSON Web Token (JWT) ](/ja/docs/secure/tokens/json-web-tokens) に格納します。
+
+* 署名: クライアントアプリケーションは、秘密鍵を使用して JWT に署名します。
+* 検証: Auth0 認可サーバーは JWT を受け取り、登録済みの公開鍵を使用して署名を検証します。
+* 処理: JWT が有効な場合、Auth0 認可サーバーはパラメーターを取り出します。同じパラメーターが JAR とクエリ文字列の両方に存在する場合は、JAR 内の値が優先されます。
+
+<div id="generate-the-jar-request">
+  ## JAR リクエストを生成する
+</div>
+
+任意の言語で <Tooltip tip="JSON Web Token（JWT）: 2 者間でクレームを安全に表現するために使用される標準の IDトークン 形式（多くの場合、アクセストークン の形式としても使用されます）。" cta="用語集を表示" href="/ja/docs/glossary?term=JWT">JWT</Tooltip> を生成するには、[Auth0 JWT ライブラリ](https://jwt.io/libraries) を使用します。
+
+<div id="header">
+  ### ヘッダー
+</div>
+
+JWT ヘッダーは、検証に使用するキーとアルゴリズムを Auth0 に伝えます。次のパラメーターが必要です。
+
+* `alg`: JWT の署名に使用するアルゴリズム。RS256、RS384、または PS256 のいずれかである必要があります。
+* `typ`: JWT のタイプ。`jwt` または `oauth-authz-req+jwt` のいずれかである必要があります。
+
+ヘッダーには、JWT の署名に使用したキーを識別する `kid` フィールドを含めることもできます。`kid` が存在する場合、Auth0 は [JAR configuration](/ja/docs/get-started/applications/configure-jar) で登録された公開キーの中から一致するキー ID を持つものを探し、そのキーを使用して JWT の署名を検証します。
+
+<div id="payload">
+  ### ペイロード
+</div>
+
+ペイロードには認可パラメーターが含まれます。次のクレームを含める必要があります。
+
+* `iss`: アプリの `client_id` を指定する必要があります
+* `aud`: プロトコルと末尾のスラッシュを含むテナントのドメインである必要があります。例: `https://{YOUR_DOMAIN}.auth0.com/`
+
+JWT には、`/authorize` の呼び出しに必要な必須パラメーターも含める必要があります。例:
+
+* `client_id`: これにもアプリの `client_id` を指定する必要があります
+* `response_type`: 実行する <Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/ja/docs/glossary?term=OAuth+2.0">OAuth 2.0</Tooltip> フローを Auth0 に示します。認可コードグラントフローには `code` を使用します。
+
+JWT には、要求する <Tooltip tip="認可フロー: OAuth 2.0 フレームワークで指定される認可グラント（またはワークフロー）。" cta="用語集を見る" href="/ja/docs/glossary?term=authorization+flow">認可フロー</Tooltip> の任意パラメーター (`audience`、`scope`、`state`、`redirect_uri` など) を含めることもできます。
+
+さらに、JWT には次の任意クレームを含めることができます。
+
+* `iat`: 数値形式の日付である必要があります。
+* `nbf`: 過去の時点を表す数値形式の日付である必要があります。
+* `exp`: 将来の時点を表す数値形式の日付である必要があります。
+* `jti`: 64 バイト以下の文字列である必要があります。
+
+<div id="code-sample-generate-and-sign-jar">
+  ## コードサンプル: JAR を生成して署名する
+</div>
+
+次の Node.js の例では、[jsonwebtoken ライブラリ](https://www.npmjs.com/package/jsonwebtoken?activeTab=readme) を使用して JAR を生成し、署名します。
+
+```javascript lines expandable
+const jwt = require('jsonwebtoken');
+const crypto = require("crypto");
+const fs = require('fs');
+
+const privateKey = fs.readFileSync('{PATH_TO_YOUR_PEM_FILE}');
+const client_id = '{YOUR_CLIENT_ID}';
+const nonce = crypto.randomBytes(16).toString('hex');
+
+const requestObject = jwt.sign(
+{
+  iss: client_id,    
+  aud: 'https://your_tenant.auth0.com/', // テナントのドメイン
+  client_id,
+  response_type: "code",
+  scope: "openid profile",
+  redirect_uri : "https://myapp.com/callback", // アプリのコールバックURL
+  nonce
+},
+privateKey,
+{
+  keyid: '{YOUR_KID}', // 公開鍵のキーID（kid）の値（省略可能）
+  algorithm: 'RS256',
+  header: {
+    typ: 'oauth-authz-req+jwt',
+  },
+});
+
+console.log(requestObject);
+```
+
+<div id="call-the-authorization-endpoint">
+  ## 認可エンドポイントを呼び出す
+</div>
+
+JAR は、次のいずれかの方法で Auth0 認可サーバーに送信できます。
+
+1. [標準 JAR リクエスト](#standard-jar-request): 署名済み JWT を URL エンコードした文字列として、リクエストパラメーターに渡します。
+2. [プッシュ型認可リクエスト](#pushed-authorization-request): セキュリティを強化し、URL 長の制約を回避するために、PAR を使用します。
+
+<div id="standard-jar-request">
+  ### 標準JARリクエスト
+</div>
+
+標準JARリクエストを使用して `/authorize` エンドポイントを呼び出すには、次の手順に従います。
+
+1. 新しいブラウザーウィンドウを開きます。
+2. <Tooltip tip="クライアントID: Auth0 から登録済みリソースに付与される識別値です。" cta="用語集を表示" href="/ja/docs/glossary?term=Client+ID">クライアントID</Tooltip> を `client_id` パラメーターに、署名してURLエンコードした JWT を `request` パラメーターに指定します。
+
+```bash lines
+# MacOS
+open "https://{YOUR_DOMAIN}.auth0.com/authorize?client_id={YOUR_CLIENT_ID}&request={URL_ENCODED_JWT}"
+
+# Windows
+explorer "https://{YOUR_DOMAIN}.auth0.com/authorize?client_id={YOUR_CLIENT_ID}&request={URL_ENCODED_JWT}"
+```
+
+<div id="pushed-authorization-request">
+  ### プッシュ型認可リクエスト
+</div>
+
+プッシュ型認可リクエストを使用して `/authorize` エンドポイントを呼び出すには、次の手順を実行します。
+
+1. バックチャネルの `POST` リクエストで、JAR を `/oauth/par` エンドポイントに送信します。
+2. Auth0 は `request_uri` を返します。これを使用して、[通常の PAR フロー](/ja/docs/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-par) と同様に `/authorize` エンドポイントを呼び出せます。
+
+次の cURL リクエストでは、PAR と JAR を組み合わせて使用しています。
+
+```bash lines
+curl --location 'https://{YOUR_DOMAIN}.auth0.com/oauth/par' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'client_id={YOUR_CLIENT_ID}' \
+--data-urlencode 'client_secret={YOUR_CLIENT_SECRET}' \
+--data-urlencode 'request={JWT}'
+```
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [JWT で保護された認可リクエスト (JAR) を設定する](/ja/docs/get-started/applications/configure-jar)

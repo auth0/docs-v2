@@ -1,0 +1,119 @@
+---
+description: Amazon Web Services からユーザーを移行する方法
+title: Amazon Web Services からユーザーを移行する
+---
+
+2023 年 4 月時点では、Amazon Web Services (AWS) から Auth0 へユーザーを一括移行することはできません。Auth0 では、以下の手順に従って **Automatic Migration** (**lazy loading** とも呼ばれます) を使用することを推奨しています。
+
+1. Auth0 で[カスタムデータベースを設定](/ja/docs/authenticate/database-connections/custom-db/create-db-connection)し、AWS Cognito ユーザープールを参照するように構成します。
+2. Import Users to Auth0 を True に設定します。
+3. 2 つのスクリプトを定義します。1 つはユーザー取得用、もう 1 つはユーザーログイン用です。
+4. Auth0 の [get-user](/ja/docs/authenticate/database-connections/custom-db/templates/get-user) スクリプトと [login](/ja/docs/authenticate/database-connections/custom-db/templates/login) スクリプトで、[amazon-cognito-identity-js npm package APK](https://www.npmjs.com/package/amazon-cognito-identity-js) を使用してユーザーを自動移行します。
+
+以下は JavaScript コードの例です。
+
+<div id="get-userjs">
+  ##### get-user.js
+</div>
+
+```javascript lines expandable
+/*
+    Auth0 グローバル変数の設定が必要です - https://auth0.com/docs/rules/configure-global-variables-for-rules
+    ローカルでテストする場合（または Auth0 グローバル変数を使用しない場合）:
+    const configuration = {
+      "accessKeyId": "GQZDJNME56E3AJUBXMFOO",
+      "secretAccessKey": "your-cognito-secret-access-key",
+      "region": "eu-west-1",
+      "UserPoolId": "eu-west-1_V69pvauTp"
+    */
+
+    function getUser(username, callback) {
+const userParameters =  ["email", "email_verified", "custom:designation"];
+const AWS = require('aws-sdk@2.593.0');
+AWS.config.update({ "accessKeyId": configuration.accessKeyId, "secretAccessKey": configuration.secretAccessKey, "region": configuration.region });
+const cognito = new AWS.CognitoIdentityServiceProvider();
+
+cognito.adminGetUser({
+    UserPoolId: configuration.UserPoolId,
+    Username: username
+}, (err, data) => {
+    if (err) {
+        console.log(err);
+        if (err.code === "UserNotFoundException") return callback(null);
+        else callback(err);
+    }
+    else {
+        console.log(data);
+        if (data.code === "UserNotFoundException") return callback(null);
+        else {
+            let profile = {
+                "user_id": data.UserAttributes.find(item=>item.Name==="sub").Value,
+                "username": data.Username,
+            };
+            userParameters.forEach(customParameterName => {
+                profile[customParameterName] = data.UserAttributes.find(item=>item.Name===customParameterName).Value;
+            });
+            return callback(null, profile);
+        }
+    }
+
+});
+
+    }
+```
+
+<div id="loginjs">
+  ##### login.js
+</div>
+
+```javascript lines expandable
+/*
+    windowの問題の可能性についてはStackOverflowの記事を参照: https://stackoverflow.com/questions/40219518/aws-cognito-unauthenticated-login-error-window-is-not-defined-js
+
+    Auth0グローバル変数の設定が必要 - https://auth0.com/docs/rules/configure-global-variables-for-rules
+
+    ローカルでテストする場合（またはAuth0グローバル変数を使用しない場合）:
+    const configuration = {
+      "ClientId": "7tY2xt2NHwj3ZWfovz0wHrJ22IDr15XTyVlo08Xx",
+      "UserPoolId": "eu-west-1_V69pvauTp"
+    */
+
+    function login(username, password, callback) {
+global.fetch = require('node-fetch@2.6.0');
+var AmazonCognitoIdentity = require('amazon-cognito-identity-js@3.0.14');
+var poolData = {
+    UserPoolId: configuration.UserPoolId,
+    ClientId: configuration.ClientId
+
+};
+var userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+
+var authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+    Username: username,
+    Password: password
+});
+var userData = {
+    Username: username,
+    Pool: userPool
+};
+var cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+cognitoUser.authenticateUser(authenticationDetails, {
+    onSuccess: function (result) {
+        //console.log(result);
+        var idTokenPayload = result.getIdToken().payload;
+        console.log(idTokenPayload);
+        var profile = {
+          user_id: idTokenPayload.sub,
+          email: idTokenPayload.email,
+          /* メールアドレスを検証しない場合はfalseに設定することを推奨 */
+          email_verified: true,
+        };
+        console.log({ result, idTokenPayload, profile });
+        callback(null, profile);
+    },
+    onFailure: (function (err) {
+        return callback(new WrongUsernameOrPasswordError(username))
+    })
+});
+    }
+```

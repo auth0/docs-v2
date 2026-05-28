@@ -1,0 +1,138 @@
+---
+description: エンタープライズ接続を使用して、アプリケーションを Active Directory Federation Services（ADFS）に接続する方法について説明します。
+title: アプリを ADFS に接続する
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+アプリケーションを Microsoft の Active Directory Federation Services (ADFS) に接続するには、次の情報を ADFS 管理者に提供する必要があります。
+
+* レルム識別子: `urn:auth0:{yourTenant}`
+* エンドポイント: `https://{yourDomain}/login/callback`。または、[カスタムドメイン](/ja/docs/customize/custom-domains) を使用している場合は `https://<YOUR CUSTOM DOMAIN>/login/callback`
+
+<Card title="フェデレーション メタデータ">
+  フェデレーション メタデータ ファイルには、ADFS サーバーの証明書に関する情報が含まれています。ADFS で フェデレーション メタデータ エンドポイント (`/FederationMetadata/2007-06/FederationMetadata.xml`) が有効になっている場合、Auth0 は構成の変更 (ロールオーバーに備えて新しい署名証明書が追加された場合など) を定期的に (1 日 1 回) 確認できます。そのため、スタンドアロンのメタデータファイルを提供するよりも、フェデレーション メタデータ エンドポイントを有効にすることを推奨します。スタンドアロンのメタデータファイルを提供した場合は、証明書の有効期限が近づくとメールで通知します。
+</Card>
+
+スクリプトを使用して接続を設定することも、手動で設定することもできます。
+
+<div id="scripted-setup">
+  ## スクリプトによるセットアップ
+</div>
+
+Windows PowerShell ウィンドウで、次の 2 つのコマンドを実行します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このスクリプトは、システム管理者として実行する必要があります。
+</Callout>
+
+```powershell wrap lines
+(new-object Net.WebClient -property @{Encoding = [Text.Encoding]::UTF8}).DownloadString("https://raw.github.com/auth0/adfs-auth0/master/adfs.ps1") | iex
+```
+
+export const codeExample1 = `AddRelyingParty "urn:auth0:{yourTenant}" "https://{yourDomain}/login/callback"`;
+
+<AuthCodeBlock children={codeExample1} language="powershell" />
+
+自動統合の場合、このスクリプトでは [ADFS PowerShell SnapIn](http://technet.microsoft.com/en-us/library/adfs2-powershell-basics.aspx) を使用して、認証済みのユーザーに対し **email**、**upn**、**given name**、**surname** の各クレームを発行する **<Tooltip tip="Relying Party: ユーザーを認証するためにサードパーティのIDプロバイダーに依存するエンティティ（サービスやアプリケーションなど）。" cta="用語集を表示" href="/ja/docs/glossary?term=Relying+Party">Relying Party</Tooltip>** を作成して設定します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  [custom domains](/ja/docs/customize/custom-domains) 機能を使用している場合は、`$webAppEndpoint` の値を `https://<YOUR CUSTOM DOMAIN>/login/callback` に置き換える必要があります。
+</Callout>
+
+このスクリプトは、次のように ADFS に Relying Party Trust を作成します。
+
+export const codeExample2 = `$realm = "urn:auth0:{yourTenant}";
+$webAppEndpoint = "https://{yourDomain}/login/callback";
+Add-PSSnapin Microsoft.Adfs.Powershell
+Add-ADFSRelyingPartyTrust -Name $realm -Identifier $realm -WSFedEndpoint $webAppEndpoint
+$rp = Get-ADFSRelyingPartyTrust -Name $realm`;
+
+<AuthCodeBlock children={codeExample2} language="powershell" />
+
+このスクリプトでは、メールアドレス、UPN、名、姓など、よく使われる属性を出力するRulesも作成されます。
+
+```powershell lines
+$rules = @'
+@RuleName = "Store: ActiveDirectory -> Mail (ldap attribute: mail), Name (ldap attribute: displayName), Name ID (ldap attribute: userPrincipalName), GivenName (ldap attribute: givenName), Surname (ldap attribute: sn)"
+c:[Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/windowsaccountname", Issuer == "AD AUTHORITY"]
+=> issue(store = "Active Directory",
+    types = ("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier",
+             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname",
+             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname"), query = ";mail,displayName,userPrincipalName,givenName,sn;{0}", param = c.Value);
+'@
+Set-ADFSRelyingPartyTrust –TargetName $realm -IssuanceTransformRules $rules
+$rSet = New-ADFSClaimRuleSet –ClaimRule '=> issue(Type = "http://schemas.microsoft.com/authorization/claims/permit", Value = "true");'
+Set-ADFSRelyingPartyTrust –TargetName $realm –IssuanceAuthorizationRules $rSet.ClaimRulesString
+```
+
+<div id="manual-setup-part-1-add-a-relying-party-trust">
+  ## 手動設定パート 1: Relying Party Trust を追加する
+</div>
+
+1. ADFS 管理コンソールを開きます。
+2. コンソールの右側にある **Add Relying Party Trust*** をクリックします。
+3. **Start** をクリックします。
+4. **Enter data about the relying party manually** を選択し、**Next** をクリックします。
+5. 名前 (`{yourAppName}` など) を入力し、**Next** をクリックします。
+6. 既定値 (`ADFS 2.0 profile`) のまま、**Next** をクリックします。
+7. 既定値 (`no encryption certificate`) のまま、**Next** をクリックします。
+8. **Enable support for the WS-Federation...** にチェックを入れ、テキストボックスに次の値を入力します。
+   `https://{yourDomain}/login/callback`。または、[カスタムドメイン](/ja/docs/customize/custom-domains) を使用している場合は、`https://<YOUR CUSTOM DOMAIN>/login/callback` を入力します
+9. **Next** をクリックします。
+10. 次の値を指定して Relying Party Trust 識別子を追加します。
+    `urn:auth0:{yourTenant}`
+11. **Add** をクリックし、続けて **Next** をクリックします。
+12. 既定値の `Permit all users...` のまま、**Next** をクリックします。
+13. **Next** をクリックし、最後に **Close** をクリックします。
+
+<div id="manual-setup-part-2-add-a-claim-issuance-policy-rule">
+  ## 手動設定パート 2: クレーム発行ポリシー ルールを追加する
+</div>
+
+1. Windows Server 2019 を使用している場合は、[Add Relying Party Trust] ウィザードの完了時に [Edit Claim Issuance Policy] ダイアログ ボックスが自動的に開きます。Windows Server 2012 または 2016 を使用している場合は、次の手順に従います。
+
+| Windows Server 2012 の場合                                                                                    | Windows Server 2016 の場合                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| コンソール右側の [Actions] パネルで、先ほど作成した Relying Party Trust を見つけます。その下にある **Edit Claim Issuance Policy** をクリックします。 | コンソール ツリーで、ADFS の下の **Relying Party Trusts** をクリックします。コンソール右側で、先ほど作成した Relying Party Trust を見つけます。それを右クリックし、**Edit Claim Issuance Policy** をクリックします。 |
+
+2. [Edit Claim Issuance Policy] ウィンドウで、[Issuance Transform Rules] の下にある **Add Rule...** をクリックします。
+3. 既定の `Send LDAP Attributes as Claims` をそのまま使用します。
+4. ルールの内容がわかる名前を付けます。
+5. [Attribute Store] で **Active Directory** を選択します。
+6. `Mapping of LDAP attributes to outgoing claim types` で次のマッピングを選択し、**Finish** をクリックします。
+
+| LDAP 属性             | 送信クレームの種類      |
+| ------------------- | -------------- |
+| E-Mail-Addresses    | E-Mail Address |
+| Display-Name        | Name           |
+| User-Principal-Name | Name ID        |
+| Given-Name          | Given Name     |
+| Surname             | Surname        |
+
+<div id="add-additional-ldap-attributes">
+  ### LDAP 属性を追加する
+</div>
+
+前の手順で設定したマッピングは最も一般的なものですが、ユーザー情報として追加の LDAP 属性が必要な場合は、クレームマッピングをさらに追加できます。
+
+1. 前の手順でウィンドウを閉じた場合は、作成した Relying Party Trust のコンテキストメニューから **Edit Claim Rules** を選択し、ルールを編集します。
+2. 必要な LDAP 属性ごとに行を追加し、左側の列で属性名、右側の列で使用するクレーム型を選択します。
+3. 必要なクレーム型が存在しない場合は、2 つの方法があります。
+
+   1. 新しいクレームに [namespace-qualified name](/ja/docs/secure/tokens/json-web-tokens/create-custom-claims) を入力します (例: `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/department`) 。
+   2. 新しいクレーム型を登録し (ADFS 管理コンソールの **ADFS &gt; Services &gt; Claim Descriptions**) 、そのクレーム名をマッピングで使用します。
+      Auth0 は、クレーム型の名前部分 (たとえば `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/department` の `department`) を、ユーザープロファイルの属性名として使用します。
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+接続の設定が完了したら、次はその接続を使用するようにアプリケーションを構成します。以下のステップ別 Quickstarts に従うか、ライブラリや API を使用できます。
+
+* [Quickstarts を使って開始する](/ja/docs/quickstarts)
+* [Lock ログインフォームを使用してアプリケーションを構成する](/ja/docs/libraries/lock)
+* [Auth0.js ライブラリと独自の UI を使用してアプリケーションを構成する](/ja/docs/libraries/auth0js)
+* [Authentication API を使用して認証する](https://auth0.com/docs/api/authentication)

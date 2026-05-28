@@ -1,0 +1,351 @@
+---
+description: Casos en los que un código personalizado incorrecto en una Rule puede crear vulnerabilidades en el flujo de autenticación.
+title: Boletín de seguridad de Auth0 sobre Rules
+---
+
+**Publicado**: 10 de enero de 2019
+
+<div id="overview">
+  ## Descripción general
+</div>
+
+Este boletín de seguridad aborda varios escenarios que los clientes deben evitar en el código personalizado de Rule, ya que pueden generar vulnerabilidades en el flujo de autenticación. A continuación, se ofrece una descripción de cada problema y, cuando es posible, una forma alternativa de escribir la misma Rule.
+
+* El código personalizado de Rule que contiene lógica condicional para aplicar la <Tooltip tip="Autenticación multifactor (MFA): proceso de autenticación de usuarios que utiliza un factor adicional al nombre de usuario y la contraseña, como un código enviado por SMS." cta="Ver glosario" href="/es/docs/glossary?term=multi-factor+authentication">autenticación multifactor</Tooltip> (MFA) puede introducir la posibilidad de omitir por completo la MFA, especialmente al usar la autenticación silenciosa.
+* El código personalizado de Rule que implementa controles de autorización basados en una subcadena específica sin la lógica adecuada puede dar lugar a privilegios elevados.
+* El código personalizado de Rule que envía información de diagnóstico a servicios de terceros, en lugar de usar las funciones de depuración integradas de Auth0, puede provocar la divulgación de información confidencial.
+* El código personalizado de Rule que activa servicios de pago puede permitir que un adversario genere cargos no deseados.
+* El código personalizado de Rule que concede autorización basándose en direcciones de correo electrónico no verificadas puede permitir que adversarios obtengan esos privilegios mediante un tipo de conexión secundario.
+* El código personalizado de Rule que contiene secretos codificados de forma fija, como claves de API, en lugar de usar el objeto de configuración global, aumenta el riesgo de exponer esos secretos.
+
+<div id="improper-mfa-rules">
+  ## Rules de MFA incorrectas
+</div>
+
+<div id="silent-authentication">
+  ### Autenticación silenciosa
+</div>
+
+Dentro de una aplicación de página única (SPA), la autenticación silenciosa permite emitir nuevos <Tooltip tip="Token de acceso: Credencial de autorización, en forma de una cadena opaca o un JWT, utilizada para acceder a una API." cta="Ver glosario" href="/es/docs/glossary?term=access+tokens">tokens de acceso</Tooltip> sin interacción del usuario, siempre que la sesión actual siga siendo válida para el <Tooltip tip="Servidor de autorización: Servidor centralizado que contribuye a definir los límites del acceso de un usuario. Por ejemplo, tu servidor de autorización puede controlar los datos, las tareas y las funcionalidades disponibles para un usuario." cta="Ver glosario" href="/es/docs/glossary?term=authorization+server">servidor de autorización</Tooltip>.
+
+Auth0 ofrece autenticación silenciosa mediante un parámetro especial que se agrega al endpoint de autorización de la siguiente manera:
+`/authorize?prompt=none`
+
+Sin embargo, si se agrega MFA al proceso de autenticación silenciosa, la interacción del usuario pasa a ser necesaria.
+
+No debe utilizarse lógica condicional basada en la autenticación silenciosa para eludir MFA como solución alternativa. Rules de este tipo permiten omitir MFA por completo y no deben utilizarse:
+
+```javascript lines
+function (user, context, callback) {
+  if (context.request.query && context.request.query.prompt === 'none') {
+  // omitir MFA para solicitudes de token silenciosas
+  return callback(null, user, context);
+  }
+...
+}
+```
+
+<div id="silent-authentication-with-redirection-to-custom-mfa-provider">
+  ### Autenticación silenciosa con redirección a un proveedor de MFA personalizado
+</div>
+
+Las Rules que determinan si se debe redirigir a un proveedor de MFA personalizado en función de la autenticación silenciosa pueden permitir omitir MFA en algunas circunstancias poco habituales. Por ejemplo, evite lo siguiente:
+
+```javascript lines
+function (user, context, callback) {
+  if (context.request.query && context.request.query.prompt === 'none') {
+  //redirigir a MFA personalizado
+  context.redirect = {
+    url: "https://example.com/"
+  };
+...
+}
+```
+
+<div id="improper-verification">
+  ### Verificación incorrecta
+</div>
+
+El uso de Rules para omitir la autenticación multifactor en determinadas condiciones puede permitir omitir MFA cuando las comprobaciones implementadas no bastan para determinar la validez del estado deseado.
+
+En estos casos, la causa raíz del problema es que Rules nunca puede determinar si MFA se ejecutó correctamente, ya que MFA ocurre después de la ejecución de la Rule. Las Rules configuradas de esta manera (consulte los ejemplos a continuación) actualizan prematuramente el registro del usuario, partiendo de la suposición incorrecta de que MFA se ejecutará correctamente, y al mismo tiempo dependen de ese mismo registro del usuario para omitir MFA en determinadas condiciones.
+
+Los ejemplos a continuación ilustran comprobaciones de verificación incorrectas que pueden dar lugar a una omisión completa de la autenticación multifactor.
+
+<div id="device-fingerprint">
+  #### Huella digital del dispositivo
+</div>
+
+```javascript lines
+function (user, context, callback) {
+
+  var crypto = require('crypto');
+
+  var deviceFingerPrint = getDeviceFingerPrint();
+  user.app_metadata = user.app_metadata || {};
+
+  // Verificación inadecuada
+  if (user.app_metadata.lastLoginDeviceFingerPrint !== deviceFingerPrint) {
+    user.app_metadata.lastLoginDeviceFingerPrint = deviceFingerPrint;
+    context.multi-factor = {
+      ...
+    };
+    ...
+  }
+  function getDeviceFingerPrint() {
+    var shasum = crypto.createHash('sha1');
+    shasum.update(context.request.userAgent);
+    shasum.update(context.request.ip);
+    return shasum.digest('hex');
+  }
+}
+```
+
+<div id="country-code">
+  #### Código de país
+</div>
+
+```javascript lines
+function (user, context, callback) {
+  user.app_metadata = user.app_metadata || {};
+
+  // Verificación insuficiente
+  if (user.app_metadata.last_location !== context.request.geoip.country_code) {
+    user.app_metadata.last_location = context.request.geoip.country_code;
+    context.multi-factor = {
+    ...
+    };
+  }
+```
+
+### ¿Me afecta?
+
+Si usa alguna de las lógicas de Rule descritas anteriormente, un adversario que haya iniciado sesión correctamente con el primer factor de autenticación podría eludir MFA en su aplicación.
+
+<div id="mitigation-steps">
+  ### Pasos de mitigación
+</div>
+
+**Si se ve afectado por el escenario de autenticación silenciosa**, elimine la lógica condicional basada en `prompt === 'none'`. Esto hará que se solicite autenticación multifactor en cada llamada de autenticación silenciosa para comprobar el estado de la sesión.
+
+**Si se ve afectado por el escenario de autenticación silenciosa con redirección**, elimine la lógica condicional basada en `prompt === 'none'` y cambie a un proveedor de autenticación multifactor compatible con Auth0.
+
+Para evitar solicitar MFA al usuario con demasiada frecuencia, puede establecer el parámetro `allowRememberBrowser` en `true`, lo que permitirá a los usuarios marcar una casilla para que solo se les solicite autenticación multifactor cada 30 días. Por ejemplo:
+
+```js lines
+context.multi-factor = {
+    provider: 'guardian',
+    allowRememberBrowser: true
+  };
+```
+
+Puede que desee informar a sus usuarios finales de que marquen la casilla para evitar que se les vuelva a solicitar con demasiada frecuencia.
+
+**Si se ve afectado por Rules que usan una verificación inadecuada para omitir MFA**, asegúrese de aplicar comprobaciones de verificación fiables, dejar de usar por completo las excepciones de MFA o utilizar la opción de configuración `allowRememberBrowser` descrita anteriormente.
+
+<div id="will-this-update-impact-my-users">
+  ### ¿Esta actualización afectará a mis usuarios?
+</div>
+
+Según cómo ajuste sus reglas o la configuración, esta actualización puede afectar a sus usuarios y pedirles MFA con más frecuencia de lo habitual.
+
+<div id="improper-substring-verification">
+  ## Verificación incorrecta de subcadenas
+</div>
+
+Si tiene lógica de Rule que requiere control de acceso basado en una coincidencia exacta de una cadena concreta, como un dominio de correo electrónico, pero solo comprueba una subcadena en lugar de una coincidencia exacta de la cadena completa, es posible que la lógica no funcione como pretende. Por ejemplo:
+
+`if( _.findIndex(connection.options.domain_aliases,function(d){ return user.email.indexOf(d) >= 0;`
+
+La lógica anterior devolvería `true` para correos electrónicos como estos:
+
+* `user.domain.com@not-domain.com`
+* `"user@domain.com"@not-domain.com` (comillas incluidas)
+
+### ¿Me afecta?
+
+Solo se ven afectados los clientes que usan lógica condicional en Rules, como se describió anteriormente.
+
+<div id="mitigation-steps">
+  ### Pasos de mitigación
+</div>
+
+Utilice una lógica como la siguiente:
+
+`const emailSplit = user.email.split('@'); const userEmailDomain = emailSplit[emailSplit.length - 1].toLowerCase();`
+
+Consulte la [plantilla de Rule Check Domains Against Connection Aliases](https://github.com/auth0/rules/blob/master/src/rules/check-domains-against-connection-aliases.js) para obtener más información. Como alternativa, en la sección **Rules** del <Tooltip tip="Auth0 Dashboard: el principal producto de Auth0 para configurar sus servicios." cta="Ver glosario" href="/es/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip>, vea la plantilla de Rule llamada **Check if user email domain matches configured domain**.
+
+<div id="will-this-update-impact-my-users">
+  ### ¿Esta actualización afectará a mis usuarios?
+</div>
+
+Posiblemente. El cambio recomendado en las Rules con lógica basada en comprobaciones de subcadenas puede afectar a los usuarios finales, aunque usted es quien mejor puede juzgar la intención de sus Rules y si es probable que los cambios recomendados afecten a sus usuarios finales.
+
+<div id="debugging-using-external-services">
+  ## Depuración con servicios externos
+</div>
+
+Si tiene lógica de Rule que envía el objeto de contexto de Auth0 a un servicio externo, está exponiendo elementos como `id_token` o `access_token` asociados con la solicitud. Por ejemplo:
+
+```js lines
+request.post({
+    url: 'http://requestbin.fullcontact.com/YourBinUrl',
+    json: {
+      user: user,
+      context: context,
+    },
+    timeout: 15000
+  }, function(err, response, body){
+    if (err) return callback(err);
+    return callback(null, user, context);
+  });
+```
+
+### ¿Me afecta?
+
+Solo se ven afectados los clientes con lógica de Rule, como se describió anteriormente.
+
+<div id="mitigation-steps">
+  ### Pasos de mitigación
+</div>
+
+Debe modificar su Rule para que ya no envíe el objeto de contexto completo a requestbin, ya que esto puede exponer cualquier `id_token` o `access_token` asociado a cada solicitud. En su lugar, debe enviar un subconjunto de atributos del objeto de contexto que sean menos sensibles.
+
+Consulte la [plantilla de Rule de Requestbin](https://github.com/auth0/rules/blob/master/src/rules/requestbin.js) para obtener más información. Como alternativa, en la sección **Rules** del Auth0 Dashboard, vea la plantilla de Rule llamada **Dump rule variables to RequestBin**.
+
+Auth0 también ofrece métodos integrados para depurar Rules sin enviar información a servicios externos.
+
+<div id="will-this-update-impact-my-users">
+  ### ¿Esta actualización afectará a mis usuarios?
+</div>
+
+No. La Rule afectada normalmente se utilizaba con fines de depuración. La modificación no debería afectar a los usuarios finales.
+
+<div id="rules-using-a-paid-service">
+  ## Rules que usan un servicio de pago
+</div>
+
+Si tiene lógica de Rule que implica un servicio de pago, como el envío de mensajes SMS mediante Twillio, como parte del proceso de autenticación, puede ser vulnerable a un aumento de costos, ya que un adversario con un username y una contraseña válidos podría desencadenar una llamada al servicio e incurrir en costos sin tener que completar todo el proceso de autenticación especificado por las Rules. Por ejemplo:
+
+```javascript lines
+//Envía SMS al usuario vía Twilio
+  function notifyUser(done) {
+    const request = require('request');
+    const twilioAccount = '{yourTwilioAccount}';
+    const twilioAuthToken = '{yourTwilioAuthToken}';
+
+    request.post({
+      url: 'https://api.twilio.com/2010-04-01/Accounts/' + twilioAccount + '/Messages.json',
+      auth: {
+        'user': twilioAccount,
+        'pass': twilioAuthToken,
+      },
+      form: {
+        body: 'You\'ve logged in from a different device or location.',
+        to: user.phone,
+        from: '+18668888888'
+      }
+    }, function (error, response, body) {
+      if (error) return done(error);
+      if (response.statusCode !== 201) return done(new Error(response.statusCode));
+      return done(null);
+    });
+  }
+```
+
+### ¿Me afecta?
+
+Solo se ven afectados los clientes que tengan lógica de Rule, como se describe anteriormente, y cuya lógica de Rule pueda ser activada por cualquier usuario no fiable.
+
+<div id="mitigation-steps">
+  ### Pasos de mitigación
+</div>
+
+Para mitigar este riesgo, considere una o varias de las siguientes acciones:
+
+* Deshabilite los registros públicos, si no son necesarios, para reducir la cantidad de usuarios que pueden registrarse y desencadenar llamadas a servicios de pago.
+* Mitigue el riesgo de robo de credenciales para evitar la toma de control de cuentas por parte de atacantes que puedan usar cuentas comprometidas para desencadenar llamadas a servicios de pago.
+* Asegúrese de que sus usuarios tengan contraseñas seguras cuando usen conexiones de base de datos.
+* Asegúrese de que sus usuarios utilicen autenticación multifactor.
+* Asegúrese de que la Rule solo se active para un subconjunto autorizado de usuarios o en otras condiciones apropiadas. Por ejemplo, puede que desee agregar lógica que verifique si un usuario tiene un dominio de correo electrónico, un rol/grupo o un nivel de suscripción determinados antes de desencadenar la llamada al servicio de pago.
+
+<div id="will-this-update-impact-my-users">
+  ### ¿Esta actualización afectará a mis usuarios?
+</div>
+
+El impacto en los usuarios finales depende de cuál de las opciones descritas anteriormente elija para mitigar el problema.
+
+<div id="authorization-based-on-unverified-email-address">
+  ## Autorización basada en una dirección de correo electrónico sin verificar
+</div>
+
+Si tiene lógica en una Rule que requiere control de acceso en función de una dirección de correo electrónico o de un dominio de correo electrónico concretos, pero no comprueba si ese usuario ha verificado su correo electrónico, un atacante podría obtener privilegios adicionales al usar un segundo tipo de conexión. Por ejemplo:
+
+```javascript lines
+var userHasAccess = allowList.some(function (email) {
+    return email === user.email;
+  });
+```
+
+La lógica anterior devolvería `true` si un atacante pudiera crear una cuenta mediante un tipo de conexión distinto (como una conexión social) con una dirección de correo electrónico incluida en la lista de permitidos. Esto sucede porque el mismo correo electrónico puede existir en distintos tipos de conexión.
+
+<div id="am-i-affected">
+  ### ¿Estoy afectado?
+</div>
+
+Solo se ven afectados los clientes que usan lógica condicional en Rules, tal como se describió anteriormente, y admiten varios tipos de conexión.
+
+<div id="mitigation-steps">
+  ### Pasos de mitigación
+</div>
+
+Siempre que otorgue autorización basándose en direcciones de correo electrónico, inicie siempre la Rule con la siguiente lógica:
+
+```javascript lines
+function (user, context, callback) {
+  // El acceso solo debe concederse a usuarios verificados.
+  if (!user.email || !user.email_verified) {
+    return callback(new UnauthorizedError('Access denied.'));
+  }
+```
+
+A veces, incluso un correo electrónico verificado puede no ser una verificación suficiente para la autorización que quiere realizar. Para obtener más información sobre estos casos, consulte la sección Uso del correo electrónico verificado.
+
+<div id="will-this-update-impact-my-users">
+  ### ¿Esta actualización afectará a mis usuarios?
+</div>
+
+Esto solo afectará a los usuarios existentes si no han verificado su correo electrónico.
+
+<div id="plaintext-secrets-within-rule-code">
+  ## Secretos en texto sin cifrar dentro del código de Rule
+</div>
+
+Si especifica información confidencial, como API keys, dentro del código de Rule, debe configurar esos valores en la configuración de Rule. Por ejemplo:
+
+`const myApiKey = 'abcdefghijklmnopqrstuvwxyz';`
+
+Como esos valores confidenciales están presentes en el código de Rule, permanecerán sin cifrar en nuestros sistemas y correrán el riesgo de quedar expuestos.
+
+<div id="am-i-affected">
+  ### ¿Estoy afectado?
+</div>
+
+Si tus Rules contienen valores sensibles en el propio código de la Rule, estás afectado.
+
+<div id="mitigation-steps">
+  ### Pasos de mitigación
+</div>
+
+Coloque los valores confidenciales en el área de **Settings** de la sección principal de **Rules** del Auth0 Dashboard y luego acceda a ellos desde su Rule de la siguiente manera:
+
+`const myApiKey = configuration.myApiKey;`
+
+Esto garantiza que todos los valores confidenciales queden cifrados dentro de los sistemas de Auth0, lo que reduce el riesgo de exposición.
+
+<div id="will-this-update-impact-my-users">
+  ### ¿Esta actualización afectará a mis usuarios?
+</div>
+
+Esto no afectará a tus usuarios.

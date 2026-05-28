@@ -1,0 +1,541 @@
+---
+description: ユーザーデータの保存先として Auth0 のデータストアを使用する場合と外部データベースを使用する場合の違いを学びます。
+title: ユーザーデータの保存
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+import {AuthCodeGroup} from "/snippets/ja/AuthCodeGroup.jsx";
+
+Auth0 は、テナントのユーザー情報をホスト型クラウドデータベースに保存します。ユーザーデータを独自の外部カスタムデータベースに保存することもできます。
+
+Auth0 が認証に使用する基本情報を超えるユーザーデータを保存するには、Auth0 のデータストアまたはカスタムデータベースを使用できます。ただし、その追加データを認証に使用する場合は、[Auth0 Management Dashboard](https://manage.auth0.com/#) からユーザーデータを管理できるため、Auth0 のデータストアを使用することをお勧めします。
+
+<div id="external-database-vs-auth0-data-store">
+  ## 外部データベースとAuth0データストア
+</div>
+
+Auth0データストアは、認証データ向けに設計されています。デフォルトのユーザー情報を超えるデータの保存は、限定的なケースにとどめるべきです。理由は次のとおりです。
+
+* **スケーラビリティ**: Auth0データストアのスケーラビリティには限界があり、アプリケーションのデータ量が適切な上限を超える可能性があります。外部データベースを使用すれば、Auth0データストアはシンプルに保ちつつ、追加データはより効率的な外部データベースに保存できます。
+* **パフォーマンス**: 認証データは、他のデータに比べてアクセス頻度が低いことが一般的です。Auth0データストアは高頻度アクセス向けには最適化されていないため、より頻繁に取得する必要があるデータは別の場所に保存するべきです。
+* **柔軟性**: Auth0データストアは、ユーザープロフィールとそれに関連するメタデータのみを扱うように設計されているため、データベースに対して実行できる操作には制限があります。他のデータを別のデータベースに保存すれば、用途に応じて適切にデータを管理でき、Auth0の<Tooltip tip="Management API: 顧客が管理タスクを実行できるようにする製品。" cta="用語集を表示" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip>を使わずに直接呼び出しを実行できます。
+
+ユーザー認証を外部に委ねる場合、通常は独自の users/passwords テーブルを維持する必要はありません。それでも、認証済みユーザーにアプリケーションデータを関連付けたい場合はあります。
+
+* たとえば、Auth0で認証された各ユーザーを一覧するUsersテーブルを用意できます。ユーザーがログインするたびに、そのテーブルで該当ユーザーを検索します。ユーザーが存在しなければ新しいレコードを作成し、存在する場合はすべてのフィールドを更新して、実質的にすべてのユーザーデータのローカルコピーを維持します。
+* あるいは、ユーザー関連データを持つ各テーブルやコレクションにユーザー識別子を保存する方法もあります。これは、比較的小規模なアプリケーションに適した、よりシンプルな実装です。
+
+<div id="user-data-storage-example-scenario">
+  ## ユーザーデータ保存のシナリオ例
+</div>
+
+Auth0 では、カスタムの外部データベースと Auth0 を組み合わせて使用する場合のエンドツーエンドのユーザー体験を示す、モバイル音楽アプリのサンプルを提供しています。このサンプルアプリは、[Auth0 iOS seed project](/ja/docs/quickstart/native/ios-swift) を使用して作成された iOS アプリです。バックエンドには [Node.js API](/ja/docs/quickstart/backend/nodejs) を使用します。
+
+アプリケーション全体の構造を視覚的に確認するには、[Mobile + API architecture scenario](/ja/docs/get-started/architecture-scenarios/mobile-api) を参照してください。
+
+<div id="metadata">
+  ### メタデータ
+</div>
+
+<div id="app-metadata">
+  #### アプリメタデータ
+</div>
+
+モバイル音楽アプリケーションでは、次のデータ項目を `app_metadata` に保存するのが適切です。
+
+* ユーザーのサブスクリプションプラン
+* 注目のプレイリストを編集できるかどうか
+
+これら 2 つのデータ項目は、ユーザーが直接変更できるものではないため、`user_metadata` ではなく `app_metadata` に保存する必要があります。
+
+<div id="user-metadata">
+  #### ユーザーメタデータ
+</div>
+
+モバイル音楽アプリケーションでは、次のようなデータを `user_metadata` に保存するのが適切です。
+
+* アプリケーションの設定
+* ログイン時のアプリ体験を変えるために、ユーザーが選択した項目
+
+`app_metadata` に保存するデータとは異なり、`user_metadata` に保存されたこれらの値は、ユーザー自身が簡単に変更できます。
+
+たとえば、ユーザーが `displayName` を変更できるようにできます。これは、ログイン時にユーザー本人に表示され、アプリの他のユーザーにも表示される名前です。
+
+ユーザーがログインするたびに、ユーザーが選択した識別子を表示するには、Rule を使用して `user.user_metadata` の値を取得します。
+
+```javascript lines
+function(user, context, callback){
+  user.user_metadata = user.user_metadata || {};
+  user.user_metadata.displayName = user.user_metadata.displayName || "user";
+
+  auth0.users.updateUserMetadata(user.user_id, user.user_metadata)
+    .then(function(){
+      callback(null, user, context);
+    })
+    .catch(function(err){
+      callback(err);
+    });
+}
+```
+
+ユーザーが `displayName` を変更する際に使用する画面は次のとおりです。
+
+<Frame>![表示名を更新するオプションがある iOS アプリの設定画面。](/docs/images/cdy7uua7fh8z/33YxGQKYztHY3OM6mxJ4jN/0a06103e6b6455c2e1962a1f738b663a/4-settings.png)</Frame>
+
+変更をデータベースに保存するには、アプリケーションは適切なユーザーを特定するために、Management API の [Get a User](https://auth0.com/docs/api/management/v2#!/Users/get_users_by_id) エンドポイントを呼び出します。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id \
+    --header 'authorization: Bearer {yourIdToken}'
+  ```
+
+  ```csharp C# lines
+  var client = new RestClient("https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id");
+  var request = new RestRequest(Method.GET);
+  request.AddHeader("authorization", "Bearer {yourIdToken}");
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	req.Header.Add("authorization", "Bearer {yourIdToken}")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse<String> response = Unirest.get("https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id")
+    .header("authorization", "Bearer {yourIdToken}")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'GET',
+    url: 'https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id',
+    headers: {authorization: 'Bearer {yourIdToken}'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer {yourIdToken}"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  headers = { 'authorization': "Bearer {yourIdToken}" }
+
+  conn.request("GET", "%7ByourAccount%7D.auth0.com/api/v2/users/user_id", headers=headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://%7ByourAccount%7D.auth0.com/api/v2/users/user_id")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Get.new(url)
+  request["authorization"] = 'Bearer {yourIdToken}'
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+次に、`user_metadata` フィールドを更新するために [Update a User](https://auth0.com/docs/api/management/v2#!/Users/patch_users_by_id) エンドポイントを呼び出します。
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request PATCH \
+    --url 'https://{yourDomain}/api/v2/users/user_id' \
+    --header 'authorization: Bearer {yourAccessToken}' \
+    --header 'content-type: application/json' \
+    --data '{"user_metadata": {"displayName": "J-vald3z"}'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/api/v2/users/user_id");
+  var request = new RestRequest(Method.PATCH);
+  request.AddHeader("authorization", "Bearer {yourAccessToken}");
+  request.AddHeader("content-type", "application/json");
+  request.AddParameter("application/json", "{"user_metadata": {"displayName": "J-vald3z"}", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/api/v2/users/user_id"
+
+  	payload := strings.NewReader("{"user_metadata": {"displayName": "J-vald3z"}")
+
+  	req, _ := http.NewRequest("PATCH", url, payload)
+
+  	req.Header.Add("authorization", "Bearer {yourAccessToken}")
+  	req.Header.Add("content-type", "application/json")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.patch("https://{yourDomain}/api/v2/users/user_id")
+    .header("authorization", "Bearer {yourAccessToken}")
+    .header("content-type", "application/json")
+    .body("{"user_metadata": {"displayName": "J-vald3z"}")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'PATCH',
+    url: 'https://{yourDomain}/api/v2/users/user_id',
+    headers: {authorization: 'Bearer {yourAccessToken}', 'content-type': 'application/json'},
+    data: '{"user_metadata": {"displayName": "J-vald3z"}'
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/api/v2/users/user_id",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "PATCH",
+    CURLOPT_POSTFIELDS => "{"user_metadata": {"displayName": "J-vald3z"}",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer {yourAccessToken}",
+      "content-type: application/json"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "{"user_metadata": {"displayName": "J-vald3z"}"
+
+  headers = {
+      'authorization': "Bearer {yourAccessToken}",
+      'content-type': "application/json"
+      }
+
+  conn.request("PATCH", "/{yourDomain}/api/v2/users/user_id", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/api/v2/users/user_id")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Patch.new(url)
+  request["authorization"] = 'Bearer {yourAccessToken}'
+  request["content-type"] = 'application/json'
+  request.body = "{"user_metadata": {"displayName": "J-vald3z"}"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+`{yourAccessToken}` は [Management API アクセストークン](https://auth0.com/docs/api/management/v2/concepts/tokens) に置き換えてください。
+
+<div id="user-data-permission-rules">
+  ### ユーザーデータ権限のルール
+</div>
+
+ユーザーが注目のプレイリストを編集できるかどうかを制御する権限を実装するには、[Rules](/ja/docs/customize/rules) を使用します。
+
+<div id="assign-playlist-editor-role">
+  #### Playlist Editor ロールを割り当てる
+</div>
+
+最初のRuleは Node API にリクエストを送信し、その API が Heroku に接続されたデータベースを照会して、ユーザーのプレイリストの再生回数を確認します。再生回数が 100 回以上であれば、`app_metadata` の `roles` 配列に `playlist_editor` を値として割り当てます。
+
+```javascript lines expandable
+function (user, context, callback) {
+
+  var request = require('request');
+
+  user.app_metadata = user.app_metadata || {};
+  user.app_metadata.roles = user.roles || [];
+
+  var CLIENT_SECRET = configuration.AUTH0_CLIENT_SECRET;
+  var CLIENT_ID = configuration.AUTH0_CLIENT_ID;
+
+  var scope = {
+    user_id: user.user_id,
+    email: user.email,
+    name: user.name
+  };
+
+  var options = {
+    subject: user.user_id,
+    expiresInMinutes: 600,
+    audience: CLIENT_ID,
+    issuer: 'https://example.auth0.com'
+  };
+
+  var id_token = jwt.sign(scope, CLIENT_SECRET, options);
+
+  var auth = 'Bearer ' + id_token;
+
+  request.get({
+    url: 'https://example.com/playlists/getPlays',
+    headers: {
+       'Authorization': auth,
+      'Content-Type': 'text/html'
+    },
+    timeout: 15000
+  }, function(err, response, body){
+    if (err)
+      return callback(new Error(err));
+    var plays = parseInt(body, 10);
+
+    if (plays >= 100 && user.roles.indexOf('playlist_editor') < 0){
+      user.app_metadata.roles.push('playlist_editor');
+      auth0.users.updateAppMetadata(user.user_id, user.app_metadata)
+        .then(function(){
+          callback(null, user, context);
+        })
+        .catch(callback);
+    }
+
+    else if (plays < 100 && user.roles.indexOf('playlist_editor') >= 0){
+      user.app_metadata.roles = [];
+      auth0.users.updateAppMetadata(user.user_id, user.app_metadata)
+        .then(function(){
+          callback(null, user, context);
+        })
+        .catch(callback);
+    }
+    else{
+      callback(null, user, context);
+    }
+
+  });
+
+}
+```
+
+<div id="scope-parameter-specifies-role">
+  #### `scope` パラメーターでロールを指定する
+</div>
+
+2 番目の Rule では、`app_metadata` フィールドを取得し、`roles` 配列をユーザーオブジェクト内のフィールドに割り当てます。これにより、アプリケーション側で `app_metadata` を参照しなくてもアクセスできるようになります。すると、ユーザーのログイン時に、ユーザーオブジェクトへ `app_metadata` の内容をすべて含めなくても、`scope` パラメーターで `roles` を指定できます。
+
+```javascript lines
+function(user, context, callback) {
+   if (user.app_metadata) {
+      user.roles = user.app_metadata.roles;
+   }
+   user.roles = user.roles || [];
+   callback(null, user, context);
+}
+```
+
+これら 2 つのルールを実装すると、アプリはユーザーがプレイリストエディターかどうかを判別し、それに応じてようこそ画面を変更します。ユーザーの `app_metadata` に保存されている `roles` 配列に `playlist_editor` が含まれている場合、サインイン後、ユーザーは **EDITOR** として迎えられます。
+
+<Frame>![エディターロールを持つユーザープロフィールページの例。](/docs/images/cdy7uua7fh8z/1WEKC4eWvm8GPK2BlodGFk/3eb36843f22518ace800fc1507bd5816/3-home.png)</Frame>
+
+<div id="associate-a-users-music-with-the-user">
+  #### ユーザーの音楽をそのユーザーに関連付ける
+</div>
+
+ユーザーの音楽をそのユーザーに関連付ける必要がありますが、この情報は認証に必須ではありません。ここでは、アプリケーションのバックエンドと連携した別のデータベースにこの情報を保存する方法を説明します。
+
+ユーザーの一意の識別子は `user_id` で、`authResult` 内の `idTokenPayload` オブジェクトの `sub` プロパティです。以下は、データベース内の `songs` テーブルの行の例です。
+
+| song&#95;id | songname       | user&#95;id   |
+| ----------- | -------------- | ------------- |
+| 1           | Number One Hit | google-oauth2 |
+
+Node.js バックエンドでは、<Tooltip tip="JSON Web Token（JWT）: 2 者間でクレームを安全に表現するために使用される標準の IDトークン 形式（多くの場合は アクセストークン の形式でもあります）。" cta="用語集を見る" href="/ja/docs/glossary?term=JSON+Web+Token">JSON Web Token</Tooltip> を検証することで、データベースからユーザーの個人データを取得する URI へのリクエストを認証します。
+
+[トークンベースの認証と、Applications で JWT を実装する方法について学ぶ](/ja/docs/secure/tokens/json-web-tokens)
+
+以下は、Node.js シードプロジェクトにおける JWT 検証の実装コードです。
+
+```javascript lines
+var genres = require('./routes/genres');
+var songs = require('./routes/songs');
+var playlists = require('./routes/playlists');
+var displayName = require('./routes/displayName');
+
+var authenticate = jwt({
+  secret: process.env.AUTH0_CLIENT_SECRET,
+  audience: process.env.AUTH0_CLIENT_ID
+});
+
+app.use('/genres', authenticate, genres);
+app.use('/songs', authenticate, songs);
+app.use('/playlists', authenticate, playlists);
+app.use('/displayName', authenticate, displayName);
+```
+
+アプリケーションからのさまざまなデータリクエストを処理する機能を追加できます。たとえば、`/secured/getFavGenre` への `GET` リクエストを受信すると、API は `queryGenre()` 関数を呼び出し、データベースを照会してユーザーのお気に入りのジャンルを返します。
+
+```swift lines
+@IBAction func getGenre(sender: AnyObject) {
+        let request = buildAPIRequest("/genres/getFav", type:"GET")
+        let task = NSURLSession.sharedSession().dataTaskWithRequest(request) {[unowned self](data, response, error) in
+            let genre = NSString(data: data!, encoding: NSUTF8StringEncoding)
+            dispatch_async(dispatch_get_main_queue(), {
+                self.favGenre.text = "Favorite Genre:  \(genre!)"
+            })
+        }
+        task.resume()
+    }
+```
+
+`buildAPIRequest()` 関数は、リクエストのパスと HTTP メソッドをパラメーターとして受け取り、Heroku でホストされている Node.js API のベース URL を使用してリクエストを構築します。
+
+Application では、`getGenre()` 関数が API にリクエストを送信し、`/genres/getFav` へのリクエストのレスポンスが表示されるようにアプリのインターフェースを更新します。バックエンドは、この処理に必要なデータを `queryGenre()` 関数で取得し、その結果を Application に返します。
+
+```javascript lines
+function queryGenre(user_id, res){
+
+  db.connect(process.env.DATABASE_URL, function(err, client) {
+  if (err) throw err;
+
+  client
+    .query('SELECT fav_genre as value FROM user_data WHERE user_id = $1', [user_id], function(err, result) {
+
+      if(err) {
+        return console.error('error running query', err);
+      }
+      res.send(result.rows[0].value);
+    });
+  });
+
+};
+```
+
+<div id="learn-more">
+  ## 詳細
+</div>
+
+* [Normalized ユーザープロフィール](/ja/docs/manage-users/user-accounts/user-profiles/normalized-user-profiles)
+* [Normalized User Profile Schema](/ja/docs/manage-users/user-accounts/user-profiles/normalized-user-profile-schema)
+* [ユーザープロフィールのサンプル](/ja/docs/manage-users/user-accounts/user-profiles/sample-user-profiles)

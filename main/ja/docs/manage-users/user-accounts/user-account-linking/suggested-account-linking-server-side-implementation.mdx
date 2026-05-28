@@ -1,0 +1,164 @@
+---
+description: サンプルシナリオを使用して、通常の Web アプリケーションでサーバーサイドコードによりユーザーアカウントをリンクする方法を説明します。
+title: 'ユーザーアカウントのリンク: サーバーサイド実装'
+---
+
+Auth0 は、さまざまな <Tooltip tip="IDプロバイダー（IdP）: デジタルアイデンティティを保存および管理するサービス。" cta="用語集を表示" href="/ja/docs/glossary?term=identity+providers">IDプロバイダー</Tooltip> のユーザーアカウントのリンクをサポートしています。サーバーサイドコードを使用すると、通常の Web アプリケーションでアカウントをリンクできます。その際、処理を進める前にユーザーに関与してもらい、許可を得ることができます。コードではユーザーを認証し、メールアドレスを使用して該当するユーザーを検索および特定します。次に、アプリケーションは対象アカウントの認証情報で認証するようユーザーに求め、アカウントをリンクするよう促した後、アカウントをリンクします。
+
+このサンプルアプリケーションの完全なソースは [GitHub](https://github.com/auth0-samples/auth0-link-accounts-sample/tree/master/RegularWebApp) で確認できます。
+
+1. ユーザーをアプリケーションへログインさせます。<br />
+
+   ユーザーは [Universal Login](/ja/docs/authenticate/login/auth0-universal-login) を使用してアプリケーションにサインインします。詳しくは、Auth0 Management API のオーディエンス (audience=`https://{yourDomain}/api/v2/`) に対するトークンをリクエストする [通常の Web アプリのクイックスタート](/ja/docs/quickstart/webapp) を参照してください。
+
+2. 同じメールアドレスを持つユーザーを検索します。<br />
+
+   ユーザープロフィールと、同じ確認済みメールアドレスを持つユーザーの一覧を取得できます。
+
+   ```javascript lines expandable
+   router.get("/", async (req, res) => {
+     const { sub, email_verified } = req.openid.user;
+     //user_metadataとapp_metadataプロパティを含むユーザープロフィールを取得する
+     try {
+       let getUsersWithSameVerifiedEmail = [];
+       const getUserProfile = auth0Client.getUser(sub);
+       if (email_verified)
+         // アカウントリンクはメールアドレスが確認済みの場合のみ提供される
+         getUsersWithSameVerifiedEmail = auth0Client.getUsersWithSameVerifiedEmail(
+           req.openid.user
+         );
+
+       const [user, suggestedUsers] = await Promise.all([
+         getUserProfile,
+         getUsersWithSameVerifiedEmail,
+       ]);
+
+       const flashError = clear(req);
+       res.render("user", {
+         user,
+         suggestedUsers,
+         wrongAccountError: flashError && flashError === Errors.WrongAccount,
+       });
+     } catch (err) {
+       debug("GET /user[s] failed: %o", err);
+       res.render("error", err);
+     }
+   });
+   ```
+
+   同じメールアドレスを持つすべてのユーザーレコードの一覧を取得するには、アプリケーションで `read:users` スコープを持つ [Management API アクセストークン](/ja/docs/secure/tokens/access-tokens/management-api-access-tokens) を使用して、Auth0 Management API の [Get Users By Email エンドポイント](https://auth0.com/docs/api/v2#!/users-by-email/get_users_by_email) を呼び出します。
+
+   ```javascript lines
+   const request = require('request');
+   class Auth0Client {
+   ...
+   async getUsersWithSameVerifiedEmail({ sub, email }) {
+     return await this.request({
+       url: `${process.env.ISSUER_BASE_URL}/api/v2/users-by-email?email=${email}`,
+     });
+   }
+   ```
+
+3. ユーザーにアカウントのリンクを促します。
+
+   1. Auth0 が一致するメールアドレスを持つレコードを 1 件以上返した場合、ユーザーにはその一覧と、アカウントをリンクするよう促す次のメッセージが表示されます。
+   2. ユーザーが特定のアカウントをリンクする場合は、該当するアカウントの横にある **Link** をクリックします。
+
+      <Frame>![サーバー側のアカウントリンクページを表示したアプリケーションの例](/docs/images/cdy7uua7fh8z/7unQjUtxTZUc4tRFOxhaP3/050fb853d2b3be37795ce88b8a60ffed/account-linking-webapp-small__1_.png)</Frame>
+
+4. ユーザーが **Link** をクリックすると、アプリケーションは対象のアカウントで認証するようユーザーに求め、その後アカウントリンクを実行します。
+
+   <Warning>
+     セカンダリアカウントの `user_metadata` を保持してマージするには、API エンドポイントを呼び出す前に、その `user_metadata` を取得し、プライマリアカウントのメタデータにマージする必要があります。アカウントをリンクすると、セカンダリアカウントのメタデータは破棄されます。
+
+     アカウントリンクを開始する際は、どの ID をプライマリアカウントとして使用し、どの ID をセカンダリアカウントとして使用するかを選択できます。この選択は、プライマリプロファイルに保持したい属性セットに応じて決まります。
+   </Warning>
+
+   次のコードスニペットは、メタデータを検証してマージする方法を示しています。
+
+   ```javascript lines expandable
+   async function accountLink(req, res, next) {
+   const {
+     linking: { targetUserId },
+   } = req.appSession;
+   const { sub: authenticatedTargetUserId } = req.openidTokens.claims();
+   if (authenticatedTargetUserId !== targetUserId) {
+     debug(
+       "Skipping account linking as the authenticated user(%s)  is different than target linking user (%s)",
+       authenticatedTargetUserId,
+       targetUserId
+     );
+     set(req, Errors.WrongAccount);
+     return next();
+   }
+
+   debug(
+     "User %s succesfully authenticated. Account linking with %s... ",
+     authenticatedTargetUserId,
+     targetUserId
+   );
+   const { id_token: targetIdToken } = req.openidTokens;
+   const { sub: primaryUserId } = req.appSession.claims;
+
+   try {
+     await mergeMetadata(primaryUserId, authenticatedTargetUserId);
+     await auth0Client.linkAccounts(primaryUserId, targetIdToken);
+     debug("Accounts linked.");
+   } catch (err) {
+     debug("Linking failed %o", err);
+   } finally {
+     next();
+   }
+   }
+   ```
+
+5. アプリケーションは、`update:users` スコープを持つ [Management API アクセストークン](/ja/docs/secure/tokens/access-tokens/management-api-access-tokens) を使用して、Auth0 Management API の [ユーザーアカウントのリンク用エンドポイント](https://auth0.com/docs/api/v2#!/Users/post_identities) を呼び出します。
+
+<div id="metadata-merge-example">
+  ## メタデータのマージ例
+</div>
+
+次の例では、[API V2 用 Node.js Auth0 SDK](https://github.com/auth0/node-auth0) を使用して、セカンダリアカウントの `user_metadata` と `app_metadata` をプライマリアカウントに明示的にマージする方法を示します。
+
+```javascript lines expandable
+/*
+ * セカンダリユーザーの user_metadata と app_metadata をプライマリユーザーに再帰的にマージします。
+ * プライマリユーザーのデータが優先されます。
+ * 配列フィールドは結合されます。
+ */
+async function mergeMetadata(primaryUserId, secondaryUserId) {
+  // 両方のユーザーをメタデータとともに読み込みます。
+  const [primaryUser, secondaryUser] = await Promise.all(
+    [primaryUserId, secondaryUserId].map((uid) => auth0Client.getUser(uid))
+  );
+
+  const customizerCallback = function (objectValue, sourceValue) {
+    if (_.isArray(objectValue)) {
+      return sourceValue.concat(objectValue);
+    }
+  };
+  const mergedUserMetadata = _.merge(
+    {},
+    secondaryUser.user_metadata,
+    primaryUser.user_metadata,
+    customizerCallback
+  );
+  const mergedAppMetadata = _.merge(
+    {},
+    secondaryUser.app_metadata,
+    primaryUser.app_metadata,
+    customizerCallback
+  );
+  await auth0Client.updateUser(primaryUserId, {
+    user_metadata: mergedUserMetadata,
+    app_metadata: mergedAppMetadata,
+  });
+}
+```
+
+<div id="learn-more">
+  ## 関連情報
+</div>
+
+* [API呼び出しを確認する](/ja/docs/troubleshoot/authentication-issues/check-api-calls)
+* [無効なトークンエラーのトラブルシューティング](/ja/docs/troubleshoot/basic-issues/invalid-token-errors)

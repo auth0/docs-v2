@@ -1,0 +1,268 @@
+---
+description: SSE（Server-Sent Events）ベースの Events API を使用して、独自のスケジュールで Auth0 からイベントを取得します。
+title: Events API でイベントを取得する
+---
+
+Events API は、Event Stream に代わるプルベースの手段を提供します。Auth0 がイベントを送信先にプッシュする代わりに、アプリケーションは `GET /api/v2/events` への長時間接続を確立し、Server-Sent Events (SSE) ストリームとしてイベントを受信します。接続するタイミング、切断後の再開方法、イベントを消費する速度は、すべて制御できます。
+
+このアプローチは、次のような場合に役立ちます。
+
+* Webhook エンドポイントを用意せずに、自分のペースでイベントを処理する必要がある場合。
+* バックフィルや復旧のために、特定の時点からイベントを再生する必要がある場合。
+* プッシュベースの配信ではなく、ポーリングを前提とするシステムと統合する場合。
+
+<div id="how-the-events-api-works">
+  ## Events API の仕組み
+</div>
+
+アプリケーションが Events API に接続すると、SSE メッセージのストリームを受信します。各メッセージには、**オフセット** として機能する `id` フィールドが含まれます。接続が切断された場合、アプリケーションは再接続し、最後に受信したオフセットを送信します。Auth0 はその時点から配信を再開するため、イベントが失われることはありません。
+
+SSE ストリームには、次のメッセージタイプが含まれます。
+
+| Message type                                      | Purpose                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `:connected`                                      | 接続が確立されたことを示します。これはデータイベントではなく、SSE コメントです。                   |
+| `retry: <ms>`                                     | 切断後に再接続するまでの待機時間を SSE クライアントに通知します。                          |
+| `event: <type>` (for example, `user.created`)     | `data` フィールドに完全なペイロードを含む実際のイベントです。                           |
+| `event: offset-only`                              | 一定間隔で送信される進行マーカーです (ハートビートの頻度で送信) 。イベントデータを配信せずにオフセットを更新します。 |
+| `:` followed by text (for example, `: heartbeat`) | プロキシやロードバランサーがアイドル状態の接続を閉じるのを防ぐためのキープアライブコメントです。対応は不要です。     |
+| `event: error`                                    | 終端エラーです。このメッセージの後、ストリームは閉じられます。                              |
+
+<div id="example-sse-stream">
+  ### SSE ストリームの例
+</div>
+
+```text wrap lines
+:connected
+
+retry: 2000
+
+event: user.created
+id: MTIzNDIzNDEzCg==
+data: {"offset":"MTIzNDIzNDEzCg==","event":{"id":"evt_abc123","type":"user.created","time":"2025-06-01T12:00:00Z","data":{"object":{"user_id":"auth0|123","email":"jane@example.com"}}}}
+
+event: offset-only
+id: 4LcuTXmVDASuNRQt
+data: {"offset":"4LcuTXmVDASuNRQt"}
+
+: heartbeat
+
+event: user.updated
+id: NTY3ODkwMTIzCg==
+data: {"offset":"NTY3ODkwMTIzCg==","event":{"id":"evt_def456","type":"user.updated","time":"2025-06-01T12:05:00Z","data":{"object":{"user_id":"auth0|123","email":"jane.doe@example.com"}}}}
+```
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+開始する前に、次のものを用意してください。
+
+* Events が有効になっている Auth0 テナント。利用可能な Event Stream 接続数は、ご利用のプランによって異なります。
+
+  | プラン          | 接続上限 |
+  | ------------ | ---- |
+  | Free         | 1    |
+  | Self-service | 4    |
+  | Enterprise   | 8    |
+
+* `read:events` スコープを持つ Management API アクセストークン。詳細については、[Management API アクセストークン](/ja/docs/secure/tokens/access-tokens/management-api-access-tokens)を参照してください。
+
+<div id="connect-to-the-events-api">
+  ## Events API に接続する
+</div>
+
+テナントの events エンドポイントへの SSE 接続を確立します。次の例では `curl` を使用します。
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    "https://YOUR_DOMAIN/api/v2/events"
+```
+
+<div id="query-parameters">
+  ### クエリパラメーター
+</div>
+
+クエリパラメーターを使用して、ストリームを絞り込んだり再開したりできます。
+
+| Parameter        | Type   | Description                                                                                                                                    |
+| ---------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`           | string | 以前の `id` フィールドで返されたオフセットです。配信はこのオフセットの直後から再開されます。                                                                                              |
+| `from_timestamp` | string | ISO 8601 タイムスタンプです。この時刻以降に発生したイベントを返します。`from` とは同時に指定できません。初期設定や、既知の時点からイベントを再生する場合に適しています。継続的に取り込む場合は、オフセットのほうがより正確なため、`from` で再開することを推奨します。 |
+| `event_type`     | string | 含めるイベントタイプです。タイプごとにこのパラメーターを繰り返し指定します (例: `event_type=user.created&event_type=user.updated`) 。                                                 |
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    "https://YOUR_DOMAIN/api/v2/events?event_type=user.created&event_type=user.updated&from_timestamp=2025-06-01T00:00:00Z"
+```
+
+<div id="resume-after-a-disconnection">
+  ## 切断後に再開する
+</div>
+
+SSE 接続は、ネットワークの問題、トークンの有効期限切れ、サーバー側での接続の切り替え (Auth0 は負荷分散のため、通常は数分ごとに定期的に接続を閉じます) など、さまざまな理由で切断されることがあります。標準的な SSE クライアントライブラリは、再接続して最後のオフセットを送信することで、これを透過的に処理します。
+
+再接続時にオフセットを指定する方法は 2 つあります。
+
+* **`Last-Event-ID` header** — 標準の SSE 再接続メカニズムです。ほとんどの SSE クライアントライブラリでは、再接続時にこのヘッダーが自動的に設定されます。
+* **`from` query parameter** — クライアントが `Last-Event-ID` ヘッダーをサポートしていない場合は、こちらを使用します。
+
+両方が指定されている場合は、`Last-Event-ID` ヘッダーが優先されます。
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    -H "Last-Event-ID: MTIzNDIzNDEzCg==" \
+    "https://YOUR_DOMAIN/api/v2/events"
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  すべてのメッセージ (`offset-only` メッセージを含む) について、最新の `id` 値を永続ストレージに保存してください。アプリケーションが再起動した場合は、保存したオフセットを使用して、中断した箇所から配信を再開します。
+</Callout>
+
+<div id="handle-message-types">
+  ## メッセージタイプの処理
+</div>
+
+<div id="real-events">
+  ### 実際のイベント
+</div>
+
+`event` フィールドが既知のイベントタイプ (たとえば `user.created`) に一致するメッセージには、`data` フィールドにイベント ペイロード全体が含まれます。JSON をパースし、ビジネスロジックに従ってイベントを処理してください。
+
+<div id="offset-only-messages">
+  ### オフセットのみのメッセージ
+</div>
+
+Auth0 は、ストリーム内での位置を進めるため、一定間隔 (ハートビートの頻度) で `offset-only` メッセージを送信します。これらのメッセージにはイベントのペイロードは含まれません。受信したら、保存してあるオフセットを更新してください。そうすることで、今後再接続した際に、すでに通過したイベントが再送されるのを防げます。
+
+<div id="error-messages">
+  ### エラーメッセージ
+</div>
+
+`event: error` メッセージは、オフセットの有効期限切れやサーバー側の問題などの致命的な問題を示します。このメッセージを受信すると、ストリームは閉じられます。アプリケーションでは、エラーをログに記録したうえで、適切なオフセットまたは新しい `from_timestamp` を使用して再接続する必要があります。
+
+<div id="heartbeats">
+  ### ハートビート
+</div>
+
+`:` で始まる行は、ハートビートとして使われる SSE のコメントです。これにより、プロキシやロードバランサーを経由しても接続が維持されます。処理は不要です。
+
+<div id="server-side-connection-cycling">
+  ## サーバー側での接続の切り替え
+</div>
+
+Auth0 は負荷分散のため、SSE 接続を定期的に切断します (通常は数分ごと) 。これは想定された動作であり、エラーではありません。標準的な SSE クライアントライブラリ (`eventsource` npm パッケージを含む) は、`Last-Event-ID` ヘッダーを使用して自動的に再接続するため、アプリケーションはイベントを失うことなく正しいオフセットから処理を再開できます。
+
+カスタム SSE クライアントを実装する場合は、最新のオフセットを保持し、その値を使って再接続することで、接続の切断を適切に処理できるようにしてください。
+
+<div id="implement-a-consumer">
+  ## コンシューマーを実装する
+</div>
+
+次の Node.js の例は、イベントを処理し、オフセットをファイルに保存する最小限の Events API コンシューマーを示しています。
+
+```javascript wrap lines
+const EventSource = require("eventsource");
+const fs = require("fs");
+
+const OFFSET_FILE = "./offset.txt";
+const AUTH0_DOMAIN = "YOUR_DOMAIN";
+const TOKEN = "YOUR_MANAGEMENT_API_TOKEN";
+
+function loadOffset() {
+    try {
+        return fs.readFileSync(OFFSET_FILE, "utf8").trim();
+    } catch {
+        return null;
+    }
+}
+
+function saveOffset(offset) {
+    fs.writeFileSync(OFFSET_FILE, offset);
+}
+
+function connect() {
+    const offset = loadOffset();
+    const params = new URLSearchParams();
+    params.append("event_type", "user.created");
+    params.append("event_type", "user.updated");
+    params.append("event_type", "user.deleted");
+
+    if (offset) {
+        params.append("from", offset);
+    }
+
+    const url = `https://${AUTH0_DOMAIN}/api/v2/events?${params.toString()}`;
+
+    const es = new EventSource(url, {
+        headers: {
+            "Authorization": `Bearer ${TOKEN}`
+        }
+    });
+
+    // 実際のイベントを処理する
+    for (const type of ["user.created", "user.updated", "user.deleted"]) {
+        es.addEventListener(type, (msg) => {
+            const payload = JSON.parse(msg.data);
+            console.log(`Received ${type}:`, payload.event.id);
+
+            // ここでイベントを処理する
+
+            saveOffset(msg.lastEventId);
+        });
+    }
+
+    // オフセットのみの進捗マーカーを処理する
+    es.addEventListener("offset-only", (msg) => {
+        saveOffset(msg.lastEventId);
+    });
+
+    // 致命的なエラーを処理する
+    es.addEventListener("error", (msg) => {
+        if (msg.data) {
+            const errorPayload = JSON.parse(msg.data);
+            console.error("Stream error:", errorPayload.error);
+        }
+        es.close();
+
+        // 一定時間後に再接続する
+        setTimeout(connect, 5000);
+    });
+}
+
+connect();
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `eventsource` npm パッケージは SSE プロトコルを実装しており、`Last-Event-ID` ヘッダーを使用して自動的に再接続します。別の SSE ライブラリを使用する場合は、自動再接続とオフセットのフォワードに対応していることを確認してください。
+</Callout>
+
+<div id="error-responses">
+  ## エラーレスポンス
+</div>
+
+Events API は、接続の確立時に標準の HTTP ステータスコードを返します。
+
+| ステータスコード | 意味                                                                |
+| -------- | ----------------------------------------------------------------- |
+| `200`    | 接続が確立されました。イベントのストリーミングが開始されます。                                   |
+| `400`    | 無効なリクエストです。`offset` の値の形式が不正か、要求されたイベントタイプがサポートされていません。           |
+| `401`    | アクセストークンがないか無効です。                                                 |
+| `403`    | アクセストークンに `read:events` スコープが含まれていません。                            |
+| `410`    | `offset` の有効期限が切れています。特定の時点から再開するには、`from_timestamp` の値を使用してください。 |
+| `429`    | レート制限を超過しました。`Retry-After` ヘッダーで指定された時間だけ待機してから、再試行してください。        |
+
+<div id="learn-more">
+  ## 詳しくはこちら
+</div>
+
+* [イベントタイプ](/ja/docs/customize/events/event-types)
+* [Event Stream を作成](/ja/docs/customize/events/create-an-event-stream)
+* [イベントのベストプラクティス](/ja/docs/customize/events/events-best-practices)
+* [Management API アクセストークン](/ja/docs/secure/tokens/access-tokens/management-api-access-tokens)

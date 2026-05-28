@@ -1,0 +1,268 @@
+---
+description: Récupérez des événements depuis Auth0 au moment qui vous convient à l’aide de l’API Events basée sur Server-Sent Events (SSE).
+title: Consommer des événements avec l’API Events
+---
+
+L’API Events offre une solution de rechange par extraction aux flux d’événements. Au lieu qu’Auth0 envoie les événements vers une destination, votre application ouvre une connexion de longue durée à `GET /api/v2/events` et reçoit les événements sous la forme d’un flux Server-Sent Events (SSE). Vous contrôlez quand vous connecter, comment reprendre après une déconnexion et à quelle vitesse consommer les événements.
+
+Cette approche est utile lorsque vous devez :
+
+* Traiter les événements à votre propre rythme sans configurer un endpoint de webhook.
+* Relire des événements à partir d’un moment précis pour le remplissage rétrospectif ou la récupération.
+* Intégrer des systèmes qui privilégient la scrutation plutôt qu’une livraison par envoi.
+
+<div id="how-the-events-api-works">
+  ## Fonctionnement de l’API Events
+</div>
+
+Lorsque votre application se connecte à l’API Events, elle reçoit un flux de messages SSE. Chaque message comprend un champ `id` qui sert d’**offset**. Si la connexion est interrompue, votre application se reconnecte et fournit le dernier offset reçu. Auth0 reprend la transmission à partir de ce point, de sorte qu’aucun événement n’est perdu.
+
+Le flux SSE comprend les types de messages suivants :
+
+| Type de message                                 | Rôle                                                                                                                                                            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `:connected`                                    | Confirme que la connexion est établie. Il s’agit d’un commentaire SSE, et non d’un événement de données.                                                        |
+| `retry: <ms>`                                   | Indique au client SSE combien de temps attendre avant de se reconnecter après une déconnexion.                                                                  |
+| `event: <type>` (par exemple, `user.created`)   | Un événement réel avec le payload complet dans le champ `data`.                                                                                                 |
+| `event: offset-only`                            | Un marqueur de progression envoyé à intervalles réguliers (à la fréquence du heartbeat). Met à jour l’offset sans transmettre de données d’événement.           |
+| `:` suivi de texte (par exemple, `: heartbeat`) | Un commentaire de maintien en vie qui empêche les serveurs proxy et les répartiteurs de charge de fermer les connexions inactives. Aucune action n’est requise. |
+| `event: error`                                  | Une erreur terminale. Le flux se ferme après ce message.                                                                                                        |
+
+<div id="example-sse-stream">
+  ### Exemple de flux SSE
+</div>
+
+```text wrap lines
+:connected
+
+retry: 2000
+
+event: user.created
+id: MTIzNDIzNDEzCg==
+data: {"offset":"MTIzNDIzNDEzCg==","event":{"id":"evt_abc123","type":"user.created","time":"2025-06-01T12:00:00Z","data":{"object":{"user_id":"auth0|123","email":"jane@example.com"}}}}
+
+event: offset-only
+id: 4LcuTXmVDASuNRQt
+data: {"offset":"4LcuTXmVDASuNRQt"}
+
+: heartbeat
+
+event: user.updated
+id: NTY3ODkwMTIzCg==
+data: {"offset":"NTY3ODkwMTIzCg==","event":{"id":"evt_def456","type":"user.updated","time":"2025-06-01T12:05:00Z","data":{"object":{"user_id":"auth0|123","email":"jane.doe@example.com"}}}}
+```
+
+<div id="prerequisites">
+  ## Prérequis
+</div>
+
+Avant de commencer, assurez-vous d’avoir :
+
+* Un locataire Auth0 avec Events activé. Le nombre de connexions de flux d’événements offertes dépend de votre forfait :
+
+  | Forfait       | Limite de connexions |
+  | ------------- | -------------------- |
+  | Gratuit       | 1                    |
+  | Libre-service | 4                    |
+  | Enterprise    | 8                    |
+
+* Un jeton d’accès de la Management API avec le scope `read:events`. Pour en savoir plus, consultez [jetons d’accès de la Management API](/fr-CA/docs/secure/tokens/access-tokens/management-api-access-tokens).
+
+<div id="connect-to-the-events-api">
+  ## Se connecter à l’API Events
+</div>
+
+Ouvrez une connexion SSE au point de terminaison Events de votre locataire. L’exemple suivant utilise `curl` :
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    "https://YOUR_DOMAIN/api/v2/events"
+```
+
+<div id="query-parameters">
+  ### Paramètres de requête
+</div>
+
+Utilisez des paramètres de requête pour filtrer ou reprendre le flux :
+
+| Paramètre        | Type   | Description                                                                                                                                                                                                                                                                                                                        |
+| ---------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`           | chaîne | Un offset renvoyé dans un champ `id` précédent. La livraison reprend après cet offset.                                                                                                                                                                                                                                            |
+| `from_timestamp` | chaîne | Un horodatage ISO 8601. Renvoie les événements survenus à cette heure ou après. Ne peut pas être utilisé avec `from`. À privilégier pour la configuration initiale ou pour rejouer des événements à partir d’un moment précis; pour une consommation continue, préférez reprendre avec `from`, car les offsets sont plus précis. |
+| `event_type`     | chaîne | Le type d’événement à inclure. Répétez le paramètre pour chaque type (par exemple, `event_type=user.created&event_type=user.updated`).                                                                                                                                                                                             |
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    "https://YOUR_DOMAIN/api/v2/events?event_type=user.created&event_type=user.updated&from_timestamp=2025-06-01T00:00:00Z"
+```
+
+<div id="resume-after-a-disconnection">
+  ## Reprendre après une interruption de connexion
+</div>
+
+Les connexions SSE peuvent être interrompues pour plusieurs raisons : problèmes réseau, expiration du jeton ou recyclage des connexions côté serveur (Auth0 ferme périodiquement les connexions pour répartir la charge — généralement toutes les quelques minutes). Les bibliothèques clientes SSE standard gèrent cela de façon transparente en se reconnectant et en envoyant le dernier offset.
+
+Il existe deux façons de fournir l’offset lors de la reconnexion :
+
+* **En-tête `Last-Event-ID`** — mécanisme standard de reconnexion SSE. La plupart des bibliothèques clientes SSE définissent automatiquement cet en-tête lors de la reconnexion.
+* **Paramètre de requête `from`** — utilisez-le lorsque votre client ne prend pas en charge l’en-tête `Last-Event-ID`.
+
+Si les deux sont fournis, l’en-tête `Last-Event-ID` prévaut.
+
+```bash wrap lines
+curl -N --http2 \
+    -H "Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN" \
+    -H "Accept: text/event-stream" \
+    -H "Last-Event-ID: MTIzNDIzNDEzCg==" \
+    "https://YOUR_DOMAIN/api/v2/events"
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Conservez dans un stockage persistant la valeur `id` la plus récente de chaque message (y compris les messages `offset-only`). Si votre application redémarre, utilisez l’offset enregistré pour reprendre la livraison là où vous l’aviez laissée.
+</Callout>
+
+<div id="handle-message-types">
+  ## Gérer les types de messages
+</div>
+
+<div id="real-events">
+  ### Événements réels
+</div>
+
+Les messages dont le champ `event` correspond à un type d’événement connu (par exemple, `user.created`) contiennent le payload complet de l’événement dans le champ `data`. Analysez le JSON et traitez l’événement selon votre logique d’affaires.
+
+<div id="offset-only-messages">
+  ### Messages `offset-only`
+</div>
+
+Auth0 envoie des messages `offset-only` à intervalles réguliers (à la fréquence de heartbeat) pour faire progresser votre position dans le flux. Ces messages ne contiennent aucun payload d’événement. Mettez à jour l’offset enregistré lorsque vous les recevez afin qu’une reconnexion ultérieure ne rejoue pas les événements que vous avez déjà dépassés.
+
+<div id="error-messages">
+  ### Messages d’erreur
+</div>
+
+Un message `event: error` signale une erreur fatale, comme un offset expiré ou un problème côté serveur. Après avoir reçu ce message, le flux se ferme. Votre application doit consigner l’erreur, puis se reconnecter avec l’offset approprié ou un `from_timestamp` récent.
+
+<div id="heartbeats">
+  ### Heartbeats
+</div>
+
+Les lignes qui commencent par `:` sont des commentaires SSE utilisés comme heartbeats. Elles maintiennent la connexion active via les proxys et les répartiteurs de charge. Aucun traitement n’est nécessaire.
+
+<div id="server-side-connection-cycling">
+  ## Rotation côté serveur des connexions
+</div>
+
+Auth0 ferme périodiquement les connexions SSE à des fins d’équilibrage de charge (généralement toutes les quelques minutes). Il s’agit d’un comportement attendu, et non d’une erreur. Les bibliothèques clientes SSE standard (y compris le paquet npm `eventsource`) se reconnectent automatiquement à l’aide de l’en-tête `Last-Event-ID`, ce qui permet à votre application de reprendre au bon offset sans perdre d’événements.
+
+Si vous créez un client SSE personnalisé, assurez-vous qu’il gère correctement les interruptions de connexion en conservant l’offset le plus récent et en se reconnectant avec celui-ci.
+
+<div id="implement-a-consumer">
+  ## Implémenter un consommateur
+</div>
+
+L’exemple Node.js suivant présente un consommateur minimal de l’API Events qui traite les événements et enregistre l’offset dans un fichier.
+
+```javascript wrap lines
+const EventSource = require("eventsource");
+const fs = require("fs");
+
+const OFFSET_FILE = "./offset.txt";
+const AUTH0_DOMAIN = "YOUR_DOMAIN";
+const TOKEN = "YOUR_MANAGEMENT_API_TOKEN";
+
+function loadOffset() {
+    try {
+        return fs.readFileSync(OFFSET_FILE, "utf8").trim();
+    } catch {
+        return null;
+    }
+}
+
+function saveOffset(offset) {
+    fs.writeFileSync(OFFSET_FILE, offset);
+}
+
+function connect() {
+    const offset = loadOffset();
+    const params = new URLSearchParams();
+    params.append("event_type", "user.created");
+    params.append("event_type", "user.updated");
+    params.append("event_type", "user.deleted");
+
+    if (offset) {
+        params.append("from", offset);
+    }
+
+    const url = `https://${AUTH0_DOMAIN}/api/v2/events?${params.toString()}`;
+
+    const es = new EventSource(url, {
+        headers: {
+            "Authorization": `Bearer ${TOKEN}`
+        }
+    });
+
+    // Gérer les événements réels
+    for (const type of ["user.created", "user.updated", "user.deleted"]) {
+        es.addEventListener(type, (msg) => {
+            const payload = JSON.parse(msg.data);
+            console.log(`Received ${type}:`, payload.event.id);
+
+            // Traiter l'événement ici
+
+            saveOffset(msg.lastEventId);
+        });
+    }
+
+    // Gérer les marqueurs de progression sans données
+    es.addEventListener("offset-only", (msg) => {
+        saveOffset(msg.lastEventId);
+    });
+
+    // Gérer les erreurs fatales
+    es.addEventListener("error", (msg) => {
+        if (msg.data) {
+            const errorPayload = JSON.parse(msg.data);
+            console.error("Stream error:", errorPayload.error);
+        }
+        es.close();
+
+        // Se reconnecter après un délai
+        setTimeout(connect, 5000);
+    });
+}
+
+connect();
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Le package npm `eventsource` implémente le protocole SSE et gère automatiquement la reconnexion au moyen de l’en-tête `Last-Event-ID`. Si vous utilisez une autre bibliothèque SSE, assurez-vous qu’elle prend en charge la reconnexion automatique et le transfert de l’offset.
+</Callout>
+
+<div id="error-responses">
+  ## Réponses d’erreur
+</div>
+
+L’API Events renvoie des codes d’état HTTP standard lorsqu’il est impossible d’établir la connexion :
+
+| Code d’état | Signification                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| `200`       | Connexion établie. La diffusion des événements commence.                                                           |
+| `400`       | Requête invalide. La valeur d’offset est mal formée ou le type d’événement demandé n’est pas pris en charge.       |
+| `401`       | Jeton d’accès manquant ou invalide.                                                                                |
+| `403`       | Le jeton d’accès n’inclut pas le scope `read:events`.                                                              |
+| `410`       | L’offset a expiré. Utilisez une valeur `from_timestamp` pour reprendre à partir d’un moment précis.                |
+| `429`       | Limite de débit dépassée. Attendez, puis réessayez en utilisant l’intervalle indiqué dans l’en-tête `Retry-After`. |
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Types d’événements](/fr-CA/docs/customize/events/event-types)
+* [Créer un flux d’événements](/fr-CA/docs/customize/events/create-an-event-stream)
+* [Meilleures pratiques relatives à Events](/fr-CA/docs/customize/events/events-best-practices)
+* [Jetons d’accès de la Management API](/fr-CA/docs/secure/tokens/access-tokens/management-api-access-tokens)

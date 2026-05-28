@@ -1,0 +1,193 @@
+---
+description: Auth0テナントで送信者制約を設定する方法の概要。
+title: 送信者制約を設定する
+validatedOn: 2026-02-02
+---
+
+[送信者制約](/ja/docs/secure/sender-constraining)は、<Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/ja/docs/glossary?term=OAuth+2.0">OAuth 2.0</Tooltip>および<Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/ja/docs/glossary?term=OpenID">OpenID</Tooltip> Connect (OIDC) のセキュリティメカニズムであり、アクセストークンと<Tooltip tip="Refresh Token: ユーザーに再度ログインさせることなく、新しいアクセストークンを取得するために使用されるトークン。" cta="用語集を見る" href="/ja/docs/glossary?term=refresh+tokens">リフレッシュトークン</Tooltip>を、それらを取得した特定のクライアントアプリケーションに暗号学的に結び付けることで、トークンの盗難や不正利用を防ぎます。
+
+Auth0は、mTLSによる送信者制約とDemonstrating Proof-of-Possession (DPoP) をサポートしています。クライアントアプリケーションで送信者制約を有効にする場合は、API呼び出し先の<Tooltip tip="Resource Server: 保護されたリソースをホストするサーバー。リソースサーバーは保護されたリソース要求を受け入れ、応答します。" cta="用語集を見る" href="/ja/docs/glossary?term=resource+server">リソースサーバー</Tooltip>に対しても、送信者制約を強制する必要があります。
+
+Auth0で送信者制約を設定するには、次の操作が必要です。
+
+* [クライアントアプリケーションの送信者制約を設定する](#configure-sender-constraining-for-a-client-application)
+* [リソースサーバーの送信者制約を設定する](#configure-sender-constraining-for-a-resource-server)
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+<Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を見る" href="/ja/docs/glossary?term=Access+tokens">アクセストークン</Tooltip> が Auth0 で送信者制約されるかどうかは、クライアントアプリケーションとリソースサーバーの送信者制約の設定方法によって決まります。
+
+1. **要求されたオーディエンス:** トークンリクエストで、要求されたオーディエンスが `/userinfo` のみか、[`/userinfo`](https://auth0.com/docs/api/authentication/user-profile/get-user-info) エンドポイントでのみ使用することを意図しているか、または `openid` スコープも要求した場合に `/userinfo` を含む可能性があるカスタム API かどうかによって、アクセストークンが送信者制約されるかどうかが決まります。
+2. **クライアントアプリケーション:** クライアントアプリケーションで送信者制約を `required` に設定しているかどうか。
+3. **リソースサーバー:** リソースサーバーに送信者制約を設定しているかどうか。
+
+   1. `none`: リソースサーバーに送信者制約を設定していません。
+   2. `allowed`: 送信者制約方式を設定して、リソースサーバーに送信者制約を構成しています。
+   3. `required`: リソースサーバーに送信者制約を必須として設定しています。つまり、アクセストークンはアプリケーションに対して送信者制約されている必要があります。すべてのアプリケーション、またはパブリックアプリケーションのみに対して送信者制約を必須にできます。送信者制約方式が必要です。
+
+<Callout icon="lightbulb" color="#0EA5E9" iconType="regular">
+  送信者制約方式として mTLS を使用する場合、送信者制約は常にすべてのアプリケーションで必須です。mTLS はパブリックアプリケーションをサポートしていないため、mTLS 送信者制約をパブリッククライアントのみに限定することはできません。
+</Callout>
+
+* **所有証明:** クライアントアプリケーションがトークンリクエストで所有証明アサーションを送信したかどうか。
+
+  * mTLS 送信者制約: 所有証明は、TLS ハンドシェイク中にクライアントが特定の秘密鍵 (クライアント証明書に関連付けられたもの) を正常に提示することで証明されます。
+  * DPoP: 所有証明は、クライアントが秘密鍵で暗号学的に署名した DPoP Proof JWT を作成し、関連付けられたアクセストークンを使用するすべてのリクエストの DPoP HTTP ヘッダーに `DPoP` Proof JWT を含めることで実現されます。
+
+次の表は、さまざまなクライアントリクエストパラメーターと Auth0 リソースサーバーの構成に基づいて、アクセストークンがどのように発行されるか、および送信者制約されるかどうかを示しています。
+
+| 要求されたオーディエンスタイプ                  | クライアントで PoP が必須か | クライアントが Proof-of-Possession (PoP) を送信したか | Auth0 リソースサーバーポリシー: None | Auth0 リソースサーバーポリシー: Allowed (必須ではない)  | Auth0 リソースサーバーポリシー: Required |
+| -------------------------------- | ---------------- | ---------------------------------------- | ------------------------ | ------------------------------------- | ---------------------------- |
+| Userinfo のみ                      | いいえ              | いいえ                                      | 発行される、送信者制約なし            | 該当なし                                  | 該当なし                         |
+| Userinfo のみ                      | いいえ              | はい                                       | 発行される、送信者制約あり            | 該当なし                                  | 該当なし                         |
+| Userinfo のみ                      | はい               | いいえ                                      | 発行されない                   | 該当なし                                  | 該当なし                         |
+| Userinfo のみ                      | はい               | はい                                       | 発行される、送信者制約あり            | 該当なし                                  | 該当なし                         |
+| カスタムオーディエンス (Userinfo を含む可能性あり)  | いいえ              | いいえ                                      | 発行される、送信者制約なし            | 発行される、送信者制約なし                         | 発行されない                       |
+| カスタムオーディエンス (Userinfo を含む可能性あり)  | いいえ              | はい                                       | 発行される、送信者制約なし            | 発行される、送信者制約あり                         | 発行される、送信者制約あり                |
+| カスタムオーディエンス (Userinfo を含む可能性あり)  | はい               | いいえ                                      | 発行されない                   | 発行されない                                | 発行されない                       |
+| カスタムオーディエンス (Userinfo を含む可能性あり)  | はい               | はい                                       | 発行されない                   | 発行される、送信者制約あり                         | 発行される、送信者制約あり                |
+
+<div id="configure-sender-constraining-for-a-client-application">
+  ## クライアントアプリケーションの送信者制約を設定する
+</div>
+
+クライアントアプリケーションに送信者制約を必須にすると、アクセストークンはそのアプリケーションに紐付けられます。Auth0 はリクエストを検証し、トークンを要求したアプリケーションだけが、そのトークンを使用して関連するリソースにアクセスできるようにします。
+
+クライアントアプリケーションで送信者制約を必須に設定すると、リソースサーバーの設定時に、送信者制約方式として mTLS または DPoP を指定できます。
+
+クライアントアプリケーションの送信者制約は、<Tooltip tip="Auth0 Dashboard: サービスを設定するための Auth0 の主要製品です。" cta="用語集を見る" href="/ja/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip> または <Tooltip tip="Management API: お客様が管理タスクを実行できるようにする製品です。" cta="用語集を見る" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip> で設定できます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. [Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications) に移動し、設定するアプリケーションを選択します。
+    2. **Settings** で **Token Sender-Constraining** までスクロールします。
+    3. **Require Sender Constraining** をオンにします。アプリケーションの送信者制約の必須設定を解除するには、オフにします。
+
+    <Frame>![](/docs/images/cdy7uua7fh8z/3BoGW9NEYKPBkfk2tPBL7l/0f884ac3f64f17b23fd6a0e9436bb472/Screenshot_2024-07-23_at_1.30.19_PM.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    クライアントの送信者制約を設定するには、[Management API](https://auth0.com/docs/api/management/v2) を使用します。
+
+    クライアントで送信者制約を必須にするには、[クライアント設定を更新する](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) に対して PATCH リクエストを送信します。`require_proof_of_possession` パラメーターを `true` に設定します。
+
+    ```bash lines
+    curl -L -X PATCH 'https://{YOUR_DOMAIN}/api/v2/clients/{YOUR_CLIENT_ID}' \
+    -H 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    -H 'Content-Type: application/json' \
+    -d '{"require_proof_of_possession": true}'
+    ```
+
+    送信者制約の必須設定を解除するには、`require_proof_of_possession` パラメーターを `false` に設定します。
+
+    ```bash lines
+    curl -L -X PATCH 'https://{YOUR_DOMAIN}/api/v2/clients/{YOUR_CLIENT_ID}' \
+    -H 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    -H 'Content-Type: application/json' \
+    -d '{"require_proof_of_possession": false}'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="configure-sender-constraining-for-a-resource-server">
+  ## リソースサーバーの送信者制約を設定する
+</div>
+
+Auth0 が発行するアクセストークンは、リソースサーバー上の API へのアクセスに使用するクライアントアプリケーション (送信者) に制約できます。
+
+Auth0 Dashboard または Management API を使用して、リソースサーバーの送信者制約を設定できます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    トークンバインディングまたは送信者制約を有効にするには、API の **API Settings** で設定を行います。
+
+    1. [Auth0 Dashboard &gt; Applications &gt; APIs](https://manage.auth0.com/#/apis) に移動します。
+    2. 設定する API を選択します。
+    3. **Settings** タブで、**Token Sender-Constraining** セクションを探します。
+    4. 次の項目を設定します。
+
+       1. 送信者制約方式:
+
+          1. **なし:** リソースサーバーに送信者制約方式を設定しません。
+          2. **mTLS**: リソースサーバーの送信者制約方式として mTLS を有効にします。
+          3. **DPoP:** リソースサーバーの送信者制約方式として DPoP を有効にします。
+
+       2. トークン送信者制約を必須にする: この API に適用する送信者制約ポリシーを選択します。
+
+          1. **常に:** すべてのアプリケーションで送信者制約を必須にします。mTLS を使用する場合に選択できるのはこのオプションのみです。
+          2. **パブリックアプリケーションの場合:** パブリックアプリケーションでのみ送信者制約を必須にします。このオプションは mTLS を使用する場合は選択できません。
+          3. **しない:** 送信者制約は必須ではありません。
+
+    <Frame>![Auth0 Dashboard > APIs > Settings > トークンバインディング](/docs/images/sender-constraining/method_is_dpop.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    Management API で送信者制約を有効にするには、[リソースサーバーの更新](https://auth0.com/docs/api/management/v2/resource-servers/patch-resource-servers-by-id) に PATCH リクエストを送信します。`proof_of_possession` オブジェクトのパラメーターを次のように設定します。
+
+    | パラメーター         | 説明                                                                                                                                                                                                     |
+    | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+    | `mechanism`    | 送信者制約方式を設定します: `none`、`mtls`、または `dpop`。                                                                                                                                                               |
+    | `required`     | 必須。`true` に設定すると、この API 向けにアプリケーションに発行されるアクセストークンは、そのアプリケーションに制約されます。この要件をどのアプリケーション種別に適用するかは `required_for` で指定します。`false` に設定すると、送信者制約は必須ではありません。                                                    |
+    | `required_for` | `required` が `true` の場合に、どのアプリケーション種別で送信者制約を必須にするかを絞り込みます: `all_clients` (すべてのアプリケーション) または `public_clients` (パブリックアプリケーションのみ) 。指定しない場合のデフォルトは `all_clients` です。mTLS を使用する場合、有効なのは `all_clients` のみです。 |
+
+    次のコードサンプルは、リソースサーバーに mTLS 送信者制約を設定するリクエストボディの例です。mTLS では `required_for` に `all_clients` のみをサポートしており (これがデフォルト値です) 、そのため指定する必要はありません。
+
+    ```bash lines
+    curl -L -X PATCH 'https://{YOUR_DOMAIN}/api/v2/resource-servers/{YOUR_RESOURCE_SERVER_ID}' \
+    -H 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{
+      "proof_of_possession": {
+        "mechanism": "mtls",
+        "required": true
+      }
+    }'
+    ```
+
+    次のコードサンプルは、パブリックアプリケーションでのみ必須となる DPoP 送信者制約をリソースサーバーに設定するリクエストボディの例です。
+
+    ```bash lines
+    curl -L -X PATCH 'https://{YOUR_DOMAIN}/api/v2/resource-servers/{YOUR_RESOURCE_SERVER_ID}' \
+    -H 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{
+      "proof_of_possession": {
+        "mechanism": "dpop",
+        "required": true,
+        "required_for": "public_clients"
+      }
+    }'
+    ```
+
+    次のコードサンプルは、すべてのアプリケーションで必須となる DPoP 送信者制約を設定します。`all_clients` はデフォルト値のため、`required_for` は省略できます。
+
+    ```bash lines
+    curl -L -X PATCH 'https://{YOUR_DOMAIN}/api/v2/resource-servers/{YOUR_RESOURCE_SERVER_ID}' \
+    -H 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{
+      "proof_of_possession": {
+        "mechanism": "dpop",
+        "required": true
+      }
+    }'
+    ```
+
+    次のコードサンプルは、リソースサーバーの送信者制約を無効にします (Dashboard で &quot;Never&quot; を選択するのと同等です) 。
+
+    ```bash lines
+    curl -L -X PATCH 'https://{YOUR_DOMAIN}/api/v2/resource-servers/{YOUR_RESOURCE_SERVER_ID}' \
+    -H 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -d '{
+      "proof_of_possession": null 
+    }'
+    ```
+  </Tab>
+</Tabs>

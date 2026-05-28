@@ -1,0 +1,206 @@
+---
+description: Server Client + API アーキテクチャシナリオ向け API の Node.js 実装
+title: 'サーバーアプリ + API: API の Node.js 実装'
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+[Server + API Architecture Scenario](/ja/docs/get-started/architecture-scenarios/server-application-api)の一環として、Node.js で Timesheets API を実装します。実装するソリューションの詳細については、このシナリオを参照してください。
+
+Node.js API 実装の完全なソースコードは、[こちらの GitHub リポジトリ](https://github.com/auth0-samples/auth0-pnp-exampleco-timesheets/tree/master/timesheets-api/node)で確認できます。
+
+<div id="step-1-define-the-api-endpoint">
+  ## ステップ 1. API エンドポイントを定義する
+</div>
+
+Node.js API の構築には、[Express web application framework](http://expressjs.com/) を使用します。
+
+<div id="create-a-packagejson-file">
+  ### package.json ファイルを作成する
+</div>
+
+API 用のフォルダーを作成し、そのフォルダーに移動して `npm init` を実行します。これにより、`package.json` ファイルが作成されます。
+
+デフォルト設定のままでも、必要に応じて変更してもかまいません。
+
+サンプルの `package.json` は次のとおりです。
+
+```json lines
+{
+  "name": "timesheets-api",
+  "version": "1.0.0",
+  "description": "API used to add timesheet entries for employees and contractors",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/auth0-samples/auth0-pnp-timesheets.git"
+  },
+  "author": "Auth0",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/auth0-samples/auth0-pnp-timesheets/issues"
+  },
+  "homepage": "https://github.com/auth0-samples/auth0-pnp-timesheets#readme"
+}
+```
+
+<div id="install-the-dependencies">
+  ### 依存関係をインストールする
+</div>
+
+次に、必要な依存関係を設定します。使用するモジュールは次のとおりです。
+
+* **express**: [Express Web アプリケーションフレームワーク](https://expressjs.com/)を追加するモジュールです。
+* **jwks-rsa**: JWKS (JSON Web Key Set) エンドポイントから RSA 署名鍵を取得するライブラリです。`expressJwtSecret` を使用すると、<Tooltip tip="JSON Web Token（JWT）: 2 者間でクレームを安全に表現するために使用される標準の IDトークン形式（および多くの場合はアクセストークン形式）。" cta="用語集を表示" href="/ja/docs/glossary?term=JWT">JWT</Tooltip> ヘッダー内の `kid` に基づいて、`express-jwt` に適切な署名鍵を提供するシークレットプロバイダーを生成できます。詳細については、[node-jwks-rsa GitHub リポジトリ](https://github.com/auth0/node-jwks-rsa)を参照してください。
+* **express-jwt**: Node.js アプリケーションで JWT を使用して HTTP リクエストを認証できるモジュールです。JWT をより簡単に扱うための複数の関数が用意されています。詳細については、[express-jwt GitHub リポジトリ](https://github.com/auth0/express-jwt)を参照してください。
+* **body-parser**: Node.js 用のボディ解析ミドルウェアです。受信リクエストストリームのボディ全体を抽出し、扱いやすい形で `req.body` として利用できるようにします。詳細およびいくつかの代替手段については、body-parser GitHub リポジトリを参照してください。
+
+これらの依存関係をインストールするには、次を実行します。
+
+```bash lines
+npm install express express-jwt jwks-rsa body-parser --save
+```
+
+<div id="implement-the-endpoint">
+  ### エンドポイントを実装する
+</div>
+
+API ディレクトリに移動し、`server.js` ファイルを作成します。コードでは、次のことを行う必要があります。
+
+* 依存関係を設定します。
+* リクエストボディを解析するミドルウェアを有効にします。
+* エンドポイントを実装します。
+* API サーバーを起動します。
+
+以下は実装例です。
+
+```javascript lines
+// 依存関係を設定する
+const express = require('express');
+const app = express();
+const jwt = require('express-jwt');
+const jwksRsa = require('jwks-rsa');
+const bodyParser = require('body-parser');
+
+// リクエストボディ解析ミドルウェアの使用を有効にする
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({
+  extended: true
+}));
+
+// タイムシートアップロード用APIエンドポイントを作成する
+app.post('/timesheets/upload', function(req, res){
+  res.status(201).send({message: "This is the POST /timesheets/upload endpoint"});
+})
+
+// localhost:8080 でAPIサーバーを起動する
+app.listen(8080);
+```
+
+`node server` で API サーバーを起動し、`localhost:8080/timesheets/upload` に HTTP POST リクエストを送信します。`This is the POST /timesheets/upload endpoint` というメッセージを含む JSON レスポンスが表示されるはずです。
+
+これでエンドポイントは用意できましたが、このままでは誰でも呼び出せます。これを修正する方法については、次の段落に進んで確認してください。
+
+<div id="step-2-secure-the-api-endpoint">
+  ## ステップ 2. API エンドポイントを保護する
+</div>
+
+トークンを検証するために、[express-jwt middleware](https://github.com/auth0/express-jwt#usage) が提供する `jwt` 関数と、Auth0 から公開鍵を取得するための `jwks-rsa` パッケージを使用します。これらのライブラリは、次のように動作します。
+
+1. `express-jwt` はトークンをデコードし、リクエスト、ヘッダー、ペイロードを `jwksRsa.expressJwtSecret` に渡します。
+2. `jwks-rsa` は JWKS エンドポイントからすべての署名鍵をダウンロードし、その中に JWT ヘッダーの `kid` と一致するものがあるかどうかを確認します。受信した `kid` に一致する署名鍵がない場合は、エラーがスローされます。一致するものがあれば、適切な署名鍵を `express-jwt` に渡します。
+3. `express-jwt` はその後、独自のロジックでトークンの署名、有効期限、`audience`、`issuer` を検証します。
+
+コードで行う手順は次のとおりです。
+
+* <Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を表示" href="/ja/docs/glossary?term=access+token">アクセストークン</Tooltip> を検証するミドルウェア関数を作成します。
+* ルートでそのミドルウェアを有効にします。
+
+またこのタイミングで、タイムシート エントリをローカルデータベース、または任意の別の保存先に保存するロジックを実装するのもよいでしょう。以下はサンプル実装です (簡潔にするため、一部のコードは省略しています) 。
+
+export const codeExample = `// 依存関係を設定 - コードは省略
+
+// リクエストボディを解析するミドルウェアを有効化 - コードは省略
+
+// JWT を検証するミドルウェアを作成
+const checkJwt = jwt({
+  // ヘッダー内の kid と、JWKS エンドポイントから提供される署名鍵に基づいて、署名鍵を動的に指定します。
+  secret: jwksRsa.expressJwtSecret({
+    cache: true,
+    rateLimit: true,
+    jwksRequestsPerMinute: 5,
+    jwksUri: \`https://{yourDomain}/.well-known/jwks.json\`
+  }),
+
+  // オーディエンスと issuer を検証します。
+  audience: process.env.AUTH0_AUDIENCE,
+  issuer: \`https://{yourDomain}/\`,
+  algorithms: ['RS256']
+});
+
+// timesheets API エンドポイントを作成
+app.post('/timesheets/upload', checkJwt, function(req, res){
+  var timesheet = req.body;
+
+  // タイムシート エントリをデータベースに保存...
+
+  // レスポンスを返す
+  res.status(201).send(timesheet);
+})
+
+// localhost:8080 で API サーバーを起動 - コードは省略`;
+
+<AuthCodeBlock children={codeExample} language="javascript" />
+
+ここでサーバーを起動し、`localhost:8080/timesheets/upload` に HTTP POST リクエストを送信すると、`Missing or invalid token` というエラーメッセージが返されるはずです (リクエストでアクセストークンを送信していないため、これは想定どおりです) 。
+
+正常に動作するケースもテストするには、次の手順を実行します。
+
+* アクセストークンを取得します。取得方法の詳細については、[Get an Access Token](/ja/docs/get-started/architecture-scenarios/server-application-api#get-an-access-token) を参照してください
+* リクエストに値 `Bearer ACCESS_TOKEN` を指定した `Authorization` ヘッダーを追加して API を呼び出します (`ACCESS_TOKEN` は最初の手順で取得したトークンの値です) 。
+
+<div id="step-3-check-the-client-permissions">
+  ## ステップ 3. クライアントの権限を確認する
+</div>
+
+このステップでは、タイムシートをアップロードするためにこのエンドポイントを使用する権限 (または `scope`) をクライアントが持っているかどうかを確認する機能を実装に追加します。具体的には、トークンに適切なスコープ `batch:upload` が含まれていることを確認します。
+
+これを行うには、`express-jwt-authz` Node.js パッケージを使用するため、プロジェクトに追加してください。
+
+```bash lines
+npm install express-jwt-authz --save
+```
+
+これで、特定のエンドポイントを実行する際に JWT に必要なスコープが含まれていることを確認するには、ミドルウェアに `jwtAuthz(...)` の呼び出しを追加するだけです。以下は実装例です (一部のコードは簡潔にするため省略しています) 。
+
+```javascript lines
+// 依存関係の設定 - 一部のコードは省略
+const jwtAuthz = require('express-jwt-authz');
+
+// JWTを検証するミドルウェアを作成
+
+// リクエストボディ解析ミドルウェアの使用を有効化
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({
+  extended: true
+}));
+
+// バッチアップロードエンドポイント
+app.post('/timesheets/upload', checkJwt, jwtAuthz(['batch:upload']), function(req, res){
+  var timesheet = req.body;
+
+  // タイムシートエントリをデータベースに保存...
+
+  // レスポンスを送信
+  res.status(201).send(timesheet);
+});
+
+// localhost:8080 でAPIサーバーを起動 - コードは省略
+```
+
+このスコープを含まないトークンで API を呼び出すと、HTTP ステータスコード `403` とともに、Forbidden というエラーメッセージが返されるはずです。これを確認するには、API からこのスコープを削除してテストします。
+
+以上で完了です。

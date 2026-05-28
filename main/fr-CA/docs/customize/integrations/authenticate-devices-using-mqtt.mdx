@@ -1,0 +1,263 @@
+---
+description: Comment authentifier et autoriser des appareils à l’aide de MQTT avec Auth0.
+title: Authentification et autorisation d’appareils à l’aide de MQTT avec Auth0
+---
+
+MQTT est un protocole léger souvent utilisé pour permettre à des appareils de communiquer avec d’autres systèmes. Il est conçu pour le modèle de messagerie **publication/abonnement**. Vous pouvez en apprendre davantage sur [MQTT](https://en.wikipedia.org/wiki/MQ_Telemetry_Transport) sur Wikipédia.
+
+De façon générale, il y a 3 composants :
+
+1. Un `publisher` de messages.
+2. Un `subscriber` de messages.
+3. Un `courtier` qui relie les deux.
+
+Il existe une notion de `topics` (aussi appelés `channels` ou `subjects`) auxquels les messages sont associés. Les `topics` servent à acheminer les messages entre les `publishers` et les `subscribers`.
+
+Le protocole MQTT prend en charge un mécanisme d’authentification simple fondé sur des `usernames` et des `passwords`. Ces informations d’identification sont envoyées avec le message `CONNECT`.
+
+Cet article présente une intégration entre le courtier MQTT basé sur Node.js, [mosca](https://github.com/moscajs/mosca), et [Auth0](https://auth0.com). Dans cet exemple, Auth0 sert à **authentifier** les `publishers` et les `subscribers` auprès du courtier, puis à **autoriser** l’acheminement des messages.
+
+<Frame>![Diagramme du flux de données MQTT](/docs/images/cdy7uua7fh8z/1BAQm0lXvF7A3VqIciOagV/776a17e3372964acc3ac67a71a026e06/2023-09-22_13-15-29.png)</Frame>
+
+<div id="components-of-the-solution">
+  ## Composants de la solution
+</div>
+
+<div id="the-broker">
+  ### Le courtier
+</div>
+
+**mosca** est facile à héberger et peut être intégré à d’autres serveurs. Pour cet exemple, nous auto-hébergeons simplement un serveur **mosca** :
+
+```javascript lines expandable
+var mosca = require('mosca')
+var Auth0Mosca = require('auth0mosca');
+
+var settings = {
+  port: 9999,
+};
+
+//'Thermostats' est une connexion de base de données où tous les appareils sont enregistrés.
+var auth0 = new Auth0Mosca('https://eugeniop.auth0.com', '{Your Auth0 ClientID}', '{Your Auth0 Client Secret}','Thermostats');
+
+//Configurer le serveur Mosca
+var server = new mosca.Server(settings);
+
+//Relier l'authentification et l'autorisation à mosca
+server.authenticate = auth0.authenticateWithCredentials();
+server.authorizePublish = auth0.authorizePublish();
+server.authorizeSubscribe = auth0.authorizeSubscribe();
+
+server.on('ready', setup);
+
+// Déclenché lorsque le serveur mqtt est prêt
+function setup() {
+    console.log('Mosca server is up and running');
+}
+
+server.on('clientConnected', function(client) {
+  console.log('New connection: ', client.id );
+});
+```
+
+Cela crée un serveur à l’écoute des messages MQTT sur le port 9999. **mosca** vous permet de redéfinir les 3 fonctions utilisées pour authentifier et autoriser les opérations.
+
+Dans cet exemple, nous utilisons un module très simple, `auth0mosca`, pour assurer ces fonctions. Auth0 est intégré à **mosca**.
+
+<div id="the-auth0mosca-module">
+  ### Le module Auth0Mosca
+</div>
+
+Ce petit [module](https://www.npmjs.org/package/auth0mosca) fournit les 4 fonctions utilisées par **mosca** : `authenticateWithCredentials`, `authenticateWithJWT`, `authorizePublish` et `authorizeSubscribe` :
+
+```javascript lines expandable
+var request = require('request');
+var jwt = require('jsonwebtoken');
+
+function Auth0Mosca(auth0Namespace, clientId, clientSecret, connection)
+{
+  this.auth0Namespace = auth0Namespace;
+  this.connection = connection;
+  this.clientId = clientId;
+  this.clientSecret = clientSecret;
+}
+
+Auth0Mosca.prototype.authenticateWithJWT = function(){
+
+  var self = this;
+
+  return function(client, username, password, callback) {
+
+    if( username !== 'JWT' ) { return callback("Invalid Credentials", false); }
+
+    // console.log('Password:'+password);
+
+    jwt.verify(password, self.clientSecret, function(err,profile){
+          if( err ) { return callback("Error getting UserInfo", false); }
+          console.log("Authenticated client " + profile.user_id);
+          console.log(profile.topics);
+          client.deviceProfile = profile;
+          return callback(null, true);
+        });
+  }
+}
+
+Auth0Mosca.prototype.authenticateWithCredentials = function(){
+
+  var self = this;
+
+  return function(client, username, password, callback) {
+    
+    var data = {
+        client_id:   self.clientId, // {client-name}
+        username:    username.toString(),
+        password:    password.toString(),
+        connection:  self.connection,
+        grant_type:  "password",
+        scope: 'openid name email' //Details: https:///scopes
+    };
+
+    request.post({
+        headers: {
+                "Content-type": "application/json"
+            },
+        url: self.auth0Namespace + '/oauth/ro',
+        body: JSON.stringify(data)
+      }, function(e,r,b){
+        if(e){
+          console.log('Error in Authentication');
+          return callback(e,false);
+        }
+        var r = JSON.parse(b);
+
+        if( r.error ) { return callback( r, false); }
+
+        jwt.verify(r.id_token, self.clientSecret, function(err,profile){
+          if( err ) { return callback("Error getting UserInfo", false); }
+          client.deviceProfile = profile;
+          return callback(null, true);
+        });
+    });
+  }
+}
+
+Auth0Mosca.prototype.authorizePublish = function() {
+  return function (client, topic, payload, callback) {
+   callback(null, client.deviceProfile && client.deviceProfile.topics && client.deviceProfile.topics.indexOf(topic) > -1);
+  }
+}
+
+Auth0Mosca.prototype.authorizeSubscribe = function() {
+  return function(client, topic, callback) {
+  callback(null, client.deviceProfile && client.deviceProfile.topics && client.deviceProfile.topics.indexOf(topic) > -1);
+}
+
+module.exports = Auth0Mosca;
+```
+
+`authenticateWithCredentials` utilise le [flux OAuth2 Resource Owner Password Credential Grant](/fr-CA/docs/authenticate/protocols) pour authentifier le courtier et toutes les connexions qui y sont associées. Chaque fois qu’un `publisher` ou un `subscriber` envoie un message **CONNECT** au courtier, la fonction `authenticate` est appelée. Dans cette fonction, nous appelons le point de terminaison Auth0 et transmettons le `username`/`password` de l’appareil. Auth0 valide ces informations par rapport à son répertoire de comptes (il s’agit du premier `request.post` dans le code). Si la validation réussit, Auth0 valide et analyse le <Tooltip tip="JSON Web Token (JWT) : format standard de ID Token (et souvent de Jeton d’accès) utilisé pour représenter des revendications de façon sécurisée entre deux parties." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=JSON+Web+Token">JSON Web Token</Tooltip> (JWT) afin d’obtenir le profil de l’appareil et l’ajoute à l’objet `client`, qui représente soit le `subscriber`, soit le `publisher`. Cela se fait dans l’appel `jwt.verify`.
+
+Par convention, tous les appareils connectés au courtier ont un compte dans Auth0.
+
+Notez que le profil de l’appareil comprend aussi une propriété `topics`. Il s’agit d’un tableau contenant tous les sujets auxquels cet appareil particulier est autorisé à publier ou à s’abonner. Dans la capture d’écran ci-dessus, `thermostat-1a` sera autorisé à publier (ou à s’abonner) aux sujets `temperature` et `config`.
+
+Les fonctions `authorizePublish` et `authorizeSubscribe` vérifient simplement qu’un sujet demandé se trouve dans cette liste.
+
+`authenticateWithJWT` s’attend à recevoir un JWT dans le champ `password`. Dans ce cas, le flux est légèrement différent :
+
+1. Le publisher et le subscriber obtiendront un jeton
+2. Ils se connecteront à `mosca` en soumettant le JWT
+3. `mosca` validera le JWT
+4. Les messages seront envoyés et retransmis aux abonnés
+
+<Frame>![Flux de données du JWT MQTT ](/docs/images/cdy7uua7fh8z/38KV0HggAdQDkLxqZuAOph/e134f43c290d432064f288e549a59789/2023-09-22_13-15-47.png)</Frame>
+
+Les éditeurs et les abonnés obtiendront le JWT d’une façon ou d’une autre. Notez que le courtier n’a plus besoin de communiquer avec Auth0. Les JWT sont autonomes et peuvent être validés à l’aide du secret utilisé pour les signer.
+
+<div id="the-publisher">
+  ### L’éditeur
+</div>
+
+Pour cet exemple, l’éditeur est un simple programme Node.js qui utilise le module `mqtt` et y ajoute les identifiants appropriés :
+
+```javascript lines expandable
+var mqtt = require('mqtt')
+  , host = 'localhost'
+  , port = '9999';
+
+var settings = {
+  keepalive: 1000,
+  protocolId: 'MQIsdp',
+  protocolVersion: 3,
+  clientId: 'Thermostat 1a',
+  username:'thermostat-1a',
+  password:'the password'
+}
+
+// connexion de l'application
+var client = mqtt.createClient(port, host, settings);
+
+setInterval(sendTemperature, 2000, client);
+
+function sendTemperature(client){
+  var t = {
+    T: Math.random() * 100,
+    Units: "C"
+  };
+
+  client.publish('temperature', JSON.stringify(t));
+}
+```
+
+Bien sûr, `username` &amp; `password` ici doivent correspondre à ce qui est stocké dans Auth0.
+
+<div id="the-subscriber">
+  ### L’abonné
+</div>
+
+L’abonné est très similaire à l’éditeur :
+
+```javascript lines expandable
+var mqtt = require('mqtt')
+  , host = 'localhost'
+  , port = '9999';
+
+var settings = {
+  keepalive: 1000,
+  protocolId: 'MQIsdp',
+  protocolVersion: 3,
+  clientId: 'Reader-X1',
+  username:'reader-X1',
+  password:'the password'
+}
+
+// connexion de l'application
+var client = mqtt.createClient(port, host, settings);
+
+
+client.subscribe('temperature');
+
+client.on('message', function(topic, message) {
+
+  if(topic ==='temperature')
+  {
+    console.log('New reading', message);
+  }
+});
+```
+
+<div id="summary">
+  ## Résumé
+</div>
+
+Cela montre à quel point il est facile d’utiliser Auth0 dans divers scénarios. Le répertoire d’utilisateurs d’Auth0 sert à gérer des appareils. Bien sûr, des règles d’autorisation beaucoup plus sophistiquées pourraient être définies selon d’autres conditions : l’heure, l’emplacement, `device_id`, etc. Tout cela serait très simple à mettre en œuvre, soit à l’aide d’attributs de profil supplémentaires, soit au moyen de Rules. Cela montre également comment le profil flexible d’Auth0 peut être étendu pour prendre en charge des artefacts quelconques (comme `topics` dans l’exemple).
+
+Pour en savoir plus sur Rules, vous pouvez consulter [Auth0 Rules](/fr-CA/docs/customize/rules).
+
+Il n’est jamais recommandé d’envoyer des informations d’identification (`username`/`password`) sur des réseaux non sécurisés. D’autres implémentations offrent une sécurité au niveau du transport qui empêcherait le contenu des messages d’être exposé. **mosca** prend en charge TLS, par exemple. Dans un environnement de production, on privilégierait probablement cette option, à moins que tout le trafic ne circule sur un réseau fermé.
+
+<div id="acknowledgements">
+  ### Remerciements
+</div>
+
+Un grand merci à Matteo Collina pour la relecture de cet article et pour avoir créé l’excellent **mosca**.

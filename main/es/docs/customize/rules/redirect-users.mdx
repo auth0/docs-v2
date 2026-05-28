@@ -1,0 +1,275 @@
+---
+description: Aprenda a personalizar los flujos de autenticación redirigiendo a los usuarios mediante Rules. Algunos ejemplos de áreas que se pueden personalizar incluyen MFA, la aceptación de la política de privacidad y la recopilación de datos de usuario.
+title: Redirigir a los usuarios desde Rules
+---
+
+import {AuthCodeBlock} from "/snippets/es/AuthCodeBlock.jsx";
+
+<Warning>
+  La fecha de fin de vida útil (EOL) de Rules y Hooks será el **18 de noviembre de 2026**, y ya no están disponibles para los nuevos inquilinos creados a partir del **16 de octubre de 2023**. Los inquilinos existentes con Hooks activos conservarán el acceso al producto Hooks hasta el fin de su vida útil.
+
+  Recomendamos encarecidamente que uses Actions para extender Auth0. Con Actions, tienes acceso a información de tipos más completa, documentación en línea y paquetes públicos de `npm`, y puedes conectar integraciones externas que mejoran tu experiencia general de extensibilidad. Para obtener más información sobre lo que ofrece Actions, lee [Cómo funcionan las Actions de Auth0](/es/docs/customize/actions/actions-overview).
+
+  Para ayudarte con la migración, ofrecemos guías que te ayudarán a [migrar de Rules a Actions](/es/docs/customize/actions/migrate/migrate-from-rules-to-actions) y [migrar de Hooks a Actions](/es/docs/customize/actions/migrate/migrate-from-hooks-to-actions). También contamos con una página específica, [Move to Actions](https://auth0.com/platform/extensibility/movetoactions), que destaca comparaciones de funcionalidades, [una demostración de Actions](https://www.youtube.com/watch?v=UesFSY1klrI) y otros recursos para ayudarte en tu proceso de migración.
+
+  Para obtener más información sobre la retirada de Rules y Hooks, consulta nuestra entrada del blog: [Preparing for Rules and Hooks End of Life](https://auth0.com/blog/preparing-for-rules-and-hooks-end-of-life/).
+</Warning>
+
+Puedes usar [Auth0 Rules](/es/docs/customize/rules) para redirigir a los usuarios antes de que se complete una transacción de autenticación. Esto te permite implementar flujos de autenticación personalizados que requieren interacción adicional del usuario más allá del formulario de inicio de sesión estándar. Las Rules de redirección se usan habitualmente para implementar <Tooltip tip="Autenticación multifactor (MFA): proceso de autenticación del usuario que usa un factor adicional al username y la contraseña, como un code por SMS." cta="Ver glosario" href="/es/docs/glossary?term=Multi-factor+Authentication">Autenticación multifactor</Tooltip> (MFA) personalizada en Auth0, pero también se pueden usar para:
+
+* Aceptación personalizada de políticas de privacidad, términos del servicio y formularios de divulgación de datos.
+* Recopilar de forma segura, una sola vez, datos de perfil adicionales obligatorios.
+* Permitir que los usuarios remotos de Active Directory cambien su contraseña.
+* Exigir que los usuarios proporcionen una verificación adicional al iniciar sesión desde ubicaciones desconocidas.
+* Recopilar más información sobre tus usuarios de la que proporcionaron durante el registro inicial.
+
+Puedes redirigir a un usuario **una vez** por flujo de autenticación. Si tienes una Rule que redirige a un usuario, **no puedes** invocar una segunda Rule para redirigirlo más adelante.
+
+Para obtener más información, consulta [Autenticación multifactor en Auth0](/es/docs/secure/multi-factor-authentication).
+
+<div id="start-redirect-and-resume-authentication">
+  ## Iniciar la redirección y reanudar la autenticación
+</div>
+
+Establezca la propiedad `context.redirect` de la siguiente manera:
+
+```javascript lines
+function (user, context, callback) {
+  context.redirect = {
+    url: "https://example.com/foo"
+  };
+  return callback(null, user, context);
+}
+```
+
+Una vez que se hayan ejecutado todas las Rules, Auth0 redirige al usuario a la URL especificada en la propiedad `context.redirect.url`. Auth0 también incluye un parámetro `state` en esa URL. Por ejemplo:
+
+```http lines
+https://example.com/foo?state=abc123
+```
+
+La URL de redirección debe extraer el parámetro `state` y devolverlo a Auth0 para reanudar la transacción de autenticación. El estado es un valor opaco que se utiliza para evitar [ataques de Cross-Site Request Forgery (CSRF)](/es/docs/secure/security-guidance/prevent-threats#cross-site-request-forgery).
+
+Después de la redirección, reanude la autenticación redirigiendo al usuario al endpoint `/continue` e incluyendo el parámetro `state` que recibió en la URL. Si no envía el estado original de vuelta al endpoint `/continue`, Auth0 perderá el contexto de la transacción de inicio de sesión y el usuario no podrá iniciar sesión debido a un error `invalid_request`.
+
+Por ejemplo:
+
+export const codeExample1 = `https://{yourDomain}/continue?state={originalState}`;
+
+<AuthCodeBlock children={codeExample1} language="http" />
+
+Si usas un <Tooltip tip="Dominio personalizado: dominio de terceros con un nombre específico o personalizado." cta="Ver glosario" href="/es/docs/glossary?term=custom+domain">dominio personalizado</Tooltip>:
+
+```http lines
+https://{yourAuth0CustomDomain}/continue?state={originalState}
+```
+
+`THE_ORIGINAL_STATE` es el valor que Auth0 generó y envió a la URL de redirección. Por ejemplo, si tu Rule redirigía a `https://example.com/foo`, Auth0 usaría una URL de redirección similar a `https://example.com/foo?state=abc123`. Por lo tanto, `abc123` sería el valor de `THE_ORIGINAL_STATE`. Para reanudar la transacción de autenticación, redirige a:
+
+export const codeExample2 = `https://{yourDomain}/continue?state=abc123`;
+
+<AuthCodeBlock children={codeExample2} language="http" />
+
+Cuando se haya redirigido a un usuario al endpoint `/continue`:
+
+* **todas las Rules se ejecutarán de nuevo**; sin embargo, `context.redirect` se ignorará para permitir que la autenticación continúe.
+* cualquier cambio en el objeto de usuario se realiza durante la redirección, antes de llamar al endpoint `/continue`. Por ejemplo, las actualizaciones realizadas mediante la <Tooltip tip="Management API: Un producto que permite a los clientes realizar tareas administrativas." cta="Ver glosario" href="/es/docs/glossary?term=Management+API">Management API</Tooltip> de Auth0 estarán disponibles después de continuar la transacción.
+
+<div id="validate-resumed-login">
+  ## Validar la reanudación del inicio de sesión
+</div>
+
+Para distinguir entre los inicios de sesión iniciados por el usuario y los flanudados, compruebe la propiedad `context.protocol`:
+
+```javascript lines
+function (user, context, callback) {
+    if (context.protocol === "redirect-callback") {
+        // El usuario fue redirigido al endpoint /continue
+    } else {
+        // El usuario está iniciando sesión directamente
+    }
+}
+```
+
+<div id="force-password-change-example">
+  ## Ejemplo para forzar el cambio de contraseña
+</div>
+
+En algunos casos, es posible que desee obligar a los usuarios a cambiar su contraseña en determinadas condiciones. Puede escribir una Rule con el siguiente comportamiento:
+
+1. El usuario intenta iniciar sesión y necesita cambiar su contraseña.
+2. Se redirige al usuario a una página específica de la aplicación con un JWT en la cadena de consulta. Este JWT garantiza que solo se pueda cambiar la contraseña de este usuario y **debe ser validado** por la aplicación.
+3. El usuario cambia su contraseña en la página específica de la aplicación haciendo que la aplicación llame a la [Auth0 Management API](https://auth0.com/docs/api/management/v2/users/patch-users-by-id)
+4. Una vez que el usuario haya cambiado correctamente su contraseña, la aplicación extrae la reclamación `authorize_again` del JWT verificado y decodificado, y luego redirige al usuario a esa URL para que pueda iniciar sesión con su nueva contraseña.
+
+```javascript lines expandable
+function(user, context, callback) {
+   /*
+   * Requisitos previos:
+   * 1. Implementar una función `mustChangePassword`
+   * 2. Establecer variables de configuración para lo siguiente:
+   *    - CLIENT_ID
+   *    - CLIENT_SECRET
+   *    - ISSUER
+   */
+
+  const url = require('url@0.10.3');
+  const req = context.request;
+
+  function mustChangePassword() {
+    // TODO: implementar la función
+    return true;
+  }
+
+  if (mustChangePassword()) {
+    // El usuario ha iniciado sesión y debe cambiar su contraseña
+    // Enviar la información del usuario y los parámetros de consulta en un JWT para evitar manipulaciones
+    function createToken(clientId, clientSecret, issuer, user) {
+      const options = {
+        expiresInMinutes: 5,
+        audience: clientId,
+        issuer: issuer
+      };
+      return jwt.sign(user, clientSecret, options);
+    }
+
+    const token = createToken(
+      configuration.CLIENT_ID,
+      configuration.CLIENT_SECRET,
+      configuration.ISSUER,
+      {
+        sub: user.user_id,
+        email: user.email,
+        authorize_again: url.format({
+          protocol: 'https',
+          hostname: auth0.com,
+          pathname: '/authorize',
+          query: req.query
+        })
+      }
+    );
+
+    context.redirect = {
+      url: `https://example.com/change-pw?token=${token}`
+    };
+  }
+
+  return callback(null, user, context);
+}
+```
+
+<div id="where-to-store-data">
+  ## Dónde almacenar datos
+</div>
+
+Evita almacenar demasiados datos en el perfil de Auth0. Estos datos están pensados para fines de autenticación y autorización. Las capacidades de metadatos y búsqueda de Auth0 no están diseñadas para estudios de marketing ni para otros casos que requieran búsquedas intensivas o actualizaciones frecuentes. Es probable que tu sistema tenga problemas de escalabilidad y rendimiento si usas Auth0 con ese fin. Una mejor opción es almacenar los datos en un sistema externo y guardar un puntero (el id del usuario) en Auth0 para que los sistemas de backend puedan obtener esos datos si es necesario. Una regla sencilla que debes seguir es almacenar solo los elementos que tengas previsto usar en Rules para añadirlos a los tokens o tomar decisiones.
+
+<div id="security-considerations">
+  ## Consideraciones de seguridad
+</div>
+
+Pasar información de un lado a otro por el canal frontal amplía la superficie de ataque para los <Tooltip tip="Actores maliciosos: entidad (una persona o un grupo) que representa una amenaza para la empresa o el entorno con la intención de causar daño." cta="Ver glosario" href="/es/docs/glossary?term=bad+actors">actores maliciosos</Tooltip>. Esto solo debe hacerse cuando sea imprescindible actuar en la Rule (por ejemplo, rechazar el intento de autorización con `UnauthorizedError`).
+
+Sin embargo, si necesitas comunicarte directamente con Auth0 y darle instrucciones para restringir el acceso (si estás implementando comprobaciones de captcha o MFA personalizada), debes contar con un mecanismo seguro para indicar a Auth0 que se cumplieron los requisitos de esa operación. Del mismo modo, si necesitas pasar información a la aplicación a la que estás redirigiendo, debes contar con una forma segura de garantizar que la información transferida no haya sido manipulada.
+
+<div id="ensure-app-is-logging-into-the-same-user">
+  ### Asegúrese de que la aplicación inicie sesión como el mismo usuario
+</div>
+
+La aplicación va a redirigir al usuario de vuelta al inquilino de Auth0, por lo que cualquier dato relacionado con el usuario puede recopilarse a través del <Tooltip tip="ID Token: Credencial destinada al propio cliente, en lugar de para acceder a un recurso." cta="Ver glosario" href="/es/docs/glossary?term=ID+token">token de ID</Tooltip> que se devuelve a la aplicación. Sin embargo, es posible que quiera asegurarse de que la aplicación inicie sesión como el mismo usuario que está siendo redirigido, para garantizar que no haya ningún tipo de manipulación durante el proceso. Por lo tanto, probablemente querrá enviar un token junto con la solicitud.
+
+El token enviado a la aplicación debe cumplir los siguientes requisitos:
+
+| Elemento del token | Descripción                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sub`              | El `user_id` de Auth0 del usuario.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `iss`              | Un identificador que identifica a la propia Rule.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `aud`              | La aplicación de destino de la redirección.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `jti`              | Una cadena generada aleatoriamente que se almacena para su confirmación en el objeto de usuario (en el código de la Rule, establezca user.jti = uuid.v4(); y luego añádalo como jti al token que cree). user.jti seguirá establecido cuando las Rules se ejecuten de nuevo al llamar a /continue. Esto se ajusta a las especificaciones.                                                                                                                                                                                                                                                                                                                                                                           |
+| `exp`              | Debe ser lo más corto posible para evitar la reutilización del token.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `other`            | Cualquier otra información de claims personalizados que necesite pasar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `signature`        | Suponiendo que la aplicación tenga un lugar seguro donde almacenar un secreto, puede usar firmas con HS256. Esto reduce en gran medida la complejidad de la solución y, dado que el token que se devuelve también tendrá que estar firmado, este es un requisito de esta solución. Puede usar RS256, pero requiere crear un certificado y actualizarlo cuando expire. Si no está devolviendo ninguna información directamente a las Rules, podría usar una SPA para esta aplicación intermedia y quizá prefiera RS256 para que la aplicación no tenga que almacenar la información. Para ello, necesitaría una forma de validar el token, ya sea mediante un endpoint de introspección o un endpoint JWKS público. |
+
+<Warning>
+  Este token **no** debe tratarse como un token Bearer. Es una pieza de información firmada para usarse en la aplicación. La aplicación igualmente debe redirigir de vuelta a Auth0 para autenticar al usuario.
+</Warning>
+
+<div id="pass-information-back-to-the-rule">
+  ### Devolver información a la Rule
+</div>
+
+En la mayoría de los casos, incluso si quiere pasar información de la Rule a la aplicación, lo ideal es que la aplicación pueda almacenarla de forma segura en el mecanismo de almacenamiento que corresponda. Incluso si lo que se pretende es actualizar los metadatos de la aplicación o del usuario en Auth0, eso puede hacerse mediante la Management API, y la información del usuario se actualizará siempre que esto se complete antes de redirigirlo de vuelta al endpoint `/continue`. Solo debería devolver información a la Rule si es la propia Rule la que necesita obtenerla y si esa información solo es relevante para esta sesión de inicio de sesión en particular.
+
+Al devolver información al endpoint `/continue`, el token enviado debe cumplir los siguientes requisitos:
+
+| Elemento del token | Descripción                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sub`              | El `user_id` de Auth0 del usuario.                                                                                                                                                                                                                                                                                                                                             |
+| `iss`              | La aplicación de destino de la redirección.                                                                                                                                                                                                                                                                                                                                    |
+| `aud`              | Algún identificador que identifique a la propia Rule.                                                                                                                                                                                                                                                                                                                          |
+| `jti`              | El mismo JTI que se almacenó en el token pasado a la aplicación (NOTA: debe coincidir con user.jti; de lo contrario, debe fallar).                                                                                                                                                                                                                                             |
+| `exp`              | Debe ser lo más breve posible para evitar la reutilización del token.                                                                                                                                                                                                                                                                                                          |
+| `other`            | Cualquier otra información de claims personalizada que necesite pasar.                                                                                                                                                                                                                                                                                                         |
+| `signature`        | Suponiendo que la aplicación disponga de un lugar seguro para almacenar un secreto, puede usar firmas con HS256. Esto reduce considerablemente la complejidad de la solución y, dado que el token que se devuelve también tendrá que estar firmado, este es un requisito de esta solución. Puede usar RS256, pero requiere crear un certificado y actualizarlo cuando caduque. |
+
+Debe enviarse mediante POST y luego recuperarse en `context.request.body.token` (o algo similar), en lugar de pasarlo como parámetro de consulta. Esto es similar al método form-post para autenticación.
+
+Si no está devolviendo información al endpoint `/continue`, quizá le convenga añadir el JTI a una lista de denegación, a menos que los tiempos de expiración sean lo suficientemente cortos como para que los ataques de repetición sean casi imposibles.
+
+<div id="restrictions-and-limitations">
+  ## Restricciones y limitaciones
+</div>
+
+Las Redirect Rules no funcionan con:
+
+* [endpoint de Resource Owner](https://auth0.com/docs/api/authentication/reference#resource-owner)
+* [intercambio de contraseña](/es/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow)
+* [intercambio de Token de actualización](/es/docs/secure/tokens/refresh-tokens)
+
+Puede identificar los casos anteriores comprobando `context.protocol`:
+
+* Para el intercambio de contraseña: `context.protocol === 'oauth2-password'`
+* Para el intercambio de <Tooltip tip="Token de actualización: token utilizado para obtener un nuevo Token de acceso sin obligar a los usuarios a volver a iniciar sesión." cta="Ver glosario" href="/es/docs/glossary?term=Refresh+Token">Token de actualización</Tooltip>: `context.protocol === 'oauth2-refresh-token'`
+* Para los inicios de sesión con <Tooltip tip="Propietario del recurso: entidad (como un usuario o una aplicación) capaz de otorgar acceso a un recurso protegido." cta="Ver glosario" href="/es/docs/glossary?term=Resource+Owner">Resource Owner</Tooltip>: `context.protocol === 'oauth2-resource-owner'`
+
+<div id="session-timeout">
+  ### Tiempo de espera de sesión
+</div>
+
+Las sesiones de las Rules de redirección suelen ser válidas durante 3 días, a menos que haya configurado un tiempo de espera más corto en la configuración de **Gestión de sesiones de inicio de sesión**. Puede encontrar esta configuración en la [configuración avanzada de su inquilino](https://manage.auth0.com/#/tenant/advanced).
+
+<div id="resource-owner-endpoint">
+  ### Endpoint de Resource Owner
+</div>
+
+No es posible usar Rules de redirección en el contexto en el que llamas directamente a `/oauth/token` para el flujo Resource Owner Password Grant. Como el usuario no forma parte de un flujo de redirección desde el principio, no puedes redirigirlo en una Rule. Si intentas establecer `context.redirect`, obtendrás un intento de inicio de sesión fallido con el error `interaction_required`.
+
+<div id="flows-where-promptnone">
+  ### Flujos con prompt=none
+</div>
+
+Dado que el objetivo de `prompt=none` es evitar cualquier escenario en el que el usuario tenga que introducir información, cualquier redirección dará lugar a un `error=interaction_required`.
+
+Como las Rules se ejecutan después de que se crea una sesión de autenticación, no puede usar `prompt=none` si tiene una Rule de redirección que intenta bloquear el acceso a los tokens en determinadas condiciones (MFA personalizada, captcha en el inicio de sesión, etc.).
+
+No puede crear un flujo de redirección que bloquee el acceso a los tokens y omita la Rule de redirección con `prompt=none` porque, después de un intento fallido, un usuario puede simplemente volver a hacer la llamada con `prompt=none` y obtener tokens, ya que su sesión de autenticación ya se habrá creado aunque las Rules hayan fallado la primera vez.
+
+<div id="refresh-tokens">
+  ### Tokens de actualización
+</div>
+
+Dado que usar un token de actualización requiere una llamada por canal secundario a `/oauth/token`, esto también fallará si se establece `context.redirect`.
+
+Es difícil verificar de forma segura que se hayan aplicado las restricciones del inicio de sesión. No hay un ID de sesión consistente en el contexto que pueda usarse para recopilar información asociada con la sesión, por ejemplo, si este usuario superó las verificaciones de MFA. Por lo tanto, no puede usar `prompt=none` en absoluto.
+
+Cada vez que se establece `context.redirect` en una Rule, si se pasó `prompt=none`, la autorización falla con `error=interaction_required`, pero como la sesión del usuario se crea incluso si las Rules fallan, no podemos confiar en que un usuario haya superado todas las verificaciones de `context.redirect` y, por lo tanto, no podemos usar `prompt=none` como una forma de obtener tokens.
+
+En este caso específico, le recomendamos usar exclusivamente tokens de actualización, porque así puede asegurarse de que un usuario haya superado las verificaciones si estas son necesarias para generar un token de actualización.
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [Redirigir a los usuarios](/es/docs/authenticate/login/redirect-users-after-login)
+* [Comprender cómo funciona el perfilado progresivo](/es/docs/manage-users/user-accounts/user-profiles/progressive-profiling)
+* [Redirigir a los usuarios mediante un cierre de sesión alternativo](/es/docs/authenticate/login/logout/redirect-users-after-logout)

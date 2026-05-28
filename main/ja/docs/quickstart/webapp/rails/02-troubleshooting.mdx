@@ -1,0 +1,131 @@
+---
+title: "Auth0 Ruby on Rails SDK クイックスタート: トラブルシューティング"
+---
+
+<div id="by-david-patrick">
+  ##### David Patrick による
+</div>
+
+Auth0 と Rails を併用する際のトラブルシューティングのヒントです。お使いのアカウント用に設定された例に沿ってこのクイックスタートを進められるよう、ログインしてから利用することをお勧めします。
+
+{/* <Card title="GitHubで表示" href="https://github.com/auth0-samples/auth0-rubyonrails-sample/tree/master/sample" icon="github">
+  システム要件: Ruby 2.5.0 以上 | Rails 6.0 以上、または Rails 5.0 以上、または Rails 4.2 以上
+  </Card> */}
+
+<div id="troubleshooting">
+  # トラブルシューティング
+</div>
+
+以下は、Rails クイックスタートの使用時に発生する可能性がある問題のトラブルシューティング項目です。
+
+<div id="using-a-reverse-proxy">
+  ## リバースプロキシを使用する
+</div>
+
+ログインへリダイレクトする際に OmniAuth が生成する `redirect_uri` パラメーターは、Rails に渡される `Host` ヘッダーに基づいています。そのため、リバースプロキシと併用してこの戦略 (および OmniAuth 全般) を使用すると、誤ったコールバック URL が渡される場合があります。OmniAuth が使用するホストは、次のスニペットで調整できます。
+
+```
+OmniAuth.config.full_host = lambda do |env|
+    scheme         = env['rack.url_scheme']
+    local_host     = env['HTTP_HOST']
+    forwarded_host = env['HTTP_X_FORWARDED_HOST']
+    forwarded_host.blank? ? "#{scheme}://#{local_host}" : "#{scheme}://#{forwarded_host}"
+end
+```
+
+[詳細については、こちらのStack Overflowのスレッドを参照してください](https://stackoverflow.com/a/7135029/728480).
+
+<div id="actioncontrollerinvalidauthenticitytoken">
+  ## ActionController::InvalidAuthenticityToken
+</div>
+
+これは、ログインリクエストをPOSTする際に必要なCSRFトークンが欠落していることが原因である可能性があります。ブラウザーでログインボタンを確認すると、次のようなものが表示されるはずです。
+
+```erb lines
+<a data-method="post" href="auth/auth0">Login</a>
+```
+
+... また、ページの `<head>` 要素には、以下のような CSRF メタタグを含める必要があります。
+
+```erb lines
+<meta name="csrf-param" content="authenticity_token">
+<meta name="csrf-token" content="UY2XpKwxzwBWalxFVJ8yKsao/33it7If09BnZewpHifVPSpFJd2LrA7xgQn6VQrhZNGjgZoLI3kV+bkQHtr+Rw==">
+```
+
+これらの要素を追加すると、Rails はログインリンクを、ログインにリダイレクトする前に CSRF トークンをバックエンドへ POST して検証するように変換します。
+
+<div id="actiondispatchcookiescookieoverflow">
+  ## ActionDispatch::Cookies::CookieOverflow
+</div>
+
+このエラーは、cookie セッションを使用していて、プロファイル全体を保存しているために、最大サイズの 4 kb を超えていることを示します。ユーザープロファイルにアクセスできない場合や、`NoMethodError`、`undefined method '[]' for nil:NilClass` のようなエラーが発生する場合は、開発環境では In-Memory store を使用してみてください。
+
+`/config/initializers/session_store.rb` に移動し (存在しない場合は作成し) 、次の内容を追加します。
+
+```
+Rails.application.config.session_store :cache_store
+```
+
+`/config/environments/development.rb` を開き、以下を追加します。
+
+```
+config.cache_store = :memory_store
+```
+
+これらの変更を反映するには、Rails サーバーを再起動してください。
+
+本番環境のアプリケーションでは、MemCached などのメモリストアを使用することを推奨します。
+
+<div id="ssl-issues">
+  ## SSL の問題
+</div>
+
+構成によっては、Ruby が認証局証明書 (CA 証明書) を見つけられないことがあります。
+
+CA 証明書バンドルをプロジェクトディレクトリにダウンロードします。
+
+```bash lines
+curl -L -o lib/ca-bundle.crt http://curl.haxx.se/ca/ca-bundle.crt
+```
+
+次のイニシャライザを `config/initializers/fix_ssl.rb` に追加します:
+
+```rb lines
+# config/initializers/fix_ssl.rb
+
+require 'open-uri'
+require 'net/https'
+
+module Net
+  class HTTP
+    alias_method :original_use_ssl=, :use_ssl=
+
+    def use_ssl=(flag)
+      path = ( Rails.env == "development") ? "lib/ca-bundle.crt" : "/usr/lib/ssl/certs/ca-certificates.crt"
+      self.ca_file = Rails.root.join(path).to_s
+      self.verify_mode = OpenSSL::SSL::VERIFY_PEER
+      self.original_use_ssl = flag
+    end
+  end
+end
+```
+
+<div id="failure-messageinvalid_credentials">
+  ## &quot;failure message=invalid_credentials&quot;
+</div>
+
+この問題はローカル環境では発生しませんが、ステージング環境や本番環境では発生することがあります。エラーメッセージは次のように表示される場合があります。
+
+```
+omniauth: (auth0) Authentication failure! invalid_credentials: OAuth2::Error, server_error: The redirect URI is wrong. You send [wrong url], and we expected [callback url set in your app settings]
+```
+
+これを解決するには、次の内容を`config/environments/staging.rb`または`production.rb`に追加します。
+
+```
+OmniAuth.config.full_host = "http://www.example.com"
+```
+
+`http://www.example.com` は、アプリケーションで実際に使用するURLに置き換えてください。
+
+[GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/webapp/rails/02-troubleshooting.md)

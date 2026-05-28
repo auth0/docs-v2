@@ -1,0 +1,175 @@
+---
+description: アプリケーションが Token Vault にアクセスし、JWT ベアラートークンをアクセストークンまたはリフレッシュトークンに交換して外部 API を呼び出す方法について説明します。
+title: Token Vault を使用した Privileged Worker Token Exchange
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Token Vault を使用した Privileged Worker Token Exchange は現在ベータ版です。Auth0 の製品リリースサイクルの詳細については、[Product Release Stages](/ja/docs/troubleshoot/product-lifecycle/product-release-stages) を参照してください。このプログラムへの参加を希望する場合は、[Auth0 Support](https://support.auth0.com/) または担当の Technical Account Manager までお問い合わせください。
+</Callout>
+
+Token Vault は Privileged Worker Token Exchange をサポートしており、クライアントアプリケーションは署名付き JWT (サブジェクトトークン) を、外部プロバイダーのアクセストークンまたはリフレッシュトークン (requested token) に交換できます。
+
+通常、ユーザーの認証と認可が正常に完了すると、クライアントアプリケーションは、ユーザーのID、権限、セッション状態を含むユーザーコンテキストを、Token Vault でトークン交換を行うためのアクセストークンまたはリフレッシュトークンとして渡します。サービス間フローでは、バックエンドアプリケーションやサービスワーカーなどのクライアントアプリケーションがユーザーに代わってリソースにアクセスする必要がある場合がありますが、インタラクティブなセッションに「ユーザーが存在しない」ため、クライアントアプリケーションはユーザーコンテキストを利用できません。
+
+このようなサービス間シナリオでは、クライアントアプリケーションは署名付き JWT ベアラートークンを生成し、それを サブジェクトトークン として使用してトークン交換を実行し、外部 API を呼び出すために必要なトークンを取得できます。つまり、クライアントアプリケーションは、アクティブなユーザー操作やセッションがなくても、ユーザーに代わって処理を実行できます。
+
+Token Vault で Privileged Worker Token Exchange を使用するには、クライアントアプリケーションが高度な権限を持つクライアントであり、さらに Token Vault 経由で外部プロバイダーからリフレッシュトークンを要求できる必要があります。また、[Private Key JWT](/ja/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) アサーションや [相互 TLS 認証](/ja/docs/get-started/authentication-and-authorization-flow/authenticate-with-mtls) などの非対称暗号方式を使用して Token Vault に対して認証する必要があります。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+Token Vault で Privileged Worker Token Exchange を使用できるのは、特定の種類のクライアントに限られます。
+
+* クライアントはファーストパーティクライアントである必要があります。つまり、`is_first_party property` が `true` である必要があります。
+* クライアントは、有効な認証方式を備えた機密クライアントである必要があります。つまり、`token_endpoint_auth_method` プロパティが `none` に設定されていてはなりません。
+* クライアントは OIDC 準拠である必要があります。つまり、`oidc_conformant` が `true` である必要があります。
+
+クライアントアプリケーションで Privileged Worker Token Exchange を設定する前に、次を実施してください。
+
+1. クライアントアプリケーションで [Token Vault のグラントタイプを有効に](/ja/docs/secure/tokens/token-vault/configure-token-vault#configure-application) します。
+2. クライアントアプリケーションに対して [Private Key JWT](/ja/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) または [相互 TLS 認証](/ja/docs/get-started/authentication-and-authorization-flow/authenticate-with-mtls) を設定します。
+
+<div id="configure-client-application">
+  ## クライアントアプリケーションの設定
+</div>
+
+クライアントアプリケーションの Token Vault への特権アクセスを設定するには、サブジェクトトークンとして使用される署名付き JWT を検証するための公開鍵を指定する必要があります。
+
+[JAR の設定](/ja/docs/get-started/applications/configure-jar#configure-jwt-secured-authorization-requests-jar)と同様に、新しいクライアントの作成時に、Token Vault の特権アクセス用公開鍵を設定できます。
+
+```bash lines
+POST https://{yourDomain}.auth0.com/api/v2/clients
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "name": "My App using JAR",
+   “grant_types”: [“urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token”],
+     “oidc_conformant”: true,
+           “is_first_party”: true,
+           “jwt_configuration”: {
+             “alg”: 'RS256',
+           },
+
+  "token_vault_privileged_access": {
+"credentials": [{
+        "name": "My credential for Token Vault Privileged Access",
+        "credential_type": "public_key",
+        "pem": "<YOUR PEM FILE CONTENT>",
+        "alg": "RS256"
+}]
+  },
+}
+```
+
+既存のクライアントを、Token Vault の特権アクセス用公開鍵で更新することもできます。
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "token_vault_privileged_access": {
+    "credentials": [{"id": "<YOUR CREDENTIAL ID>"}]
+  }
+}
+```
+
+<div id="create-signed-jwt-subject-token">
+  ## 署名付きJWTサブジェクトトークンを作成する
+</div>
+
+[公開鍵を使用してクライアントアプリケーションを設定](#configure-client-application)したら、外部APIのアクセストークンと交換するためのサブジェクトトークンを作成する必要があります。サブジェクトトークンは、必要なクレームを含む JSON Web Token (JWT) です。これは秘密鍵で署名されます。
+
+JWT の標準的な形式とクレームは次のとおりです。
+
+* ヘッダーの `typ` は `token-vault-req+jwt`
+* 公開鍵が 1 つだけ設定されている場合、ヘッダーの `kid` は省略可能です
+* ペイロードの `sub` は、トークンを取得する対象のユーザーIDです
+* ペイロードの `aud` はテナントのホストです
+* ペイロードの `iss` は、リクエストを送信するクライアントIDです
+
+以下は JWT の例です。
+
+```json lines
+{
+    alg: "RS256"  
+    typ: "token-vault-req+jwt"
+}
+.
+{
+    sub: "auth0|000012030101231",
+    aud: "https://{yourDomain}.auth0.com/",
+    iss: "<YOUR_CLIENT_ID>",
+    iat: 1758799540,
+    exp: 1758800540,
+    nbf: 1758799540
+}
+```
+
+次のコードサンプルは、署名付きJWTのサブジェクトトークンを生成するスクリプトです。
+
+```tsx lines
+import * as jwt from 'jsonwebtoken';
+   const privateKey = ‘-----BEGIN RSA PRIVATE KEY-----........’;
+   const subjectToken = jwt.sign(
+     {
+       iss: CLIENT_ID,
+       aud: 'https://' + TENANT_DOMAIN + '/',
+       sub: USER_ID,
+     },
+     privateKey,
+     {
+       algorithm: 'RS256',
+       header: {
+         typ: 'token-vault-req+jwt',
+       },
+     }
+   );
+```
+
+<div id="request-token-for-external-api">
+  ## 外部 API のアクセストークンをリクエストする
+</div>
+
+署名済みの JWT を取得したら、外部 API のアクセストークンをリクエストできます。
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/json' \
+--data '{
+  "client_id": "<YOUR_CLIENT_ID>",
+  "client_secret": "<YOUR_CLIENT_SECRET>",
+  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
+  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-access-token",
+  "connection": "google-oauth2"
+}'
+```
+
+| パラメーター                 | 説明                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `grant_type`           | グラントタイプ。Token Vault の場合は、`urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token` に設定します。 |
+| `client_id`            | クライアントアプリケーション ID                                                                                                        |
+| `client_secret`        | クライアントシークレット。**注:** Privileged Worker Token Exchange では、Private Key JWT または mTLS 認証の使用を推奨します。                            |
+| `subject_token_type`   | サブジェクトトークン の種類。Privileged Worker Token Exchange の場合は、JWT (`urn:ietf:params:oauth:token-type:jwt`) に設定します。             |
+| `subject_token`        | Auth0 認可サーバーがユーザーの識別に使用する、署名付きの JWT ベアラートークン。                                                                            |
+| `requested_token_type` | 要求する token の種類。Privileged Worker Token Exchange では、アクセストークンまたはリフレッシュトークンを要求できます。                                         |
+| `connection`           | 接続名。この場合は `google-oauth2` です。                                                                                            |
+
+Token Vault に保存されているアクセストークンを受け取ります。同様に、外部 API のリフレッシュトークンを要求することもできます。
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/json' \
+--data '{
+  "client_id": "<YOUR_CLIENT_ID>",
+  "client_secret": "<YOUR_CLIENT_SECRET>",
+  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
+  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-refresh-token",
+  "connection": "google-oauth2"
+}'
+```

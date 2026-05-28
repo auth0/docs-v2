@@ -1,0 +1,294 @@
+---
+description: Auth0 Actions で複数のカスタムドメインを使用して、ドメイン固有の認証ロジックを作成する方法について説明します。
+title: 複数のカスタムドメインを使用した Actions 統合
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+[Auth0 Actions](/ja/docs/customize/actions) を使用すると、カスタムコードで認証をカスタマイズできます。[複数のカスタムドメイン](/ja/docs/customize/custom-domains/multiple-custom-domains) を使用している場合は、Actions からカスタムドメイン情報にアクセスして、ドメイン固有のロジックを実装したり、ユーザーを組織に振り分けたり、アクセス ポリシーを適用したり、通知をカスタマイズしたりできます。
+
+<div id="accessing-custom-domain-information">
+  ## カスタムドメイン情報へのアクセス
+</div>
+
+Actions では、`event.custom_domain` オブジェクトを通じてカスタムドメインの情報にアクセスできます。このオブジェクトには、ドメイン名と、そのドメインに設定されたすべてのメタデータが含まれます。
+
+<div id="available-triggers">
+  ### 利用可能なトリガー
+</div>
+
+`event.custom_domain` オブジェクトは、以下の Action トリガーで使用できます。
+
+| Trigger                       | Event object reference                                                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Credentials Exchange          | [イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-event-object)                                                    |
+| Custom Email Provider         | [イベントオブジェクト](/ja/docs/customize/email/smtp-email-providers/custom/action-triggers-custom-email-provider-event-object)                                                     |
+| Custom Phone Provider         | [イベントオブジェクト](/ja/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/actions-triggers-custom-phone-provider-event-object) |
+| Post Login                    | [イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object)                                                 |
+| Post User Registration        | [イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger/post-user-registration-event-object)                    |
+| Post Password Change          | [イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger/post-change-password-event-object)                          |
+| Pre User Registration         | [イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-event-object)                      |
+| Reset Password Post Challenge | [イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/password-reset-triggers/post-challenge-trigger/post-challenge-event-object)                                      |
+
+<Note>
+  `event.custom_domain` オブジェクトは、リクエストがカスタムドメイン経由で発生したトリガーでのみ使用できます。カスタムドメインが使用されていない場合、このプロパティは `undefined` になります。
+</Note>
+
+<div id="event-object-structure">
+  ### イベントオブジェクトの構造
+</div>
+
+ドメインメタデータで設定された `login.example.com` ドメインを使用する場合:
+
+| キー             | 値                         |
+| -------------- | ------------------------- |
+| allow&#95;list | example1.com,example2.com |
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  console.log(event.custom_domain);
+};
+```
+
+コンソールには次のように出力されます:
+
+```json
+{
+  "domain": "login.example.com",
+  "domain_metadata": {
+    "allow_list": "example1.com,example2.com"
+  }
+}
+```
+
+<div id="common-use-cases">
+  ## 一般的な使用例
+</div>
+
+<div id="conditional-logic-by-domain">
+  ### ドメインに基づく条件分岐
+</div>
+
+カスタムドメインと正規ドメインのどちらを使用しているかに応じて、異なるルールを適用します。
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (
+    domain === undefined ||
+    domain.includes('.auth0.com') || // パブリッククラウド
+    domain.includes('.auth0app.com') // プライベートクラウド
+  ) {
+    return api.access.deny('Please use the custom domain to log in.');
+  }
+};
+```
+
+<div id="email-domain-based-access-control">
+  ### メールアドレスのドメインに基づくアクセス制御
+</div>
+
+カスタムドメインメタデータを使用して、メールアドレスのドメインごとのアクセスポリシーを適用します。
+
+```javascript
+const getEmailDomain = (email) => {
+  if (!email || typeof email !== 'string') {
+    return null;
+  }
+
+  const parts = email.split('@');
+  
+  // '@' がちょうど1つ存在すること（または少なくともドメイン部分が存在すること）を確認する
+  // "invalid-email" や "user@" のようなケースに対応する
+  if (parts.length < 2 || !parts[1]) {
+    return null;
+  }
+
+  return parts[1].toLowerCase().trim();
+}
+
+exports.onExecutePreUserRegistration = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      'access_denied',
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const email = event.user.email;
+  
+  if (email === undefined) {
+    return api.access.deny(
+      'access_denied',
+      `Access denied - Users cannot access without email.`
+    );
+  }
+
+  const domainAllowList = event.custom_domain?.domain_metadata?.allow_list?.split(',') || [];
+  const emailDomain = getEmailDomain(email);
+
+  if (domainAllowList.includes(emailDomain) === false) {
+    return api.access.deny(
+      'access_denied',
+      `Access denied - Users from ${emailDomain} cannot access ${domain}.`
+    );
+  }
+};
+```
+
+<div id="application-metadata-based-access-control">
+  ### アプリケーションメタデータに基づくアクセス制御
+</div>
+
+アプリケーションメタデータとドメインメタデータを使用して、アプリケーション グループとドメイン グループのアクセス ポリシーを適用します。
+
+```javascript
+exports.onExecuteCredentialsExchange = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+  
+  if (
+    domain === undefined ||
+    domain.includes(event.tenant.id)
+  ) {
+    return; // 正規ドメインの場合はスキップ
+  }
+
+  const applicationGroup = new Set(event.client.metadata?.domain_group?.split(',') || []);
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];
+  const intersection = domainGroup.filter(x => applicationGroup.has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      'invalid_request',
+      `Access denied - Cannot get access from application ${event.client.name} and ${domain}.`
+    );
+  }
+};
+```
+
+<div id="connection-metadata-based-access-control">
+  ### 接続メタデータに基づくアクセス制御
+</div>
+
+接続メタデータとドメインメタデータを使用して、接続グループおよびドメイングループに対するアクセス ポリシーを適用します：
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const connectionGroup = new Set(event.connection.metadata?.domain_group?.split(',') || []);
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];
+  const intersection = domainGroup.filter(x => connectionGroup.has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access connection ${event.connection.name} from ${domain}.`
+    );
+  }
+};
+```
+
+<div id="organization-metadata-based-access-control">
+  ### 組織メタデータに基づくアクセス制御
+</div>
+
+組織とドメインのメタデータを使用して、組織グループおよびドメイングループのアクセスポリシーを適用します。
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const organization = event.organization;
+
+  if (organization === undefined) {
+    return; // 組織認証以外はスキップ
+  }
+
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const organizationGroup = new Set(organization.metadata?.domain_group?.split(',') || []);
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];  
+  const intersection = domainGroup.filter(x => organizationGroup.has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access organization ${organization.name} from ${domain}.`
+    );
+  }
+};
+```
+
+<div id="region-based-requests">
+  ### リージョン別のリクエスト
+</div>
+
+カスタムドメインメタデータに基づいて、リージョン固有の外部サービスにリクエストを送信します。
+
+```javascript
+exports.onExecuteCustomEmailProvider = async (event, api) => {
+  const regionServiceEndpoint = event.custom_domain?.domain_metadata?.region_service_endpoint;
+
+  if (regionServiceEndpoint === undefined) {
+    return api.notification.drop(`Missing regional service endpoint configuration at custom domain.`);
+  }
+
+  const notification = event.notification;
+  const messageBody = {
+    body: notification.html
+  };
+
+  try {
+    await fetch(regionServiceEndpoint, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': event.secrets.API_KEY,
+      },
+      body: JSON.stringify(messageBody),
+    });
+  } catch (err) {
+    api.notification.drop('External service failure');
+  }
+};
+```
+
+<div id="learn-more">
+  ## 詳細はこちら
+</div>
+
+<div id="actions-documentation">
+  ### Actions のドキュメント
+</div>
+
+* [Auth0 Actions の概要](/ja/docs/customize/actions)
+* [Action トリガーを確認](/ja/docs/customize/actions/explore-triggers)
+* [Actions の制限事項](/ja/docs/customize/actions/limitations)
+
+<div id="event-object-references">
+  ### イベントオブジェクトのリファレンス
+</div>
+
+* [Post-Login イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object)
+* [Pre-User Registration イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-event-object)
+* [カスタムメールプロバイダーイベントオブジェクト](/ja/docs/customize/email/smtp-email-providers/custom/action-triggers-custom-email-provider-event-object)
+* [カスタム電話番号プロバイダーイベントオブジェクト](/ja/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/actions-triggers-custom-phone-provider-event-object)
+
+<div id="related-topics">
+  ### 関連トピック
+</div>
+
+* [複数のカスタムドメイン](/ja/docs/customize/custom-domains/multiple-custom-domains)
+* [組織](/ja/docs/manage-users/organizations)
+* [カスタムメールプロバイダー](/ja/docs/customize/email/smtp-email-providers/custom)

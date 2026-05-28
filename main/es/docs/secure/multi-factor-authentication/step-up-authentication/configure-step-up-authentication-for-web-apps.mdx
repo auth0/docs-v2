@@ -1,0 +1,173 @@
+---
+description: Aprenda a verificar si un usuario ha iniciado sesión en su aplicación web con MFA al examinar su ID Token.
+title: Configurar la autenticación escalonada para aplicaciones web
+---
+
+import {AuthCodeBlock} from "/snippets/es/AuthCodeBlock.jsx";
+
+Con la autenticación escalonada, las aplicaciones que permiten acceder a distintos tipos de recursos pueden requerir que los usuarios se autentiquen con un mecanismo más sólido para acceder a información confidencial o realizar determinadas transacciones.
+
+Por ejemplo, se puede permitir que un usuario acceda a vistas con datos confidenciales o restablezca su contraseña solo después de confirmar su identidad mediante <Tooltip tip="Autenticación multifactor (MFA): proceso de autenticación de usuarios que usa un factor además del nombre de usuario y la contraseña, como un código por SMS." cta="Ver glosario" href="/es/docs/glossary?term=multi-factor+authentication">autenticación multifactor</Tooltip> (MFA).
+
+Para implementar la autenticación escalonada en su aplicación web, creará una Action que solicite al usuario autenticarse con MFA cuando la aplicación web lo requiera, comprobará las claims del <Tooltip tip="ID Token: credencial destinada al propio cliente, en lugar de para acceder a un recurso." cta="Ver glosario" href="/es/docs/glossary?term=ID+Token">ID Token</Tooltip> para verificar MFA si el usuario intenta acceder a una página restringida y, a continuación, volverá a solicitar MFA al usuario si no está incluido en la claim.
+
+<div id="validate-id-tokens-for-mfa">
+  ## Validar tokens de ID para MFA
+</div>
+
+Cuando un usuario inicia sesión, recibe un [token de ID](/es/docs/secure/tokens/id-tokens/get-id-tokens) que contiene información relevante sobre la sesión del usuario en forma de claims. El claim relevante es `amr` (authentication methods reference), que es un array JSON de cadenas que indica el método de autenticación utilizado durante el inicio de sesión. Debe estar presente en la carga útil del token de ID y debe contener el valor `mfa`.
+
+Sus valores pueden incluir cualquiera de los [Authentication Method Reference Values](https://tools.ietf.org/html/rfc8176) predefinidos. Como puede contener claims distintos de `mfa`, al validarlo debe comprobar tanto que exista como que su contenido incluya el valor `mfa`.
+
+Si un usuario intenta acceder a una página restringida y el token muestra que no se ha autenticado con MFA, puede volver a activar la autenticación, que ha configurado para activar MFA mediante una Action. Una vez que el usuario proporciona el segundo factor, se genera un nuevo token de ID que contiene el claim `amr` y se envía a la aplicación.
+
+1. [Obtenga el token de ID](/es/docs/secure/tokens/id-tokens/get-id-tokens).
+2. Verifique la firma del token, que se utiliza para comprobar que el remitente del token es quien dice ser y para asegurarse de que el mensaje no se haya modificado en tránsito.
+3. Valide los siguientes claims:
+
+| Claim | Descripción                                                                                                                                                                                                      |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exp` | Expiración del token                                                                                                                                                                                             |
+| `iss` | Emisor del token                                                                                                                                                                                                 |
+| `aud` | Destinatario previsto del token                                                                                                                                                                                  |
+| `amr` | Si `amr` no existe en la carga útil o no contiene el valor `mfa`, el usuario no inició sesión con MFA. Si `amr` existe en la carga útil y contiene el valor `mfa`, entonces el usuario sí inició sesión con MFA. |
+
+<div id="amr-claim-exceptions">
+  #### Excepciones del claim `amr`
+</div>
+
+El claim `amr` es obligatorio, excepto en los siguientes casos de uso:
+
+1. En los flujos de inicio de sesión alojados, el claim `amr` solo se incluye en el token de ID después de que el usuario supere correctamente una verificación de MFA. Si la aplicación usa autenticación silenciosa o Tokens de actualización para los tokens de ID recién emitidos, el claim `amr` no estará presente porque el usuario ya completó previamente el inicio de sesión con MFA.
+2. Los tokens emitidos por la API de MFA no contienen el claim `amr`. El claim `amr` indica los métodos de autenticación utilizados cuando el usuario recibe el ID Token. En el proceso de autenticación de la API de MFA, la aplicación controla el flujo de autenticación y puede exigir MFA según sea necesario.
+
+En los ejemplos siguientes, puede comparar los posibles valores incluidos en la carga útil de un token de ID cuando un usuario se ha autenticado con MFA frente a cuando no lo ha hecho.
+
+<div id="example-values-with-mfa">
+  ### Ejemplo: valores con MFA
+</div>
+
+{/* codeblockOld.header.login.logInButton codeblockOld.header.login.configureSnippet */}
+
+export const codeExample1 = `{
+    "iss": "https://{yourDomain}/",
+    "sub": "auth0|1a2b3c4d5e6f7g8h9i",
+    "aud": "{yourClientId}",
+    "iat": 1522838054,
+    "exp": 1522874054,
+    "acr": "http://schemas.openid.net/pape/policies/2007/06/multi-factor",
+    "amr": [
+        "mfa"
+    ]
+}`;
+
+<AuthCodeBlock children={codeExample1} language="json" />
+
+<div id="example-values-without-mfa">
+  ### Ejemplo: valores sin MFA
+</div>
+
+export const codeExample2 = `{
+    "iss": "https://{yourDomain}/",
+    "sub": "auth0|1a2b3c4d5e6f7g8h9i",
+    "aud": "{yourClientId}",
+    "iat": 1522838054,
+    "exp": 1522874054
+}`;
+
+<AuthCodeBlock children={codeExample2} language="json" />
+
+<div id="scenario-salary-data-with-push-notifications">
+  ## Escenario: Datos salariales con notificaciones push
+</div>
+
+En el siguiente escenario, una aplicación web autentica a un usuario con username y contraseña. Algunos usuarios quieren acceder a una pantalla específica que muestra datos salariales, por lo que deben autenticarse con el factor de notificación push de Guardian.
+
+<div id="prerequisites">
+  ### Requisitos previos
+</div>
+
+Para este escenario, debe configurar los siguientes elementos en el Dashboard:
+
+* [Registrar una aplicación web](/es/docs/get-started/auth0-overview/create-applications/regular-web-apps).
+* [Crear una conexión de base de datos](https://manage.auth0.com/#/connections/database).
+* [Habilitar MFA](/es/docs/secure/multi-factor-authentication/enable-mfa) para usar las notificaciones push.
+
+<div id="create-an-action">
+  ### Crear una Action
+</div>
+
+Cree una Action que solicite al usuario autenticarse con MFA cuando la aplicación web lo solicite. Vaya a [Dashboard &gt; Actions &gt; Flows](https://manage.auth0.com/#/actions/flows) y cree una Action que contenga el siguiente contenido:
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+ const CLIENTS_WITH_MFA = ['REPLACE_WITH_{yourClientId}'];
+ // ejecutar solo para los clientes especificados
+ if (CLIENTS_WITH_MFA.includes(event.client.client_id)) {
+ // solicitar MFA solo si la aplicación web lo indicó en la solicitud de autenticación
+ if (event.transaction?.acr_values.includes('http://schemas.openid.net/pape/policies/2007/06/multi-factor')) {
+ api.multifactor.enable('any', { allowRememberBrowser: false });
+ }
+ }
+}
+```
+
+* La variable `CLIENTS_WITH_MFA` contiene los <Tooltip tip="ID de cliente: valor de identificación asignado por Auth0 a tu recurso registrado." cta="Ver glosario" href="/es/docs/glossary?term=client+IDs">ID de cliente</Tooltip> de las aplicaciones a las que quieres aplicar esta Action. Puedes eliminar esto (y la condición `if` que aparece a continuación) si no lo necesitas.
+* La propiedad `event.transaction.acr_values` es un arreglo de cadenas que contiene las referencias de clase del contexto de autenticación (`acr`). Es una propiedad opcional que solo existe cuando la aplicación la incluye en la solicitud de autenticación al <Tooltip tip="Servidor de autorización: servidor centralizado que contribuye a definir los límites del acceso de un usuario. Por ejemplo, tu servidor de autorización puede controlar los datos, las tareas y las funciones disponibles para un usuario." cta="Ver glosario" href="/es/docs/glossary?term=Authorization+Server">Servidor de autorización</Tooltip>. En este ejemplo, nuestra aplicación web la incluirá en la solicitud de autenticación, pero solo cuando un usuario que todavía no se haya autenticado con MFA intente acceder a información salarial. Cuando nuestra aplicación web la incluya, establecerá el valor `http://schemas.openid.net/pape/policies/2007/06/multi-factor`, lo que indica que queremos que el Servidor de autorización exija MFA, y el valor de la propiedad `api.multifactor` que configuramos en nuestro código pedirá al usuario que complete MFA con cualquiera de los métodos disponibles que se hayan configurado en el inquilino. Para obtener más información sobre el método `api.multifactor.enable()`, consulta [Action Triggers: objeto API de post-login](/es/docs/customize/actions/explore-triggers/password-reset-triggers/post-challenge-trigger/post-challenge-api-object).
+* La directiva `http://schemas.openid.net/pape/policies/2007/06/multi-factor` define un mecanismo de autenticación en el que el usuario final se autentica ante el proveedor de <Tooltip tip="OpenID: estándar abierto de autenticación que permite a las aplicaciones verificar la identidad de los usuarios sin recopilar ni almacenar información de inicio de sesión." cta="Ver glosario" href="/es/docs/glossary?term=OpenID">OpenID</Tooltip> proporcionando más de un factor de autenticación, o MFA. Para obtener más información, consulta [OpenID Provider Authentication Policy Extension 1.0](https://openid.net/specs/openid-provider-authentication-policy-extension-1_0.html).
+
+<div id="configure-app">
+  ### Configurar la aplicación
+</div>
+
+Configure la aplicación para comprobar que el usuario se haya autenticado con MFA cuando intente acceder a la página de información salarial restringida. (Cuando un usuario se autentica con MFA, los claims del token de ID contienen el claim `amr` con el valor `mfa`.) Si el usuario ya se ha autenticado con MFA, la aplicación web mostrará la página restringida; de lo contrario, la aplicación web enviará una nueva solicitud de autenticación que incluye el parámetro `acr_values` con el siguiente valor:
+`http://schemas.openid.net/pape/policies/2007/06/multi-factor`que activará la Action.
+
+La aplicación web de este escenario usa [Flujo de Código de Autorización](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow) para autenticarse, por lo que la solicitud es la siguiente:
+
+export const codeExample3 = `https://{yourDomain}/authorize?
+        audience=https://{yourDomain}/userinfo&
+        scope=openid&
+        response_type=code&
+        client_id={yourClientId}&
+        redirect_uri={https://yourApp/callback}&
+        state={yourOpaqueValue}&
+        acr_values=http://schemas.openid.net/pape/policies/2007/06/multi-factor`;
+
+<AuthCodeBlock children={codeExample3} language="http" />
+
+Una vez que el usuario se autentica con MFA, la aplicación web recibe el código de autorización, que debe intercambiarse por el nuevo token de ID, que ahora debería incluir la claim `amr` con el valor `mfa`. Para obtener más información sobre cómo intercambiar el código por un token de ID, consulte [Agregar inicio de sesión mediante el Flujo de Código de Autorización](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow/add-login-auth-code-flow).
+
+<div id="validate-id-token">
+  ### Validar token de ID
+</div>
+
+En este escenario, realice las validaciones con el [código de ejemplo de JSON Web Token](https://github.com/auth0/node-jsonwebtoken), que verifica la firma del token (`jwt.verify`), decodifica el token, comprueba si la carga útil contiene `amr` y, de ser así, muestra los resultados en la consola.
+
+export const codeExample4 = `const AUTH0_CLIENT_SECRET = '{yourClientSecret}';
+const jwt = require('jsonwebtoken');
+
+jwt.verify(id_token, AUTH0_CLIENT_SECRET, { algorithms: ['HS256'] }, function(err, decoded) {
+  if (err) {
+    console.log('token no válido');
+    return;
+  }
+
+  if (Array.isArray(decoded.amr) && decoded.amr.indexOf('mfa') >= 0) {
+    console.log('Has usado MFA');
+    return;
+  }
+
+  console.log('no estás usando MFA');
+});`;
+
+<AuthCodeBlock children={codeExample4} language="javascript" />
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [ID Tokens](/es/docs/secure/tokens/id-tokens)
+* [Casos de uso de Rule](/es/docs/customize/rules/use-cases)
+* [JSON Web Tokens](/es/docs/secure/tokens/json-web-tokens)
+* [Configurar la autenticación escalonada para las API](/es/docs/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-apis)

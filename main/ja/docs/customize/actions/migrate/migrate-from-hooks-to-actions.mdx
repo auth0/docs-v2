@@ -1,0 +1,289 @@
+---
+description: 既存の Auth0 Hooks コードを Auth0 Actions コードに移行する方法を説明します。
+title: Hooks から Actions へ移行する
+---
+
+既存の Hooks を Actions に変換する場合は、Hook の種類に対応する Trigger に新しい Action を関連付ける必要があります。以下の手順に従い、その中で示す対応関係を使用すれば、同じ機能を維持できます。
+
+<div id="plan-your-migration">
+  ## 移行を計画する
+</div>
+
+デプロイ済みのActionsはアクティブなHooksの後に実行されるため、DashboardでHooksを1つずつ変換することも、<Tooltip tip="Management API: お客様が管理タスクを実行できるようにする製品。" cta="用語集を見る" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip> を使用してまとめて変換することもできます。
+
+コードを変換したら、Actionを有効化し、Hookを無効化する必要があります。Actionの有効化とHookの無効化はすばやく続けて実行できますが、順序によっては、短時間だけ両方が実行される、またはどちらも実行されない状態になる可能性があります。
+
+そのため、パイプラインは段階的に移行することをお勧めします。Hooksコードの一部をActionコードに変換し、ステージング環境でテストしてから、1つずつ本番環境に反映してください。アクティブなHooksはデプロイ済みのActionsより先に実行されるため、Actionsでほかのロジックを構築してテストしている間も、一部のロジックはHooksに残しておけます。
+
+<Card title="移行計画時のヒント">
+  * コストの高い処理や一度限りの処理が重複しないよう、フラグを使用します。
+  * 影響とトラフィックが最も少ない時間帯に変更を実施するようにしてください。
+  * [Auth0 Deploy CLI](/ja/docs/deploy-monitor/deploy-cli-tool) を使用して、移行全体を一括または段階的にスクリプト化、テストし、すばやく実装することを検討してください。
+</Card>
+
+<div id="understand-limitations">
+  ## 制限事項を理解する
+</div>
+
+Actions では Hooks でできることの大半を実現できますが、移行を開始する前に、いくつかの制限事項を把握しておく必要があります。 (注意: 移行中は Hooks と Actions を同時に実行できます。)
+
+* Actions では、<Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を表示" href="/ja/docs/glossary?term=access+tokens">アクセストークン</Tooltip> や API レスポンスのようなデータを、実行間で永続化できません。
+* Actions では、Hooks とは異なり、[Management API のアクセストークン](/ja/docs/customize/rules/use-management-api) や [グローバル `auth0` オブジェクトへのアクセス](/ja/docs/customize/actions/action-coding-guidelines#global-object) は提供されません。
+
+制限事項の一覧については、[Actions の制限事項](/ja/docs/customize/actions/limitations) を参照してください。
+
+<div id="convert-code">
+  ## コードを変換する
+</div>
+
+Hook を Action に変換するには、Hook 固有のコードを Actions のコードに置き換える必要があります。このセクションでは、動作中の Hook を対応する Action に変換する際に必要な作業について説明します。
+
+<Card title="コード変換時のヒント">
+  * 一般的には、Hooks 関数に渡されるオブジェクトの読み取り専用プロパティは、Actions の `event` オブジェクト内で探します。
+  * コードの作成には Auth0 Dashboard の Actions Code Editor を使用してください。エラーのハイライト表示や自動補完候補の提示に役立ちます。
+  * 本番環境に移行する前に、[新しい Actions](/ja/docs/customize/actions/test-actions) を[ステージング環境またはテスト環境](/ja/docs/get-started/auth0-overview/create-tenants/set-up-multiple-environments)で十分にテストしてください。
+</Card>
+
+<div id="copy-hook-code-to-a-new-action">
+  ### Hook のコードを新しい Action にコピーする
+</div>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Hook のコードを新しい Action にコピーし、Auth0 Dashboard の Actions Code Editor を使用することをお勧めします。これにより、コードに残っている問題を特定しやすくなります。
+</Callout>
+
+1. 本番テナントにログインし、変換する Hook のコードをコピーします。
+2. 非本番テナントに切り替え、[Auth0 Dashboard &gt; Actions &gt; Library](https://manage.auth0.com/#/select-tenant?path=/actions/library) に移動します。
+3. **Build Custom** を選択し、次の操作を行います。
+
+   * 変換する Hook と同じ **名前** を Action に入力します。
+
+   * **Trigger** を見つけて、適切なトリガーを選択します**:**
+
+     | Hook の種類                    | Actions Trigger        |
+     | --------------------------- | ---------------------- |
+     | Client Credentials Exchange | M2M/Client-Credentials |
+     | Pre-User-Registration       | Pre User Registration  |
+     | Post-User-Registration      | Post User Registration |
+     | Post-Change-Password        | Post Change Password   |
+     | Send Phone Message          | Send Phone Message     |
+
+   * **Runtime** を見つけて、**Node 18** を選択します。
+
+   * **Create** を選択します。
+4. Actions Code Editor のコードブロックで、変換する Hook のコードをエクスポートされた関数の下に貼り付けます。
+5. コードを関数内に移しながら、この記事の以降で説明する変更を加えます。
+   また、新しい Actions Trigger に関連付けられた `event` オブジェクトについても確認してください。このガイドの後半にある [データへのアクセス方法を変更する](#change-how-data-is-accessed) セクションに進むと、関連ドキュメントへのリンクが表示されます。
+
+<div id="change-the-function-declaration">
+  ### 関数宣言を変更する
+</div>
+
+Hooks の関数はデフォルトエクスポートでエクスポートされますが、Actions の関数は名前付きエクスポートを使用します。変換する Hook の種類によって、使用する名前付きエクスポートが異なります。対応は次のとおりです。
+
+| Hook の種類                    | 名前付きエクスポート                      |
+| --------------------------- | ------------------------------- |
+| Client Credentials Exchange | `onExecuteCredentialsExchange`  |
+| Pre-User Registration       | `onExecutePreUserRegistration`  |
+| Post-User Registration      | `onExecutePostUserRegistration` |
+| Post-Change Password        | `onExecutePostChangePassword`   |
+| Send Phone Message          | `onExecuteSendPhoneMessage`     |
+
+**変更前**
+
+```javascript lines
+module.exports = async function myHooksFunction(){}
+```
+
+**変換後**
+
+```javascript lines
+// クライアント資格情報の交換
+exports.onExecuteCredentialsExchange = async (event, api) => {}
+
+// ユーザー登録前
+exports.onExecutePreUserRegistration = async (event, api) => {}
+
+// ユーザー登録後
+exports.onExecutePostUserRegistration = async (event) => {}
+
+// パスワード変更後
+exports.onExecutePostChangePassword = async (event) => {}
+
+// 電話番号へのメッセージ送信
+exports.onExecuteSendPhoneMessage = async (event) => {}
+```
+
+<div id="convert-dependencies">
+  ### 依存関係を移行する
+</div>
+
+Hooks と Actions では、依存関係はほぼ同じ方法で扱います。どちらも、依存関係を UI または Management API から個別に追加し、コード内で読み込みます。また、どちらでも `npm` Registry で公開されている任意のパッケージを `require` できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `npm` モジュールが最新バージョンでない場合は、この機会に更新しておくことをおすすめします。
+</Callout>
+
+1. Hook のコード内にある `require` 文を探します。
+2. バージョン番号を削除し、削除した番号は控えておきます。
+3. [Write Your First Action](/ja/docs/customize/actions/write-your-first-action) の「Add a Dependency」セクションの手順に従って依存関係を追加します (依存関係が [core NodeJS module](https://github.com/nodejs/node/tree/master/lib) ではない場合) 。依存関係が core NodeJS module の場合は、追加する必要はありません。
+4. 見つかった `require` 文を `function` 宣言の外に移動します。
+
+<div id="convert-secrets">
+  ### シークレットを変換する
+</div>
+
+Hooks と Actions では、シークレットはほぼ同じ方法で扱います。どちらの場合も、シークレットは UI または Management API を通じて Hook/Action ごとに追加し、コード内で利用できます。
+
+Hooks から Actions にシークレットを変換するには、次の手順を実行します。
+
+1. 作業中の Action に必要な値を保存します。
+2. Action 内からアクセスする必要がある値ごとに Secret を追加します。追加方法については、[Write Your First Action](/ja/docs/customize/actions/write-your-first-action) の **Add a Secret** セクションを参照してください。
+3. コードを変換します。
+
+**変換前**
+
+```javascript lines
+async function (user, context, cb) {
+    const { SECRET_NAME } = context.webtask.secrets;
+
+    // ... 追加のコード
+}
+```
+
+**変更後**
+
+```javascript lines
+async (event, api) => {
+    const { SECRET_NAME } = event.secrets;
+
+	// ... 追加のコード
+};
+```
+
+Hooks と同様に、Auth0 は保存されているすべてのシークレット値を暗号化します。
+
+<div id="change-how-data-is-accessed">
+  ### データへのアクセス方法を変更する
+</div>
+
+Hooks では、ユーザー、クライアント、リクエスト、その他のコンテキストに関するデータは、Hook 関数に渡される複数の引数に格納されます。Actions では、これらのデータは再編成され、`event` オブジェクトに移されています。多くのプロパティはそのまま移行されていますが、わかりやすさを向上させるために一部は統合されています。
+
+変換する Hook の種類によって、`event` オブジェクトの内容は異なります。
+
+* [Client Credentials Exchange - Actions Event Object](/ja/docs/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-event-object)
+* [Post-Change Password - Actions Event Object](/ja/docs/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger/post-change-password-event-object)
+* [Post-User Registration - Actions Event Object](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger/post-user-registration-event-object)
+* [Pre-User Registration - Actions Event Object](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-event-object)
+* [Send Phone Message - Actions Event Object](/ja/docs/customize/actions/explore-triggers/mfa-notifications-trigger/send-phone-message-event-object)
+
+**変更前**
+
+```javascript lines
+async function (user, context, cb) {
+	const clientId = context.clientID;
+	const tenant = context.connection.tenant
+
+	// ... 追加のコード
+}
+```
+
+**変換後**
+
+```javascript lines
+async (event, api) => {
+	const clientId = event.client.client_id;
+	const tenant = event.tenant.id;
+
+	// ... 追加のコード
+};
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Hooks の `context` オブジェクトとは異なり、`event` オブジェクトのプロパティに保存または変更したデータは、後続の Actions には引き継がれません。Hook でこれらのプロパティにデータを設定してコア機能をトリガーしている場合は、Actions 間でデータを保持するために、[Machine to Machine](/ja/docs/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-api-object) および [Pre User Registration](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-api-object) の Actions フローで使用できる `api` インターフェースを利用する必要があります。
+</Callout>
+
+<div id="convert-callbacks">
+  ### コールバックを変換する
+</div>
+
+Hook では、処理が完了したら実行を終了するために `callback()` 関数を呼び出す必要があります。一方、Actions ではコールバックの仕組みを使用しないため、Action 関数から `callback()` の呼び出しをすべて削除する必要があります。
+
+これまで Client Credentials Exchange または Pre User Registration Hook で、リクエストを失敗させたりユーザーを更新したりするために `callback()` 関数を使用していた場合でも、Actions では新しい `api` インターフェースを通じて引き続き同じことを実行できます。
+
+<div id="client-credentials-exchange">
+  #### クライアント資格情報の交換
+</div>
+
+Client Credentials Exchange Hook でアクセストークンに追加のクレームを加えていた場合:
+
+```javascript lines
+// クライアント資格情報交換フック
+module.exports = function(client, scope, audience, context, cb) {
+  var access_token = {};
+  access_token.scope = scope;
+
+  access_token['https://example.com/claim'] = 'bar';
+  cb(null, access_token);
+};
+```
+
+Actions の [Client Credentials Exchange API オブジェクト](/ja/docs/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-api-object) を使用できるようになりました。
+
+```javascript lines
+// クライアント資格情報交換 Action
+exports.onExecuteCredentialsExchange = async (event, api) => {
+  api.accessToken.setCustomClaim("https://example.com/claim", 'bar');  
+};
+```
+
+<div id="pre-user-registration">
+  #### Pre User Registration
+</div>
+
+Pre User Registration Hook でアクセストークンに追加のクレームを付与していた場合:
+
+```javascript lines
+// Pre User Registration Hook（事前ユーザー登録）
+module.exports = function (user, context, cb) {
+	if (user.app_metadata.condition === "success") {
+      var response = {};
+      response.user = { user_metadata: { favorite_color: "purple" } };
+      // このHookは成功しました。次のHookに進みます。
+	  return callback(null, response);
+	}
+
+	if (user.app_metadata.condition === "failure") {
+		// このHookは失敗しました。エラーレスポンスでログインを停止します。
+		return callback(new Error("Failure message"));
+	}
+
+	// ... 追加のコード
+};
+```
+
+これで、[Pre User Registration API オブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-api-object)を使用できるようになりました。
+
+```javascript lines
+// Pre User Registration Action（ユーザー登録前）
+exports.onExecutePreUserRegistration = async (event, api) => {
+	if (event.user.app_metadata.condition === "success") {
+		// この Action は成功しました。次の Action に進みます。
+		api.user.setUserMetadata("favorite_color", "purple");
+		return;
+	}
+
+	if (event.user.app_metadata.condition === "failure") {
+		// この Action は失敗しました。エラーレスポンスで呼び出しを停止します。
+		return api.access.deny("Failure message");
+	}
+
+	// ... 追加のコード
+};
+```
+
+<div id="complete-the-migration">
+  ## 移行を完了する
+</div>
+
+新しい Actions のコードを作成してテストしたら、Action を有効にし、Hook を無効にする必要があります。これら 2 つの作業は続けてすばやく実行できますが、順序によっては、短時間だけ両方が実行されたり、どちらも実行されなかったりする可能性があります。有効な Hooks はデプロイ済みの Actions より先に実行されるため、Actions でほかのロジックを構築してテストしている間も、一部のロジックを Rules に残しておくことができます。

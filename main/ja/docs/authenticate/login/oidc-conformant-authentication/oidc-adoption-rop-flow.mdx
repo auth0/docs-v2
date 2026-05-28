@@ -1,0 +1,190 @@
+---
+description: OIDC 準拠パイプラインが Resource Owner Password（ROP）フローに与える影響について説明します。
+title: OIDC 準拠の Resource Owner Password フロー
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+[Resource Owner Password Flow](/ja/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow) (<Tooltip tip="Resource Owner: 保護されたリソースへのアクセスを許可できるエンティティ（ユーザーやアプリケーションなど）。" cta="用語集を見る" href="/ja/docs/glossary?term=Resource+Owner">Resource Owner</Tooltip> Password Grant または ROPG と呼ばれることもあります) は、高い信頼性を前提とするアプリケーションでアクティブ認証を提供するために使用されます。認可コードグラントやインプリシットグラントとは異なり、この認証メカニズムではユーザーを Auth0 にリダイレクトしません。単一のリクエストでユーザーを認証し、パスワード認証情報をトークンに交換します。
+
+OIDC 準拠パイプラインは、次の点で Resource Owner Password Flow に影響します。
+
+* 認証リクエスト
+* 認証レスポンス
+* <Tooltip tip="ID Token: リソースへのアクセスではなく、クライアント自体のための資格情報です。" cta="用語集を見る" href="/ja/docs/glossary?term=ID+token">IDトークン</Tooltip> の構造
+* <Tooltip tip="Access Token: API へのアクセスに使用される、不透明な文字列または JWT の形式の認可資格情報です。" cta="用語集を見る" href="/ja/docs/glossary?term=Access+token">アクセストークン</Tooltip> の構造
+
+<div id="authentication-request">
+  ## 認証リクエスト
+</div>
+
+<div id="legacy">
+  ### 従来
+</div>
+
+```json lines
+POST /oauth/ro HTTP 1.1
+Content-Type: application/json
+{
+  "grant_type": "password",
+  "client_id": "123",
+  "username": "alice",
+  "password": "A3ddj3w",
+  "connection": "my-database-connection",
+  "scope": "openid email favorite_color offline_access",
+  "device": "my-device-name"
+}
+```
+
+`offline_access` スコープを指定して <Tooltip tip="リフレッシュトークン: ユーザーに再度ログインさせることなく、新しいアクセストークンを取得するために使用されるトークン。" cta="用語集を表示" href="/ja/docs/glossary?term=refresh+token">リフレッシュトークン</Tooltip> を要求する場合にのみ、`device` パラメーターが必要です。
+
+### OIDC準拠
+
+```json lines
+POST /oauth/token HTTP 1.1
+Content-Type: application/x-www-form-urlencoded
+grant_type=http%3A%2F%2Fauth0.com%2Foauth%2Fgrant-type%2Fpassword-realm&client_id=123&username=alice&password=A3ddj3w&realm=my-database-connection&scope=openid+email+offline_access&audience=https%3A%2F%2Fapi.example.com
+```
+
+* 認証情報交換を実行するエンドポイントは `/oauth/token` です。
+* Auth0 独自の grant type は、特定の接続 (`realm`) のユーザーを認証するために使用されます。標準の OIDC password grant もサポートされていますが、`realm` などの Auth0 固有のパラメーターは受け付けません。
+* `favorite_color` は、現在は有効なスコープではありません。
+* `device` パラメーターは削除されました。
+* `audience` パラメーターは省略可能です。
+
+<div id="authentication-response">
+  ## 認証レスポンス
+</div>
+
+<div id="legacy">
+  ### 従来
+</div>
+
+```json lines
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
+{
+    "access_token": "SlAV32hkKG",
+    "token_type": "Bearer",
+    "refresh_token": "8xLOxBtZp8",
+    "expires_in": 3600,
+    "id_token": "eyJ..."
+}
+```
+
+* 返されるアクセストークンは、[`/userinfo`](https://auth0.com/docs/api/authentication#get-user-info) エンドポイントの呼び出しでのみ有効です。
+* リフレッシュトークンが返されるのは、`device` パラメーターが渡され、`offline_access` スコープが要求された場合のみです。
+
+### OIDC準拠
+
+```json lines
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
+{
+    "access_token": "eyJ...",
+    "token_type": "Bearer",
+    "refresh_token": "8xLOxBtZp8",
+    "expires_in": 3600,
+    "id_token": "eyJ..."
+}
+```
+
+* 返されるアクセストークンは、`/userinfo` エンドポイントの呼び出しに使用できます (`audience` パラメーターで指定した API が、[署名アルゴリズム](/ja/docs/get-started/applications/signing-algorithms) として `RS256` を使用している場合) 。また、必要に応じて、`audience` パラメーターで指定した <Tooltip tip="リソースサーバー: 保護されたリソースをホストするサーバー。リソースサーバーは、保護されたリソースへのリクエストを受け入れ、応答します。" cta="用語集を見る" href="/ja/docs/glossary?term=resource+server">リソースサーバー</Tooltip> の呼び出しにも使用できます。
+* パブリックアプリケーションから要求された場合、IDトークンは強制的に `RS256` で署名されます。詳細については、[機密アプリケーションとパブリックアプリケーション](/ja/docs/get-started/applications/confidential-and-public-applications) を参照してください。
+* リフレッシュトークンは、`offline_access` スコープが付与された場合にのみ返されます。
+
+<div id="id-token-structure">
+  ## IDトークンの構造
+</div>
+
+<div id="legacy">
+  ### 従来
+</div>
+
+export const codeExample1 = `{
+    "sub": "auth0|alice",
+    "iss": "https://{yourDomain}/",
+    "aud": "123",
+    "exp": 1482809609,
+    "iat": 1482773609,
+    "email": "alice@example.com",
+    "email_verified": true,
+    "favorite_color": "blue"
+}`;
+
+<AuthCodeBlock children={codeExample1} language="json" filename="JSON" />
+
+### OIDC準拠
+
+export const codeExample2 = `{
+    "sub": "auth0|alice",
+    "iss": "https://{yourDomain}/",
+    "aud": "123",
+    "exp": 1482809609,
+    "iat": 1482773609,
+    "email": "alice@example.com",
+    "email_verified": true,
+    "https://app.example.com/favorite_color": "blue"
+}`;
+
+<AuthCodeBlock children={codeExample2} language="json" filename="JSON" />
+
+* パブリックアプリケーションから要求された場合、IDトークンは強制的に `RS256` で署名されます。
+* `favorite_color` クレームは名前空間付きである必要があり、Rule を使用して追加する必要があります。詳しくは、[名前空間付きカスタムクレームを作成する](/ja/docs/secure/tokens/json-web-tokens/create-custom-claims)を参照してください。
+
+<div id="access-token-structure-optional">
+  ## アクセストークンの構造 (省略可)
+</div>
+
+<div id="legacy">
+  ### 従来
+</div>
+
+```json JSON lines
+SlAV32hkKG
+```
+
+返されるアクセストークンは不透明で、`/userinfo` エンドポイントの呼び出しにのみ有効です。
+
+<div id="oidc-conformant">
+  ### OIDC 準拠
+</div>
+
+export const codeExample3 = `{
+    "sub": "auth0|alice",
+    "iss": "https://{yourDomain}/",
+    "aud": [
+        "https://api.example.com",
+        "https://{yourDomain}/userinfo"
+    ],
+    "azp": "123",
+    "exp": 1482816809,
+    "iat": 1482809609,
+    "scope": "openid email"
+}`;
+
+<AuthCodeBlock children={codeExample3} language="json" filename="JSON" />
+
+* 返されるアクセストークンは、`audience` パラメータで指定された API が <Tooltip tip="JSON Web Token（JWT）: 2者間でクレームを安全に表現するために使用される標準的なIDトークン形式（また、多くの場合はアクセストークン形式）。" cta="用語集を見る" href="/ja/docs/glossary?term=JWT">JWT</Tooltip> であり、かつ <Tooltip tip="署名アルゴリズム: トークンが改ざんされていないことを保証するために、トークンにデジタル署名する際に使用されるアルゴリズム。" cta="用語集を見る" href="/ja/docs/glossary?term=signing+algorithm">署名アルゴリズム</Tooltip> として `RS256` を使用している場合、`/userinfo` エンドポイントおよび `audience` パラメータで指定されたリソースサーバーの呼び出しに使用できる <Tooltip tip="JSON Web Token（JWT）: 2者間でクレームを安全に表現するために使用される標準的なIDトークン形式（また、多くの場合はアクセストークン形式）。" cta="用語集を見る" href="/ja/docs/glossary?term=JWT">JWT</Tooltip> です。
+* 指定された <Tooltip tip="オーディエンス: 発行されたトークンの対象者を示す一意の識別子。トークン内では aud という名前で表され、その値には、IDトークンの場合はアプリケーション（クライアントID）、アクセストークンの場合はAPI（API Identifier）のIDが含まれます。" cta="用語集を見る" href="/ja/docs/glossary?term=audience">オーディエンス</Tooltip> が `/userinfo` のみである場合でも、不透明なアクセストークンが返されることがあります。
+
+<div id="standard-password-grant-requests">
+  ## 標準のパスワードグラントリクエスト
+</div>
+
+Auth0 の password realm grant は標準の OIDC では定義されていませんが、Auth0 固有の `realm` パラメーターをサポートしているため、従来の resource owner エンドポイントに代わる選択肢として推奨されています。OIDC 認証を使用する場合は、[標準の OIDC フローもサポートされます](/ja/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow)。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [OIDC を使用したアクセストークン](/ja/docs/authenticate/login/oidc-conformant-authentication/oidc-adoption-access-tokens)
+* [OIDC を使用した外部 API](/ja/docs/authenticate/login/oidc-conformant-authentication/oidc-adoption-apis)
+* [OIDC を使用した Authorization Code Flow](/ja/docs/authenticate/login/oidc-conformant-authentication/oidc-adoption-auth-code-flow)
+* [OIDC を使用した Client Credentials Flow](/ja/docs/authenticate/login/oidc-conformant-authentication/oidc-adoption-client-credentials-flow)
+* [OIDC を使用した Implicit Flow](/ja/docs/authenticate/login/oidc-conformant-authentication/oidc-adoption-implicit-flow)
+* [OIDC を使用したリフレッシュトークン](/ja/docs/authenticate/login/oidc-conformant-authentication/oidc-adoption-refresh-tokens)

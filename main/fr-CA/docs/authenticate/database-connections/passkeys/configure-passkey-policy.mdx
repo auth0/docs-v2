@@ -1,0 +1,218 @@
+---
+title: Activer et configurer l’authentification par clé d’accès pour les connexions de base de données
+sidebarTitle: Configurer les clés d’accès
+description: Utilisez l’Auth0 Dashboard pour activer les clés d’accès comme méthode d’authentification pour une connexion de base de données et configurer l’interface utilisateur de l’authentification par clé d’accès, l’inscription progressive et l’inscription locale.
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-CA/ReleaseStageNotice.jsx"
+
+<div id="prerequisites">
+  ## Prérequis
+</div>
+
+Avant de pouvoir activer les clés d’accès pour une connexion de base de données, vous devez satisfaire aux prérequis suivants.
+
+Dans votre locataire, vous devez :
+
+* [Activer Universal Login](/fr-CA/docs/authenticate/login/auth0-universal-login/universal-login-vs-classic-login/universal-experience).
+
+* [Activer l’authentification Identifier First](/fr-CA/docs/authenticate/login/auth0-universal-login/identifier-first).
+
+* Désactiver les pages de connexion personnalisées. Dans l’Auth0 Dashboard, accédez à [Branding &gt; Universal Login &gt; Manage Classic Login &gt; Login](https://manage.auth0.com/#/login_page), puis désactivez le bouton bascule **Custom Login Page**.
+
+Dans votre connexion de base de données, vous devez :
+
+* Soit désactiver [l’obligation d’utiliser un nom d’utilisateur](/fr-CA/docs/authenticate/database-connections/require-username) pour votre connexion de base de données, soit [activer Flexible Identifiers](/fr-CA/docs/authenticate/database-connections/flexible-identifiers-and-attributes).
+
+* Soit désactiver [l’utilisation de votre propre base de données](/fr-CA/docs/authenticate/database-connections/custom-db/create-db-connection), soit activer [l’importation d’utilisateurs](/fr-CA/docs/authenticate/database-connections/custom-db/templates) (**Import Users to Auth0**).
+
+  Pour utiliser votre propre base de données sans activer l’importation d’utilisateurs (**Import Users to Auth0**), suivez les [prérequis supplémentaires ci-dessous pour mettre à jour vos scripts d’action de base de données](#early-access-use-your-own-database-without-user-import-enabled).
+
+Les connexions de base de données pour lesquelles les clés d’accès sont activées doivent aussi toujours avoir les mots de passe activés. Cela garantit que les utilisateurs peuvent continuer à accéder à leurs comptes à partir de navigateurs et d’appareils plus anciens qui ne prennent peut-être pas encore en charge les clés d’accès.
+
+### <Badge color="yellow">Accès anticipé</Badge> Utiliser votre propre base de données sans activer l’importation d’utilisateurs
+
+L’authentification par clé d’accès prend maintenant en charge l’utilisation de votre propre base de données sans activer l’importation d’utilisateurs. Vous pouvez ainsi proposer l’authentification par clé d’accès avec des connexions de base de données personnalisées tout en continuant d’authentifier les utilisateurs à partir de votre répertoire d’utilisateurs externe.
+
+Comme prérequis, vous devez mettre à jour les scripts d’action de base de données Get User et Create [scripts d’action de base de données](/fr-CA/docs/authenticate/database-connections/custom-db/templates) afin de prendre en charge le traitement des utilisateurs à la fois par identifiant et par `user_id`.
+
+<Accordion title="Comment mettre à jour les scripts d’action de base de données pour activer les clés d’accès avec votre propre base de données sans activer l’importation d’utilisateurs">
+  <ReleaseStageNotice feature="clés d’accès avec votre propre base de données sans activer l’importation d’utilisateurs" stage="ea" terms="true" />
+
+  1. Commencez par confirmer que l’importation d’utilisateurs est désactivée pour votre connexion de base de données.
+
+  2. [Activez la prise en charge de l’objet context](/fr-CA/docs/authenticate/database-connections/custom-db/create-db-connection#enable-context-object). Le paramètre `context` sera ainsi disponible dans vos scripts d’action de base de données, ce qui est nécessaire pour prendre en charge les recherches à la fois par identifiant et par `user_id`.
+
+  3. Le script Get User doit prendre en charge à la fois la recherche par identifiant (`context.identifierType` n’est pas défini) et la recherche par `user_id` (`context.identifierType` est défini sur `user_id`).
+
+     Mettez à jour votre [script d’action de base de données Get User](/fr-CA/docs/authenticate/database-connections/custom-db/templates/get-user) en remplaçant `getByEmail` par la fonction `getUser` fournie :
+
+     ```js
+     function getByEmail(email, callback) { // [!code --] 
+     function getUser(identifierValue, context, callback) { // [!code ++] 
+         const axios = require('axios');
+
+         // Récupérer l’identifiant de l’utilisateur à partir de context // [!code ++]
+         const identifierType = context.identifierType || 'email'; // [!code ++]
+
+         // Remplacez par votre point de terminaison externe de récupération d’utilisateur 
+         const url = configuration.baseAPIUrl
+                     + `/get_user/${email}?type=email`; // [!code --]
+                     + `/get_user/${identifierValue}?type=${identifierType}`; // [!code ++]
+
+         axios.get(url)
+             .then(response => {
+                 // Retourner l’objet utilisateur s’il est trouvé
+                 const user = response.data; 
+                 return callback(null, {
+                     user_id: user.user_id,
+                     email: user.email
+                     // Inclure éventuellement d’autres attributs utilisateur 
+                 });
+             })
+             .catch(error => {
+                 // Gérer la réponse d’erreur 
+                 return callback(null);
+             });
+     }
+     ```
+
+  4. Le script Create doit retourner un profil utilisateur valide. Lorsque les attributs sont activés, le profil utilisateur retourné doit être validé de la même façon que pour les scripts Login et Get User. Lorsque les attributs ne sont pas activés, le profil utilisateur retourné doit inclure la valeur `user_id`.
+
+     Mettez à jour votre [script d’action de base de données Create](/fr-CA/docs/authenticate/database-connections/custom-db/templates/create) pour retourner un profil utilisateur valide :
+
+     ```js
+     function create(user, callback) {
+         const axios = require('axios');
+
+         // Remplacez par votre point de terminaison externe de création d’utilisateur
+         const url = 'https://example.com/api/create'; 
+
+         const payload = {
+             email: user.email
+             // Ajouter d’autres propriétés utilisateur au besoin
+         };
+
+         axios.post(url, payload)
+             .then(response => {
+                 // Retourner l’objet utilisateur s’il est créé
+                 const createdUser = response.data; 
+
+                 return callback(null, {
+                     user_id: createdUser.user_id,
+                     email:createdUser.email
+                     // Inclure éventuellement d’autres attributs utilisateur
+                 });
+             })
+             .catch(error => {
+                 // Gérer la réponse d’erreur 
+                 return callback(error);
+             }); 
+     }
+     ```
+</Accordion>
+
+<div id="configure-passkeys">
+  ## Configurer les clés d’accès
+</div>
+
+Une fois les prérequis satisfaits, vous pouvez utiliser l’Auth0 Dashboard pour activer et configurer les clés d’accès.
+
+<Steps titleSize="h3">
+  <Step title="Ouvrir la configuration des clés d’accès">
+    Accédez à [Authentication &gt; Database](https://manage.auth0.com/#/connections/database) et sélectionnez le nom de la connexion de base de données que vous souhaitez modifier.
+
+    Sélectionnez l’onglet **Méthodes d’authentification**. Ensuite, dans la section **Clé d’accès**, sélectionnez **Configurer** pour ouvrir le panneau **Clé d’accès**.
+
+    Si ce n’est pas déjà fait, cochez **Activer les clés d’accès**.
+  </Step>
+
+  <Step title="Choisir l’interface d’authentification par clé d’accès">
+    L’interface d’authentification par clé d’accès détermine comment les utilisateurs peuvent lancer l’authentification par clé d’accès lors de la connexion et de l’inscription.
+
+    Dans la section **Interface d’authentification par clé d’accès**, choisissez l’une des trois options :
+
+    | Interface d’authentification par clé d’accès     | Description                                                                                                                                                                                                                                                                                         |
+    | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Bouton de clé d’accès et remplissage automatique | Les utilisateurs peuvent s’authentifier avec des clés d’accès à l’aide du remplissage automatique ou du bouton de clé d’accès.                                                                                                                                                                      |
+    | Remplissage automatique                          | Les utilisateurs doivent se connecter à l’aide de la fonctionnalité de remplissage automatique de leur navigateur pour utiliser les clés d’accès. Le remplissage automatique permet de sélectionner un compte enregistré dans une liste déroulante au lieu de saisir manuellement les identifiants. |
+    | Bouton de clé d’accès                            | Les utilisateurs doivent sélectionner le bouton **Continuer avec une clé d’accès** dans l’invite de connexion.                                                                                                                                                                                      |
+
+    Si le remplissage automatique n’est pas disponible dans le navigateur de l’utilisateur, celui-ci peut se connecter à l’aide du bouton de clé d’accès (s’il est activé) ou avec un mot de passe.
+  </Step>
+
+  <Step title="Activer l’inscription progressive (facultatif)">
+    L’inscription progressive invite les utilisateurs à créer une clé d’accès (s’ils ne l’ont pas déjà fait) après s’être connectés avec un identifiant et un mot de passe. Cette étape n’est pas obligatoire, et les utilisateurs peuvent choisir de reporter cette action tous les 30 jours.
+
+    L’inscription progressive peut être utile lors de la migration des utilisateurs vers les clés d’accès, afin de faciliter la transition entre les méthodes d’authentification.
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      Lorsqu’ils créent un compte à partir d’un [courriel d’invitation à une organisation](/fr-CA/docs/manage-users/organizations/configure-organizations/invite-members), les utilisateurs ne peuvent pas choisir l’authentification par clé d’accès. Vous pouvez activer l’inscription progressive pour leur permettre de créer des clés d’accès après s’être connectés avec un mot de passe.
+    </Callout>
+
+    La case **Inscription progressive** est cochée par défaut, mais vous pouvez la décocher pour la désactiver.
+  </Step>
+
+  <Step title="Activer l’inscription locale (facultatif)">
+    Lorsqu’un utilisateur se connecte sur un nouvel appareil à l’aide d’une clé d’accès interappareil, l’inscription locale l’invite à créer une clé d’accès locale sur ce nouvel appareil. Cette étape n’est pas obligatoire; l’utilisateur peut donc choisir de ne pas créer de clé d’accès locale.
+
+    La case **Inscription locale** est cochée par défaut, mais vous pouvez la décocher pour la désactiver.
+  </Step>
+
+  <Step title="Enregistrer les paramètres">
+    Sélectionnez **Enregistrer** pour sauvegarder vos modifications de configuration.
+
+    Si le bouton d’enregistrement est désactivé, utilisez la section **Prérequis d’authentification par clé d’accès** en haut du panneau **Clé d’accès** pour confirmer que votre locataire et votre connexion de base de données sont correctement configurés.
+  </Step>
+</Steps>
+
+<div id="next-steps">
+  ## Prochaines étapes
+</div>
+
+Afin d’offrir la meilleure expérience possible aux utilisateurs finaux avec les clés d’accès, vous pouvez envisager les étapes supplémentaires suivantes.
+
+<div id="configure-relying-party-id-rp-id">
+  ### Configurer l’identifiant de partie de confiance (RP ID)
+</div>
+
+Pour permettre aux utilisateurs d’utiliser une seule clé d’accès pour s’authentifier dans tous les sous-domaines (par exemple, à la fois dans une application native accessible à `app.example.com` et dans une application Web accessible à `login.example.com`), vous pouvez définir le RP ID sur le domaine parent ou racine.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Lorsque vous personnalisez le RP ID dans Auth0 Dashboard ou la Management API, toutes les clés d’accès associées aux autres domaines deviennent inutilisables, et vos utilisateurs finaux doivent se réinscrire.
+</Callout>
+
+Le domaine de votre application doit être ajouté à la liste **Allowed Origins (CORS)** dans les [paramètres de votre application](https://manage.auth0.com/#/applications) pour que le RP ID fonctionne correctement.
+
+Pour définir le RP ID dans Auth0 Dashboard :
+
+1. Accédez à **[Auth0 Dashboard &gt; Tenant Settings](https://manage.auth0.com/#/tenant/relying_party_ids)**.
+2. Sélectionnez l’onglet **Relying Party IDs**.
+3. Choisissez **Edit Relying Party ID**.
+4. Entrez le domaine.
+5. Si ce RP ID correspond au domaine racine, cochez la case pour définir ce domaine comme valeur par défaut pour votre locataire.
+6. Sélectionnez **Save**.
+7. Ensuite, accédez à l’application pour laquelle vous voulez définir un identifiant de partie de confiance.
+8. Sélectionnez les paramètres de l’application.
+9. Dans la section **Application URIs**, ajoutez le domaine de votre application à Allowed Origins (CORS).
+10. Sélectionnez **Save**.
+
+<div id="configure-a-custom-domain">
+  ### Configurer un domaine personnalisé
+</div>
+
+Lorsqu’un utilisateur inscrit une clé d’accès, elle est associée au domaine de la <Tooltip tip="Entité (comme un service ou une application) qui dépend d’un fournisseur d’identité tiers pour authentifier un utilisateur." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=relying+party">partie de confiance</Tooltip>. Si le nom de domaine change, toutes les clés d’accès associées à l’ancien domaine deviennent invalides.
+
+Pensez à configurer un [domaine personnalisé](/fr-CA/docs/customize/custom-domains) pour votre locataire avant d’activer les clés d’accès afin d’éviter toute interruption pour les utilisateurs finaux.
+
+Si l’option [Multiple Custom Domains](/fr-CA/docs/customize/custom-domains/multiple-custom-domains) est activée sur votre locataire, Auth0 maintient une correspondance un à un entre un domaine et la clé d’accès correspondante.
+
+Les utilisateurs ne peuvent inscrire une clé d’accès que pour un seul domaine (le premier pour lequel ils l’inscrivent) parmi les multiples domaines personnalisés du locataire. Pour la connexion Passwordless, le domaine personnalisé sélectionné doit être indiqué dans le Magic Link du flux de connexion Passwordless.
+
+<div id="bypass-multi-factor-authentication">
+  ### Contourner l’authentification multifacteur
+</div>
+
+Si l’[authentification multifacteur](/fr-CA/docs/secure/multi-factor-authentication) est activée, le comportement par défaut consiste à exiger qu’un défi MFA soit complété, que la méthode d’authentification soit un mot de passe ou une clé d’accès.
+
+Compte tenu du niveau de sécurité élevé qu’offrent les clés d’accès, vous pouvez [ne pas exiger la MFA pour l’authentification par clé d’accès à l’aide d’une Action post-login](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#reduce-friction-with-passkeys).

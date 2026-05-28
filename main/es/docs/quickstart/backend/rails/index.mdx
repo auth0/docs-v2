@@ -1,0 +1,348 @@
+---
+title: "API de Ruby On Rails: Autorización"
+---
+
+<div id="by-josh-cunningham">
+  ##### Por Josh Cunningham
+</div>
+
+Este tutorial muestra cómo agregar autorización a una API de Ruby on Rails. Le recomendamos que inicie sesión para seguir este inicio rápido con ejemplos configurados para su cuenta.
+
+{/* <Card title="Ver en GitHub" href="https://github.com/auth0-samples/auth0-rubyonrails-api-samples/tree/master/01-Authentication-RS256" icon="github">
+  Requisitos del sistema: Ruby 2.1.8 | Rails 4.2.5
+  </Card> */}
+
+<Info>
+  **¿Es la primera vez que usa Auth0?** Descubra [cómo funciona Auth0](/es/docs/get-started/auth0-overview) y lea sobre [cómo implementar la autenticación y autorización de API](/es/docs/get-started/authentication-and-authorization-flow) con el marco de OAuth 2.0.
+</Info>
+
+<div id="configure-auth0-apis">
+  ## Configurar las API de Auth0
+</div>
+
+<div id="create-an-api">
+  ### Crear una API
+</div>
+
+En la sección [APIs](https://manage.auth0.com/#/apis) del Auth0 Dashboard, haz clic en **Create API**. Indica un nombre y un identificador para tu API, por ejemplo, `https://quickstarts/api`. Más adelante, usarás el identificador como `audience` al configurar la verificación del Token de acceso. Deja **Signing Algorithm** como **RS256**.
+
+<Frame>![Crear API](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/create-api.png)</Frame>
+
+De forma predeterminada, tu API usa RS256 como algoritmo para firmar tokens. Como RS256 usa un par de claves pública/privada, los tokens se verifican con la clave pública de tu cuenta de Auth0. La clave pública está en formato [JSON Web Key Set (JWKS)](/es/docs/secure/tokens/json-web-tokens/json-web-key-sets), y puedes acceder a ella [aquí](https://\{yourDomain}/.well-known/jwks.json).
+
+<Info>
+  Te recomendamos usar el [algoritmo de firma](/es/docs/get-started/applications/signing-algorithms) RS256 predeterminado para tu API. Si necesitas usar el algoritmo HS256, consulta el [ejemplo de integración de HS256](https://github.com/auth0-samples/auth0-rubyonrails-api-samples/tree/OIDC/02-Authentication-HS256).
+</Info>
+
+<div id="define-permissions">
+  ### Definir permisos
+</div>
+
+Los permisos le permiten definir cómo se puede acceder a los recursos en nombre del usuario con un token de acceso determinado. Por ejemplo, puede optar por conceder acceso de lectura al recurso `messages` si los usuarios tienen el nivel de acceso de gerente, y acceso de escritura a ese recurso si tienen el nivel de acceso de administrador.
+
+Puede definir los permisos permitidos en la vista **Permissions** de la sección [APIs](https://manage.auth0.com/#/apis) del Auth0 Dashboard.
+
+<Frame>![Configurar permisos](https://cdn2.auth0.com/docs/1.14550.0/media/articles/server-apis/configure-permissions.png)</Frame>
+
+<Info>
+  Este ejemplo usa el scope `read:messages`.
+</Info>
+
+En este ejemplo se muestra:
+
+* Cómo comprobar si hay un JSON Web Token (JWT) en el encabezado `Authorization` de una solicitud HTTP recibida.
+* Cómo comprobar si el token es válido mediante el [JSON Web Key Set (JWKS)](/es/docs/secure/tokens/json-web-tokens/json-web-key-sets) de su cuenta de Auth0. Para obtener más información sobre cómo validar tokens de acceso, consulte [Validar tokens de acceso](/es/docs/secure/tokens/access-tokens/validate-access-tokens).
+
+<div id="validate-access-tokens">
+  ## Validar tokens de acceso
+</div>
+
+<div id="install-dependencies">
+  ### Instalar dependencias
+</div>
+
+En este tutorial, la validación del token de acceso se realiza con la gema [**jwt**](https://github.com/jwt/ruby-jwt) dentro de una clase `Auth0Client` personalizada. También se usa un Concern llamado `Secured` para autorizar los endpoints que requieren autenticación mediante un token de acceso recibido.
+
+Instale la gema **jwt**.
+
+```bash lines
+gem 'jwt'
+bundle install
+```
+
+<div id="create-an-auth0client-class">
+  ### Cree una clase Auth0Client
+</div>
+
+Cree una clase llamada `Auth0Client` que decodifique y verifique el token de acceso entrante tomado del encabezado `Authorization` de la solicitud. La clave pública de su inquilino de Auth0 puede obtenerse para verificar el token.
+
+```rb lines
+# app/lib/auth0_client.rb
+
+# frozen_string_literal: true
+
+require 'jwt'
+require 'net/http'
+
+class Auth0Client 
+
+  # Objetos del cliente Auth0 
+  Error = Struct.new(:message, :status)
+  Response = Struct.new(:decoded_token, :error)
+
+  # Funciones auxiliares 
+  def self.domain_url
+    "https://#{Rails.configuration.auth0.domain}/"
+  end
+
+  def self.decode_token(token, jwks_hash)
+    JWT.decode(token, nil, true, {
+                 algorithm: 'RS256',
+                 iss: domain_url,
+                 verify_iss: true,
+                 aud: Rails.configuration.auth0.audience,
+                 verify_aud: true,
+                 jwks: { keys: jwks_hash[:keys] }
+               })
+  end
+
+  def self.get_jwks
+    jwks_uri = URI("#{domain_url}.well-known/jwks.json")
+    Net::HTTP.get_response jwks_uri
+  end
+
+  # Validación de token 
+  def self.validate_token(token)
+    jwks_response = get_jwks
+
+    unless jwks_response.is_a? Net::HTTPSuccess
+      error = Error.new(message: 'Unable to verify credentials', status: :internal_server_error)
+      return Response.new(nil, error)
+    end
+
+    jwks_hash = JSON.parse(jwks_response.body).deep_symbolize_keys
+
+    decoded_token = decode_token(token, jwks_hash)
+
+    Response.new(decoded_token, nil)
+  rescue JWT::VerificationError, JWT::DecodeError => e
+    error = Error.new('Bad credentials', :unauthorized)
+    Response.new(nil, error)
+  end
+end
+```
+
+<div id="define-a-secured-concern">
+  ### Defina un concern `Secured`
+</div>
+
+Cree un concern llamado `Secured` que busque el token de acceso en el encabezado `Authorization` de una solicitud entrante. Si el token está presente, debe pasarse a `Auth0Client.validate_token`.
+
+```rb lines
+# app/controllers/concerns/secured.rb
+
+# frozen_string_literal: true
+
+module Secured
+  extend ActiveSupport::Concern
+
+  REQUIRES_AUTHENTICATION = { message: 'Requires authentication' }.freeze
+  BAD_CREDENTIALS = {
+    message: 'Bad credentials'
+  }.freeze
+  MALFORMED_AUTHORIZATION_HEADER = {
+    error: 'invalid_request',
+    error_description: 'Authorization header value must follow this format: Bearer access-token',
+    message: 'Bad credentials'
+  }.freeze
+
+  def authorize
+    token = token_from_request
+
+    return if performed?
+    
+    validation_response = Auth0Client.validate_token(token)
+    
+    return unless (error = validation_response.error)
+    
+    render json: { message: error.message }, status: error.status
+  end
+
+  private
+
+  def token_from_request
+    authorization_header_elements = request.headers['Authorization']&.split
+
+    render json: REQUIRES_AUTHENTICATION, status: :unauthorized and return unless authorization_header_elements
+
+    unless authorization_header_elements.length == 2
+      render json: MALFORMED_AUTHORIZATION_HEADER, status: :unauthorized and return
+    end
+
+    scheme, token = authorization_header_elements
+
+    render json: BAD_CREDENTIALS, status: :unauthorized and return unless scheme.downcase == 'bearer'
+
+    token
+  end
+end
+```
+
+<div id="validate-scopes">
+  ### Validar alcances
+</div>
+
+El método `Auth0Client.validate_token` anterior verifica que el token de acceso incluido en la solicitud sea válido; sin embargo, todavía no incluye ningún mecanismo para comprobar que el token tenga el **scope** necesario para acceder a los recursos solicitados.
+
+Para buscar un `scope` concreto en un token de acceso, cree una nueva estructura en su clase `Auth0Client` llamada `Token` y defina dentro de ella un nuevo método, `validate_permissions`, que, dado un array de alcances requeridos, compruebe si están presentes en la carga útil del token.
+
+Vaya a la clase `Auth0Client`. Agregue la nueva estructura `Token` y actualice el valor de retorno del método `validate_token` de la siguiente manera:
+
+```rb lines
+# app/lib/auth0_client.rb
+
+# frozen_string_literal: true
+
+require 'jwt'
+require 'net/http'
+
+class Auth0Client 
+
+  # Objetos del cliente Auth0 
+  Error = Struct.new(:message, :status)
+  Response = Struct.new(:decoded_token, :error)
+
+  Token = Struct.new(:token) do
+    def validate_permissions(permissions)
+      required_permissions = Set.new permissions
+      scopes = token[0]['scope']
+      token_permissions = scopes.present? ? Set.new(scopes.split(" ")) : Set.new
+      required_permissions <= token_permissions
+    end
+  end
+
+  # ... 
+
+  # Validación de token 
+  def self.validate_token(token)
+    jwks_response = get_jwks
+
+    unless jwks_response.is_a? Net::HTTPSuccess
+      error = Error.new(message: 'Unable to verify credentials', status: :internal_server_error)
+      return Response.new(nil, error)
+    end
+
+    jwks_hash = JSON.parse(jwks_response.body).deep_symbolize_keys
+
+    decoded_token = decode_token(token, jwks_hash)
+
+    Response.new(Token.new(decoded_token), nil)
+  rescue JWT::VerificationError, JWT::DecodeError => e
+    error = Error.new('Bad credentials', :unauthorized)
+    Response.new(nil, error)
+  end
+end
+```
+
+A continuación, en el concern `Secured`, defina una nueva constante de error `INSUFFICIENT_PERMISSIONS` para devolver un mensaje de error adecuado en caso de que se intente solicitar un recurso sin los permisos necesarios. Luego, actualice el valor devuelto por la llamada a `Auth0Client.validate_token` y, por último, cree un nuevo método `validate_permissions` para comprobar si el token tiene los permisos adecuados o, de lo contrario, devolver un código de estado `403 FORBIDDEN` con el mensaje de error `INSUFFICIENT_PERMISSIONS`.
+
+Aplique estos cambios en su concern `Secured` agregando el siguiente código:
+
+```rb lines
+# app/controllers/concerns/secured.rb
+
+# frozen_string_literal: true
+
+module Secured
+  extend ActiveSupport::Concern
+
+  # ... 
+
+  INSUFFICIENT_PERMISSIONS = {
+    error: 'insufficient_permissions',
+    error_description: 'The access token does not contain the required permissions',
+    message: 'Permission denied'
+  }.freeze
+
+  def authorize
+    token = token_from_request
+
+    return if performed?
+
+    validation_response = Auth0Client.validate_token(token)
+
+    @decoded_token = validation_response.decoded_token # Agrega esta línea
+
+    return unless (error = validation_response.error)
+
+    render json: { message: error.message }, status: error.status
+  end
+
+  def validate_permissions(permissions)
+    raise 'validate_permissions needs to be called with a block' unless block_given?
+    return yield if @decoded_token.validate_permissions(permissions)
+
+    render json: INSUFFICIENT_PERMISSIONS, status: :forbidden
+  end
+
+  private
+  # ... 
+end
+```
+
+<div id="protect-api-endpoints">
+  ## Proteja los endpoints de la API
+</div>
+
+Las rutas que se muestran a continuación están disponibles para las siguientes solicitudes:
+
+* `GET /api/public`: disponible para solicitudes no autenticadas
+* `GET /api/private`: disponible para solicitudes autenticadas que contienen un token de acceso sin alcances adicionales
+* `GET /api/private-scoped`: disponible para solicitudes autenticadas que contienen un token de acceso con el scope `read:messages` concedido
+
+Agregue el concern `Secured` a `ApplicationController`:
+
+```rb lines
+class ApplicationController < ActionController::API
+  include Secured
+end
+```
+
+Solo tienes que proteger el `PrivateController` de la siguiente manera:
+
+```rb lines
+class PrivateController < ApplicationController
+  before_action :authorize
+
+  # ...
+end
+```
+
+Para comprobar que tu token de acceso tiene los permisos adecuados, llama al método `validate_permissions` de la siguiente manera en la Action `private-scoped`:
+
+```rb lines
+class PrivateController < ApplicationController
+  before_action :authorize
+
+  def private
+    render json: { message: 'Hello from a private endpoint! You need to be authenticated to see this.' }
+  end
+
+  def private_scoped
+    validate_permissions ['read:messages'] do
+      render json: { message: 'Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this.' }
+    end
+  end
+end
+```
+
+<Info>
+  ##### ¿Qué puedes hacer a continuación?
+
+  | [Configura otros proveedores de identidad](/es/docs/authenticate/identity-providers)                                                | [Habilita la autenticación multifactor](/es/docs/secure/multi-factor-authentication) |
+  | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+  | [Más información sobre la protección contra ataques](/es/docs/secure/attack-protection)                                             | [Más información sobre Rules](/es/docs/customize/rules)                              |
+  | [Editar en GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/backend/aspnet-core-webapi/01-authorization.md) |                                                                                   |
+</Info>
+
+***

@@ -1,0 +1,432 @@
+---
+title: CIMD でアプリケーションを登録する
+description: Client ID Metadata Document（CIMD）を使用してアプリケーションを登録する方法を説明します。
+validatedOn: 2026-04-29
+---
+
+URL から外部でホストされている Client ID Metadata Document (CIMD) をインポートして、Auth0 にアプリケーションを登録します。CIMD は、ドメイン上でホストされるクライアントのメタデータを含む JSON ファイルです (例: `https://example-client.com/mcp-metadata.json`) 。CIMD URL はそのアプリケーションのクライアントIDであり、ドメイン所有権を証明することで、信頼できるテナント管理者のみがアプリケーションを登録できるようにします。
+
+CIMD URL からアプリケーションをインポートすると、Auth0 はメタデータを取得、検証、保存し、そのアプリケーションを CIMD クライアントとして登録します。Auth0 はこれらの設定を記録しますが、ホストされている CIMD が引き続き信頼できる唯一の情報源であり、メタデータの更新は [手動更新](#refresh-client-metadata) によって同期されます。このアプリケーション登録プロセスは、手動 CIMD 登録と呼ばれます。
+
+手動 CIMD を使用して登録できるのは、[サードパーティアプリケーション](/ja/docs/get-started/applications/third-party-applications)のみです。これらには、[強化されたセキュリティ制御](/ja/docs/get-started/applications/third-party-applications/security-controls)が適用されます。登録後、Auth0 で [CIMD クライアントを設定](#set-up-cimd-client) し、サードパーティアプリケーションとして使用します。
+
+<div id="key-benefits">
+  ## 主な利点
+</div>
+
+CIMD の手動登録には、次の利点があります。
+
+1. 漏えいするおそれがある共有の対称シークレットではなく、非対称暗号 (公開鍵/秘密鍵) を使用します。
+2. アプリケーション所有者は CIMD でクライアントのメタデータを直接管理し、Auth0 はそれらの更新を取得して保存するだけです。
+3. クライアントID は、安全な HTTPS ドメインでホストされる CIMD の URL であり、監査ログでは人が読み取れる所有権の証明として機能します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  CIMD クライアントを含むサードパーティアプリケーションでは、組織はサポートされていません。サードパーティアプリケーションでの組織のサポートは、今後のリリースで導入される予定です。
+</Callout>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  CIMD クライアントのレート制限は、今後のリリースで導入される予定です。CIMD クライアントごとに個別のレート制限を設定できるほか、テナント内のすべての CIMD クライアントからの集約トラフィックに対して共有レート制限も設定できるようになります。
+</Callout>
+
+<div id="use-cases">
+  ## ユースケース
+</div>
+
+手動での CIMD 登録の一般的なユースケースは次のとおりです。
+
+* MCP クライアント: デプロイごとに一度だけ CIMD に登録すれば十分です。そのデプロイのすべてのインスタンスで同じ登録認証情報を使用します。Auth0 が MCP クライアントとサーバーをどのように保護しているかについては、[Auth for MCP](https://auth0.com/ai/docs/mcp/intro/overview) を参照してください。
+* サードパーティ統合: 組織に代わってユーザーを認証するパートナーアプリケーション、SaaS プラットフォーム、外部サービス。これらのアプリケーションは独自のクライアントメタデータと暗号鍵を管理するため、秘密情報を共有することなく、個別に更新や鍵のローテーションを行えます。
+
+<div id="example-cimd">
+  ## CIMD の例
+</div>
+
+以下は、`"token_endpoint_auth_method": "none"` が設定されたパブリック MCP クライアントの CIMD の例です。
+
+```json https://example-client.com/mcp-metadata.json wrap lines
+{
+  "client_id": "https://example-client.com/mcp-metadata.json",
+  "client_name": "Example MCP Tool Server",
+  "description": "MCP server providing tools for data analysis",
+  "logo_uri": "https://example-client.com/logo.png",
+  "application_type": "web",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "redirect_uris": [
+    "https://example-client.com/callback"
+  ],
+  "token_endpoint_auth_method": "none",
+  "response_types": ["code"]
+}
+```
+
+Auth0 は自動的に [CIMD フィールドをマッピングして検証します](#cimd-json-validation-rules)。サポートされているクライアントタイプの詳細については、[前提条件](#prerequisites) を参照してください。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+次の図は、手動によるCIMD登録のエンドツーエンドのフローを示しています。
+
+* [フェーズ1: 登録](#phase-1%3A-registration)
+* [フェーズ2: 認可](#phase-2%3A-authorization)
+
+```mermaid
+%%{init: { "sequence": { "mirrorActors": true }}}%%
+sequenceDiagram
+    rect rgb(240, 248, 255)
+    Note over Tenant Admin,Auth0: Registration Phase
+    participant Tenant Admin
+    participant Auth0
+    participant Domain
+    Tenant Admin->>Auth0: Create CIMD app
+    Auth0->>Tenant Admin: POST /register<br/>(external_client_id = https://.../client.json)
+    Auth0->>Domain: GET https://.../client.json
+    Domain-->>Auth0: Client metadata (CIMD JSON)
+    Auth0->>Auth0: Validate + store client
+    end
+    rect rgb(240, 255, 240)
+    Note over Client,Auth0: Authorization Phase
+    actor User
+    participant Client
+    participant Auth0
+    User->>Client: User-initiated task
+    Client->>Auth0: /authorize?client_id = https://.../client.json<br/>(Auth0 resolves client by external_client_id == client_id)
+    Auth0->>User: Consent screen<br/>(client metadata)
+    User->>Auth0: Approve
+    Auth0-->>Client: Authorization code
+    Client->>Auth0: Exchange code
+    Auth0->>Client: Complete authorization & redirect to client redirect_uri
+    Client->>Auth0: Request resource access token with /oauth/token
+    Auth0-->>Client: Return resource access token<br/>(includes client_id=https://../client.json)
+    end
+```
+
+<div id="phase-1-registration">
+  ### フェーズ1: 登録
+</div>
+
+手動でCIMDを登録する場合、テナント管理者は外部でホストされているCIMDをAuth0にインポートして、アプリケーションを登録します。
+
+1. **アプリケーションの作成**: テナント管理者は、次の方法でAuth0にCIMDアプリを作成します。
+   * Auth0 Dashboardで**Import from URL**を選択する
+   * `/register` エンドポイントにPOSTリクエストを送信し、`external_client_id` を指定する
+2. **メタデータの取得**: Auth0はクライアントのドメインにGETリクエストを送信し、CIMD (client.json) を取得します。
+3. **セキュリティ検証**: Auth0はCIMD URLをマッピングし、[CIMD URL検証ルール](#cimd-url-validation-rules)に基づいて検証するとともに、CIMD自体も[CIMD検証ルール](#cimd-json-validation-rules)に基づいて検証します。この際、`external_client_id` がCIMD URLと一致することなどを確認します。
+4. **永続化**: 検証が完了すると、Auth0はクライアントのメタデータをデータベースに保存します。
+5. **確認**: Auth0は成功レスポンスを返し、アプリケーションはAuth0でCIMDクライアントとして正常に登録されます。
+
+<div id="phase-2-authorization">
+  ### フェーズ 2: 認可
+</div>
+
+登録が完了すると、アプリケーションは OAuth フローにおける自身の識別子として CIMD URL を使用します。
+
+1. **ユーザー主導のタスク**: ユーザーは、アプリケーションによる API へのアクセスが必要なタスクを開始します。
+2. **認可リクエスト**: アプリケーションは Auth0 認可サーバーにリクエストを送信し、`client_id` として CIMD URL を渡します。
+3. **クライアントの解決**: Auth0 認可サーバーはデータベースを照会し、指定された URL (`client_id`) を保存済みのクライアント設定 (`external_client_id`) に対応付けます。
+4. **ユーザーの同意**: Auth0 はユーザーに同意画面を表示し、CIMD メタデータから取得した `client_name` を使ってアプリケーションを識別します。
+5. **リダイレクト**: ユーザーが同意すると、Auth0 は認可コードを付与し、ユーザーをアプリケーションにリダイレクトします。
+6. **code の交換**: アプリケーションは、トークンエンドポイントで認可コードをアクセストークンと交換します。
+7. **認可の完了**: Auth0 認可サーバーは、`client_id` が CIMD URL に設定されたアクセストークンを返します。これで、アプリケーションはユーザーに代わって API にアクセスできます。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+手動で CIMD にアプリケーションを登録する前に、テナントとアプリケーションが次の要件を満たしていることを確認してください。
+
+<div id="tenant-configuration">
+  ### テナント設定
+</div>
+
+* **CIMD サポートを有効にする**: [テナント設定](/ja/docs/get-started/tenant-settings)で **Client ID Metadata Document Registration** トグルを有効にすると、Auth0 認可サーバーのメタデータに CIMD サポートが示され、接続時にクライアントがこの機能を自動的に検出できるようになります。
+  * **Settings &gt; Advanced** に移動し、**Settings** セクションまでスクロールします。
+  * **Client ID Metadata Document Registration** をオンにします。
+* **Resource Parameter Compatibility Profile (任意)&#x20;**: MCP クライアントでは、[テナント設定](/ja/docs/get-started/tenant-settings)でこのプロファイルを有効にすることを推奨します。これにより、`audience` が指定されていない場合に `resource` パラメーターを確認して、認可サーバーがリソース固有のリクエスト ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707.html#name-resource-parameter)) を処理できるようになります。
+
+<div id="supported-client-types">
+  ### サポートされるクライアントタイプ
+</div>
+
+Auth0 では、手動CIMDで次のクライアントタイプを登録できます。
+
+* **アプリケーションタイプ**: ネイティブアプリケーションまたは Regular Web Application である必要があります。
+* **サードパーティアプリケーション**: [サードパーティアプリケーション](/ja/docs/get-started/applications/third-party-applications) (`is_first_party: false`) である必要があり、[セキュリティ制御](/ja/docs/get-started/applications/third-party-applications/security-controls) の対象となります。登録後、Auth0 で [CIMD クライアントを設定](#set-up-cimd-client) し、サードパーティアプリケーションとして構成します。
+
+<div id="supported-authentication-methods">
+  ### サポートされる認証方法
+</div>
+
+CIMD クライアントでは、`client_secret_post`、`client_secret_basic`、`client_secret_jwt` など、共有対称シークレットベースの認証方法は使用できません。
+
+Auth0 では、クライアントがパブリッククライアントか機密クライアントかに応じて、CIMD クライアントに次の認証方法をサポートしています。
+
+* **パブリッククライアント**:
+  * トークンエンドポイントでのクライアント認証は不要です。クライアントのメタデータで `token_endpoint_auth_method` を `none` に設定してください
+  * 認可フローでは、[Proof Key for Code Exchange (PKCE)](/ja/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) を使用する必要があります
+* **機密クライアント**:
+  * [Private Key JWT 認証](/ja/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt#authenticate-with-private-key-jwt) のみサポートされています。クライアントのメタデータで `token_endpoint_auth_method` を `private_key_jwt` に設定してください
+  * 公開鍵をホストする `jwks_uri` を指定してください。`jwks_uri` は、CIMD URL と完全に同じオリジン (スキーム、ホスト、ポート) である必要があります。詳しくは、[CIMD JSON の検証ルール](#cimd-json-validation-rules) を参照してください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Private Key JWT 認証は、Enterprise のお客様のみ利用できます。Enterprise プランの詳細については、[Pricing](https://auth0.com/pricing) を参照するか、[Auth0 Sales](https://auth0.com/contact-us) へお問い合わせください。
+</Callout>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Private Key JWT 認証を使用する CIMD クライアントでは、[新しい一意の `kid` を持つ新しいキーペアを生成して、キー ローテーションを実装する](#security-considerations) 必要があります。
+</Callout>
+
+<div id="register-applications-with-manual-cimd">
+  ## 手動 CIMD を使用してアプリケーションを登録する
+</div>
+
+Auth0 でアプリケーションを作成するときは、Auth0 Dashboard または Management API を使用して、CIMD を手動で登録します。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Auth0 Dashboard を使用して手動 CIMD でアプリケーションを登録するには、次の手順に従います。
+
+    1. **Applications &gt; Applications** に移動します。
+    2. **Create Application &gt; Import from URL** を選択します。
+    3. CIMD URL を入力し、**Preview** を選択します。Auth0 は [CIMD URL 検証ルール](#cimd-url-validation-rules)に基づいて CIMD URL を検証します。
+    4. CIMD URL が有効な場合、Auth0 は CIMD を読み込み、[CIMD JSON 検証ルール](#cimd-json-validation-rules)に基づいて検証します。クライアントのメタデータをプレビューし、検証エラーがあればトラブルシューティングします。
+    5. **Create** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    Management API を使用して手動 CIMD でアプリケーションを登録するには、次の手順に従います。
+
+    1. [CIMD をプレビューする](#preview-cimd): Auth0 で CIMD URL と CIMD を検証します
+    2. [CIMD クライアントを登録する](#register-cimd-client): アプリケーションを Auth0 に CIMD クライアントとして登録します
+
+    ### CIMD をプレビューする
+
+    CIMD をプレビューするには、`/api/v2/clients/cimd/preview` エンドポイントに `POST` リクエストを送信し、次の値を渡します。
+
+    * `external_client_id`: アプリケーションの CIMD URL
+
+    `/api/v2/clients/cimd/preview` エンドポイントは、`external_client_id` とその URL にある CIMD を読み込んで検証し、クライアントのメタデータと検証エラーをプレビューできるようにします。
+
+    次のリクエストでは、`https://mcpserver.example.com/client.json` を `external_client_id` として `/api/v2/clients/cimd/preview` エンドポイントに渡しています。
+
+    ```bash wrap lines
+    curl --request POST \
+      --url 'https://YOUR_AUTH0_DOMAIN/api/v2/clients/cimd/preview' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "external_client_id": "https://mcpserver.example.com/client.json"
+      }'
+    ```
+
+    成功すると、Auth0 は次のようなレスポンスを返します。
+
+    ```json
+    {
+      "mapped_fields": {
+        "external_client_id": "https://mcpserver.example.com/client.json",
+        "redirect_uris": ["https://mcpserver.example.com/callback"],
+        "client_name": "MCP Tool Server",
+        "logo_uri": "https://mcpserver.example.com/logo.png",
+        "grant_types": ["authorization_code"],
+        "scope": "read write"
+      },
+      "validation": {
+        "valid": true,
+        "warnings": [
+          "Grant type not supported: 'implicit'",
+          "Property not supported: 'nfv_token_signed_response_alg'"
+        ]
+      }
+    }
+    ```
+
+    ### CIMD クライアントを登録する
+
+    クライアントのメタデータを確認したら、`/api/v2/clients/cimd/register` エンドポイントに `POST` リクエストを送信し、次の値を渡します。
+
+    * `external_client_id`: アプリケーションの CIMD URL
+
+    `/api/v2/clients/cimd/register` エンドポイントは、CIMD アプリケーションを登録します。
+
+    次のリクエストでは、`https://mcpserver.example.com/client.json` を `external_client_id` として `/api/v2/clients/cimd/register` エンドポイントに渡しています。
+
+    ```bash wrap lines
+    curl --request POST \
+      --url 'https://YOUR_AUTH0_DOMAIN/api/v2/clients/cimd/register' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "external_client_id": "https://mcpserver.example.com/client.json"
+      }'
+    ```
+
+    成功すると、Auth0 は次のようなレスポンスを返します。
+
+    ```json
+    Location: /api/v2/clients/YOUR_CLIENT_ID
+    {
+      "client_id": "YOUR_CLIENT_ID",
+      "mapped_fields": {
+        "external_client_id": "https://mcpserver.example.com/client.json",
+        "redirect_uris": ["https://mcpserver.example.com/callback"],
+        "client_name": "MCP Tool Server",
+        "logo_uri": "https://mcpserver.example.com/logo.png",
+        "grant_types": ["authorization_code"],
+        "scope": "read write"
+      },
+      "validation": {
+        "valid": true,
+        "warnings": [
+          "Grant type not supported: 'implicit'",
+          "Property not supported: 'nfv_token_signed_response_alg'"
+        ]
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<div id="set-up-cimd-client">
+  ## CIMDクライアントを設定する
+</div>
+
+手動での CIMD 登録は、[強化されたセキュリティ制御](/ja/docs/get-started/applications/third-party-applications/security-controls)の対象となるサードパーティアプリケーション (`is_first_party: false`) に限定されています。CIMD クライアントを登録したら、Auth0 でサードパーティアプリケーションとして設定します。
+
+* [APIアクセスポリシーを設定する](/ja/docs/get-started/applications/third-party-applications/configure-third-party-applications#configure-api-access-policies): API へのアクセスを許可するクライアントグラントを作成します
+* [接続をドメインレベルで利用可能にする](/ja/docs/get-started/applications/third-party-applications/configure-third-party-applications#configure-connections): ユーザーを認証できるよう、接続をドメインまたはテナントレベルで利用可能にします
+
+詳細については、[Configure Third-Party Applications](/ja/docs/get-started/applications/third-party-applications/configure-third-party-applications)を参照してください。
+
+<div id="refresh-client-metadata">
+  ## クライアントのメタデータを再取得する
+</div>
+
+CIMD クライアントを登録すると、クライアントのメタデータを手動で再取得できます。Auth0 は CIMD から最新のクライアントメタデータを取得し、その内容をプレビューして保存できます。
+
+クライアントのメタデータを再取得すると、Auth0 はホストされている CIMD の値に合わせて `app_type` と `grant_types` を更新します。CIMD フィールドの詳細については、[CIMD JSON の検証ルール](#cimd-json-validation-rules)を参照してください。
+
+Auth0 Dashboard で次の操作を行います。
+
+1. **Applications &gt; Applications** に移動し、CIMD クライアントを選択します。
+2. 画面右上の **Refresh Client Metadata** を選択します。
+3. **Refresh Preview** を選択して、CIMD の最新のクライアントメタデータをプレビューします。検証に関する警告やエラーを確認します。
+4. **Save** を選択します。
+
+<div id="get-cimd-client">
+  ## CIMDクライアントを取得する
+</div>
+
+CIMDクライアントを取得するには、`/v2/clients/{clientId}` エンドポイントに `GET` リクエストを送信します。ここで、`{clientID}` は CIMDクライアントに割り当てられた、Auth0 によって生成されたクライアントIDです。
+
+```bash wrap lines
+curl --request GET \
+  --url 'https://YOUR_AUTH0_DOMAIN/api/v2/clients/YOUR_CLIENT_ID' \
+  --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+  --header 'Content-Type: application/json'
+```
+
+または、`external_client_id` か CIMD URL を、`/v2/clients` エンドポイントのクエリパラメーターとして渡します。
+
+```bash wrap lines
+curl --request GET \
+  --url 'https://YOUR_AUTH0_DOMAIN/api/v2/clients?external_client_id=https://mcpserver.example.com/client.json' \
+  --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+  --header 'Content-Type: application/json'
+```
+
+成功すると、Auth0 は `external_client_id`、`name`、`callbacks`、`token_endpoint_auth_method` などのフィールドを含む、CIMD クライアントの設定を返します。
+
+<div id="update-cimd-client">
+  ## CIMDクライアントを更新する
+</div>
+
+登録済みのCIMDクライアントについて、Auth0データベース内のフィールドを更新できます。Auth0内のCIMDクライアントを更新しても、アプリケーションのドメインでホストされているCIMDには自動的に反映されません。
+
+CIMDクライアントで更新できるのは、次のフィールドのみです。
+
+| Field                         | Description                                                                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `app_type`                    | Auth0アプリケーションのタイプ。CIMDでは、これは`application_type`からマッピングされ、`native` (ネイティブアプリ用) または`regular_web` (Webアプリ用) のみに制限されます。                |
+| `grant_types`                 | 許可されるOAuth 2.0のグラントタイプ。CIMDでは、`authorization_code`と`refresh_token`のみに制限されます。その他のタイプはマッピング時に除外されます。                                |
+| `jwt_configuration.alg`       | IDトークンの署名に使用されるアルゴリズム。厳格なサードパーティクライアントとして、CIMDアプリケーションは通常、RS256、RS512、PS256などの安全な非対称アルゴリズムに制限されます。                                |
+| `description`                 | クライアントの自由記述の説明です。CIMDメタデータから直接マッピングされ、最大140文字まで指定できます。                                                                            |
+| `oidc_conformant`             | 厳格なサードパーティクライアントでは有効にする必要があります。これにより、クライアントがOIDC仕様に準拠することが保証され、CIMDクライアントでは通常変更できません。                                             |
+| `allowed_origins`             | Cross-Origin Resource Sharing (CORS) で許可されるURLの一覧。通常はブラウザーベースのアプリケーションで使用されます。                                                    |
+| `web_origins`                 | Webベースのフロー (例: サイレント認証) で許可されるURLの一覧。                                                                                             |
+| `refresh_token.*`             | `rotation_type`、`leeway`、および各種有効期間設定を含む、リフレッシュトークンの動作に関する設定です。これらは、リフレッシュトークンの有効期間や、使用時にローテーションするかどうかを制御します。                      |
+| `organization_*`              | `usage`、`require_behaviour`、`discovery_methods`、`default_organization`を含む、組織固有のフローに関する設定です。これらは、クライアントがAuth0の組織とどのように連携するかを決定します。 |
+| `client_metadata`             | 標準のAuth0プロパティにマッピングされない、クライアントに関する追加情報を格納するための任意のキーと値のペアです。                                                                       |
+| `require_proof_of_possession` | クライアントが鍵の所持証明を提示する必要があるかどうかを示します。多くの場合、DPoPまたはmTLSとともに使用されます。                                                                     |
+
+CIMDクライアントを更新するには、`/v2/clients/{clientId}`エンドポイントに対して`PATCH`リクエストを送信します。ここで、`{clientID}`はCIMDクライアントに割り当てられたAuth0生成のクライアントIDです。
+
+```bash wrap lines
+curl --location --request PATCH \
+  'https://YOUR_AUTH0_DOMAIN/api/v2/clients/YOUR_CLIENT_ID' \
+  --header 'Content-Type: application/json' \
+  --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+  --data '{
+    "description": "This is my test CIMD client"
+  }'
+```
+
+<div id="cimd-url-validation-rules">
+  ## CIMD URL の検証ルール
+</div>
+
+Auth0 で検証を通過するには、CIMD URL が次の要件を満たしている必要があります。
+
+| Category        | Rule             | Requirement                                              |
+| --------------- | ---------------- | -------------------------------------------------------- |
+| **Protocol**    | HTTPS Required   | `https://` スキームを使用する必要があります。                             |
+| **Host**        | No Localhost     | `localhost`、`127.0.0.1`、`::1` は使用できません。                  |
+|                 | Valid Hostname   | 空でないホスト名を含める必要があります。トリプルスラッシュ (例: `https:///`) は使用できません。 |
+| **Path**        | Path Component   | ルート `/` より先のパスを含める必要があります。                               |
+|                 | No Dot Segments  | パスに `.` または `..` (エンコードされた `%2e` を含む) を含めることはできません。      |
+| **Constraints** | Length Limit     | 最大 120 バイトです。                                            |
+|                 | No Whitespace    | 先頭または末尾に空白を含めることはできません。                                  |
+|                 | Format           | URL として解析可能な空でない文字列である必要があります。                           |
+| **Forbidden**   | No Credentials   | URL に username またはパスワードを含めることはできません。                     |
+|                 | No Fragments     | フラグメント識別子 (`#`) は使用できません。                                |
+|                 | No Query         | クエリ文字列 (`?`) は使用できません。                                   |
+|                 | No Port 0        | ポート 0 は予約済みのため、使用できません。                                  |
+| **Encoding**    | Percent-Encoding | `%` の直後には、必ず 2 桁の 16 進数が続く必要があります。                       |
+
+<div id="cimd-json-validation-rules">
+  ## CIMD JSON 検証ルール
+</div>
+
+Auth0 では、次の CIMD JSON 検証ルールが適用されます。
+
+* **サポートされていないプロパティ**: Auth0 は、マッピング時にサポートされていないプロパティを無視し、検証レスポンスで警告として報告します。
+* **インライン JWKS**: `jwks_uri` ではなくインラインの `jwks` オブジェクトを指定することはサポートされておらず、`invalid_client_metadata` エラーが発生します。
+* **秘密鍵**: `jwks_uri` 経由で取得した JWKS に秘密鍵の情報 (`d` パラメーター) が含まれている場合は拒否されます。
+* **取得時のセキュリティ**: CIMD ドキュメントと `jwks_uri` には、それぞれ 5KB と 12KB のサイズ制限が適用され、どちらも HTTP リダイレクトはサポートされていません。
+
+Auth0 は、次の CIMD プロパティをサポートしています。
+
+| Property                     | Required | Type         | Validation Rules                                                                                                  | Auth0 Mapping                |
+| ---------------------------- | -------- | ------------ | ----------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `client_id`                  | はい       | String       | ドキュメントのホスト先と完全に一致する有効な HTTPS URL である必要があります。                                                                      | `external_client_id`         |
+| `client_name`                | はい       | String       | 空でない文字列である必要があります。                                                                                                | `name`                       |
+| `redirect_uris`              | 条件付き     | String Array | `grant_types` に `authorization_code` または `implicit` が含まれる場合は必須です。一意の HTTPS URI である必要があります (ネイティブアプリではループバックを許可) 。 | `callbacks`                  |
+| `grant_types`                | はい       | String Array | 少なくとも 1 つのサポート対象タイプ (`authorization_code` または `refresh_token`) を含める必要があります。サポートされていないタイプは警告を生成し、除外されます。           | `grant_types`                |
+| `application_type`           | いいえ      | String       | `native` または `web` のみ使用できます。不明な値は拒否されます。デフォルトは `web` です。                                                          | `app_type`                   |
+| `token_endpoint_auth_method` | いいえ      | String       | `none` または `private_key_jwt` をサポートします。対称鍵方式 (例: `client_secret_post`) は禁止されています。                                  | `token_endpoint_auth_method` |
+| `jwks_uri`                   | 条件付き     | String       | `token_endpoint_auth_method` が `private_key_jwt` の場合は必須です。`client_id` と同じオリジンの HTTPS URL である必要があります。              | `jwks_uri`                   |
+| `logo_uri`                   | いいえ      | String       | 有効な HTTP または HTTPS URL である必要があります。                                                                                | `logo_uri`                   |
+| `description`                | いいえ      | String       | 最大 140 文字の自由記述テキストです。                                                                                             | `description`                |
+| `response_types`             | いいえ      | String Array | OIDC の整合性について検証されますが、保持はされません。`grant_types` に `authorization_code` が含まれていないのに `code` が含まれている場合は警告が生成されます。         |  (なし)                        |
+
+<div id="security-considerations">
+  ## セキュリティ上の考慮事項
+</div>
+
+<div id="cimd-client-key-rotation-for-private_key_jwt-authentication">
+  ### Private Key JWT 認証の CIMD クライアント鍵ローテーション
+</div>
+
+Private Key JWT 認証を使用する CIMD クライアントの鍵を正しくローテーションするには、新しい一意の `kid` を持つ新しいキーペアを生成します。秘密鍵をローテーションし、同じ `kid` のまま新しい鍵情報で JWKS を更新すると、Auth0 の CIMD 登録では新しい鍵が拒否され、古い鍵が保持されます。これにより、鍵のローテーションでは新しい鍵を明示的に追加する必要があり、気付かないうちに置き換えられることはありません。
+
+鍵をローテーションした後は、必ず Auth0 で鍵登録を更新してください。詳細については、[署名鍵のローテーション](/ja/docs/secure/tokens/json-web-tokens/json-web-key-sets#rotate-signing-keys) を参照してください。

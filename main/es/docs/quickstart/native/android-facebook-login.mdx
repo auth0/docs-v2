@@ -1,0 +1,342 @@
+---
+mode: wide
+sidebarTitle: Facebook Login para Android
+title: Agrega Native Facebook Login a tu aplicación de Android
+---
+
+<div id="before-you-start">
+  ## Antes de comenzar
+</div>
+
+Completa estos requisitos previos antes de seguir este inicio rápido:
+
+1. **Configura el SDK de Facebook Login** - Instala y configura el [SDK de Facebook Login para Android](https://developers.facebook.com/docs/facebook-login/). Crea una aplicación de Facebook en [developers.facebook.com](https://developers.facebook.com). Al terminar, Facebook Login debería funcionar en tu aplicación.
+2. **Configura Auth0 para Facebook Native** - Configura tu aplicación de Auth0 para usar Facebook Native Sign In. Consulta [Añadir Facebook Login a aplicaciones nativas](/es/docs/authenticate/identity-providers/social-identity-providers/facebook-native).
+
+<div id="get-started">
+  ## Primeros pasos
+</div>
+
+<Steps>
+  <Step title="Configurar permisos de Facebook Login" stepNumber={1}>
+    Actualiza el botón de Facebook Login en tu Activity para solicitar los permisos adecuados.
+
+    Tu aplicación ya admite Facebook Login, pero para obtener un perfil de usuario más completo debes solicitar los permisos `public_profile` y `email`. También agregarás un callback para iniciar el flujo de autenticación de Auth0.
+
+    ```kotlin MainActivity.kt lines
+    private lateinit var fbCallbackManager: CallbackManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_login)
+
+        fbCallbackManager = CallbackManager.Factory.create()
+        val loginButton = findViewById<LoginButton>(R.id.login_button)
+
+        // Solicitar permisos de email y public_profile
+        loginButton.setPermissions("email", "public_profile")
+
+        loginButton.registerCallback(fbCallbackManager,
+            object : FacebookCallback<LoginResult> {
+                override fun onSuccess(result: LoginResult) {
+                    val accessToken = result.accessToken
+                    performLogin(accessToken)
+                }
+                override fun onCancel() {
+                    // El usuario cerró el diálogo. Se puede ignorar
+                }
+                override fun onError(error: FacebookException) {
+                    // Gestionar error de autenticación de Facebook
+                }
+            })
+    }
+
+    private fun performLogin(accessToken: AccessToken) {
+        // Los pasos 2–4 completarán este método
+    }
+    ```
+
+    <Info>
+      El permiso `email` es opcional; el usuario debe dar su consentimiento para compartirlo. El correo electrónico que devuelve Facebook se **marcará como no verificado** en el perfil de usuario de Auth0.
+    </Info>
+  </Step>
+
+  <Step title="Instala y configura el SDK de Auth0" stepNumber={2}>
+    Añade el SDK de Auth0 para Android a tu proyecto y configura las credenciales de la aplicación.
+
+    **Añade la dependencia a `app/build.gradle.kts`:**
+
+    ```kotlin app/build.gradle.kts lines
+    dependencies {
+        implementation("com.auth0.android:auth0:3.+")
+    }
+    ```
+
+    Sincroniza Gradle después de agregar la dependencia.
+
+    **Agrega tus credenciales de Auth0 a `strings.xml`:**
+
+    Ve a la sección **Applications** del [Auth0 Dashboard](https://manage.auth0.com/) y selecciona la aplicación en la que habilitaste Facebook Native Sign In. Copia los valores de **dominio** e **ID de cliente**.
+
+    ```xml app/src/main/res/values/strings.xml lines
+    <resources>
+        <string name="com_auth0_domain">{yourDomain}</string>
+        <string name="com_auth0_client_id">{yourClientId}</string>
+    </resources>
+    ```
+
+    **Inicializa el SDK de Auth0 en tu Activity:**
+
+    ```kotlin MainActivity.kt lines
+    private val account: Auth0 by lazy {
+        Auth0.getInstance(
+            getString(R.string.com_auth0_client_id),
+            getString(R.string.com_auth0_domain)
+        )
+    }
+
+    private val authenticationApiClient: AuthenticationAPIClient by lazy {
+        AuthenticationAPIClient(account)
+    }
+    ```
+
+    <Note>
+      Si tu aplicación no usa Auth0 Web Authentication, elimina la actividad que no se usa de `AndroidManifest.xml` para evitar errores de Manifest Placeholder:
+
+      ```xml app/src/main/AndroidManifest.xml lines
+      <application>
+          <activity
+              android:name="com.auth0.android.provider.AuthenticationActivity"
+              tools:node="remove" />
+      </application>
+      ```
+
+      Si tienes previsto admitir Web Authentication, consulta [Autenticación mediante Universal Login](/es/docs/libraries/auth0-android#authentication-via-universal-login).
+    </Note>
+  </Step>
+
+  <Step title="Obtener el token de acceso de la sesión de Facebook" stepNumber={3}>
+    Una vez que el Login de Facebook se complete correctamente, obtén un **token de acceso de sesión** de la API de Facebook. Auth0 requiere este token para verificar la identidad del usuario en el backend.
+
+    Haz una solicitud GET al endpoint `/oauth/access_token` de Facebook mediante la clase `GraphRequest`:
+
+    ```kotlin MainActivity.kt lines
+    private interface SimpleCallback<T> {
+        fun onResult(result: T)
+        fun onError(cause: Throwable)
+    }
+
+    private fun fetchSessionToken(accessToken: AccessToken, callback: SimpleCallback<String>) {
+        val request = GraphRequest()
+        request.graphPath = "oauth/access_token"
+        val bundle = Bundle()
+        bundle.putString("grant_type", "fb_attenuate_token")
+        bundle.putString("client_id", getString(R.string.facebook_app_id))
+        bundle.putString("fb_exchange_token", accessToken.token)
+        request.parameters = bundle
+        request.callback = GraphRequest.Callback { response ->
+            if (response.error != null) {
+                response.error?.exception?.let { callback.onError(it) }
+            } else {
+                response.jsonObject?.let { callback.onResult(it.getString("access_token")) }
+            }
+        }
+        request.executeAsync()
+    }
+    ```
+
+    <Info>
+      Los parámetros de consulta obligatorios son:
+
+      * `grant_type`: `fb_attenuate_token`
+      * `fb_exchange_token`: el token de acceso de Facebook Login
+      * `client_id`: el ID de tu aplicación de Facebook (ya está en tu aplicación desde la configuración del SDK de Facebook)
+    </Info>
+  </Step>
+
+  <Step title="Obtén el perfil de usuario de Facebook" stepNumber={4}>
+    Obtenga el perfil del usuario desde Facebook. Auth0 usa estos datos para crear o actualizar el perfil del usuario en Auth0.
+
+    ```kotlin MainActivity.kt lines
+    private fun fetchUserProfile(
+        accessToken: AccessToken,
+        callback: SimpleCallback<String>
+    ) {
+        val request = GraphRequest.newMeRequest(accessToken) { _, response ->
+            val error = response?.error
+            if (error != null) {
+                error.exception?.let { callback.onError(it) }
+            } else {
+                callback.onResult(response?.rawResponse.toString())
+            }
+        }
+        val bundle = Bundle()
+        bundle.putString("fields", "first_name,last_name,email")
+        request.parameters = bundle
+        request.executeAsync()
+    }
+    ```
+
+    <Tip>
+      El parámetro `fields` corresponde directamente a los permisos de Facebook que solicitaste. Solicitar `first_name`, `last_name` y `email` es suficiente para que Auth0 cree un perfil de usuario completo.
+    </Tip>
+  </Step>
+
+  <Step title="Intercambiar tokens por credenciales de Auth0" stepNumber={5}>
+    Usa el token de sesión y el perfil de usuario de los pasos anteriores para autenticarte con Auth0 y obtener tokens de Auth0.
+
+    Llama a `loginWithNativeSocialToken` en `AuthenticationAPIClient` y pasa el token de sesión con el tipo de token de sujeto de Facebook:
+
+    ```kotlin MainActivity.kt lines
+    private fun exchangeTokens(
+        sessionToken: String,
+        userProfile: String,
+        callback: SimpleCallback<Credentials>
+    ) {
+        authenticationApiClient
+            .loginWithNativeSocialToken(
+                sessionToken,
+                "http://auth0.com/oauth/token-type/facebook-info-session-access-token"
+            )
+            .setScope("openid profile email offline_access")
+            .addParameter(name = "user_profile", value = userProfile)
+            .start(object : Callback<Credentials, AuthenticationException> {
+                override fun onSuccess(result: Credentials) {
+                    callback.onResult(result)
+                }
+                override fun onFailure(error: AuthenticationException) {
+                    callback.onError(error)
+                }
+            })
+    }
+    ```
+
+    <Info>
+      El tipo de token del sujeto `http://auth0.com/oauth/token-type/facebook-info-session-access-token` indica a Auth0 que use la conexión nativa de Facebook para la autenticación.
+    </Info>
+  </Step>
+
+  <Step title="Integra todo" stepNumber={6}>
+    Complete el método `performLogin` para encadenar los tres pasos: obtener el token de sesión → obtener el perfil de usuario → canjearlo por tokens de Auth0.
+
+    ```kotlin MainActivity.kt lines
+    private fun performLogin(accessToken: AccessToken) {
+        fetchSessionToken(accessToken, object : SimpleCallback<String> {
+            override fun onResult(sessionToken: String) {
+                fetchUserProfile(accessToken, object : SimpleCallback<String> {
+                    override fun onResult(userProfile: String) {
+                        exchangeTokens(sessionToken, userProfile, object : SimpleCallback<Credentials> {
+                            override fun onResult(result: Credentials) {
+                                // ¡Autenticado! Usa result.accessToken o result.idToken
+                            }
+                            override fun onError(cause: Throwable) {
+                                // Gestionar error de intercambio de token
+                            }
+                        })
+                    }
+                    override fun onError(cause: Throwable) {
+                        // Gestionar error de solicitud de perfil
+                    }
+                })
+            }
+            override fun onError(cause: Throwable) {
+                // Gestionar error de solicitud de token de sesión
+            }
+        })
+    }
+    ```
+
+    <Tip>
+      Mantén las constantes (el tipo de token del sujeto, los permisos de Facebook y los alcances de Auth0) al inicio de la clase para evitar tener literales mágicos dispersos por todo el código.
+    </Tip>
+  </Step>
+</Steps>
+
+<Check>
+  **Punto de control**
+
+  Ahora ya deberías poder autenticarte de forma nativa con Facebook. Si la aplicación de Facebook está instalada en el dispositivo, la autenticación se realiza directamente a través de la aplicación, sin necesidad de usar un navegador.
+</Check>
+
+***
+
+<div id="troubleshooting-advanced">
+  ## Resolución de problemas y aspectos avanzados
+</div>
+
+<Accordion title="Problemas comunes y soluciones">
+  ### El intercambio de tokens falla con un error de autenticación
+
+  **Soluciones:**
+
+  1. Verifique que su aplicación de Auth0 tenga **Facebook Native Sign In** habilitado en el Dashboard
+  2. Compruebe que el Facebook App ID de su `strings.xml` coincida con el de la Facebook Developer Console
+  3. Confirme que la cadena del tipo de token de sujeto coincida exactamente: `http://auth0.com/oauth/token-type/facebook-info-session-access-token`
+  4. Asegúrese de que el token de acceso de Facebook no haya expirado antes de llamar a `performLogin`
+
+  ### La solicitud del token de sesión devuelve un error
+
+  **Solución:**
+
+  * Verifique que `R.string.facebook_app_id` esté configurado correctamente en su `strings.xml`
+  * Asegúrese de que `fb_exchange_token` sea el valor bruto del token del objeto `AccessToken` de Facebook
+  * Compruebe que su aplicación de Facebook no esté en modo de desarrollo si está realizando pruebas con usuarios que no sean administradores
+
+  ### `AuthenticationException`: &quot;Connection not found&quot;
+
+  **Solución:**
+
+  1. Vaya a Auth0 Dashboard → **Authentication** → **Social**
+  2. Verifique que **Sign in with Facebook** esté habilitado
+  3. Confirme que **Facebook Native Social Login** esté activado en la configuración de la conexión
+  4. Compruebe que la aplicación de Auth0 esté asociada a la conexión de Facebook
+
+  ### Faltan campos del perfil de usuario
+
+  * Confirme que `public_profile` y `email` estén incluidos en la llamada a `setPermissions`
+  * Es posible que el usuario haya rechazado el permiso `email`; gestione correctamente un valor nulo en el correo electrónico
+  * Verifique que los mismos campos estén en el bundle `fields` de `fetchUserProfile`
+</Accordion>
+
+<Accordion title="Consideraciones para producción">
+  ### Prácticas recomendadas de seguridad
+
+  * **Desactive el registro en producción**: Quite o limite `enableLogging = true` en `DefaultClient`; registra el tráfico de red
+  * **Almacenamiento seguro de tokens**: Use `SecureCredentialsManager` para almacenar los tokens de Auth0 en el Android Keystore
+  * **Tokens de actualización**: Solicite el scope `offline_access` e implemente la renovación de tokens para mantener las sesiones
+
+  ### Configuración de la aplicación de Facebook
+
+  * Cambie su aplicación de Facebook de **Development Mode** a **Live** antes del lanzamiento
+  * Agregue la huella digital SHA-1 de su aplicación a la Facebook Developer Console
+  * Revise los requisitos de la [Data Policy](https://developers.facebook.com/policy/) de Facebook para las aplicaciones que usan el Login SDK
+
+  ### Google Play Store
+
+  * Siga las políticas de Google Play para las aplicaciones que usan autenticación de terceros
+  * Incluya Facebook Login en la política de privacidad de su aplicación
+</Accordion>
+
+***
+
+<div id="next-steps">
+  ## Próximos pasos
+</div>
+
+<CardGroup cols={2}>
+  <Card title="Configurar otros proveedores de identidad" icon="key" href="/es/docs/authenticate/identity-providers" iconType="solid">
+    Agrega Google, Apple y otros proveedores de inicio de sesión social
+  </Card>
+
+  <Card title="Protección contra ataques" icon="shield" href="/es/docs/secure/attack-protection" iconType="solid">
+    Protégete contra ataques de fuerza bruta y bots
+  </Card>
+
+  <Card title="Actions" icon="bolt" href="/es/docs/customize/actions/actions-overview" iconType="solid">
+    Personaliza los flujos de autenticación con código sin servidor
+  </Card>
+
+  <Card title="Referencia del SDK para Android" icon="android" href="/es/docs/libraries/auth0-android" iconType="solid">
+    Explora la documentación completa del SDK de Auth0 para Android
+  </Card>
+</CardGroup>

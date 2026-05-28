@@ -1,0 +1,329 @@
+---
+description: メール通知を使用して、クライアント起点バックチャネル認証フローでユーザーを認証する方法を学びます。
+title: CIBA でのメール通知
+validatedOn: 2026-02-20
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  クライアント起点バックチャネル認証 (CIBA) 機能を使用するには、Enterprise Plan または適切なアドオンが必要です。詳細については、[Auth0 Pricing](https://auth0.com/pricing/)を参照してください。
+</Callout>
+
+CIBA でメール通知を使用すると、ユーザーはブラウザーでリクエストを認証または認可するためのリンクを含むメールを受信します。
+
+CIBA でメール通知を使用する場合、ユーザーは利用端末でログインしますが、確認済みのメールアドレスに送信されたリンクをクリックして認証を完了します。ユーザーが確認リンクをクリックすると、ブラウザーにリダイレクトされ、Auth0 が認証プロセスを追跡してユーザーの本人確認を行うためのセッションが作成されます。このセッションは、この場合はブラウザーである認証端末と、Smart TV などの利用端末との間を橋渡しするために必要です。
+
+次の図は、メール通知を使用したエンドツーエンドの CIBA フローを示しています。
+
+<Frame>![](/docs/images/ciba/email_notifications_with_ciba_diagram.png)</Frame>
+
+以下のセクションでは、メール通知を使用した CIBA によるユーザー認証の仕組みを、手順に沿って詳しく説明します。
+
+* [前提条件](#prerequisites)
+* [ステップ 1: クライアントアプリケーションが CIBA リクエストを開始する](#step-1%3A-client-application-initiates-a-ciba-request)
+* [ステップ 2: Auth0 テナントが CIBA リクエストを受け付ける](#step-2%3A-auth0-tenant-acknowledges-the-ciba-request)
+* [ステップ 3: クライアントアプリケーションがレスポンスをポーリングする](#step-3%3A-client-application-polls-for-a-response)
+* [ステップ 4: Auth0 がユーザーのメールアドレスにリンクを送信する](#step-4%3A-auth0-sends-a-link-to-the-user’s-email-address)
+* [ステップ 5: ユーザーがブラウザーで認証する](#step-5%3A-user-authenticates-in-the-browser)
+* [ステップ 6: ブラウザーが同意内容をユーザーに表示する](#step-6%3A-browser-sends-the-user-response-back-to-auth0)
+* [ステップ 7: フロー完了後に Auth0 がユーザーの応答を受信する](#step-7%3A-auth0-receives-user-response-after-the-flow-completes)
+* [ステップ 8: Auth0 がアクセストークンをクライアントアプリケーションに返す](#step-8%3A-auth0-returns-access-token-to-client-application)
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+Auth0 を使用して CIBA のメールリクエストを開始するには、次の要件を満たしている必要があります。
+
+* テナントとアプリケーションで、[クライアント起点バックチャネル認証を設定](/ja/docs/get-started/applications/configure-client-initiated-backchannel-authentication)し、[メール通知](/ja/docs/get-started/applications/configure-client-initiated-backchannel-authentication/#configure-email-notifications)も構成します。
+* `requested_expiry` パラメーターを 301 ～ 259200 秒 (72 時間) の範囲で設定します。詳細については、[通知チャネルを設定する](/ja/docs/get-started/applications/configure-client-initiated-backchannel-authentication#configure-notification-channel)を参照してください。
+* CIBA と Rich Authorization Requests (RAR) の [ユーザー認可](/ja/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow/user-authorization-with-ciba) でメール通知を使用する場合は、[カスタマイズされた同意プロンプトを設定](/ja/docs/get-started/apis/configure-rich-authorization-requests#set-customized-consent-prompt)します。
+
+<div id="step-1-client-application-initiates-a-ciba-request">
+  ## ステップ 1: クライアントアプリケーションが CIBA リクエストを開始する
+</div>
+
+[User Search APIs](/ja/docs/manage-users/user-search) を使用して、CIBA リクエストを開始する対象の認可を行うユーザーを検索し、その user ID を取得します。
+
+認可を行うユーザーの user ID を取得したら、Authentication API または [SDKs](/ja/docs/libraries) を使用して、`/bc-authorize` エンドポイントに CIBA リクエストを送信します。
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash lines
+    curl --location 'https://{YOUR_DOMAIN}.auth0.com/bc-authorize' \
+      --header 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode 'client_id={YOUR_CLIENT_ID}' \
+      --data-urlencode 'client_secret={YOUR_CLIENT_SECRET}' \
+      --data-urlencode 'login_hint={ "format": "iss_sub", "iss": "https://{YOUR_DOMAIN}.auth0.com/", "sub": "{USER_ID}" }' \
+      --data-urlencode 'scope={SCOPES}' \
+      --data-urlencode 'binding_message={BINDING_MESSAGE}'
+    ```
+  </Tab>
+
+  <Tab title="C#">
+    ```csharp lines
+    var response = await authenticationApiClient.ClientInitiatedBackchannelAuthorization(
+                new ClientInitiatedBackchannelAuthorizationRequest()
+                {
+                    ClientId = "{YOUR_CLIENT_ID}",
+                    Scope = "{SCOPES}",
+                    ClientSecret = "{YOUR_CLIENT_SECRET}",
+                    BindingMessage = "{BINDING_MESSAGE}",
+                    LoginHint = new LoginHint()
+                    {
+                        Format = "iss_sub",
+                        Issuer = "https://{YOUR_DOMAIN}.auth0.com/",
+                        Subject = "{USER_ID}"
+                    }
+                }
+            );
+    ```
+  </Tab>
+
+  <Tab title="Go">
+    ```go lines
+    resp, err := authAPI.CIBA.Initiate(context.Background(), ciba.Request{
+        ClientID:     mgmtClientID,
+        ClientSecret: mgmtClientSecret,
+        Scope:        "openid",
+        LoginHint: map[string]string{
+          "format": "iss_sub",
+          "iss":    "https://{YOUR_DOMAIN}.auth0.com/",
+          "sub":    "{USER_ID}",
+        },
+        BindingMessage: "{BINDING_MESSAGE}",
+      })
+    ```
+  </Tab>
+
+  <Tab title="Java">
+    ```java lines
+    //AuthClient インスタンスを作成
+    AuthAPI auth = AuthAPI.newBuilder(domain, clientId, clientSecret).build();
+
+    //認可を実行
+    Map<String, Object> loginHint = new HashMap<>();
+            loginHint.put("format", "iss_sub");
+            loginHint.put("iss", "https://{YOUR_DOMAIN}.auth0.com/");
+            loginHint.put("sub", "{USER_ID}");
+
+    Request<BackChannelAuthorizeResponse> request = auth.authorizeBackChannel("openid", "{BINDING_MESSAGE}", loginHint);
+
+    BackChannelAuthorizeResponse resp = request.execute().getBody();
+    ```
+  </Tab>
+</Tabs>
+
+| パラメーター             | 説明                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenant`           | テナント名です。カスタムドメインを指定することもできます。`iss_sub` 形式を使用する場合、テナント名は `iss` クレーム内で渡されます。                                                                                                                                                                                                                                                                                                                                                                    |
+| `client_id`        | クライアントアプリケーションの識別子です。                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `client_secret`    | CIBA でユーザーを認証する際に使用するクライアント認証方法です。たとえば、クライアントシークレット、Private Key JWT、mTLS Authentication などがあります。Private Key JWT または mTLS を使用する場合は、クライアントシークレットを含める必要はありません。                                                                                                                                                                                                                                                                                   |
+| `scope`            | `openid` を含める必要があります。<br /><br />必要に応じて、リフレッシュトークンを要求するために `offline_access` を含めることもできます。ただし、CIBA フローでトランザクションを 1 回限り認可する場合、リフレッシュトークンは不要であり、このコンテキストでは意味を持ちません。                                                                                                                                                                                                                                                                               |
+| `user_id`          | `login_hint` 構造内で渡される、認可を行うユーザーのユーザー ID です。`iss_sub` 形式を使用する場合、ユーザー ID は `sub` クレーム内で渡されます。<br /><br />ユーザー ID の形式は、外部プロバイダーによって異なる場合があります。                                                                                                                                                                                                                                                                                                   |
+| `requested_expiry` | CIBA セッションの有効期間の上限 (秒単位) です。CIBA フローの要求有効期限は 1 ～ 259200 秒 (72 時間) で、デフォルトは 300 秒です。CIBA フローにカスタムの有効期限を設定するには、`requested_expiry` パラメーターを含めます。<br /><br />`requested_expiry` パラメーターは、CIBA が使用する通知チャネルの判定にも使われます。<ul><li>`requested_expiry` を 300 秒以下に設定すると、有効化されている場合、CIBA はモバイルプッシュ通知チャネルを使用します。テナントで MFA が設定されていない場合、CIBA リクエストは失敗します。</li><li>`requested_expiry` を 301 ～ 259200 秒 (72 時間) に設定すると、有効化されている場合、CIBA はメール通知チャネルを使用します。</li></ul> |
+| `binding_message`  | 認証デバイスと利用デバイスの間で CIBA フローをひも付けるために使用される、人が読んで理解できるメッセージです。binding message は必須で、最大 64 文字です。使用できるのは英数字と `+-_.,:#` のみです。                                                                                                                                                                                                                                                                                                                         |
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  認可を行うユーザーに送信できるリクエストは、ユーザー単位で 1 分あたり 5 件までに制限されています。
+</Callout>
+
+<div id="step-2-auth0-tenant-acknowledges-the-ciba-request">
+  ## ステップ 2: Auth0 テナントが CIBA リクエストを受理する
+</div>
+
+Auth0 テナントが `POST` リクエストを正常に受信すると、そのリクエストを参照する `auth-req-id` を含むレスポンスが返されます。
+
+```json lines
+{
+    "auth_req_id": "eyJh...",
+    "expires_in": 300,
+    "interval": 5
+}
+```
+
+`auth_req_id` 値は、CIBA フローの完了をポーリングで確認するために `/token` エンドポイントに渡されます。
+
+<div id="step-3-client-application-polls-for-a-response">
+  ## ステップ 3: クライアントアプリケーションが応答をポーリングする
+</div>
+
+Authentication API または [SDK](/ja/docs/libraries) を使用して、`urn:openid:params:grant-type:ciba` グラントタイプと `/bc-authorize` エンドポイントから受け取った `auth_req_id` を使って `/token` エンドポイントを呼び出します。
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash lines
+    curl --location 'https://{YOUR_DOMAIN}.auth0.com/oauth/token' \
+      --header 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode 'client_id={YOUR_CLIENT_ID}' \
+      --data-urlencode 'client_secret={YOUR_CLIENT_SECRET}' \
+      --data-urlencode 'auth_req_id={AUTH_REQ_ID}' \
+      --data-urlencode 'grant_type=urn:openid:params:grant-type:ciba'
+    ```
+  </Tab>
+
+  <Tab title="C#">
+    ```csharp lines
+    var token = await authenticationApiClient.GetTokenAsync(
+                new ClientInitiatedBackchannelAuthorizationTokenRequest()
+                {
+                    AuthRequestId = response.AuthRequestId,
+                    ClientId = "{YOUR_CLIENT_ID}",
+                    ClientSecret = "{YOUR_CLIENT_SECRET}"
+                }
+            );
+    ```
+  </Tab>
+
+  <Tab title="Go">
+    ```go lines
+    token, err := authAPI.OAuth.LoginWithGrant(context.Background(),
+          "urn:openid:params:grant-type:ciba",
+          url.Values{
+            "auth_req_id":   []string{resp.AuthReqID},
+            "client_id":     []string{clientID},
+            "client_secret": []string{clientSecret},
+          },
+          oauth.IDTokenValidationOptions{})
+    ```
+  </Tab>
+
+  <Tab title="Java">
+    ```java lines
+    Request<BackChannelTokenResponse> tokenRequest = auth.getBackChannelLoginStatus(authReqId, "grant-type");
+
+    BackChannelTokenResponse tokenResponse = tokenRequest.execute().getBody();
+    ```
+  </Tab>
+</Tabs>
+
+認可を行うユーザーがトランザクションを承認するまでは、次の応答が返されます。
+
+```json lines
+{
+    "error": "authorization_pending",
+    "error_description": "エンドユーザーの認証が保留中です"
+}
+```
+
+ポーリングの待機間隔は約5秒です。ポーリングの頻度が高すぎると、次のレスポンスが返されます。このとき、description はバックオフ間隔に応じて異なります。
+
+```json lines
+{
+"error": "slow_down",
+"error_description": "You are polling faster than allowed. Try again in 10 seconds."
+"interval": 10
+}
+```
+
+このエラーを解消するには、次のポーリング間隔 (秒) が経過するまで待ってから、`/token` エンドポイントをポーリングしてください。
+
+<div id="step-4-auth0-sends-a-link-to-the-users-email-address">
+  ## ステップ 4: Auth0 がユーザーのメールアドレスにリンクを送信する
+</div>
+
+Auth0 認可サーバーは、認可するユーザーのユーザー ID を含む `login_hint` を使用して、認証デバイスでのユーザー認証を開始します。
+
+* Auth0 認可サーバーは、ユーザーの確認済みメールアドレスにメールを送信します。
+* メールには、ユーザーが認証するためにクリックする必要がある確認リンクが含まれています。`binding_message` はリクエスト code として表示されます。
+* このリンクにより、`/bc-verify` エンドポイントへのリクエストを介してユーザーはブラウザーに移動し、そこで `consent` クエリパラメーターが同意待ちの CIBA リクエストを参照します。
+
+<Frame>
+  <img src="/docs/images/ciba/ciba_with_email_verification_link.png" alt="Auth0 がユーザーの確認済みメールアドレスにメールを送信する" style={{ width: '300px', height: 'auto' }} />
+</Frame>
+
+<div id="step-5-user-authenticates-in-the-browser">
+  ## ステップ 5: ユーザーがブラウザーで認証する
+</div>
+
+アクティブなセッションが見つからない場合、確認リンクを開くとユーザーに認証が求められます。ユーザーはリンクをクリックして認証を進めます。
+
+認証するには、ユーザーは確認済みのメールアドレスとパスワードを入力します。ユーザーは、クライアントアプリケーションが [CIBA リクエストを開始する](#step-1%3A-client-application-initiates-a-ciba-request)際に `/bc-authorize` エンドポイントへ送信した `login_hint` パラメーターに対応する認証情報を使用する必要があります。そうしない場合は、エラーメッセージが表示されるため、ログアウトして再試行する必要があります。
+
+<Frame>
+  <img src="/docs/images/ciba/user_authenticates_in_browser.png" alt="ユーザーがブラウザーで認証する" style={{ width: '300px', height: 'auto' }} />
+</Frame>
+
+標準的な login flow と同様に、CIBA のメールフローでも `post-login` Actions トリガーが実行されるため、お客様はアクセス制御ポリシーを適用したり、追加の MFA ファクターを要求したりするカスタムロジックを実装できます。CIBA の確認リンクから実行された場合、`event.transaction.protocol` の値は `oidc-ciba-web-link` になるため、この種類のログインに対して独自のルールを適用できます。詳細については、[Login Trigger](https://auth0.com/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger)を参照してください。
+
+認証が完了すると、ブラウザーには Auth0 Consent API による同意の詳細が表示されます。これには `binding_message`、`scope`、`audience` が含まれます。スコープは、RBAC ポリシーに従ってフィルタリングされます。詳しくは、[ロールベースアクセス制御](/ja/docs/manage-users/access-control/rbac)を参照してください。
+
+次のコードサンプルは、Auth0 Consent API からのレスポンス例です。
+
+```json lines
+{
+  "id": "cns_abc123",
+  "requested_details": {
+    "audience": "https://$tenant.auth0.com/userinfo",
+    "scope": ["openid"],
+    "binding_message": "21-49-38"
+  },
+  "created_at": 1746693720
+  "expires_at": 1746693750
+}
+```
+
+この時点で、ユーザーは認証リクエストを承認するか拒否するかを選択できます。
+
+<div id="step-6-browser-sends-the-user-response-back-to-auth0">
+  ## ステップ 6: ブラウザーがユーザーの応答を Auth0 に返送する
+</div>
+
+ブラウザーはユーザーの応答を Auth0 に返送します。ユーザーが認証リクエストを受け入れるか拒否するかに応じて、Auth0 は次の同意画面を表示します。これらの画面は、[同意プロンプトを設定する](/ja/docs/get-started/apis/configure-rich-authorization-requests#set-customized-consent-prompt)ことでカスタマイズする必要があります。
+
+<div id="user-accepts-the-authentication-request">
+  ### ユーザーが認証リクエストを承認する
+</div>
+
+<Frame>
+  <img src="/docs/images/ciba/user_accepts_the_authentication_request.png" alt="ユーザーが認証リクエストを承認する" style={{ width: '300px', height: 'auto' }} />
+</Frame>
+
+<div id="user-rejects-the-authentication-request">
+  ### ユーザーが認証リクエストを拒否する
+</div>
+
+<Frame>
+  <img src="/docs/images/ciba/user_rejects_authentication_request.png" alt="ユーザーが認証リクエストを拒否する" style={{ width: '300px', height: 'auto' }} />
+</Frame>
+
+<div id="step-7-auth0-receives-user-response-after-the-flow-completes">
+  ## ステップ 7: フローの完了後、Auth0 はユーザーの応答を受信する
+</div>
+
+クライアントアプリケーションは、`/token` エンドポイントからの応答を受信すると、ポーリングを完了します。CIBA フローでは、認可を行うユーザーからの応答が常に必要であり、その内容は承認または拒否のいずれかです。既存のグラントは確認されません。
+
+<div id="step-8-auth0-returns-access-token-to-client-application">
+  ## ステップ 8: Auth0 がクライアントアプリケーションにアクセストークンを返す
+</div>
+
+ユーザーがメールアドレスの提供リクエストを拒否した場合、Auth0 は次のようなエラーレスポンスをクライアントアプリケーションに返します。
+
+```json lines
+{
+    "error": "access_denied",
+    "error_description": "エンドユーザーが認証リクエストを拒否したか、有効期限が切れました"
+}
+```
+
+ユーザーがメールアドレスの提供リクエストを承認すると、Auth0 は次のような <Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を表示" href="/ja/docs/glossary?term=access+token">アクセストークン</Tooltip> をクライアントアプリケーションに返します。
+
+```json lines
+{
+    "access_token": "eyJh...",
+    "id_token": "eyJh...",
+    "expires_in": 86400,
+    "scope": "openid",
+    "token_type": "Bearer"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `refresh_token` は、最初の `/bc-authorize` リクエストに `offline_access` スコープが含まれている場合にのみ返されます。
+</Callout>
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [クライアント起点バックチャネル認証フロー](/ja/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow)
+* [クライアント起点バックチャネル認証を設定する](/ja/docs/get-started/applications/configure-client-initiated-backchannel-authentication)

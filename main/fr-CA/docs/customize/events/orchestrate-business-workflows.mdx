@@ -1,0 +1,308 @@
+---
+description: Déclenchez des processus métier automatisés dans plusieurs systèmes lorsque des changements d’identité surviennent dans Auth0.
+title: Orchestrer des processus métier
+---
+
+Avec Event Streams et Auth0 Actions, vous pouvez transformer les changements du cycle de vie des identités en processus métier automatisés qui s’étendent à plusieurs systèmes. Lorsqu’un utilisateur est créé, mis à jour ou supprimé dans Auth0, une Action exécute du code côté serveur qui appelle des API externes en parallèle, ce qui vous permet de créer des pipelines complets sans déployer votre propre intergiciel.
+
+Ce guide présente un exemple de bout en bout : provisionner des utilisateurs à partir d’un fournisseur d’identité d’entreprise (IdP) via Inbound SCIM d’Auth0, puis propager ces changements vers une plateforme CRM et un canal de notification d’équipe à l’aide d’une seule Action flux d’événements.
+
+<div id="why-automate-identity-workflows">
+  ## Pourquoi automatiser les flux de travail liés à l’identité
+</div>
+
+L’automatisation des flux de travail axés sur l’identité est utile lorsque vous devez :
+
+* Intégrer de nouveaux employés à plusieurs applications métier dès qu’ils sont provisionnés dans votre IdP.
+* Propager les changements d’identité à plusieurs systèmes en aval en une seule étape.
+* Supprimer les accès dans les systèmes en aval lorsqu’un utilisateur est supprimé.
+* Éliminer les étapes manuelles des processus qui dépendent des événements du cycle de vie de l’identité.
+
+<div id="architecture-overview">
+  ## Aperçu de l’architecture
+</div>
+
+Le pipeline de ce guide utilise quatre composants :
+
+1. **IdP d’entreprise (par exemple, Okta)** — la source de référence pour les identités des employés.
+2. **Auth0 Inbound SCIM** — reçoit les événements de provisionnement provenant de l’IdP et crée ou met à jour des utilisateurs dans Auth0.
+3. **Flux d’événements avec une Action Auth0** — surveille les événements du cycle de vie des utilisateurs et exécute du code côté serveur.
+4. **Plusieurs systèmes externes** — les destinations qui reçoivent les données transformées. Cet exemple cible un CRM (HubSpot) et un canal de notification d’équipe (Slack).
+
+Le flux fonctionne comme suit :
+
+1. Un administrateur attribue un utilisateur à une application dans l’IdP d’entreprise.
+2. L’IdP transmet la modification à Auth0 via SCIM.
+3. Auth0 crée ou met à jour le profil de l’utilisateur, puis publie un événement.
+4. Le flux d’événements déclenche une Action qui appelle plusieurs API externes.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  La différence entre l’orchestration et la [corrélation](/fr-CA/docs/customize/events/correlate-identity-changes) tient au nombre de systèmes en aval. La corrélation associe un événement à un seul enregistrement externe. L’orchestration propage un même événement vers plusieurs systèmes dans le cadre d’un flux de travail plus large.
+</Callout>
+
+<div id="prerequisites">
+  ## Prérequis
+</div>
+
+Avant de commencer, assurez-vous d’avoir :
+
+* Un locataire Auth0 avec les événements activés. Pour en savoir plus sur la disponibilité selon le forfait, consultez [Create an flux d’événements](/fr-CA/docs/customize/events/create-an-event-stream).
+* Un IdP d’entreprise qui prend en charge le provisionnement SCIM (par exemple, Okta ou Microsoft Entra ID).
+* Inbound SCIM d’Auth0 configuré pour la connexion concernée. Pour en savoir plus, consultez [Inbound SCIM](/fr-CA/docs/authenticate/protocols/scim/configure-inbound-scim).
+* Des informations d’identification d’API pour chaque système externe. Cet exemple nécessite :
+  * Un jeton d’accès d’une application privée HubSpot avec le scope d’écriture des contacts.
+  * Une URL de webhook entrant Slack pour le canal cible.
+
+<div id="set-up-scim-provisioning">
+  ## Configurer le provisionnement SCIM
+</div>
+
+Si vous n’avez pas encore configuré Inbound SCIM, suivez les étapes suivantes pour connecter votre IdP à Auth0.
+
+<Tabs>
+  <Tab title="Okta">
+    1. Dans Auth0 Dashboard, accédez à **Authentication &gt; Enterprise** et sélectionnez votre connexion d’entreprise SAML ou OIDC.
+    2. Sélectionnez l’onglet **Provisioning** et activez **Inbound SCIM**.
+    3. Générez un jeton SCIM et copiez-le.
+    4. Dans Okta, ouvrez l’application que vous utilisez pour la fédération avec Auth0.
+    5. Sélectionnez l’onglet **Provisioning**, puis **Configure API Integration**.
+    6. Activez l’intégration, collez l’URL du point de terminaison SCIM d’Auth0 ainsi que le jeton, puis sélectionnez **Save**.
+    7. Sous **To App**, activez **Create Users**, **Update User Attributes** et **Deactivate Users**.
+  </Tab>
+
+  <Tab title="Autres IdP">
+    Consultez la documentation de votre IdP pour configurer le provisionnement SCIM sortant. Vous aurez besoin des éléments suivants :
+
+    * L’URL du point de terminaison SCIM d’Auth0 dans l’onglet **Provisioning** de votre connexion d’entreprise.
+    * Un jeton SCIM généré dans Auth0 Dashboard.
+  </Tab>
+</Tabs>
+
+Après avoir enregistré la configuration, attribuez un utilisateur de test à l’application dans votre IdP. Vérifiez que l’utilisateur apparaît dans Auth0 sous **User Management &gt; Users**.
+
+<div id="create-the-event-stream-action">
+  ## Créer l’Action du flux d’événements
+</div>
+
+Lorsque le provisionnement SCIM est activé, Auth0 publie les événements `user.created`, `user.updated` et `user.deleted`. Ensuite, créez un flux d’événements avec une Action Auth0 qui diffuse ces événements vers plusieurs systèmes en aval.
+
+<div id="create-the-event-stream">
+  ### Créer le flux d’événements
+</div>
+
+1. Accédez à **Auth0 Dashboard &gt; Event Streams**.
+2. Sélectionnez **Create Event Stream**.
+3. Sélectionnez **Auth0 Actions** comme type de flux.
+4. Entrez un nom descriptif (par exemple, `Onboarding Workflow`).
+5. Abonnez-vous à `user.created`, `user.updated` et `user.deleted`.
+
+<div id="write-the-action-handler">
+  ### Écrire le gestionnaire de l’Action
+</div>
+
+Dans l’éditeur d’Action, écrivez un gestionnaire qui associe chaque type d’événement à des appels d’API vers vos systèmes externes. L’exemple ci-dessous crée un contact dans HubSpot CRM et envoie une notification Slack lorsqu’un nouvel utilisateur est provisionné.
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const userData = event.message.data.object;
+
+    const HUBSPOT_TOKEN = event.secrets.HUBSPOT_TOKEN;
+    const SLACK_WEBHOOK_URL = event.secrets.SLACK_WEBHOOK_URL;
+
+    switch (eventType) {
+        case "user.created":
+            await onboardUser(userData, HUBSPOT_TOKEN, SLACK_WEBHOOK_URL);
+            break;
+        case "user.updated":
+            await updateCrmContact(userData, HUBSPOT_TOKEN);
+            break;
+        case "user.deleted":
+            await offboardUser(userData, HUBSPOT_TOKEN, SLACK_WEBHOOK_URL);
+            break;
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+
+async function onboardUser(userData, hubspotToken, slackWebhookUrl) {
+    const crmResult = await createCrmContact(userData, hubspotToken);
+    await notifySlack(slackWebhookUrl, {
+        text: `New user onboarded: ${userData.email} (CRM contact ${crmResult.id})`
+    });
+}
+
+async function offboardUser(userData, hubspotToken, slackWebhookUrl) {
+    await deleteCrmContact(userData, hubspotToken);
+    await notifySlack(slackWebhookUrl, {
+        text: `User offboarded: ${userData.email}`
+    });
+}
+
+// --- Fonctions utilitaires CRM ---
+
+async function createCrmContact(userData, token) {
+    const response = await fetch("https://api.hubapi.com/crm/v3/objects/contacts", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            properties: {
+                email: userData.email,
+                firstname: userData.given_name,
+                lastname: userData.family_name
+            }
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`HubSpot create failed: ${response.status}`);
+    }
+    return response.json();
+}
+
+async function updateCrmContact(userData, token) {
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+    const headers = {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+    };
+
+    const searchResponse = await fetch(`${BASE_URL}/search`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            filterGroups: [{
+                filters: [{
+                    propertyName: "email",
+                    operator: "EQ",
+                    value: userData.email
+                }]
+            }]
+        })
+    });
+
+    const searchResult = await searchResponse.json();
+
+    if (searchResult.total > 0) {
+        const contactId = searchResult.results[0].id;
+        await fetch(`${BASE_URL}/${contactId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+                properties: {
+                    firstname: userData.given_name,
+                    lastname: userData.family_name
+                }
+            })
+        });
+    }
+}
+
+async function deleteCrmContact(userData, token) {
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+    const headers = {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+    };
+
+    const searchResponse = await fetch(`${BASE_URL}/search`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            filterGroups: [{
+                filters: [{
+                    propertyName: "email",
+                    operator: "EQ",
+                    value: userData.email
+                }]
+            }]
+        })
+    });
+
+    const searchResult = await searchResponse.json();
+
+    if (searchResult.total > 0) {
+        const contactId = searchResult.results[0].id;
+        await fetch(`${BASE_URL}/${contactId}`, {
+            method: "DELETE",
+            headers
+        });
+    }
+}
+
+// --- Fonction utilitaire Slack ---
+
+async function notifySlack(webhookUrl, payload) {
+    const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        console.error(`Slack notification failed: ${response.status}`);
+    }
+}
+```
+
+<div id="handle-partial-failures">
+  ### Gérer les échecs partiels
+</div>
+
+Lorsque votre Action appelle plusieurs systèmes externes, un appel peut réussir alors qu’un autre échoue. Envisagez les stratégies suivantes :
+
+* **Consigner et continuer.** Encapsulez chaque appel externe dans un bloc try-catch afin qu’un échec dans un système n’empêche pas les autres de s’exécuter. Consignez l’erreur pour assurer un suivi manuel.
+* **Réessayer avec des opérations idempotentes.** Si l’Action génère une erreur, Auth0 réessaie l’événement. Assurez-vous que chaque appel externe est idempotent afin que les nouvelles tentatives ne créent pas d’enregistrements en double.
+* **Utiliser des disjoncteurs.** Si un système externe échoue de façon répétée, envisagez d’interrompre les appels vers ce système pour éviter des délais en cascade.
+
+<div id="store-api-keys-as-secrets">
+  ### Enregistrer les clés API comme secrets
+</div>
+
+1. Dans l’éditeur d’Action, sélectionnez **Secrets** (l’icône en forme de clé).
+2. Ajoutez un secret nommé `HUBSPOT_TOKEN` avec comme valeur le jeton d’accès de votre application privée HubSpot.
+3. Ajoutez un secret nommé `SLACK_WEBHOOK_URL` avec comme valeur l’URL de votre webhook entrant Slack.
+
+L’utilisation de secrets permet de garder les identifiants hors du code source de votre Action. Pour en savoir plus, consultez [Action Secrets](/fr-CA/docs/customize/actions/write-your-first-action#add-a-secret).
+
+<div id="save-and-deploy">
+  ### Enregistrer et déployer
+</div>
+
+Sélectionnez **Enregistrer le brouillon**, puis **Déployer**. L’Action est maintenant liée à votre flux d’événements et s’exécute chaque fois qu’un événement auquel vous êtes abonné est déclenché.
+
+<div id="verify-the-pipeline">
+  ## Vérifier le pipeline
+</div>
+
+1. Dans votre IdP d’entreprise, assignez un utilisateur de test à l’application connectée à Auth0.
+2. Vérifiez que l’utilisateur apparaît dans Auth0, sous **User Management &gt; Users**.
+3. Vérifiez qu’un contact correspondant est créé dans HubSpot et qu’une notification est publiée dans Slack.
+4. Mettez à jour le nom de l’utilisateur dans l’IdP et vérifiez que la modification se répercute dans Auth0 et HubSpot.
+5. Retirez l’utilisateur de l’application dans l’IdP. Vérifiez que l’utilisateur est déprovisionné dans Auth0, que le contact HubSpot est supprimé et qu’une notification est publiée dans Slack.
+
+Si les événements n’arrivent pas, consultez les journaux de livraison du flux d’événements dans Auth0 Dashboard. Pour en savoir plus, consultez [Test des événements, observabilité et récupération après échec](/fr-CA/docs/customize/events/event-testing-observability-and-failure-recovery).
+
+<div id="extend-the-pattern">
+  ## Étendre ce modèle
+</div>
+
+L’architecture présentée dans ce guide n’est pas propre à HubSpot et à Slack. Vous pouvez appliquer le même modèle de diffusion à n’importe quelle combinaison de systèmes avec des API REST :
+
+* **CRM + gestion de tickets** — créez un contact Salesforce et ouvrez un ticket d’intégration dans Jira.
+* **CRM + analyse** — mettez à jour un contact HubSpot et envoyez un appel `identify` à Segment.
+* **Provisionnement + notifications** — appelez un service de provisionnement interne et publiez un message dans Microsoft Teams.
+
+Pour cibler différents systèmes, mettez à jour le gestionnaire d’Action avec les points de terminaison d’API et les méthodes d’authentification appropriés.
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Faire correspondre les changements d’identité avec des systèmes externes](/fr-CA/docs/customize/events/correlate-identity-changes)
+* [Types d’événements](/fr-CA/docs/customize/events/event-types)
+* [Créer un flux d’événements](/fr-CA/docs/customize/events/create-an-event-stream)
+* [Bonnes pratiques relatives aux événements](/fr-CA/docs/customize/events/events-best-practices)

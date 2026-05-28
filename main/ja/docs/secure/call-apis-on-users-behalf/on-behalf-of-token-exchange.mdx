@@ -1,0 +1,540 @@
+---
+title: "On-Behalf-Of トークン交換"
+description: "On-Behalf-Of（OBO）トークン交換を使用して、中間層サービスがダウンストリーム API を呼び出す際に、ユーザーの ID と権限を維持する方法を説明します。"
+validatedOn: 2026-04-30
+---
+
+On-Behalf-Of (OBO) トークン交換 ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) を使用すると、中間層サービスがダウンストリーム API を呼び出す際に、ユーザーの ID と権限を維持できます。
+
+アプリケーションがダウンストリーム API を呼び出す必要がある場合は、次の方法を使用できます。
+
+* [Client Credentials Flow](/ja/docs/get-started/authentication-and-authorization-flow/client-credentials-flow): アプリケーションは自分自身のために動作し、自身として認証されます。リクエストがユーザーによって開始された場合でも、そのコンテキストは失われます。ダウンストリームサービスが認識できるのは、呼び出し元アプリケーションの ID のみです。
+* On-Behalf-Of (OBO) トークン交換: アプリケーションはユーザーに紐づくスコープを持つトークンを受け取り、それを新しいトークンに交換してダウンストリームサービスを呼び出せます。これにより、元のエンドユーザーの ID とコンテキストが呼び出しチェーン全体を通して維持されます。
+
+たとえば、ユーザーが Service A の呼び出しをトリガーし、その後 Service A が Service B を呼び出す場合、OBO トークン交換を使うと、Service A はユーザーのアクセストークンを次のような新しいトークンに交換できます。
+
+* 元のユーザーの ID と権限を維持する
+* Service B 向けに限定されたスコープを持つ
+* Service B がエンドユーザーに基づいて認可を判断できるようにする
+
+OBO トークン交換では [`post-login` Action trigger](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) がトリガーされ、次のようになります。
+
+* [`event.transaction.protocol`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object#param-protocol) は `oauth2-token-exchange` に設定されます。
+* [`event.transaction.actor`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object#param-actor) は委任チェーン全体を追跡します。
+
+標準的なログインフローと同様に、ダウンストリーム API 呼び出しで返されるスコープは、ユーザーの [ロールベースアクセス制御 (RBAC) ](/ja/docs/manage-users/access-control/rbac) ポリシーに基づきます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 for AI Agents アドオンを購入すると、OBO トークン交換では、ご利用のサブスクリプションティアにおける Authentication API の最大レート制限を利用できます。たとえば、[Private Cloud 100 RPS](/ja/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations/tier-100-rps-private-cloud) を利用している場合、30 RPS の OBO トークン交換のレート制限を超えて、OBO トークン交換リクエストに 100 RPS の全容量を使用できます。Authentication API の上限は共有されており、ログイン、トークンのリフレッシュ、トークン交換を含むすべての Authentication API リクエストを合算した全体の上限として機能します。詳細については、テクニカルアカウントマネージャーにお問い合わせください。
+</Callout>
+
+<div id="use-cases">
+  ## ユースケース
+</div>
+
+OBO Token Exchange の一般的なユースケースには、次のようなものがあります。
+
+* ユーザーの代わりにファーストパーティ API を呼び出す必要がある MCP サーバー
+* ユーザーの代わりにダウンストリームサービスを呼び出す必要があるマイクロサービス
+
+アプリケーションからユーザーの代わりにサードパーティ API を呼び出せるようにするには、[Token Vault](/ja/docs/secure/call-apis-on-users-behalf/token-vault) を使用します。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+OBO トークン交換では、中間層サービスが受信したユーザー トークンを、ダウンストリーム サービス向けのスコープを持つ新しいトークンに交換できます。この新しいトークンは、元のユーザーの識別情報を保持したまま、JSON Web Token (JWT) ペイロード内で経由したサービスの連鎖を追跡します。
+
+<div id="example-mcp-server-calls-first-party-api">
+  ### 例: MCP サーバーがファーストパーティ API を呼び出す
+</div>
+
+ユーザーが Auth0 を使用してクライアントアプリケーションに認証され、その後そのアプリケーションが MCP サーバーを呼び出し、さらに MCP サーバーがファーストパーティ API を呼び出す必要があります。
+
+<div id="step-1-user-authentication">
+  #### ステップ 1: ユーザー認証
+</div>
+
+ユーザーがログインすると、Auth0 は JWT ペイロードに次のクレームを含む、MCP サーバー用のスコープが付与されたアクセストークンを発行します。
+
+```json
+{
+  "sub": "auth0|user123",
+  "aud": "https://mcp-server.example.com",
+  "azp": "spa_client_id" // トークンのプロファイルによって "client_id" になる場合もある
+}
+```
+
+| クレーム                                                                                                              | 値                                | 説明                        |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------- |
+| `sub`                                                                                                             | `auth0\|user123`                 | エンドユーザーのID                |
+| `aud`                                                                                                             | `https://mcp-server.example.com` | MCP サーバー向けのスコープが設定されたトークン |
+| `azp` (or `client_id` depending on the [アクセストークンプロファイル](/ja/docs/secure/tokens/access-tokens/access-token-profiles)) | `spa_client_id`                  | トークンを要求したクライアントアプリケーション   |
+
+<div id="step-2-obo-exchange">
+  #### ステップ 2: OBO 交換
+</div>
+
+OBO トークン交換を使用すると、MCP サーバーはユーザーのトークンを Auth0 に提示し、ファーストパーティ API 用のスコープが付与されたアクセストークンを要求します。Auth0 は、次のクレームを含む、その API 用にスコープが付与された新しいアクセストークンを発行します。
+
+```json
+{
+  "sub": "auth0|user123",
+  "aud": "https://first-party-api.example.com",
+  "azp": "mcp_server_client_id", // またはトークンプロファイルによっては "client_id"
+  "act": {
+    "sub": "mcp_server_client_id",
+    "act": {
+      "sub": "spa_client_id"
+    }
+  }
+}
+```
+
+| クレーム                                                                                                              | 値                                                                         | 説明                                      |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------- |
+| `sub`                                                                                                             | `auth0\|user123`                                                          | 同一のユーザー ID が維持される                       |
+| `aud`                                                                                                             | `https://first-party-api.example.com`                                     | ファーストパーティ API を対象とするトークン                |
+| `azp` (or `client_id` depending on the [アクセストークンプロファイル](/ja/docs/secure/tokens/access-tokens/access-token-profiles)) | `mcp_server_client_id`                                                    | トークンを要求したクライアント (トークン交換を実行した MCP サーバー)  |
+| `act`                                                                                                             | `{"sub": "mcp_server_client_id",`<br />`"act": {"sub": "spa_client_id"}}` | 関与したすべてのアクターを示す委任チェーン                   |
+
+<div id="the-act-claim">
+  #### `act` クレーム
+</div>
+
+`act` (actor) クレームは、委任チェーン全体を追跡します。各 `act` レベルはコールチェーン内のサービスを表し、最も外側の `act.sub` は、現在のアクター、つまりトークン交換を実行した主体を識別します。
+
+この例では、次のとおりです。
+
+* 最も外側の `act.sub`: `mcp_server_client_id` (直前にトークン交換を行った MCP サーバー)
+* ネストされた `act.sub`: `spa_client_id` (元のクライアントアプリケーション)
+
+`azp` クレームは最も外側の `act.sub` の値と一致し、直近でトークン交換を行ったサービスを識別している必要があります。
+
+ファーストパーティ API が別のダウンストリームサービス (`https://calendar-api.acme.com`) を呼び出す場合、委任チェーンはさらに拡張されます。
+
+```json
+{
+  "sub": "auth0|user123",
+  "aud": "https://calendar-api.acme.com",
+  "azp": "first_party_api_client_id",
+  "act": {
+    "sub": "first_party_api_client_id",
+    "act": {
+      "sub": "mcp_server_client_id",
+      "act": {
+        "sub": "spa_client_id"
+      }
+    }
+  }
+}
+```
+
+委任チェーンは、ネストされた階層を 5 レベルまでに制限しています。サブジェクトトークンにすでに 5 つの `act` ネストレベルがある場合、OBO トークン交換は失敗します。
+
+```json
+400 Bad Request
+{
+  "error": "invalid_request",
+  "error_description": "Delegation chain (`act` claim) depth exceeds the maximum allowed limit of 4"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  API 呼び出しのたびに新しいトークンを要求するのではなく、アクセストークンはトークンの有効期間中キャッシュしてください。アクセストークンは有効期限が切れるまで再利用できます。トークンの取得を繰り返すと、リソースを無駄にし、レイテンシが増加し、レート制限に達する可能性があります。
+</Callout>
+
+<div id="user-mcp-server-api-flow">
+  ### ユーザー &gt; MCP サーバー &gt; API フロー
+</div>
+
+次の図は、MCP サーバー がユーザーに代わってファーストパーティ API を呼び出す際の、エンドツーエンドの OBO トークン交換フローを示しています。
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client App
+    participant Auth0
+    participant MCP Server
+    participant First-Party API
+
+    Note over User,Auth0: ステップ1: ユーザー認証
+    User->>Client App: 認証 (ログイン)
+    Client App->>Auth0: ユーザートークンをリクエスト
+    Auth0-->>Client App: トークンAを発行<br/>(aud: MCP Server, sub: UserX)
+
+    Note over Client App,MCP Server: ステップ2: 初回リクエスト
+    Client App->>MCP Server: エンドポイントを呼び出す (トークンA)
+    Note right of Client App: Authorization: Bearer [Token A]
+
+    Note over MCP Server,Auth0: ステップ3: 検証とトークン交換
+    activate MCP Server
+    MCP Server->>MCP Server: トークンAを検証
+    MCP Server->>Auth0: POST /oauth/token (トークン交換)
+    Note right of MCP Server: client_id: MCP_Server_Client_ID<br/>subject_token: [Token A]<br/>audience: First-Party API
+    
+    Note over Auth0: ステップ4: トークン発行
+    activate Auth0
+    Auth0-->>MCP Server: トークンBを発行<br/>(aud: First-Party API, sub: UserX)
+    deactivate Auth0
+    Note right of Auth0: トークンBにはactクレームが含まれ<br/>MCPサーバーがアクターとして示される
+
+    Note over MCP Server,First-Party API: ステップ5: ダウンストリーム呼び出し
+    MCP Server->>First-Party API: エンドポイントを呼び出す (トークンB)
+    Note right of MCP Server: Authorization: Bearer [Token B]
+    
+    activate First-Party API
+    First-Party API->>First-Party API: トークンBを検証<br/>サブジェクトをUserXとして識別
+    
+    First-Party API-->>MCP Server: 200 OK (Data)
+    deactivate First-Party API
+
+    MCP Server-->>Client App: 200 OK (Processed Data)
+    deactivate MCP Server
+```
+
+1. **ユーザー認証**: ユーザーはクライアントアプリケーションで認証されます。Auth0 認可サーバーは、MCP サーバー向けのスコープを持つトークン A を発行します。
+2. **初回リクエスト**: クライアントアプリケーションは MCP サーバーを呼び出し、`Authorization: Bearer` ヘッダーでトークン A を渡します。
+3. **検証とトークン交換**: MCP サーバーはトークン A を受信して検証し、その後 Auth0 認可サーバーの `/oauth/token` エンドポイントに渡します。OBO トークン交換を使用して、MCP サーバーはトークン A を `subject_token` として提示し、ファーストパーティ API 用の新しいトークンを要求します。
+4. **トークン発行**: Auth0 認可サーバーはトークン B を発行します。トークン B の `sub` (ユーザー ID) はトークン A と同じですが、`aud` (オーディエンス) はファーストパーティ API になります。
+5. **ダウンストリーム呼び出し**: MCP サーバーはトークン B を使用してファーストパーティ API を呼び出します。API はトークン B を検証し、そのリクエストが元のユーザーに代わって正当に行われていることを確認します。
+
+<div id="user-api1-api2-api3">
+  ### ユーザー &gt; API1 &gt; API2 &gt; API3
+</div>
+
+次の図は、マイクロサービスの連鎖がユーザーに代わって下流のサービスを呼び出すエンドツーエンドのフローを示しています。
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client App
+    participant Auth0
+    participant API1
+    participant API2
+    participant API3
+
+    Note over User,Auth0: Step 1: User Authentication
+    User->>Client App: Authenticates (Login)
+    Client App->>Auth0: Requests User Token
+    Auth0-->>Client App: Issues Token A<br/>(aud: API1, sub: UserX)
+
+    Note over Client App,API1: Step 2: Initial Request
+    Client App->>API1: Call Endpoint (Token A)
+    Note right of Client App: Authorization: Bearer [Token A]
+
+    Note over API1,Auth0: Step 3: API1 Delegates to API2
+    activate API1
+    API1->>API1: Validates Token A
+    API1->>Auth0: POST /oauth/token (Token Exchange)
+    Note right of API1: client_id: API1_ID<br/>subject_token: [Token A]<br/>audience: API2
+
+    Note over Auth0: Step 4: Token Issuance
+    activate Auth0
+    Auth0-->>API1: Issues Token B<br/>(aud: API2, sub: UserX)
+    deactivate Auth0
+    Note right of Auth0: Token B contains act claim<br/>showing API1 as actor
+
+    Note over API1,API2: Step 5: Downstream Call
+    API1->>API2: Call Endpoint (Token B)
+    Note right of API1: Authorization: Bearer [Token B]
+    activate API2
+    API2->>API2: Validates Token B<br/>Identifies subject as UserX
+
+    Note over API2,Auth0: Step 6: API2 Delegates to API3
+    API2->>Auth0: POST /oauth/token (Token Exchange)
+    Note right of API2: client_id: API2_ID<br/>subject_token: [Token B]<br/>audience: API3
+    activate Auth0
+
+    Note over Auth0: Step 7: Token Issuance
+    Auth0-->>API2: Issues Token C<br/>(aud: API3, sub: UserX)
+    deactivate Auth0
+    Note right of Auth0: Token C contains act claim<br/>showing API2 as actor
+
+    Note over API2,API3: Step 8: Downstream Call
+    API2->>API3: Call Endpoint (Token C)
+    Note right of API2: Authorization: Bearer [Token C]
+    activate API3
+    API3->>API3: Validates Token C<br/>Identifies subject as UserX
+    API3-->>API2: 200 OK
+    deactivate API3
+
+    API2-->>API1: 200 OK (Data)
+    deactivate API2
+    API1-->>Client App: 200 OK (Processed Data)
+    deactivate API1
+```
+
+1. **ユーザー認証**: ユーザーはクライアントアプリケーションに正常に認証されます。Auth0 認可サーバーは、API1 向けのスコープを持つ Token A を発行します。
+2. **初回リクエスト**: クライアントアプリケーションは API1 を呼び出し、`Authorization: Bearer` ヘッダーで Token A を渡します。
+3. **API1 から API2 への委任**: API1 は Token A を受け取って検証した後、Auth0 認可サーバーの `/oauth/token` エンドポイントに送信します。OBO トークン交換を使用して、API1 は Token A を `subject_token` として提示し、API2 用の新しいトークンを要求します。
+4. **トークンの発行**: Auth0 認可サーバーは API1 に新しいアクセストークン Token B を付与します。Token B の `sub` (ユーザー ID) は Token A と同じですが、`aud` (オーディエンス) は API2 になります。
+5. **ダウンストリーム呼び出し**: API1 は Token B を使用して API2 にリクエストを送信します。
+6. **API2 から API3 への委任**: API2 は Token B を受け取って検証した後、Auth0 認可サーバーの `/oauth/token` エンドポイントに送信します。OBO トークン交換を使用して、API2 は Token B を `subject_token` として提示し、API3 用の新しいトークンを要求します。
+7. **トークンの発行**: Auth0 認可サーバーは API2 に新しいアクセストークン Token C を付与します。Token C の `sub` (ユーザー ID) は Token A および Token B と同じですが、`aud` (オーディエンス) は API3 になります。
+8. **ダウンストリーム呼び出し**: API2 は Token C を使用して API3 にリクエストを送信します。API3 は Token C を検証し、そのリクエストが元のユーザーに代わって正当に行われていることを確認します。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+OBO トークン交換を使用できるのは、リソースサーバーに関連付けられた Custom API クライアントのみです。Custom API クライアントは、リソースサーバーと同じ識別子を共有している場合、そのリソースサーバーに関連付けられます。
+
+Custom API クライアントには、次の要件があります。
+
+* `app_type` を `resource_server` に設定します。
+* `resource_server_identifier` を有効なリソースサーバー、つまり `https://my-api.example.com` に設定します。Auth0 は、認可リクエストでリソースサーバー識別子を `audience` パラメーターとして使用します。
+
+Custom API クライアントはファーストパーティ クライアントであるため、ファーストパーティ クライアントがアクセスする必要がある API については、必ず[ユーザーの同意をスキップ](/ja/docs/get-started/applications/confidential-and-public-applications/user-consent-and-third-party-applications#skip-consent-for-first-party-applications)してください。
+
+<div id="create-custom-api-client">
+  ### Custom API クライアントを作成する
+</div>
+
+Auth0 Dashboard または Management API を使用して、Custom API クライアントを作成できます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Auth0 Dashboard で Custom API クライアントを作成するには、次の手順に従います。
+
+    1. [**Applications &gt; APIs**](https://manage.auth0.com/#/apis) に移動し、バックエンド API を選択します。
+
+    <Frame>![My Test OBO API](/docs/images/call_apis_on_users_behalf/my_test_obo_api.png)</Frame>
+
+    2. **Add Application** を選択し、アプリケーション名を入力します。
+    3. **Add** を選択します。
+
+    アプリケーションが正常に作成されたら、**Configure Application** を選択して確認し、**Application Properties** までスクロールします。**Application Type** は **Custom API Client** です。
+
+    <Frame>![My Test OBO API](/docs/images/call_apis_on_users_behalf/create_custom_api_client.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    リソースサーバーと同じ識別子を持つ Custom API クライアントを作成するには、次のリクエストボディを指定して [`/api/v2/clients`](https://auth0.com/docs/api/management/v2/clients/post-clients) エンドポイントに `POST` リクエストを送信します。
+
+    ```bash
+    curl --request POST 'https://{yourDomain}/api/v2/clients' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --data '{
+        "name": "Custom API Client",
+        "app_type": "resource_server",
+        "resource_server_identifier": "https://my-api.example.com"
+      }'
+    ```
+
+    | パラメーター                       | 説明                                                                                   |
+    | ---------------------------- | ------------------------------------------------------------------------------------ |
+    | `name`                       | Custom API クライアントの名前です。                                                              |
+    | `app_type`                   | Custom API クライアントのアプリケーションタイプです。`resource_server` に設定します。                            |
+    | `resource_server_identifier` | Custom API クライアントの一意の識別子です。リソースサーバーのオーディエンス、つまり `https://my-api.example.com` に設定します。 |
+  </Tab>
+</Tabs>
+
+<div id="create-client-grant">
+  ### クライアントグラントを作成
+</div>
+
+アクセスを認可するには、Custom API クライアントとダウンストリーム API の間に、ユーザー委任のクライアントグラントを作成する必要があります。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. [**Applications &gt; Applications**](https://manage.auth0.com/#/applications) に移動し、Custom API クライアントを選択します。
+    2. **API Access** で、対象のリソースサーバー (例: `https://my-api.example.com`) を見つけて **Edit** を選択します。
+    3. **User-Delegated Access** で **Grant Access** を選択し、付与する権限を選択するか、**Always grant all permissions** を選択します。
+    4. **Save** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    次のリクエストボディを指定して、[`/api/v2/client-grants`](https://auth0.com/docs/api/management/v2/client-grants/post-client-grants) エンドポイントに `POST` リクエストを送信します。
+
+    ```bash
+    curl --location 'https://{yourDomain}/api/v2/client-grants' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --data '{
+        "client_id": "YOUR_CLIENT_ID",
+        "audience": "https://my-api.example.com",
+        "scope": [
+          "read:item"
+        ],
+        "subject_type": "user"
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="configure-the-obo-token-exchange">
+  ### OBO トークン交換を設定する
+</div>
+
+OBO トークン交換グラントを使用するように Custom API クライアントを設定する方法を説明します。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **Applications &gt; Applications** に移動し、Custom API クライアントを選択します。
+    2. **Token Exchange** で、**On-Behalf-Of Token Exchange** をオンにします。
+    3. **Save** を選択します。
+
+    <Frame>![My Test OBO API](/docs/images/call_apis_on_users_behalf/configure_obo_token_exchange.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    次のリクエスト本文を使用して、[`/api/v2/clients/{clientId}`](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) エンドポイントに `PATCH` リクエストを送信します。
+
+    ```bash
+    curl --location --request PATCH 'https://{yourDomain}/api/v2/clients/{clientId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN' \
+      --data '{
+        "token_exchange": {
+          "allow_any_profile_of_type": ["on_behalf_of_token_exchange"]
+        }
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="perform-obo-token-exchange">
+  ## OBOトークン交換を実行する
+</div>
+
+OBOトークン交換を実行するには、[`auth0-api-js`](https://github.com/auth0/auth0-auth-js)、[`auth0_api_python`](https://github.com/auth0/auth0-api-python)、または [Authentication API](https://auth0.com/docs/api/authentication) を使用できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  API 呼び出しのたびに新しいトークンを要求するのではなく、アクセストークンはトークンの有効期間中キャッシュしてください。アクセストークンは有効期限が切れるまで再利用できます。トークン交換を繰り返すと、リソースの無駄遣いになり、レイテンシが増加し、レート制限に達する可能性があります。
+</Callout>
+
+<Tabs>
+  <Tab title="JavaScript">
+    始める前に、[`auth0-api-js`](https://github.com/auth0/auth0-auth-js) ライブラリとその依存関係をインストールしておいてください。
+
+    まず、MCP サーバーの認証情報を使用して `ApiClient` を初期化します。
+
+    ```javascript
+    import { ApiClient } from '@auth0/auth0-api-js';
+
+    const apiClient = new ApiClient({
+      domain: 'YOUR_AUTH0_DOMAIN',
+      audience: 'YOUR_MCP_SERVER_AUDIENCE',
+      clientId: 'YOUR_CLIENT_ID',
+      clientSecret: 'YOUR_CLIENT_SECRET',
+    });
+    ```
+
+    次に、`getTokenOnBehalfOf()` メソッドを使用してトークン交換を行います。
+
+    ```javascript
+    const result = await apiClient.getTokenOnBehalfOf(accessToken, {
+      audience: 'YOUR_DOWNSTREAM_API_AUDIENCE',
+      scope: 'read:private',  // 省略可能
+    });
+    ```
+
+    `getTokenOnBehalfOf()` は、次を含むオブジェクトを返します。
+
+    * `accessToken`: ダウンストリーム API 用の新しいトークン
+    * `scope`: 付与されたスコープ
+    * `expiresIn`: トークンの有効期間 (秒)
+  </Tab>
+
+  <Tab title="Python">
+    始める前に、[`auth0_api_python`](https://github.com/auth0/auth0-api-python) ライブラリとその依存関係をインストールしておいてください。
+
+    まず、必要なクラスをインポートし、MCP サーバーの認証情報を使用して `ApiClient` を初期化します。
+
+    ```python
+    from auth0_api_python import ApiClient, ApiClientOptions
+
+    api_client = ApiClient(
+        ApiClientOptions(
+            domain='YOUR_AUTH0_DOMAIN',
+            audience='YOUR_MCP_SERVER_AUDIENCE',
+            client_id='YOUR_CLIENT_ID',
+            client_secret='YOUR_CLIENT_SECRET',
+        )
+    )
+    ```
+
+    次に、`get_token_on_behalf_of()` メソッドを使用してトークン交換を行います。
+
+    ```python
+    result = await api_client.get_token_on_behalf_of(
+        access_token=access_token,
+        audience='YOUR_DOWNSTREAM_API_AUDIENCE',
+        scope='read:private'  # 省略可能
+    )
+    ```
+
+    `get_token_on_behalf_of()` は、次を含む辞書を返します。
+
+    * `access_token`: ダウンストリーム API の新しいトークン
+    * `scope`: 付与されたスコープ
+    * `expires_in`: トークンの有効期限 (秒単位)
+  </Tab>
+
+  <Tab title="cURL">
+    次のリクエストボディを指定して、`/oauth/token` エンドポイントに `POST` リクエストを送信します。
+
+    ```bash
+    curl --location 'https://YOUR_DOMAIN.us.auth0.com/oauth/token' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "client_id": "YOUR_CLIENT_ID",
+        "client_secret": "YOUR_CLIENT_SECRET",
+        "subject_token": "AUTH0_SUBJECT_TOKEN",
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "audience": "https://my-api.example.com"
+      }'
+    ```
+
+    | Parameter              | Example                                           | Description                                                                                                              |
+    | ---------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+    | `grant_type`           | `urn:ietf:params:oauth:grant-type:token-exchange` | 必須。標準的なログインではなく、トークン交換を実行するよう認可サーバーに指示します。                                                                               |
+    | `client_id`            | `<custom_api_client_id>`                          | 必須。リクエストを行う中間層サービスの固有 ID です。                                                                                             |
+    | `client_secret`        | `<custom_api_client_secret>`                      | 任意。中間層サービス自体を認証するために使用するシークレット (またはアサーション) です。任意のクライアント認証方式を使用できますが、`token_endpoint_auth_method` を `none` に設定することはできません。 |
+    | `subject_token`        | `<auth0_access_token>`                            | 必須。中間層サービスが現在保持している、ユーザーまたはクライアントから受け取ったトークンです。                                                                          |
+    | `subject_token_type`   | `urn:ietf:params:oauth:token-type:access_token`   | 必須。`subject_token` の形式を定義します (例: アクセストークンまたはIDトークン) 。                                                                    |
+    | `requested_token_type` | `urn:ietf:params:oauth:token-type:access_token`   | 必須。返されるトークンの種類を指定します (通常は次に呼び出す API 用のアクセストークン) 。                                                                        |
+    | `audience`             | `https://my-api.example.com`                      | 必須。新しいトークンを受け取り、検証するダウンストリームサービスの識別子です。                                                                                  |
+    | `scope`                | `read:data write:data`                            | 任意。ダウンストリーム呼び出しに対して要求する特定の権限を、スペース区切りで並べたリストです。                                                                          |
+
+    成功すると、次のようなレスポンスが返されます。
+
+    ```json
+    {
+      "access_token": "YOUR_AUTH0_ACCESS_TOKEN",
+      "expires_in": 86400,
+      "token_type": "Bearer",
+      "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"
+    }
+    ```
+
+    | パラメーター              | 例                                               | 説明                                                                                                                                                                              |
+    | ------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `access_token`      | `eyJ...`                                        | &quot;新しい&quot; Auth0 アクセストークンです。ミドルティアサービスがダウンストリーム API を呼び出す際に使用する JWT または不透明な文字列です。                                                                                          |
+    | `issued_token_type` | `urn:ietf:params:oauth:token-type:access_token` | 返されたトークンの形式を示します。これは、リクエストの `requested_token_type` と一致するか、そのサブセットになります。                                                                                                         |
+    | `token_type`        | `Bearer`                                        | `Authorization` ヘッダーで使用する認証スキームを指定します。OBO では、ミドルティアサービスとダウンストリーム API が DPoP を使用している場合を除き、`Bearer` になります。その場合は `DPoP` が使用されます。                                                   |
+    | `expires_in`        | `3600`                                          | ダウンストリーム API の設定に応じた、トークンの有効期間 (秒単位) です。通常、これは元のユーザートークンより短くなります。                                                                                                               |
+    | `scope`             | `read:data`                                     | そのトークンに付与される具体的な権限です。これらの権限を有効にするには、[ユーザー委任アクセス クライアントグラント](/ja/docs/get-started/applications/application-access-to-apis-client-grants#user-access-vs-client-access) を設定する必要があります。 |
+  </Tab>
+</Tabs>
+
+<div id="organizations-support">
+  ## 組織のサポート
+</div>
+
+ユーザーが組織経由で認証されると、アクセストークンには `org_id` クレームが含まれます。OBO トークン交換では、この組織コンテキストが委任チェーン全体で維持されます。
+
+Auth0 が組織に関連付けられたアクセストークンを含む OBO トークン交換リクエストを受信すると、次の点を検証します。
+
+* `org_id` がテナント内に存在すること
+* ユーザー (`sub` で識別される) がその組織のメンバーであること
+
+検証に失敗した場合、Auth0 はトークン交換リクエストを拒否します。検証に成功すると、Auth0 は次のような新しいアクセストークンを発行します。
+
+* 元のトークンと同じ `org_id` クレームを含む
+* 同じ組織固有の RBAC ポリシーを適用する
+* [`post-login` Actions trigger](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object#event-organization) で `event.organization` プロパティを通じて組織コンテキストを利用できるようにする

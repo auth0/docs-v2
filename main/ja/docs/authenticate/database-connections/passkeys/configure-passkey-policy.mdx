@@ -1,0 +1,218 @@
+---
+title: データベース接続のパスキー認証を有効にして設定する
+sidebarTitle: パスキーを設定
+description: Auth0 Dashboard を使用して、データベース接続で認証方法としてパスキーを有効にし、パスキー認証の UI、段階的な登録、ローカル登録を設定します。
+---
+
+import { ReleaseStageNotice } from "/snippets/ja/ReleaseStageNotice.jsx"
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+データベース接続でパスキーを有効にするには、事前に次の前提条件を満たしておく必要があります。
+
+テナントでは、次の設定が必要です。
+
+* [Universal Login を有効にする](/ja/docs/authenticate/login/auth0-universal-login/universal-login-vs-classic-login/universal-experience)。
+
+* [Identifier First 認証を有効にする](/ja/docs/authenticate/login/auth0-universal-login/identifier-first)。
+
+* カスタムログインページを無効にします。Auth0 Dashboard で、[ブランディング &gt; Universal Login &gt; Manage Classic Login &gt; Login](https://manage.auth0.com/#/login_page) に移動し、**Custom Login Page** トグルをオフにします。
+
+データベース接続では、次の設定が必要です。
+
+* データベース接続で [username を必須にする](/ja/docs/authenticate/database-connections/require-username) 設定を無効にするか、または [Flexible Identifiers](/ja/docs/authenticate/database-connections/flexible-identifiers-and-attributes) を有効にします。
+
+* [独自のデータベースを使用する](/ja/docs/authenticate/database-connections/custom-db/create-db-connection) 設定を無効にするか、または [ユーザーインポート](/ja/docs/authenticate/database-connections/custom-db/templates) (**Import Users to Auth0**) を有効にします。
+
+  ユーザーインポート (**Import Users to Auth0**) を有効にせずに独自のデータベースを使用する場合は、[以下の「データベース Action スクリプトの更新」に関する追加の前提条件](#early-access-use-your-own-database-without-user-import-enabled) に従ってください。
+
+パスキーを有効にしたデータベース接続では、引き続きパスワードも有効にしておく必要があります。これにより、パスキーにまだ対応していないブラウザーや古いデバイスからでも、ユーザーは引き続きアカウントにアクセスできます。
+
+### <Badge color="yellow">早期アクセス</Badge> ユーザーインポートを有効にせずに独自のデータベースを使用する
+
+パスキー認証で、ユーザーインポートを有効にしなくても独自のデータベースを使用できるようになりました。これにより、外部のユーザーストアに対する認証を継続しながら、カスタムデータベース接続でパスキー認証を提供できます。
+
+前提条件として、識別子と `user_id` の両方でのユーザー処理をサポートするように、Get User と Create の[データベース Action スクリプト](/ja/docs/authenticate/database-connections/custom-db/templates)を更新する必要があります。
+
+<Accordion title="ユーザーインポートを有効にせずに独自のデータベースでパスキーを有効にするためのデータベース Action スクリプトの更新方法">
+  <ReleaseStageNotice feature="passkeys for using your own database wihtout user import enabled" stage="ea" terms="true" />
+
+  1. まず、データベース接続でユーザーインポートが無効になっていることを確認します。
+
+  2. [context オブジェクトのサポートを有効にします](/ja/docs/authenticate/database-connections/custom-db/create-db-connection#enable-context-object)。これにより、データベース Action スクリプトで `context` パラメーターを利用できるようになり、識別子と `user_id` の両方での検索をサポートするために必要になります。
+
+  3. Get User スクリプトは、識別子による検索 (`context.identifierType` が設定されていない場合) と `user_id` による検索 (`context.identifierType` が `user_id` に設定されている場合) の両方をサポートする必要があります。
+
+     提供されている `getUser` 関数を使用するように、[Get User データベース Action スクリプト](/ja/docs/authenticate/database-connections/custom-db/templates/get-user)を `getByEmail` から更新します。
+
+     ```js
+     function getByEmail(email, callback) { // [!code --] 
+     function getUser(identifierValue, context, callback) { // [!code ++] 
+         const axios = require('axios');
+
+         // context からユーザー識別子を取得します // [!code ++]
+         const identifierType = context.identifierType || 'email'; // [!code ++]
+
+         // 外部のユーザー取得エンドポイントに置き換えます 
+         const url = configuration.baseAPIUrl
+                     + `/get_user/${email}?type=email`; // [!code --]
+                     + `/get_user/${identifierValue}?type=${identifierType}`; // [!code ++]
+
+         axios.get(url)
+             .then(response => {
+                 // Return the user object if found
+                 const user = response.data; 
+                 return callback(null, {
+                     user_id: user.user_id,
+                     email: user.email
+                     // 必要に応じて他のユーザー属性を含めます 
+                 });
+             })
+             .catch(error => {
+                 // エラーレスポンスを処理します 
+                 return callback(null);
+             });
+     }
+     ```
+
+  4. Create スクリプトは、有効なユーザープロファイルを返す必要があります。属性が有効な場合、返されるユーザープロファイルは Login スクリプトおよび Get User スクリプトと同じ検証に従う必要があります。属性が有効でない場合、返されるユーザープロファイルには `user_id` の値を含める必要があります。
+
+     有効なユーザープロファイルを返すように、[Create データベース Action スクリプト](/ja/docs/authenticate/database-connections/custom-db/templates/create)を更新します。
+
+     ```js
+     function create(user, callback) {
+         const axios = require('axios');
+
+         // 外部のユーザー作成エンドポイントに置き換えます
+         const url = 'https://example.com/api/create'; 
+
+         const payload = {
+             email: user.email
+             // 必要に応じて他のユーザープロパティを追加します
+         };
+
+         axios.post(url, payload)
+             .then(response => {
+                 // 作成された場合はユーザーオブジェクトを返します
+                 const createdUser = response.data; 
+
+                 return callback(null, {
+                     user_id: createdUser.user_id,
+                     email:createdUser.email
+                     // 必要に応じて他のユーザー属性を含めます
+                 });
+             })
+             .catch(error => {
+                 // エラーレスポンスを処理します 
+                 return callback(error);
+             }); 
+     }
+     ```
+</Accordion>
+
+<div id="configure-passkeys">
+  ## パスキーを設定する
+</div>
+
+前提条件を満たしたら、Auth0 Dashboard を使用してパスキーを有効化し、設定できます。
+
+<Steps titleSize="h3">
+  <Step title="パスキー設定を開く">
+    [Authentication &gt; Database](https://manage.auth0.com/#/connections/database) に移動し、編集するデータベース接続の名前を選択します。
+
+    **Authentication Methods** タブを選択します。次に、**Passkey** セクションで **Configure** を選択し、**Passkey** パネルを開きます。
+
+    まだチェックされていない場合は、**Enable passkeys** をオンにします。
+  </Step>
+
+  <Step title="パスキー認証 UI を選択する">
+    パスキー認証 UI では、ログイン時およびサインアップ時に、ユーザーがどのようにパスキー認証を開始できるかを決定します。
+
+    **Passkey Authentication UI** セクションで、3 つのオプションのいずれかを選択します。
+
+    | Passkey authentication UI     | Description                                                                                            |
+    | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+    | Passkey button &amp; autofill | ユーザーは、自動入力またはパスキーボタンを使ってパスキーで認証できます。                                                                   |
+    | Autofill                      | ユーザーがパスキーを使用するには、ブラウザーの自動入力機能を使ってログインする必要があります。自動入力では、認証情報を手動で入力する代わりに、ドロップダウンメニューから保存済みのアカウントを選択できます。 |
+    | Passkey button                | ユーザーは、ログインプロンプトで **Continue with a passkey** ボタンを選択する必要があります。                                          |
+
+    ユーザーのブラウザーで自動入力を利用できない場合、パスキーボタン (有効な場合) またはパスワード認証情報を使ってログインできます。
+  </Step>
+
+  <Step title="段階的登録を有効にする（任意）">
+    段階的登録では、識別子とパスワードでログインした後、まだパスキーを作成していないユーザーに対してパスキーの作成を促します。この手順は必須ではなく、ユーザーは 30 日ごとに延期できます。
+
+    段階的登録は、ユーザーをパスキーへ移行する際に、認証方法の移行をスムーズにするのに役立ちます。
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      [Organization 招待メール](/ja/docs/manage-users/organizations/configure-organizations/invite-members) からアカウントを作成する場合、ユーザーはパスキー認証を選択できません。段階的登録を有効にすると、これらのユーザーはパスワードでログインした後にパスキーを作成できます。
+    </Callout>
+
+    **Progressive Enrollment** チェックボックスはデフォルトでオンになっていますが、チェックを外して無効にできます。
+  </Step>
+
+  <Step title="ローカル登録を有効にする（任意）">
+    パスキーユーザーがクロスデバイス パスキーを使用して新しいデバイスにログインすると、ローカル登録によって、その新しいデバイス上でローカル パスキーを作成するよう促されます。これは必須ではないため、ユーザーはローカル パスキーの作成をスキップできます。
+
+    **Local Enrollment** チェックボックスはデフォルトでオンになっていますが、チェックを外して無効にできます。
+  </Step>
+
+  <Step title="設定を保存する">
+    設定の変更を保存するには、**Save** を選択します。
+
+    保存ボタンが無効になっている場合は、**Passkey** パネル上部の **Passkey Authentication Prerequisites** セクションで、テナントとデータベース接続が正しく設定されていることを確認してください。
+  </Step>
+</Steps>
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+パスキー利用時のエンドユーザー体験を最適化するために、以下の追加手順を検討してください。
+
+<div id="configure-relying-party-id-rp-id">
+  ### Relying Party ID (RP ID) を設定する
+</div>
+
+ユーザーが 1 つのパスキーで複数のサブドメイン間で認証できるようにするには (たとえば、`app.example.com` で提供されるネイティブアプリケーションと `login.example.com` で提供される Web アプリケーションの両方) 、RP ID を親ドメインまたはルートドメインに設定できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 Dashboard または Management API で RP ID をカスタマイズすると、他のドメイン用のすべてのパスキーが使用できなくなり、エンドユーザーは再登録する必要があります。
+</Callout>
+
+RP ID を正しく機能させるには、アプリケーションのドメインを [アプリケーション設定](https://manage.auth0.com/#/applications) の **Allowed Origins (CORS)** リストに追加する必要があります。
+
+Auth0 Dashboard で RP ID を設定するには、次の手順を実行します。
+
+1. **[Auth0 Dashboard &gt; Tenant Settings](https://manage.auth0.com/#/tenant/relying_party_ids)** に移動します。
+2. **Relying Party IDs** タブを選択します。
+3. **Edit Relying Party ID** を選択します。
+4. ドメインを入力します。
+5. この RP ID がルートドメインである場合は、チェックボックスを選択して、そのドメインをテナントのデフォルトとして設定します。
+6. **Save** を選択します。
+7. 次に、Relying Party ID を設定するアプリケーションに移動します。
+8. アプリケーション設定を選択します。
+9. **Application URIs** セクションの Allowed Origins (CORS) に、アプリケーションのドメインを追加します。
+10. **Save** を選択します。
+
+<div id="configure-a-custom-domain">
+  ### カスタムドメインを設定する
+</div>
+
+ユーザーがパスキーを登録すると、そのパスキーは<Tooltip tip="ユーザーを認証するために、サードパーティのIDプロバイダーに依存するエンティティ（サービスやアプリケーションなど）。" cta="用語集を見る" href="/ja/docs/glossary?term=relying+party">relying party</Tooltip>のドメインに関連付けられます。ドメイン名が変更されると、以前のドメインに関連付けられているパスキーはすべて無効になります。
+
+エンドユーザーへの影響を避けるため、パスキーを有効にする前に、テナント用の[カスタムドメイン](/ja/docs/customize/custom-domains)を設定することを検討してください。
+
+テナントで[Multiple Custom Domains](/ja/docs/customize/custom-domains/multiple-custom-domains)が有効になっている場合、Auth0 はドメインとそのドメイン用のパスキーを1対1で対応付けます。
+
+ユーザーは、テナント上の複数のカスタムドメインのうち、1つのドメイン (最初に登録したドメイン) に対してのみパスキーを登録できます。パスワードレスログインでは、選択したカスタムドメインがパスワードレスログインフローの Magic Link に反映されている必要があります。
+
+<div id="bypass-multi-factor-authentication">
+  ### 多要素認証をスキップする
+</div>
+
+[multi-factor authentication](/ja/docs/secure/multi-factor-authentication) を有効にしている場合、既定では、認証方式がパスワードかパスキーかにかかわらず、MFA チャレンジを完了する必要があります。
+
+パスキーは非常に高いレベルのセキュリティを提供するため、[post-login Action を使用してパスキー認証時の MFA をスキップ](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#reduce-friction-with-passkeys)できます。

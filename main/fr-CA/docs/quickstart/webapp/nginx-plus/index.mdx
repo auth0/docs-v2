@@ -1,0 +1,155 @@
+---
+title: "NGINX Plus"
+---
+
+import {AuthCodeBlock} from "/snippets/fr-CA/AuthCodeBlock.jsx";
+
+<div id="by-amin-abbaspour">
+  ##### Par Amin Abbaspour
+</div>
+
+Ce tutoriel montre comment utiliser le module `nginx-openid-connect` pour ajouter l’authentification et l’autorisation à votre serveur NGINX. Nous vous recommandons d’ouvrir une session pour suivre ce guide de démarrage rapide avec des exemples configurés pour votre compte.
+
+<Note>
+  ### Configuration système requise
+
+  Ce tutoriel et ce projet de base ont été testés avec ce qui suit :
+
+  * NGINX Plus R24
+</Note>
+
+**Veuillez suivre les étapes ci-dessous pour configurer votre application à l’aide de [**NGINX Plus**](https://www.nginx.com/products/nginx/) afin qu’elle fonctionne avec Auth0 et OpenID Connect.**
+
+<div id="install-and-enable-nginx-plus-module-njs-module">
+  ## Installer et activer le module nginx-plus-module-njs
+</div>
+
+Vous devez d’abord installer le module nginx-plus-module-njs pour NGINX Plus. Suivez le [guide d’installation des modules dynamiques](https://docs.nginx.com/nginx/admin-guide/dynamic-modules/nginscript) pour installer les paquets sur le système d’exploitation hôte.
+Pour les distributions Linux qui utilisent le gestionnaire de paquets `yum`, procédez comme suit :
+
+```bash lines
+sudo yum install nginx-plus-module-njs jq
+```
+
+Une fois installé, vous devez l’activer pour NGINX en ajoutant la ligne suivante au début de votre fichier `/etc/nginx/nginx.conf` :
+
+```bash lines
+load_module modules/ngx_http_js_module.so;
+```
+
+<div id="checkout-nginx-openid-connect-template-repository">
+  ## Cloner le dépôt de modèles nginx-openid-connect
+</div>
+
+Clonez le [dépôt GitHub `nginx-openid-connect`](https://github.com/nginxinc/nginx-openid-connect). Ce dépôt comprend un modèle de configuration.
+
+```bash lines
+git clone https://github.com/nginxinc/nginx-openid-connect
+```
+
+<div id="configure-with-your-auth0-application-information">
+  ## Configurez à l’aide des informations de votre application Auth0
+</div>
+
+Exécutez le script `configure.sh` dans le dossier nginx-openid-connect pour renseigner le modèle de configuration de votre application Auth0 :
+
+export const codeExample1 = `./configure.sh --auth_jwt_key request \
+  --client_id {yourClientId} \
+  --pkce_enable \
+  https://{yourDomain}/.well-known/openid-configuration`;
+
+<AuthCodeBlock children={codeExample1} language="bash" />
+
+Ensuite, ajoutez l’URL de déconnexion de votre locataire dans le fichier `openid_connect_configuration.conf`
+
+export const codeExample2 = `# openid_connect_configuration.conf
+map $host $oidc_logout_redirect {
+    default "https://{yourDomain}/v2/logout";
+}`;
+
+<AuthCodeBlock children={codeExample2} language="conf" />
+
+<div id="set-accept-encoding-type-for-token-and-jwks-endpoints">
+  ## Définir l’en-tête `Accept-Encoding` pour les points de terminaison de jeton et JWKS
+</div>
+
+Ajoutez l’en-tête `Accept-Encoding` dans `openid_connect.server_conf`
+
+```conf lines
+# openid_connect.server_conf
+location = /_jwks_uri {
+    internal;
+    ...
+    proxy_set_header    Content-Length "";           
+    proxy_set_header    Accept-Encoding "gzip";          # ceci est obligatoire
+    ...
+}
+
+location = /_token {
+    internal;
+    ...
+    proxy_set_header    Content-Type "application/x-www-form-urlencoded";
+    proxy_set_header    Accept-Encoding "gzip";          # ceci est obligatoire
+    ...
+}
+```
+
+<div id="copy-openid-connect-config-files-to-nginx-server">
+  ## Copiez les fichiers de configuration OpenID Connect sur le serveur NGINX
+</div>
+
+Vous devez copier quatre fichiers dans le dossier de configuration du serveur NGINX
+
+```sh lines
+sudo cp openid_connect.js \ 
+   frontend.conf \
+   openid_connect_configuration.conf \
+   openid_connect.server_conf /etc/nginx/conf.d
+```
+
+<div id="configuring-auth0-settings">
+  ## Configuration des paramètres d’Auth0
+</div>
+
+Dans les paramètres de votre application, ajoutez une nouvelle valeur à « Allowed Callback URLs » correspondant à `https://server-fqdn/_codexch`.
+
+Ensuite, dans Auth0, pour votre application, définissez « Token Endpoint Authentication Method » sur « None ». Cette configuration est requise pour le flux de code d’autorisation PKCE.
+
+<div id="passing-headers-to-upstream-application">
+  ## Transmission d’en-têtes à l’application en amont
+</div>
+
+Modifiez `/etc/nginx/conf.d/frontend.conf` et ajoutez à la cible en amont des en-têtes supplémentaires provenant de `id_token` :
+
+```conf lines
+# frontend.conf
+# auth_jwt_claim_set $claim_name https://namespace/key;
+
+server {
+    include conf.d/openid_connect.server_conf; # Flux de code d'autorisation et traitement de la partie de confiance
+    error_log /var/log/nginx/error.log debug;  # Réduire le niveau de gravité au besoin
+
+    listen 8010; # Utiliser SSL/TLS en production
+    
+    location / {
+        # Ce site est protégé par OpenID Connect
+        auth_jwt "" token=$session_jwt;
+        error_page 401 = @do_oidc_flow;
+
+        #auth_jwt_key_file $oidc_jwt_keyfile; # Activer lors de l'utilisation d'un nom de fichier
+        auth_jwt_key_request /_jwks_uri; # Activer lors de l'utilisation d'une URL
+
+        # Les utilisateurs authentifiés avec succès sont acheminés par proxy vers le backend,
+        # avec la revendication 'sub' transmise comme en-tête HTTP
+        proxy_set_header username $jwt_claim_sub;
+        proxy_set_header x-email $jwt_claim_email;
+        #proxy_set_header x-custom $claim_name;             # revendication avec espace de noms
+
+        proxy_pass http://my_backend; # Le site/application backend
+
+        access_log /var/log/nginx/access.log main_jwt;
+    }
+}
+```
+
+[Modifier sur GitHub](https://github.com/auth0/docs/edit/master/articles/quickstart/webapp/nginx-plus/01-login.md)

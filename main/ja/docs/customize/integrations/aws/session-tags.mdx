@@ -1,0 +1,143 @@
+---
+description: Amazon Web Services (AWS) Session Tags を使用して、AWS API とリソースに対するロールベースのアクセス制御 (RBAC) を実装する方法を学びます。
+title: ロールベースのアクセス制御に Amazon Web Services Session Tags を使用する
+---
+
+Amazon Web Services (AWS) Session Tags を使用すると、リソースにタグを付け、ユーザーにキーと値のペアを割り当てることで、AWS API とリソースに対するロールベースのアクセス制御 (RBAC) を実装できます。
+
+このガイドの例では、まず AWS Session Tags を使用して AWS リソースにタグを付け、次に、このロールと適切なタグを持つユーザーが AWS リソースに対して特定のアクションを実行できるようにする AWS IAM ロール用のポリシーを作成します。続いて、Auth0 で Rule を作成し、AWS IAM ロールと適切な AWS Session Tags を Auth0 ユーザーに付与して、それらをトークン内の <Tooltip tip="Security Assertion Markup Language (SAML): パスワードを使わずに 2 者間で認証情報をやり取りするための標準化されたプロトコル。" cta="用語集を見る" href="/ja/docs/glossary?term=SAML">SAML</Tooltip> アサーションに含めて渡します。この例は、[Configure Amazon Web Services for Single Sign-On](/ja/docs/customize/integrations/aws/configure-amazon-web-services-for-sso) の例を基にしています。
+
+AWS API とリソースで AWS Session Tags を使用するには、次の手順が必要です。
+
+1. AWS インスタンスにタグを付ける。
+2. 専用の AWS IAM ロールを作成する。
+3. Auth0 Rule を作成する。
+4. 設定をテストする。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+* 管理者権限を持つ [Amazon Web Services (AWS) アカウント](https://portal.aws.amazon.com/billing/signup#/start) が必要です。
+* [AWS で SSO を設定する](/ja/docs/customize/integrations/aws/configure-amazon-web-services-for-sso)
+* [AWS VM インスタンスをいくつかセットアップする](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html)。このガイドの例では、3 つの別個のインスタンスを使用します。
+
+<div id="tag-aws-instances">
+  ### AWS インスタンスにタグを付ける
+</div>
+
+AWS リソースにタグを追加します。[Amazon Elastic Compute Cloud: Tag your Amazon EC2 resources](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Using_Tags.html) の手順に従ってください。
+
+3 つのインスタンスを作成済みであることを確認してください。以下のタグを追加します。
+
+| インスタンス | タグ                                                                               |
+| ------ | -------------------------------------------------------------------------------- |
+| 1      | キー: `CostCenter`、値: `marketing`。<br />キー: `Project`、値: `website`。                |
+| 2      | キー: `CostCenter`、値: `engineering`。<br />キー: `Project`、値: `management_dashboard`。 |
+| 3      | キー: `CostCenter`、値: `marketing`。<br />キー: `Project`、値: `community_site`。         |
+
+<div id="create-a-specialized-aws-iam-role">
+  ### 専用の AWS IAM ロールを作成する
+</div>
+
+前提条件で設定した AWS SAML <Tooltip tip="IDプロバイダー（IdP）：デジタルIDを保存および管理するサービス。" cta="用語集を見る" href="/ja/docs/glossary?term=identity+provider">IDプロバイダー</Tooltip>を使用して、IAM ロールを作成します。[AWS Identity and Access Management ユーザーガイド: SAML 2.0 フェデレーション用のロールの作成 (コンソール) ](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_saml.html) の手順に従ってください。
+
+ロールを設定する際は、必ず次のパラメーターを使用してください。
+
+| パラメーター        | 説明と値の例                                                                                                           |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SAML Provider | 前提条件で作成した IDプロバイダーの名前 (`auth0SamlProvider` など) 。**Allow programmatic and AWS Management Console access** を選択します。 |
+
+**Attach permissions policies** を求められたら、次の JSON を使用してポリシーを作成し、名前を `VirtualMachineAccessByCostCenter` にします。
+
+```json lines
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstances"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:ResourceTag/CostCenter": "<%= "${aws:PrincipalTag/CostCenter}" %>"
+                }
+            }
+        }
+    ]
+}
+```
+
+ポリシーを作成したら、ロールのポリシー一覧を更新し、新しいポリシーを絞り込んで選択します。
+
+設定を確認する際は、次のパラメーターを使用してください。
+
+| Parameter | Description                             |
+| --------- | --------------------------------------- |
+| ロール名      | `AccessByCostCenter` のような、ロールの内容がわかる名前。 |
+| ロールの説明    | そのロールの用途を説明するテキスト。                      |
+
+<div id="create-an-auth0-rule">
+  ### Auth0 の Rule を作成する
+</div>
+
+AWS のロールとタグをユーザーにマッピングするには、Auth0 で [Rule を作成](/ja/docs/customize/rules/create-rules)する必要があります。これらの値は、その後トークン内の SAML アサーションを介して渡されます。次の例では:
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `awsAccount` 変数の値は、ご自身のアカウント番号に置き換えてください。
+</Callout>
+
+```javascript lines
+function(user, context, callback) {
+  var awsAccount = '013823792818';
+  var rolePrefix = `arn:aws:iam::` + awsAccount; 
+  var samlIdP = rolePrefix + `:saml-provider/auth0SamlProvider`;
+
+  user.awsRole = rolePrefix + `:role/AccessByCostCenter,` + samlIdP;
+  user.awsRoleSession = user.email;
+  user.awsTagKeys = ['CostCenter', 'Project'];
+  user.CostCenter = 'marketing';
+  user.Project = 'website';
+
+  context.samlConfiguration.mappings = {
+    'https://aws.amazon.com/SAML/Attributes/Role': 'awsRole',
+    'https://aws.amazon.com/SAML/Attributes/RoleSessionName': 'awsRoleSession',
+    'https://aws.amazon.com/SAML/Attributes/PrincipalTag:CostCenter': 'CostCenter',
+    'https://aws.amazon.com/SAML/Attributes/PrincipalTag:Project': 'Project'
+  };
+
+  callback(null, user, context);
+}
+```
+
+<div id="test-configuration">
+  ### 設定をテストする
+</div>
+
+これで、Auth0 ユーザーを使用して AWS コンソールにログインし、実装をテストできるはずです。
+
+ログインするには、AWS コンソール用の <Tooltip tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインすると、その後ほかのアプリケーションにも自動的にログインされるサービス。" cta="用語集を見る" href="/ja/docs/glossary?term=SSO">SSO</Tooltip> ログインが必要です。確認するには、次の手順を実行します。
+
+1. [Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications) に移動し、表示するアプリケーションの名前を選択します。
+2. **Addons** タブで、**SAML2 Web App** アドオンを有効にします。
+3. **Usage** タブで、**Identity Provider Login URL** を確認します。
+4. 表示された URL に移動します。
+5. サインインしたら、**EC2** から **Instances** を選択します。`CostCenter` が `marketing` のインスタンスの1つをクリックし、**Actions** &gt; **Instance State** &gt; **Stop** をクリックします。アクションが正常に完了することを確認します。
+6. `CostCenter` が `engineering` のインスタンスをクリックし、**Actions** &gt; **Instance State** &gt; **Stop** をクリックします。アクションがエラーで失敗することを確認します。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [Amazon Web Services でシングルサインオンを設定する](/ja/docs/customize/integrations/aws/configure-amazon-web-services-for-sso)
+* [Amazon Web Services を SAML サービスプロバイダーとして設定する](/ja/docs/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-aws)

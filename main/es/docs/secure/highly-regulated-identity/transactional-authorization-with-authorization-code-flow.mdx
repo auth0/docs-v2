@@ -1,0 +1,261 @@
+---
+description: Obtén información sobre cómo Highly Regulated Identity permite la autorización transaccional con el Flujo de código de autorización.
+title: Autorización transaccional con el Flujo de código de autorización
+---
+
+Highly Regulated Identity permite la autorización transaccional con el [Flujo de código de autorización](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow) al aplicar una <Tooltip tip="Autenticación multifactor (MFA): proceso de autenticación del usuario que utiliza un factor adicional al nombre de usuario y la contraseña, como un código enviado por SMS." cta="Ver glosario" href="/es/docs/glossary?term=multi-factor+authentication">autenticación multifactor</Tooltip> (MFA) reforzada para autorizar una transacción. La MFA reforzada solicita al usuario un segundo factor de autenticación para autorizar explícitamente los detalles de la transacción de una operación puntual, lo que resulta útil en casos de uso que requieren seguridad de nivel financiero:
+
+* Proteger operaciones sensibles realizadas desde tus propios servicios, como aprobar transferencias bancarias, acceder al historial de operaciones y cambiar las credenciales de acceso.
+* Proteger operaciones sensibles solicitadas desde servicios de terceros, como aprobar pagos digitales y permitir acceso por única vez para la verificación de cuentas.
+
+Este artículo te guía por todo el proceso de aprobación de una transferencia bancaria. El mismo <Tooltip tip="Flujo de autorización: concesión de autorización (o flujo de trabajo) especificado en el marco de OAuth 2.0." cta="Ver glosario" href="/es/docs/glossary?term=authorization+flow">flujo de autorización</Tooltip> transaccional se puede aplicar a otros casos de uso.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Debes configurar la autorización transaccional para cada API. Una vez activada, se aplica a los alcances y a `authorization_details.types` de esa API.
+</Callout>
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+<Warning>
+  No transfiera datos detallados de autorización de la transacción ni otros datos sensibles o regulados fuera de `authorization_details`.
+</Warning>
+
+Antes de comenzar, siga las instrucciones de [Configurar solicitudes de autorización enriquecidas](/es/docs/get-started/apis/configure-rich-authorization-requests) para registrar `authorization_details.types` para su API o <Tooltip tip="Resource Server: servidor que aloja recursos protegidos. Los Resource Server aceptan solicitudes de recursos protegidos y responden a ellas." cta="Ver glosario" href="/es/docs/glossary?term=resource+server">Resource Server</Tooltip>.
+
+<div id="end-to-end-flow">
+  ## Flujo de principio a fin
+</div>
+
+El siguiente diagrama muestra el flujo de principio a fin de la autorización transaccional con SCA contextual. Hay cuatro fases principales:
+
+1. Redirija de forma segura al usuario a Auth0 con los detalles de la transacción. En este paso, evite revelar información confidencial en el canal frontal (por ejemplo, el navegador).
+2. Aplique una política dinámica después de que el usuario se autentique. Con [Actions](/es/docs/customize/actions), puede decidir dinámicamente los siguientes pasos en función de los detalles de la transacción y de otra información que pueda obtener de fuentes como API externas. Para obtener más información, consulte [Aplicar una política dinámica](#apply-dynamic-policy).
+3. Solicite al usuario un segundo factor de autenticación y muestre los detalles de la transacción para que los apruebe explícitamente. Este paso depende del factor de autenticación que haya elegido aplicar mediante Actions.
+4. Obtenga el token de acceso y continúe con la operación confidencial. Su API valida los detalles de la transacción aprobados asociados al token de acceso.
+
+<Frame>![](/docs/images/cdy7uua7fh8z/6VYcY5YJRT9Ngaomj5f9yi/ea5f0caa41a7db330a1c1d980ce7116c/Transactional_Authorization__1_.png)</Frame>
+
+A continuación, veremos cada fase en detalle en las secciones siguientes.
+
+<div id="communicate-transaction-details-and-redirect-to-auth0">
+  ### Comunicar los detalles de la transacción y redirigir a Auth0
+</div>
+
+El usuario accede por primera vez a su aplicación web después de autenticarse con Auth0. Siguiendo nuestro caso de uso de ejemplo, el usuario solicita luego una transferencia de dinero a uno de sus contactos.
+
+Para cumplir con los estándares de seguridad de nivel financiero, Highly Regulated Identity utiliza Pushed Authorization Requests (PAR) para ocultar los detalles de la transacción al navegador. En lugar de enviar parámetros de consulta a través del navegador al endpoint `/authorize`, PAR envía los parámetros directamente desde el backend a un endpoint especial, `/par`, mediante una solicitud POST. Para obtener información sobre cómo configurarlo, consulte [Configure Pushed Authorization Requests](/es/docs/get-started/applications/configure-par).
+
+En el cuerpo de la solicitud PAR, los detalles de la transacción se envían como parte del objeto JSON `authorization_details`:
+
+```json lines
+"authorization_details": [
+ {
+   "type": "money_transfer",
+   "instructedAmount": {
+     "amount": 150,
+     "currency": "USD"
+   },
+   "sourceAccount": "xxxxxxxxxxx1234",
+   "destinationAccount": "xxxxxxxxxxx9876",
+   "beneficiary": "Hanna Herwitz",
+   "subject": "A Lannister Always Pays His Debts"
+ }
+]
+```
+
+Usa Actions para inspeccionar `authorization_details` y determinar qué factores de autenticación usar según la transacción. Para obtener más información sobre `authorization_details` y cómo usarlo junto con PAR, consulta [Flujo de código de autorización con solicitudes de autorización enriquecidas](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-rar).
+
+Si quieres cumplir los requisitos de conformidad de FAPI 1 Advanced Security, también debes usar criptografía de clave pública para autenticar el backend ante el endpoint `/par` o `/token`. Esto es más seguro que enviar un <Tooltip tip="Secreto del cliente: secreto que usa un cliente (aplicación) para autenticarse con el Servidor de autorización; solo deben conocerlo el cliente y el Servidor de autorización, y debe ser lo suficientemente aleatorio como para que no pueda adivinarse." cta="Ver glosario" href="/es/docs/glossary?term=Client+Secret">Secreto del cliente</Tooltip>. Auth0 ofrece los siguientes métodos de autenticación con criptografía de clave pública:
+
+* [Private Key JWT](/es/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt)
+* [TLS mutuo (mTLS) para OAuth](/es/docs/get-started/authentication-and-authorization-flow/authenticate-with-mtls)
+
+Después de recibir una respuesta satisfactoria a tu solicitud PAR, redirige al usuario al endpoint `/authorize` de tu inquilino de Auth0. Agrega el parámetro `request_uri` recibido en la respuesta PAR y `client_id` como los únicos parámetros de consulta, lo que oculta de forma efectiva cualquier información confidencial del navegador.
+
+<div id="apply-dynamic-policy">
+  ### Aplicar una política dinámica
+</div>
+
+Cuando el usuario inicia sesión sin usar <Tooltip tip="Inicio de sesión único (SSO): servicio que, después de que un usuario inicia sesión en una aplicación, inicia automáticamente la sesión de ese usuario en otras aplicaciones." cta="Ver glosario" href="/es/docs/glossary?term=SSO">SSO</Tooltip> y el navegador accede al endpoint `/authorize` de tu inquilino de Auth0, Auth0 intentará autenticar al usuario. En nuestro ejemplo de aprobación de una transferencia bancaria, Auth0 ya ha autenticado al usuario para que acceda a tu aplicación web. Sin embargo, cuando un tercero redirige al usuario, por ejemplo, para realizar un pago digital, Auth0 le muestra una pantalla de inicio de sesión. Para obtener más información sobre el flujo de autenticación, consulta la documentación de [Authenticate](/es/docs/authenticate).
+
+Una vez que Auth0 haya autenticado correctamente al usuario, ejecuta las [Actions](/es/docs/customize/actions) posteriores al inicio de sesión, que exponen detalles de la transacción, como información sobre el usuario, la aplicación, los factores de autenticación utilizados y más, en el [objeto de evento post-login](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object). Dentro del objeto de evento post-login, la propiedad `event.transaction.requested_authorization_details` contiene detalles sobre la solicitud de autorización recibida en el paso anterior.
+
+Usa el [objeto de evento post-login](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object) para decidir cómo quieres proceder con la transacción. Por ejemplo, puedes enviar los detalles de la transacción a un motor de riesgo externo y, después de evaluar el nivel de riesgo, determinar si debes solicitar autenticación reforzada mediante SMS, como se muestra en el siguiente ejemplo de código.
+
+```js lines expandable
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.transaction?.requested_authorization_details.some(e => e.type === 'money_transfer')) {
+      const axios = require('axios');
+
+      //detalles para contactar el motor de evaluación de riesgos
+      const risk_url = 'https://risk.example.org/score';
+      const risk_options = {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      };
+
+      const tx_data = {
+        email: event.user.email,
+        authorization_details: event.transaction?.requested_authorization_details
+      };
+
+      //enviar detalles de la operación al motor de evaluación de riesgos
+      var risk = await axios.post(risk_url, tx_data, risk_options);
+
+      //si es una operación de riesgo, usar push para autorizar
+      if (risk.data.score >= 2) {
+        api.authentication.challengeWith({ type: 'push-notification', options: {otpFallback: false}});
+
+      }
+    }
+};
+```
+
+<div id="challenge-the-user-to-get-transaction-details-approval">
+  ### Desafíe al usuario para que apruebe los detalles de la transacción
+</div>
+
+Puede personalizar qué factor de autenticación usar en función de los factores que el usuario tenga inscritos, los factores ya satisfechos por la sesión y/o sus propias preferencias. También puede ofrecer alternativas para que el usuario elija. Para obtener más información, lea [Personalizar la selección de MFA en New Universal Login](/es/docs/secure/multi-factor-authentication/customize-mfa/customize-mfa-selection-universal-login).
+
+Además, para SMS, correo electrónico y WebAuthn, puede personalizar la pantalla de consentimiento que Auth0 presenta al usuario con la información que quiera mostrar de authorization&#95;details y otros detalles de la transacción. Para obtener más información, lea [Configurar solicitudes de autorización enriquecidas](/es/docs/get-started/apis/configure-rich-authorization-requests). En el caso de las notificaciones push, esto no se aplica, ya que la aplicación móvil es la que muestra los detalles de la transacción al usuario final.
+
+Las siguientes secciones explican los distintos factores de autenticación que puede configurar para la autorización transaccional.
+
+<div id="push-notifications">
+  #### Notificaciones push
+</div>
+
+Envía una notificación push al dispositivo móvil inscrito de un usuario mientras Auth0 le muestra la pantalla de espera de autenticación multifactor (MFA) en el dispositivo de consumo (por ejemplo, el portátil donde se originó la transacción).
+
+<Frame>![](/docs/images/cdy7uua7fh8z/4mEJTT4VsAAAb6I0HhJI6r/851fe5ff489bfc9e5aaa2c52b4644f2c/Mobile_Push_-_English.png)</Frame>
+
+En el caso de las notificaciones push, la aplicación móvil es responsable de mostrar al usuario los detalles de la transacción para que la apruebe de forma explícita. Al enviar una notificación push, puedes deshabilitar la opción de recurrir al ingreso manual de un OTP agregando la opción `otpFallback: false`.
+
+Para mostrar `authorization_details` al usuario, la aplicación móvil debe recuperarlos del parámetro `txlnkid`. El [SDK de Auth0 Guardian](/es/docs/secure/multi-factor-authentication/auth0-guardian) pasa el parámetro `txlnkid` del inquilino a la aplicación móvil mediante una notificación push.
+
+Después de que la aplicación móvil reciba la notificación push a través del SDK de Guardian, puede obtener los detalles de consentimiento, que incluyen `authorization_details`, desde la API de Consent de Auth0:
+
+<Tabs>
+  <Tab title="iOS">
+    ```swift lines
+    let device: AuthenticationDevice = // el objeto que obtuviste al inscribirte
+    if let consentId = notification.transactionLinkingId {
+        Guardian
+            .consent(forDomain: {yourTenantDomain}, device: device)
+            .fetch(consentId: consentId, notificationToken: notification.transactionToken)
+            .start{result in
+                switch result {
+                case .success(let payload):
+                    let authorizationDetails = payload.requestedDetails.authorizationDetails
+                case .failure(let cause):
+                    // algo salió mal
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Android">
+    ```kotlin lines
+    if (notification.getTransctionLinkingId() != null) {
+        guardian
+          .fetchConsent(notification, enrollment)
+          .start(new Callback<Enrollment> {
+            @Override
+            void onSuccess(RichConsent consentDetails) {
+              List<Map<String, Object>> authorizationDetails = consentDetails
+                    .getRequestedDetails()
+                    .getAuthorizationDetails();
+            }
+
+            @Override
+            void onFailure(Throwable exception) {
+              if (exception instanceof GuardianException) {
+                GuardianException guardianException = (GuardianException) exception;
+                if (guardianException.isResourceNotFound()) {
+                  // no hay ningún consentimiento asociado con la transacción
+                }
+              }
+              // algo salió mal
+            }
+          });
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Desde la Action de post-login, puedes llamar a `api.multifactor.enable()` antes de `api.authentication.challengeWith()` para quitar la opción de recordar este dispositivo y obligar al usuario a validar el desafío push en todas las transacciones. Para obtener más información, consulta [Desencadenadores de Action: post-login - objeto de API](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object).
+
+Una vez que el usuario apruebe o rechace la operación, la aplicación móvil puede aprobar o rechazar el desafío de MFA. La transacción avanza a la fase de **Completar la operación**.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Para verificar la identidad del usuario que abre la notificación push, puedes agregar autenticación biométrica a la aplicación móvil. Para obtener más información, consulta [Configurar WebAuthn con Device Biometrics para MFA](/es/docs/secure/multi-factor-authentication/fido-authentication-with-webauthn/configure-webauthn-device-biometrics-for-mfa).
+</Callout>
+
+<div id="sms-email-or-webauthn">
+  #### SMS, correo electrónico o WebAuthn
+</div>
+
+También puedes configurar el teléfono, el correo electrónico o WebAuthn como factores de autenticación para desafiar al usuario. Para estos factores de autenticación, Auth0 muestra al usuario la pantalla de espera de MFA correspondiente. Después de que el usuario valida el desafío en la pantalla de espera de MFA, Auth0 le muestra los detalles de la transacción para su aprobación explícita. Recuerda que debes [configurar solicitudes de autorización enriquecidas](/es/docs/get-started/apis/configure-rich-authorization-requests) para que el paso de aprobación funcione correctamente.
+
+Para el factor de autenticación por teléfono, Auth0 envía un código de verificación al usuario por SMS o llamada de voz. La siguiente captura de pantalla muestra la pantalla de espera de MFA después de que Auth0 enviara el código por SMS:
+
+<Frame>![](/docs/images/cdy7uua7fh8z/kYn2A0p2jTY5CUn1FsjVf/b926a1689ee9722e6b902e433a77223b/Phone_Challenge_-_English.png)</Frame>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Desde Actions, puedes llamar a `api.multifactor.enable('any', { allowRememberBrowser: false })` antes de `api.authentication.challengeWith` para quitar la opción de recordar este dispositivo y obligar al usuario a validar el desafío push en todas las transacciones.
+</Callout>
+
+A continuación, el usuario recibe el SMS con el código de verificación.
+
+Después de que el usuario introduce el código de verificación en la pantalla de espera de MFA, Auth0 le muestra los detalles de la transacción en una pantalla de consentimiento. Una vez que el usuario aprueba o rechaza los detalles de la transacción, la transacción pasa a la fase [Completar la operación](#complete-the-operation).
+
+El correo electrónico y WebAuthn usan el mismo flujo de aprobación de transacciones y pantallas similares de espera de MFA y aprobación explícita.
+
+<Warning>
+  Según PSD2, el [correo electrónico no es un factor de autenticación válido](https://www.eba.europa.eu/sites/default/documents/files/documents/10180/2622242/4bf4e536-69a5-44a5-a685-de42e292ef78/EBA%20Opinion%20on%20SCA%20elements%20under%20PSD2%20.pdf) para la autenticación reforzada de clientes. Te recomendamos usar otro factor de autenticación para desafiar a los usuarios y cumplir con PSD2.
+</Warning>
+
+<div id="no-challenge">
+  #### Sin desafío
+</div>
+
+Si no se somete al usuario a un segundo factor de autenticación, Auth0 le muestra la pantalla de consentimiento para obtener su aprobación explícita de los detalles de la transacción.
+
+<div id="complete-the-operation">
+  ### Completa la operación
+</div>
+
+Para completar la operación, Auth0 utiliza el estándar [Flujo de código de autorización](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow). Si se aprueba la transacción, el navegador del usuario se redirige a tu aplicación con un código de autorización, que luego se intercambia por un <Tooltip tip="Token de acceso: Credencial de autorización, en forma de una cadena opaca o un JWT, utilizada para acceder a una API." cta="Ver glosario" href="/es/docs/glossary?term=access+token">token de acceso</Tooltip> cifrado mediante [JSON Web Encryption](/es/docs/secure/tokens/access-tokens/json-web-encryption). El token de acceso contiene los `authorization_details` que enviaste originalmente. El siguiente ejemplo de código muestra el contenido de un token de acceso descifrado:
+
+```json lines
+{
+ "iss": "https://my_tenant.auth0.com/",
+ "sub": "auth0|me",
+ "aud": "https://myapi.zewobnak.com",
+ "iat": 1683661385,
+ "exp": 1683747785,
+ "azp": "my_client",
+ "transaction_linking_id": "ce4842e8-2894-418a-b1f9-39a330cd4911",
+ "authorization_details": [
+   {
+     "type": "money_transfer",
+     "instructedAmount": {
+       "amount": 150,
+       "currency": "USD"
+     },
+     "sourceAccount": "xxxxxxxxxxx1234",
+     "destinationAccount": "xxxxxxxxxxx9876",
+     "beneficiary": "Hanna Herwitz",
+     "subject": "A Lannister Always Pays His Debts",
+   }
+ ]
+}
+```
+
+Pase el token de acceso a la API que facilita la transferencia de dinero. A continuación, la API comprueba `authorization_details` del token de acceso para verificar los detalles de la transacción, como el importe, el remitente, el destino, entre otros. Una vez verificados, la transferencia de dinero se ejecuta correctamente y debería ver la pantalla de aprobación.
+
+Si la transacción se rechaza en cualquier paso, el navegador del usuario muestra el código de error `access_denied`.

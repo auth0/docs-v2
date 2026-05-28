@@ -1,0 +1,1003 @@
+---
+title: "Device Authorization Flow"
+---
+
+import {AuthCodeGroup} from "/snippets/ja/AuthCodeGroup.jsx";
+
+<div id="by-rachel-khoriander">
+  ##### Rachel Khoriander 著
+</div>
+
+このチュートリアルでは、Device Authorization フローを使用して、入力機能が限られたデバイスから API を呼び出す方法を説明します。このクイックスタートは、アカウント用に設定されたサンプルを使って進められるよう、ログインしたうえで進めることをお勧めします。
+
+このチュートリアルでは、Device Authorization フローを使用して、入力機能が限られたデバイスから API を呼び出す方法を説明します。
+
+{/* [クイックスタートを始める](#prerequisites)
+
+  [GitHubで見る](https://github.com/undefined/undefined/tree/master/01-Login) */}
+
+<Info>
+  このチュートリアルでは、Device Authorization Flow を使用して、入力に制約のあるデバイスから独自の API を呼び出す方法を説明します。このフローの仕組みと、これを使用すべき理由について詳しくは、[Device Authorization Flow](/ja/docs/get-started/authentication-and-authorization-flow/device-authorization-flow) を参照してください。
+</Info>
+
+Auth0 では、次の方法でアプリに Device Authorization Flow を簡単に実装できます。
+
+* Authentication API: API を直接呼び出す方法については、このまま読み進めてください。インタラクティブに試すには、[Device Flow プレイグラウンド](https://auth0.github.io/device-flow-playground/) を参照してください。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+**このチュートリアルを始める前に:**
+
+* Device Authorizationフローが実装に適していることを確認するため、[制限事項](#limitations)を確認します。
+* [アプリケーションを Auth0 に登録します](/ja/docs/get-started/auth0-overview/create-applications/native-apps)。
+
+  * **Application Type** で **Native** を選択します。
+  * 必要に応じて、**Allowed Web Origins** を設定します。これは、ローカル開発用に localhost をオリジンとして許可したり、CORS の対象となるアーキテクチャ (例: HTML5 + JS) を持つ特定の TV ソフトウェア向けに許可するオリジンを設定したりするために使用できます。ほとんどのアプリケーションでは、この設定は使用しません。
+  * **OIDC Conformant** トグルが有効になっていることを確認します。この設定は、[Dashboard](https://manage.auth0.com/#) の **Application Settings &gt; Advanced &gt; OAuth** にあります。
+  * アプリケーションの [**Grant Types**](/ja/docs/get-started/applications/update-grant-types) に **Device Code** が含まれていることを確認します。これも [Dashboard](https://manage.auth0.com/#) の **Application Settings &gt; Advanced &gt; Grant Types** にあります。
+  * アプリケーションで [リフレッシュトークン](/ja/docs/secure/tokens/refresh-tokens) を使用できるようにするには、アプリケーションの [**Grant Types**](/ja/docs/get-started/applications/update-grant-types) に **Refresh Token** が含まれていることを確認します。
+* アプリケーション用に少なくとも 1 つの接続を設定し、有効にします: [Database connections](/ja/docs/get-started/applications/set-up-database-connections), [Social connections](https://marketplace.auth0.com/features/social-connections)
+* [API を Auth0 に登録します](/ja/docs/get-started/architecture-scenarios/mobile-api/part-2#create-the-api)
+
+  * API が、既存のトークンの有効期限が切れたときに新しいトークンを取得できるよう [リフレッシュトークン](/ja/docs/secure/tokens/refresh-tokens) を受け取れるようにするには、**Allow Offline Access** を有効にします。
+* ランダムに生成されるユーザーコード の文字セット、形式、長さを定義するには、[Device User Code Settings を設定します](/ja/docs/get-started/tenant-settings/configure-device-user-code-settings)。
+
+<div id="steps">
+  ## 手順
+</div>
+
+1. [デバイスコードをリクエストする](#request-device-code) (Device Flow): ユーザーがデバイスを認可するために使用するデバイスコードをリクエストします。
+2. [デバイスのアクティベーションをリクエストする](#request-device-activation) (Device Flow): ユーザーがノート PC またはスマートフォンを使ってデバイスを認可するよう求めます。
+3. [トークンをリクエストする](#request-tokens) (Device Flow): トークンエンドポイントをポーリングしてトークンをリクエストします。
+4. [ユーザー認可](#user-authorization) (Browser Flow): ユーザーがデバイスを認可し、デバイスがトークンを受け取れるようにします。
+5. [トークンを受け取る](#receive-tokens) (Device Flow): ユーザーがデバイスを正常に認可した後、トークンを受け取ります。
+6. [APIを呼び出す](#call-your-api) (Device Flow): 取得したアクセストークンを使用して API を呼び出します。
+7. [トークンを更新する](#refresh-tokens) (Device Flow): 既存のトークンの有効期限が切れたら、リフレッシュトークンを使用して新しいトークンをリクエストします。
+
+オプション: [サンプルのユースケースを確認する](#sample-use-cases)
+
+オプション: [トラブルシューティング](#troubleshooting)
+
+<div id="request-device-code">
+  ## Device Code をリクエストする
+</div>
+
+ユーザーがデバイスアプリを起動し、そのデバイスの認可を行う場合は、デバイスコード を取得する必要があります。ユーザーがブラウザベースのデバイスでセッションを開始すると、この code はそのセッションに関連付けられます。
+
+デバイスコード を取得するには、アプリから[device code URL](https://auth0.com/docs/api/authentication#get-device-code)に対して、クライアントIDを含めて code をリクエストする必要があります。
+
+<div id="example-post-to-device-code-url">
+  ### デバイスコード URL への POST の例
+</div>
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/oauth/device/code' \
+    --header 'content-type: application/x-www-form-urlencoded' \
+    --data 'client_id={yourClientId}' \
+    --data 'scope=SCOPE' \
+    --data 'audience=AUDIENCE'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/oauth/device/code");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("content-type", "application/x-www-form-urlencoded");
+  request.AddParameter("application/x-www-form-urlencoded", "client_id={yourClientId}&scope=SCOPE&audience=AUDIENCE", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/oauth/device/code"
+
+  	payload := strings.NewReader("client_id=%24%7Baccount.clientId%7D&scope=SCOPE&audience=AUDIENCE")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("content-type", "application/x-www-form-urlencoded")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.post("https://{yourDomain}/oauth/device/code")
+    .header("content-type", "application/x-www-form-urlencoded")
+    .body("client_id=%24%7Baccount.clientId%7D&scope=SCOPE&audience=AUDIENCE")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/oauth/device/code',
+    headers: {'content-type': 'application/x-www-form-urlencoded'},
+    data: new URLSearchParams({
+      client_id: '{yourClientId}',
+      scope: 'SCOPE',
+      audience: 'AUDIENCE'
+    })
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/oauth/device/code",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "client_id=%24%7Baccount.clientId%7D&scope=SCOPE&audience=AUDIENCE",
+    CURLOPT_HTTPHEADER => [
+      "content-type: application/x-www-form-urlencoded"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "client_id=%24%7Baccount.clientId%7D&scope=SCOPE&audience=AUDIENCE"
+
+  headers = { 'content-type': "application/x-www-form-urlencoded" }
+
+  conn.request("POST", "/{yourDomain}/oauth/device/code", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```rb Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/oauth/device/code")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Post.new(url)
+  request["content-type"] = 'application/x-www-form-urlencoded'
+  request.body = "client_id=%24%7Baccount.clientId%7D&scope=SCOPE&audience=AUDIENCE"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="device-code-parameters">
+  #### デバイスコードのパラメーター
+</div>
+
+カスタム API を呼び出すためのデバイスコードをリクエストする場合は、次の点に注意してください。
+
+* `audience` パラメーターを含める必要があります
+* 対象の API でサポートされている追加のスコープを含めることもできます
+
+<Info>
+  アプリが認証済みユーザーに関する情報を取得するためのアクセストークンのみを必要とする場合、`audience` パラメーターは不要です。
+</Info>
+
+| Parameter Name | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `client_id`    | アプリケーションのクライアントIDです。この値は [Application Settings](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `scope`        | 認可をリクエストする[スコープ](/ja/docs/get-started/apis/scopes)です。各スコープはスペースで区切る必要があります。`profile` や `email` など、ユーザーに関する[標準 OIDC スコープ](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims)、[名前空間付き形式](/ja/docs/secure/tokens/json-web-tokens/create-custom-claims)に準拠した[カスタムクレーム](/ja/docs/secure/tokens/json-web-tokens/json-web-token-claims#custom-claims)、または[対象の API でサポートされている任意のスコープ](/ja/docs/get-started/apis/scopes/api-scopes) (例: `read:contacts`) をリクエストできます。IDトークンを取得する場合、またはユーザーのプロフィール情報を取得するために [/userinfo endpoint](https://auth0.com/docs/api/authentication#user-profile) を使用できるようにする場合は、`openid` を含めてください。リフレッシュトークンを取得するには、`offline_access` を含めます ([API Settings](https://manage.auth0.com/#/apis) で **Allow Offline Access** フィールドが有効になっていることを確認してください) 。なお、これは URL エンコードする必要があります。 |
+| `audience`     | アプリがアクセスする API の一意の識別子です。このチュートリアルの前提条件の一部として作成した API の [Settings](https://manage.auth0.com/#/apis) タブにある **Identifier** の値を使用してください。なお、これは URL エンコードする必要があります。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+
+<div id="device-code-response">
+  ### Device Code レスポンス
+</div>
+
+正常に処理されると、`device_code`、`user_code`、`verification_uri`、`expires_in`、`interval`、`verification_uri_complete` の各値を含むペイロードを伴う HTTP 200 レスポンスを受け取ります。
+
+```json lines
+{
+  "device_code": "Ag_EE...ko1p",
+  "user_code": "QTZL-MCBW",
+  "verification_uri": "https://accounts.acmetest.org/activate",
+  "verification_uri_complete": "https://accounts.acmetest.org/activate?user_code=QTZL-MCBW",
+  "expires_in": 900,
+  "interval": 5
+}
+```
+
+* `device_code` はデバイス固有の デバイスコード です。ユーザーがブラウザベースのデバイスで `verification_uri` にアクセスすると、この code がそのセッションに関連付けられます。
+* `user_code` には、デバイスを認可するために `verification_uri` で入力する code が含まれます。
+* `verification_uri` には、デバイスを認可するためにユーザーがアクセスする URL が含まれます。
+* `verification_uri_complete` には、デバイスを認可するためにユーザーがアクセスする完全な URL が含まれます。これにより、必要に応じて、アプリで `user_code` を URL に埋め込めます。
+* `expires_in` は、`device_code` と `user_code` の有効期間 (秒) を示します。
+* `interval` は、トークンをリクエストするためにアプリがトークン URL をポーリングする間隔 (秒) を示します。
+
+<Info>
+  ランダムに生成されるユーザーコードの文字セット、形式、長さは、テナント設定で[設定](/ja/docs/get-started/tenant-settings/configure-device-user-code-settings)できます。
+
+  総当たり攻撃を防ぐため、`user_code` には次の制限を適用しています。
+
+  **最小長**:
+
+  * BASE20 Letters: 8 文字
+  * Numbers: 9 文字
+
+  **最大長**:
+
+  * 20 文字 (読みやすくするための区切りとして追加されるハイフンとスペースを含む)
+
+  **有効期限**:
+
+  * 15 分
+</Info>
+
+<div id="request-device-activation">
+  ## デバイスの有効化をリクエストする
+</div>
+
+`device_code` と `user_code` を受け取ったら、ユーザーにノートPCまたはスマートフォンで `verification_uri` にアクセスし、`user_code` を入力するよう案内する必要があります。
+
+<Frame>![デバイスの有効化をリクエストする](https://cdn2.auth0.com/docs/1.14550.0/media/articles/flows/guides/device-auth/request-device-activation.png)</Frame>
+
+`device_code` はユーザーが直接使用するものではないため、混乱を避けるためにも、操作中は表示しないでください。
+
+<Info>
+  CLI を構築する場合は、この手順を省略し、すぐに `verification_uri_complete` でブラウザーを開くこともできます。
+</Info>
+
+<div id="request-tokens">
+  ## トークンをリクエストする
+</div>
+
+ユーザーがデバイスを有効化するのを待っている間に、アクセストークンをリクエストするため、トークン URL へのポーリングを開始します。前の手順で取得したポーリング間隔 (`interval`) を使用して、`device_code` を含めて [token URL](https://auth0.com/docs/api/authentication#device-auth) に `POST` する必要があります。
+
+ネットワーク遅延によるエラーを避けるため、各間隔の計測は、前回のポーリングリクエストに対するレスポンスを受信した後に開始してください。
+
+<div id="example-request-token-post-to-token-url">
+  ### token URL へのリクエストトークンの POST 例
+</div>
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/oauth/token' \
+    --header 'content-type: application/x-www-form-urlencoded' \
+    --data 'grant_type=urn:ietf:params:oauth:grant-type:device_code' \
+    --data 'device_code=YOUR_DEVICE_CODE' \
+    --data 'client_id={yourClientId}'
+  ```
+
+  ```cs C#
+  var client = new RestClient("https://{yourDomain}/oauth/token");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("content-type", "application/x-www-form-urlencoded");
+  request.AddParameter("application/x-www-form-urlencoded", "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=YOUR_DEVICE_CODE&client_id=%24%7Baccount.clientId%7D", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/oauth/token"
+
+  	payload := strings.NewReader("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=YOUR_DEVICE_CODE&client_id=%24%7Baccount.clientId%7D")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("content-type", "application/x-www-form-urlencoded")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.post("https://{yourDomain}/oauth/token")
+    .header("content-type", "application/x-www-form-urlencoded")
+    .body("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=YOUR_DEVICE_CODE&client_id=%24%7Baccount.clientId%7D")
+    .asString();
+  ```
+
+  ```javascript Node.js
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/oauth/token',
+    headers: {'content-type': 'application/x-www-form-urlencoded'},
+    data: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      device_code: 'YOUR_DEVICE_CODE',
+      client_id: '{yourClientId}'
+    })
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/oauth/token",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=YOUR_DEVICE_CODE&client_id=%24%7Baccount.clientId%7D",
+    CURLOPT_HTTPHEADER => [
+      "content-type: application/x-www-form-urlencoded"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```py Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=YOUR_DEVICE_CODE&client_id=%24%7Baccount.clientId%7D"
+
+  headers = { 'content-type': "application/x-www-form-urlencoded" }
+
+  conn.request("POST", "/{yourDomain}/oauth/token", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```rb Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/oauth/token")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Post.new(url)
+  request["content-type"] = 'application/x-www-form-urlencoded'
+  request.body = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=YOUR_DEVICE_CODE&client_id=%24%7Baccount.clientId%7D"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="token-request-parameters">
+  #### トークンリクエストパラメーター
+</div>
+
+| パラメーター名       | 説明                                                                                                                                                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`  | `"urn:ietf:params:oauth:grant-type:device_code"` に設定します。これは拡張グラントタイプです ([RFC6749](https://tools.ietf.org/html/rfc6749#section-4.5) の Section 4.5 で定義) 。なお、この値は URL エンコードする必要があります。 |
+| `device_code` | このチュートリアルの前の手順で取得した `device_code` です。                                                                                                                                              |
+| `client_id`   | アプリケーションのクライアントIDです。この値は [Application Settings](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。                                                         |
+
+<div id="token-responses">
+  ### トークンレスポンス
+</div>
+
+ユーザーがデバイスを認可するまでの間、`HTTP 4xx` レスポンスがいくつか返される場合があります。
+
+<div id="authorization-pending">
+  #### 認可待ち
+</div>
+
+このエラーは、ユーザーが操作を行うまでの間に表示されます。このチュートリアルの前の手順で取得した推奨間隔に従って、ポーリングを続けてください。
+
+```
+`HTTP 403`
+
+{
+  "error": "authorization_pending",
+  "error_description": "..."
+}
+```
+
+<div id="slow-down">
+  #### 間隔を空けてください
+</div>
+
+ポーリングの間隔が短すぎます。このチュートリアルの前の手順で取得した推奨間隔を使用し、間隔を空けてください。ネットワーク遅延が原因でこのエラーが返されるのを防ぐには、最後のポーリングリクエストへのレスポンスを受信してから、各間隔のカウントを開始してください。
+
+```
+`HTTP 429`
+
+{
+  "error": "slow_down",
+  "error_description": "..."
+}
+```
+
+<div id="expired-token">
+  #### 期限切れのトークン
+</div>
+
+ユーザーが十分な時間内にデバイスを承認しなかったため、`device_code` の有効期限が切れています。アプリケーションは、フローの有効期限が切れたことをユーザーに通知し、フローを再開するよう促す必要があります。
+
+<Info>
+  `expired_token` エラーが返されるのは、ちょうど一度だけです。その後は、厄介な `invalid_grant` が返されます。デバイスはポーリングを*必ず*停止する必要があります。
+</Info>
+
+```
+`HTTP 403`
+
+{ 
+  "error": "expired_token",
+  "error_description": "..."
+}
+```
+
+<div id="access-denied">
+  #### アクセス拒否
+</div>
+
+最後に、アクセスが拒否された場合は、次の応答が返されます。
+
+```
+`HTTP 403`
+
+{
+  "error": "access_denied",
+  "error_description": "..."
+}
+```
+
+これは、次のようなさまざまな理由で発生する可能性があります。
+
+* ユーザーがデバイスの認可を拒否した
+* 認可サーバーがトランザクションを拒否した
+* 設定された[Rules](/ja/docs/customize/rules)によってアクセスが拒否された
+
+<div id="user-authorization">
+  ## ユーザー認可
+</div>
+
+ユーザーは QR code をスキャンするか、アクティベーションページを開いてユーザーコード を入力します。
+
+<Frame>![ユーザーコード を入力](https://cdn2.auth0.com/docs/1.14550.0/media/articles/flows/guides/device-auth/enter-user-code.png)</Frame>
+
+これが正しいデバイスであることをユーザーに確認してもらうため、確認ページが表示されます。
+
+<Frame>![デバイスを確認](https://cdn2.auth0.com/docs/1.14550.0/media/articles/flows/guides/device-auth/confirm-device.png)</Frame>
+
+ユーザーはサインインしてトランザクションを完了します。このステップには、次のプロセスの 1 つ以上が含まれる場合があります。
+
+* ユーザーを認証する。
+* 認証のためにユーザーを IDプロバイダーにリダイレクトする。
+* アクティブな SSO セッションを確認する。
+* 以前に同意が与えられていない場合は、デバイスに対するユーザーの同意を取得する。
+
+<Frame>![ユーザーを認証](https://cdn2.auth0.com/docs/1.14550.0/media/articles/flows/guides/device-auth/user-auth.png)</Frame>
+
+認証と同意が正常に完了すると、確認プロンプトが表示されます。
+
+<Frame>![ユーザー確認](https://cdn2.auth0.com/docs/1.14550.0/media/articles/flows/guides/device-auth/user-confirmation.png)</Frame>
+
+この時点で、ユーザーの認証が完了し、デバイスが認可されます。
+
+<div id="receive-tokens">
+  ## トークンを受け取る
+</div>
+
+ユーザーがデバイスの認証と認可を行っている間も、デバイスアプリはアクセストークンを要求するために、トークン URL へのポーリングを継続します。
+
+ユーザーがデバイスを正常に認可すると、`access_token`、`refresh_token` (任意) 、`id_token` (任意) 、`token_type`、`expires_in` の各値を含むペイロードとともに、`HTTP 200` レスポンスを受け取ります。
+
+```json lines
+{
+  "access_token":"eyJz93a...k4laUWw",
+  "refresh_token":"GEbRxBN...edjnXbL",
+  "id_token": "eyJ0XAi...4faeEoQ",
+  "token_type":"Bearer",
+  "expires_in":86400
+}
+```
+
+<Warning>
+  トークンは保存する前に検証してください。方法については、[アクセストークンを検証する](/ja/docs/secure/tokens/access-tokens/validate-access-tokens)および [IDトークンを検証する](/ja/docs/secure/tokens/id-tokens/validate-id-tokens) を参照してください。
+</Warning>
+
+[アクセストークン](/ja/docs/secure/tokens/access-tokens)は、[Auth0 Authentication API の `/userinfo` エンドポイント](https://auth0.com/docs/api/authentication#get-user-info)または別の API を呼び出すために使用します。アクセストークンを使って `/userinfo` を呼び出せるのは、`openid` スコープを含めた場合のみです。独自の API を呼び出す場合、最初に行う必要があるのは [アクセストークンを検証する](/ja/docs/secure/tokens/access-tokens/validate-access-tokens) ことです。
+
+[IDトークン](/ja/docs/secure/tokens/id-tokens)には、[デコードして取り出す](/ja/docs/secure/tokens/id-tokens#id-token-payload)必要があるユーザー情報が含まれています。`id_token` がレスポンスに含まれるのは、`openid` スコープを含めた場合のみです。
+
+[リフレッシュトークン](/ja/docs/secure/tokens/refresh-tokens)は、以前のアクセストークンまたは IDトークンの有効期限が切れたあとに、新しいアクセストークンまたは IDトークンを取得するために使用されます。`refresh_token` がレスポンスに含まれるのは、`offline_access` スコープを含め、かつ Dashboard で API の **Allow Offline Access** を有効にした場合のみです。
+
+<Warning>
+  リフレッシュトークンを使うと、ユーザーは実質的に無期限で認証済みの状態を維持できるため、安全に保管する必要があります。
+</Warning>
+
+<div id="call-your-api">
+  ## API を呼び出す
+</div>
+
+API を呼び出すには、アプリケーションで取得したアクセストークンを、HTTP リクエストの Authorization ヘッダーに Bearer トークンとして含める必要があります。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url https://myapi.com/api \
+    --header 'authorization: Bearer ACCESS_TOKEN' \
+    --header 'content-type: application/json'
+  ```
+
+  ```javascript Node.JS lines
+  var client = new RestClient("https://myapi.com/api");
+  var request = new RestRequest(Method.GET);
+  request.AddHeader("content-type", "application/json");
+  request.AddHeader("authorization", "Bearer ACCESS_TOKEN");
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://myapi.com/api"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	req.Header.Add("content-type", "application/json")
+  	req.Header.Add("authorization", "Bearer ACCESS_TOKEN")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse<String> response = Unirest.get("https://myapi.com/api")
+    .header("content-type", "application/json")
+    .header("authorization", "Bearer ACCESS_TOKEN")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'GET',
+    url: 'https://myapi.com/api',
+    headers: {'content-type': 'application/json', authorization: 'Bearer ACCESS_TOKEN'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://myapi.com/api",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer ACCESS_TOKEN",
+      "content-type: application/json"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("myapi.com")
+
+  headers = {
+      'content-type': "application/json",
+      'authorization': "Bearer ACCESS_TOKEN"
+      }
+
+  conn.request("GET", "/api", headers=headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```rb Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://myapi.com/api")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Get.new(url)
+  request["content-type"] = 'application/json'
+  request["authorization"] = 'Bearer ACCESS_TOKEN'
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="refresh-tokens">
+  ## リフレッシュトークン
+</div>
+
+このチュートリアルに従っていて、次の手順を完了していれば、すでに[リフレッシュトークン](/ja/docs/secure/tokens/refresh-tokens)を受け取っているはずです。
+
+* API でオフラインアクセスを許可するよう設定した
+* [authorize](https://auth0.com/docs/api/authentication#authorize-application) エンドポイントを介して認証リクエストを開始する際に、`offline_access` スコープを含めた
+
+リフレッシュトークンを使用すると、新しいアクセストークンを取得できます。通常、ユーザーが新しいアクセストークンを必要とするのは、以前のアクセストークンの有効期限が切れた後か、新しいリソースに初めてアクセスするときだけです。API を呼び出すたびに新しいアクセストークンを取得するために毎回このエンドポイントを呼び出すのは推奨されません。さらに、Auth0 ではレート制限が設けられているため、同じ IP から同じトークンを使用してこのエンドポイントに実行できるリクエスト数は制限されます。
+
+トークンを更新するには、`grant_type=refresh_token` を使用して、Authentication API の `/oauth/token` エンドポイントに `POST` リクエストを送信します。
+
+<div id="example-refresh-token-post-to-token-url">
+  ### トークンURLへのリフレッシュトークンのPOST例
+</div>
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/oauth/token' \
+    --header 'content-type: application/x-www-form-urlencoded' \
+    --data grant_type=refresh_token \
+    --data 'client_id={yourClientId}' \
+    --data 'client_secret={yourClientSecret}' \
+    --data refresh_token=YOUR_REFRESH_TOKEN
+  ```
+
+  ```javascript C#
+  var client = new RestClient("https://{yourDomain}/oauth/token");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("content-type", "application/x-www-form-urlencoded");
+  request.AddParameter("application/x-www-form-urlencoded", "grant_type=refresh_token&client_id=%24%7Baccount.clientId%7D&client_secret=%24%7Baccount.clientSecret%7D&refresh_token=YOUR_REFRESH_TOKEN", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/oauth/token"
+
+  	payload := strings.NewReader("grant_type=refresh_token&client_id=%24%7Baccount.clientId%7D&client_secret=%24%7Baccount.clientSecret%7D&refresh_token=YOUR_REFRESH_TOKEN")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("content-type", "application/x-www-form-urlencoded")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.post("https://{yourDomain}/oauth/token")
+    .header("content-type", "application/x-www-form-urlencoded")
+    .body("grant_type=refresh_token&client_id=%24%7Baccount.clientId%7D&client_secret=%24%7Baccount.clientSecret%7D&refresh_token=YOUR_REFRESH_TOKEN")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/oauth/token',
+    headers: {'content-type': 'application/x-www-form-urlencoded'},
+    data: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: '{yourClientId}',
+      client_secret: '{yourClientSecret}',
+      refresh_token: 'YOUR_REFRESH_TOKEN'
+    })
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/oauth/token",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "grant_type=refresh_token&client_id=%24%7Baccount.clientId%7D&client_secret=%24%7Baccount.clientSecret%7D&refresh_token=YOUR_REFRESH_TOKEN",
+    CURLOPT_HTTPHEADER => [
+      "content-type: application/x-www-form-urlencoded"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "grant_type=refresh_token&client_id=%24%7Baccount.clientId%7D&client_secret=%24%7Baccount.clientSecret%7D&refresh_token=YOUR_REFRESH_TOKEN"
+
+  headers = { 'content-type': "application/x-www-form-urlencoded" }
+
+  conn.request("POST", "/{yourDomain}/oauth/token", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/oauth/token")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Post.new(url)
+  request["content-type"] = 'application/x-www-form-urlencoded'
+  request.body = "grant_type=refresh_token&client_id=%24%7Baccount.clientId%7D&client_secret=%24%7Baccount.clientSecret%7D&refresh_token=YOUR_REFRESH_TOKEN"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="refresh-token-request-parameters">
+  #### リフレッシュトークンのリクエストパラメーター
+</div>
+
+| パラメーター名         | 説明                                                                                                                                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`    | これを &quot;refresh&#95;token&quot; に設定します。                                                                                          |
+| `client_id`     | アプリケーションのクライアントIDです。この値は [Application Settings](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。         |
+| `client_secret` | アプリケーションのクライアントシークレットです。この値は [Application Settings](https://manage.auth0.com/#/Applications/\{yourClientSecret}/settings) で確認できます。 |
+| `refresh_token` | 使用するリフレッシュトークンです。                                                                                                                  |
+| `scope`         |  (任意) リクエストするスコープ権限をスペース区切りで指定したリストです。送信しない場合は元のスコープが使用されます。送信した場合は、より限定されたスコープのセットをリクエストできます。なお、これはURLエンコードする必要があります。             |
+
+<div id="refresh-token-response">
+  ### リフレッシュトークンのレスポンス
+</div>
+
+すべてが正常に進むと、新しい `access_token`、`id_token` (任意) 、トークンの有効期間 (秒、`expires_in`) 、付与された `scope` の値、`token_type` を含むペイロードを持つ `HTTP 200` レスポンスを受け取ります。
+
+```json lines
+{
+  "access_token": "eyJ...MoQ",
+  "expires_in": 86400,
+  "scope": "openid offline_access",
+  "id_token": "eyJ...0NE",
+  "token_type": "Bearer"
+}
+```
+
+<Warning>
+  トークンは保存する前に検証してください。詳しくは、[アクセストークンを検証する](/ja/docs/secure/tokens/access-tokens/validate-access-tokens)および[IDトークンを検証する](/ja/docs/secure/tokens/id-tokens/validate-id-tokens)を参照してください。
+</Warning>
+
+<div id="sample-use-cases">
+  ## 使用例
+</div>
+
+<div id="detect-device-authorization-flow-use">
+  ### Device Authorization Flow の使用を検出する
+</div>
+
+現在のトランザクションで Device Authorization Flow が使用されているかどうかは、[Rules](/ja/docs/customize/rules) を使って検出できます。これを行うには、`context` オブジェクトの `protocol` プロパティを確認します。
+
+```javascript lines
+function (user, context, callback) {
+   if (context.protocol === 'oauth2-device-code') {
+      ...
+   }
+ 
+   callback(null, user, context);
+}
+```
+
+<div id="sample-implementations">
+  ### 実装例
+</div>
+
+* [Device Authorization プレイグラウンド](https://auth0.github.io/device-flow-playground/)
+* [AppleTV (Swift)](https://github.com/pushpabrol/auth0-device-flow-appletv): AppleTV から Device Authorization Flow を使用して Auth0 を利用する方法を示すシンプルなアプリケーションです。
+* [CLI (Node.js)](https://gist.github.com/panva/652c61e7d847e0ed99926c324fa91b36): Authorization Code Flow ではなく Device Authorization Flow を使用する CLI の実装例です。主な違いは、CLI では Web サーバーをホストしてポートを監視する必要がないことです。
+
+<div id="troubleshooting">
+  # トラブルシューティング
+</div>
+
+[テナントログ](/ja/docs/deploy-monitor/logs)は、発生したあらゆる操作について作成され、問題の調査に使用できます。
+
+<div id="error-codes">
+  ## エラーコード
+</div>
+
+| Code    | 名前                  | 説明               |
+| ------- | ------------------- | ---------------- |
+| `fdeaz` | デバイス認可リクエストの失敗      |                  |
+| `fdeac` | デバイスのアクティベーション失敗    |                  |
+| `fdecc` | ユーザーによるデバイス確認のキャンセル |                  |
+| `fede`  | 交換の失敗               | アクセストークン用デバイスコード |
+| `sede`  | 交換の成功               | アクセストークン用デバイスコード |
+
+<div id="limitations">
+  ## 制限事項
+</div>
+
+Device Authorization Flow を使用するには、デバイスが次の要件を満たしている必要があります。
+
+* Server Name Indication (SNI) をサポートしていること
+* [Auth0 アプリケーションタイプ](/ja/docs/get-started/applications) が **Native** であること
+* [**Token Endpoint Authentication Method**](/ja/docs/get-started/applications/application-settings) が **None** に設定されていること
+* [OIDC 準拠](/ja/docs/get-started/applications/application-settings#oauth) であること
+* [Dynamic Client Registration](/ja/docs/get-started/applications/dynamic-client-registration) によって作成されていないこと
+
+さらに、Device Authorization Flow では次のことはサポートされていません。
+
+* 新しい [New Universal Login Experience](/ja/docs/authenticate/login/auth0-universal-login/universal-login-vs-classic-login/universal-experience) を使用している場合を除き、[Auth0 developer keys](/ja/docs/authenticate/identity-providers/social-identity-providers/devkeys) を使用する [Social Connections](/ja/docs/authenticate/identity-providers)
+* ホストされたログインページまたは Rules からクエリ文字列パラメーターにアクセスすること
+
+confidential クライアントを除き、[Draft 15](https://tools.ietf.org/html/draft-ietf-oauth-device-flow-15) に完全対応しています。
+
+<div id="keep-reading">
+  ## あわせてお読みください
+</div>
+
+* [OAuth 2.0 プロトコル](/ja/docs/authenticate/protocols/oauth)
+* [OpenID Connect プロトコル](/ja/docs/authenticate/protocols/openid-connect-protocol)
+* [トークン](/ja/docs/secure/tokens)
+* [デバイスのテナントログ](/ja/docs/deploy-monitor/logs)
+
+[GitHub で編集](https://github.com/auth0/docs/edit/master/articles/quickstart/native/device/01-login.md)

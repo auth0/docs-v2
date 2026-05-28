@@ -1,0 +1,526 @@
+---
+description: Aprende a configurar y usar Connected Accounts para Token Vault.
+sidebarTitle: Connected Accounts para Token Vault
+title: Connected Accounts para Token Vault
+---
+
+Connected Accounts para Token Vault permite que las aplicaciones accedan de forma segura a API externas en nombre del usuario mediante [Token Vault](/es/docs/secure/tokens/token-vault). Mientras que la autenticación de usuario estándar gestiona el inicio de sesión del usuario a través de un Proveedor de identidad social o empresarial, Connected Accounts vincula un perfil de usuario con servicios externos como Google, GitHub, Slack y otros, lo que facilita el acceso delegado a API externas en nombre del usuario.
+
+Una vez que un usuario conecta correctamente su cuenta y autoriza el acceso a un [proveedor externo compatible](/es/docs/secure/tokens/token-vault#supported-external-providers), Auth0:
+
+* Asocia la cuenta con el usuario como cuenta conectada.
+* Almacena en Token Vault los tokens de acceso y de actualización del proveedor externo para la cuenta conectada.
+
+Connected Accounts para Token Vault crea y administra un perfil de usuario unificado de Auth0 vinculado a varias cuentas externas, lo que permite una autorización sin fricciones. A continuación, la aplicación recupera las credenciales almacenadas en Token Vault para interactuar con API externas en nombre del usuario.
+
+<div id="user-authentication-vs-connected-accounts">
+  ## Autenticación de usuarios vs. Connected Accounts
+</div>
+
+Cuando [configura Connected Accounts](#configure-connected-accounts) para una conexión social o de empresa compatible, Auth0 usa el flujo de Connected Accounts (endpoint `/me/v1/connected-accounts`) para recuperar y almacenar tokens de acceso y tokens de actualización en Token Vault, en lugar de usar el flujo de inicio de sesión social o de empresa (endpoint `/authorize`). Después de completar correctamente el flujo de Connected Accounts, Auth0 agrega la cuenta del usuario al array `connected_accounts` del perfil de usuario. En cambio, en el flujo de inicio de sesión social o de empresa, Auth0 agrega la cuenta del usuario al array `identities` del perfil de usuario.
+
+La siguiente tabla explica las diferencias entre los flujos de autenticación de usuarios y Connected Accounts:
+
+|           | Autenticación de usuarios                                                  | Connected Accounts                                                                                                                                                                                    |
+| --------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flujo     | Flujo de inicio de sesión con el endpoint `/authorize`                     | Flujo de Connected Accounts con el endpoint `/me/v1/connected-accounts` de API My Account                                                                                                             |
+| Propósito | Autentica a los usuarios con un Proveedor de identidad social o de empresa | Almacena en Token Vault los tokens de acceso y de actualización de la cuenta conectada cuando un usuario inicia sesión a través de un proveedor externo compatible, se conecta y autoriza la conexión |
+
+Puede habilitar la autenticación de usuarios, Connected Accounts o ambos para conexiones sociales o de empresa compatibles. La siguiente tabla explica el comportamiento de las distintas configuraciones de propósito, incluida la forma de pasar alcances a la conexión:
+
+| Autenticación | Connected Accounts | Comportamiento                                                                                                                                                                                                                                                                    | Alcances                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Habilitado    | Deshabilitado      | La conexión usa el flujo de inicio de sesión `/authorize` para autenticar a los usuarios como un Proveedor de identidad válido.                                                                                                                                                   | Use Auth0 Dashboard o Management API para pasar los alcances deseados a la conexión. En tiempo de ejecución, esta lista se completa automáticamente con cualquier alcance adicional incluido en el parámetro `connection_scope` de la solicitud de autorización.                                                                                                                                                                                                                                                                                                                                                     |
+| Deshabilitado | Habilitado         | La conexión usa el flujo de Connected Accounts para recuperar y almacenar los tokens de la conexión en Token Vault. La conexión no usa el flujo de inicio de sesión `/authorize` para autenticar a los usuarios y queda excluida de la lista de proveedores de identidad válidos. | Use Auth0 Dashboard o Management API para pasar los alcances deseados a la conexión. En tiempo de ejecución, cualquier alcance incluido en el parámetro `scopes` de la solicitud de autorización prevalece sobre los alcances seleccionados en Auth0 Dashboard, excepto `offline_access`, si la conexión lo requiere y está habilitado en Auth0 Dashboard.<br /><br />**Nota:** Si la conexión lo requiere, Auth0 le pedirá que habilite `offline_access`, lo que permite que la aplicación cliente obtenga un token de actualización de Auth0. Debe habilitar `offline_access` para la conexión en Auth0 Dashboard. |
+| Habilitado    | Habilitado         | La conexión usa el flujo de inicio de sesión `/authorize` para autenticar a los usuarios como un Proveedor de identidad válido. También usa el flujo de Connected Accounts para recuperar y almacenar tokens de acceso de la conexión en Token Vault.                             | Use Auth0 Dashboard y Management API para pasar los alcances deseados a la conexión. En tiempo de ejecución, cualquier alcance incluido en el parámetro `scopes` prevalece sobre los alcances seleccionados en Auth0 Dashboard, excepto `offline_access`, si la conexión lo requiere y está habilitado en Auth0 Dashboard.<br /><br />**Nota:** Si la conexión lo requiere, Auth0 le pedirá que habilite `offline_access`, lo que permite que la aplicación cliente obtenga un token de actualización de Auth0. Debe habilitar `offline_access` para la conexión en Auth0 Dashboard.                                 |
+
+<div id="how-it-works">
+  ## Cómo funciona
+</div>
+
+El flujo de Connected Accounts usa la [API My Account](/es/docs/manage-users/my-account-api) para crear y administrar cuentas conectadas de un usuario en proveedores externos compatibles.
+
+Antes de que el usuario pueda iniciar una solicitud de Connected Accounts desde la aplicación cliente, esta debe [obtener un token de acceso](/es/docs/manage-users/my-account-api#get-an-access-token) con los alcances de Connected Accounts para acceder a la API My Account.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Si su aplicación usa [Organizaciones](/es/docs/manage-users/organizations), autentique al usuario con la organización de destino antes de iniciar el flujo de Connected Accounts. Token Vault almacena la cuenta conectada en el perfil de Auth0 del usuario, por lo que cada miembro de la organización conecta y autoriza su propia cuenta externa.
+</Callout>
+
+El siguiente diagrama de secuencia ilustra el flujo de Connected Accounts de extremo a extremo:
+
+<Frame>![](/docs/images/token-vault/connected_accounts_flow_diagram.png)</Frame>
+
+Cuando un usuario inicia sesión mediante Auth0 con un proveedor externo compatible, inicia una solicitud de Connected Accounts desde la aplicación cliente:
+
+1. La aplicación cliente realiza una solicitud `POST` al endpoint `/me/v1/connected-accounts/connect` de la API My Account, pasando alcances y otros parámetros que se enviarán al proveedor externo. Para obtener más información, lea [Iniciar una solicitud de Connected Accounts](#initiate-connected-accounts-request).
+2. La API My Account crea un `auth_session` y un `connect_uri` únicos que contienen un `ticket` para redirigir al usuario a un navegador web. La aplicación cliente guarda el `auth_session` para verificarlo más adelante. Si [DPoP](/es/docs/secure/sender-constraining/demonstrating-proof-of-possession-dpop) está configurado, la API My Account valida el JWT de prueba de DPoP.
+3. La aplicación cliente redirige al usuario al `connect_uri` con el `ticket` como parámetro de consulta para la autenticación y autorización del usuario en el navegador. La aplicación cliente también puede pasar un `code_challenge` o `code_challenge_method` a la URL, como en el [Flujo de código de autorización con PKCE](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce).
+4. El usuario conecta la cuenta y autoriza los permisos de la conexión en la pantalla de consentimiento.
+5. Después de que el usuario autoriza correctamente la conexión, el proveedor externo redirige al usuario a la API My Account, que a su vez lo redirige a la aplicación cliente mediante el `redirect_uri` con un `connect_code` de un solo uso.
+6. La aplicación cliente presenta el `connect_code`, el `code_verifier` (si corresponde) y el `auth_session` original a la API My Account realizando una solicitud `POST` al endpoint `/me/v1/connected-accounts/complete`. Para obtener más información, lea [Completar una solicitud de Connected Accounts](#complete-connected-accounts-request).
+7. La API My Account valida la solicitud confirmando lo siguiente:
+   * Que el `auth_session` coincide con el ID emitido originalmente para el usuario
+   * Que la solicitud proviene del mismo dispositivo que inició el flujo de Connected Accounts
+   * El JWT de prueba de DPoP (si está configurado)
+   * El `connect_code` de un solo uso
+   * El `code_verifier` (si se usa el flujo PKCE)
+8. Después de validar correctamente la solicitud, el Servidor de autorización de Auth0 agrega la cuenta al array `connected_accounts` del perfil del usuario y almacena los tokens de acceso y de actualización de la cuenta conectada en Token Vault.
+9. La API My Account completa el flujo enviando un código de estado `200` a la aplicación cliente, lo que indica que la cuenta se conectó correctamente.
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+Antes de configurar Connected Accounts, asegúrese de lo siguiente:
+
+* [Configurar el Token Vault](/es/docs/secure/tokens/token-vault/configure-token-vault) para que su aplicación cliente almacene de forma segura los tokens de acceso y de actualización asociados a cada cuenta conectada en el Token Vault.
+* [Configurar la API My Account](#configure-my-account-api), que los usuarios autenticados usan para conectar y administrar cuentas.
+* [Configurar Multi-Resource Refresh Token (MRRT)](#configure-multi-resource-refresh-token) para obtener un token de acceso para la API My Account.
+* (Opcional) [Configurar DPoP](/es/docs/secure/sender-constraining/configure-sender-constraining) para la API My Account y su aplicación cliente a fin de aplicar restricción por remitente a los tokens de acceso y evitar su robo. De forma predeterminada, la API My Account puede aceptar tokens de acceso vinculados a DPoP.
+
+<div id="configure-my-account-api">
+  ### Configurar la API My Account
+</div>
+
+Para usar Connected Accounts, configure la API My Account en el Auth0 Dashboard:
+
+1. Vaya a **Applications &gt; APIs** y [active la API My Account](/es/docs/manage-users/my-account-api#activate-the-my-account-api).
+2. Una vez activada, seleccione **Auth0 My Account API** y, a continuación, la pestaña **Application Access**.
+3. Busque su aplicación cliente y seleccione **Edit** para configurar sus [políticas de acceso a la aplicación](/es/docs/get-started/apis/api-access-policies-for-applications).
+4. Seleccione **User Access** y, en **Authorization**, seleccione **Authorized**.
+5. En los permisos, seleccione **All** para todos los [alcances de Connected Accounts](/es/docs/manage-users/my-account-api#scope) de la aplicación.
+6. Seleccione **Save**. Esto crea un [client grant](/es/docs/get-started/applications/application-access-to-apis-client-grants) que permite a su aplicación cliente acceder a la API My Account con los alcances de Connected Accounts en nombre del usuario.
+7. Si usa [Multi-Resource Refresh Token](/es/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token#multi-resource-refresh-token), vaya a la pestaña **Settings**. En **Access Settings**, seleccione **Allow Skipping User Consent**.
+
+<div id="configure-multi-resource-refresh-token">
+  ### Configurar el Token de actualización multirrecurso
+</div>
+
+Configure el Token de actualización multirrecurso (MRRT) para obtener un único token de actualización de larga duración que pueda intercambiarse por nuevos tokens de acceso para API My Account y otras API sin que el usuario tenga que volver a autenticarse.
+
+Puede configurar MRRT con el [Auth0 Dashboard](https://manage.auth0.com) o la [Management API](https://auth0.com/docs/api/management/v2).
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Para configurar MRRT con el Auth0 Dashboard:
+
+    1. Vaya a **Applications &gt; Applications** y seleccione su aplicación.
+    2. En **Multi-Resource Refresh Token**, seleccione **Edit Configuration**.
+    3. Para habilitar MRRT con API My Account, active **My Account API**.
+  </Tab>
+
+  <Tab title="Management API">
+    Para configurar MRRT para una aplicación cliente, realice una solicitud `PATCH` al endpoint `/api/v2/clients/{clientId}` y agregue el identificador de API My Account y los alcances de Connected Accounts a las políticas del token de actualización:
+
+    ```bash lines
+    curl -X PATCH --location "https://${account.namespace}/api/v2/clients/{clientId}" \
+        -H "Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>" \
+        -H "Content-Type: application/json" \
+        -d '{
+              "is_first_party": true,
+              "refresh_token": {
+                "expiration_type": "non-expiring",
+                "leeway": 0,
+                "infinite_token_lifetime": true,
+                "infinite_idle_token_lifetime": true,
+                "token_lifetime": 31557600,
+                "idle_token_lifetime": 2592000,
+                "rotation_type": "non-rotating",
+                "policies": [
+                  {
+                    "audience": "https://'"$DOMAIN"'/me/",
+                    "scope": [
+                      "create:me:connected_accounts",
+                      "read:me:connected_accounts",
+                      "delete:me:connected_accounts"
+                    ]
+                  }
+                ]
+              }
+            }'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="configure-connected-accounts">
+  ## Configurar Connected Accounts
+</div>
+
+Antes de configurar Connected Accounts para una conexión, asegúrese de haber autorizado la conexión para su aplicación cliente.
+
+En Auth0 Dashboard:
+
+1. Vaya a **Authentication &gt; Social Connections** o **Enterprise Connections** y seleccione la conexión.
+2. Seleccione **Applications** y luego habilite la conexión para su aplicación cliente.
+
+Puede configurar Connected Accounts con [Auth0 Dashboard](https://manage.auth0.com) o con la [Management API](https://auth0.com/docs/api/management/v2).
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Para configurar Connected Accounts con Auth0 Dashboard:
+
+    1. Vaya a **Authentication &gt; Social Connections** o **Enterprise Connections**.
+    2. Seleccione **Create Connection** o una conexión existente.
+    3. En **Purpose**, active **Connected Accounts for Token Vault**. Según la configuración de **Purpose**, es posible que deba habilitar `offline_access` en Auth0 Dashboard para permitir que la aplicación cliente obtenga un token de actualización del proveedor externo durante el flujo de Connected Accounts. Para obtener más información, consulte [Autenticación de usuarios frente a Connected Accounts](#user-authentication-vs-connected-accounts).
+    4. Haga clic en **Save**.
+  </Tab>
+
+  <Tab title="Management API">
+    Para configurar Connected Accounts con la Management API, realice una solicitud `PATCH` al endpoint `/connections/{connectionId}` para establecer `connected_accounts` en `true`:
+
+    ```bash lines
+    curl -L -X PATCH "https://{yourDomain}/api/v2/connections/{connectionId}" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -H "Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>" \
+    -d '{"connected_accounts":{"active":true}}'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="get-access-token-for-connected-accounts">
+  ## Obtener un token de acceso para Connected Accounts
+</div>
+
+Antes de iniciar una solicitud de Connected Accounts, [obtén un token de acceso](/es/docs/manage-users/my-account-api#scope) para la API My Account con los alcances de Connected Accounts.
+
+En las siguientes secciones se explica cómo usar [Multi-Resource Refresh Token (MRRT)](/es/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token) para obtener un token de acceso para la API My Account.
+
+<div id="fetch-a-refresh-token">
+  ### Obtener un Token de actualización
+</div>
+
+Después de [configurar MRRT](#configure-multi-resource-refresh-token) para la aplicación cliente, inicie el flujo de código de autorización e intercambie el code de autorización resultante por un Token de actualización.
+
+A continuación se muestra una solicitud del flujo de código de autorización para un cliente confidencial que incluye `offline_scope` para devolver un Token de actualización y un code de autorización de un solo uso para el identificador de la API My Account `https://{yourDomain}/me/`:
+
+```bash lines
+open "https://{yourDomain}/authorize?client_id=<CLIENT_ID>&response_type=code&prompt=login&scope=openid%20profile%20offline_access&redirect_uri=<REDIRECT_URI>&state=<STATE>&audience=https://my-example-api.com"
+```
+
+Intercambie el code de autorización de un solo uso por un token de actualización en el endpoint `/token`:
+
+```bash lines
+curl -s --request POST \
+  --url "https://{yourDomain}/oauth/token" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- <<EOF | jq -r '.refresh_token'
+{
+  "grant_type": "authorization_code",
+  "code": "<CONNECT_CODE>",
+  "client_id": "<CLIENT_ID>",
+  "client_secret": "<CLIENT_SECRET>",
+  "redirect_uri": "<REDIRECT_URI>"
+}
+EOF
+```
+
+<div id="exchange-refresh-token-for-my-account-api-access-token">
+  ### Canjear un Token de actualización por un Token de acceso para la API My Account
+</div>
+
+Una vez que hayas obtenido un Token de actualización, canjéalo por un Token de acceso para la API My Account con los alcances de Connected Accounts mediante el tipo de concesión de token de actualización:
+
+```bash lines
+curl -s -X POST "https://{yourDomain}/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=refresh_token" \
+  --data-urlencode "client_id=<CLIENT_ID>" \
+  --data-urlencode "client_secret=<CLIENT_SECRET>" \
+  --data-urlencode "refresh_token=<REFRESH_TOKEN>" \
+  --data-urlencode "audience=https://{yourDomain}/me/" \
+  --data-urlencode "scope=openid profile offline_access create:me:connected_accounts read:me:connected_accounts delete:me:connected_accounts"
+```
+
+<div id="initiate-connected-accounts-request">
+  ## Iniciar solicitud de Connected Accounts
+</div>
+
+Para iniciar una solicitud de Connected Accounts, realice una solicitud `POST` al endpoint `/me/v1/connected-accounts/connect` de la API de My Account con los siguientes parámetros:
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Para una conexión social de Google, asegúrese de seleccionar `offline_access` en el Auth0 Dashboard al configurar la conexión. Esto es necesario para que su aplicación cliente pueda obtener un Token de actualización del Servidor de autorización de Auth0.
+</Callout>
+
+| Parameter      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `connection`   | Nombre de la conexión. Para una conexión social de Google, establézcalo en `google-oauth2`.                                                                                                                                                                                                                                                                                                                                                                  |
+| `redirect_uri` | La URL de devolución de llamada de su aplicación cliente.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `state`        | Una cadena única y aleatoria asociada con la solicitud para evitar ataques.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `scopes`       | (Opcional) Los alcances que se pasan al proveedor externo como un array de cadenas.<br /><br />Si se usa para pasar alcances para una conexión social de Google, incluya `openid` y `profile` como mínimo. En tiempo de ejecución, cualquier alcance incluido en el parámetro `scopes` tiene prioridad sobre los alcances seleccionados en el Auth0 Dashboard, excepto `offline_access`, si la conexión lo requiere y está habilitado en el Auth0 Dashboard. |
+
+```bash lines
+curl --request POST "https://{yourDomain}/me/v1/connected-accounts/connect" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>" \
+--data '{
+    "connection": "google-oauth2",
+    "redirect_uri": "<REDIRECT_URI>",
+    "state": "<STATE>",
+    "scopes": ["openid","profile"] // los alcances que se pasen sobrescriben los que seleccionó en el Auth0 Dashboard
+}'
+```
+
+Si la operación se realiza correctamente, la API My Account devuelve una respuesta similar a la siguiente:
+
+| Parameter        | Description                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_session`   | ID de sesión que representa la sesión autenticada actual del usuario principal. La aplicación cliente guarda el ID de sesión para verificarlo posteriormente. |
+| `connect_uri`    | URL a la que la aplicación cliente redirige al usuario y que abre un navegador web para gestionar la autorización con el proveedor externo.                   |
+| `connect_params` | Parámetros adicionales necesarios para el URI de conexión. Incluye un ticket temporal que la API My Account utiliza para verificar la solicitud.              |
+| `expires_in`     | Tiempo de expiración de la sesión en segundos.                                                                                                                |
+
+```json
+{
+  "auth_session": "PKM-CYkdx2FyLb4Oob4ED91cSE7i_XJ4SVJByik0xKQxz9CgUZ5JlYr-aMPty0Xr",
+  "connect_uri": "https://{yourDomain}.us.auth0.com/connect",
+  "connect_params": {
+    "ticket": "9375f326-5846-4b57-ae8b-8042573f7c1f"
+  },
+  "expires_in": 300
+}
+```
+
+En el navegador web, vaya a `connect_uri` con el `ticket` como parámetro de consulta. Autorice la lista de alcances en la pantalla de consentimiento y, a continuación, extraiga y guarde el `connect_code` del fragmento de la URL.
+
+```bash lines
+open https://{yourDomain}.us.auth0.com/connected-accounts/connect?ticket={tickedId}
+```
+
+<div id="complete-connected-accounts-request">
+  ## Completar una solicitud de Connected Accounts
+</div>
+
+Para completar una solicitud de Connected Accounts, realiza una solicitud `POST` al endpoint `/me/v1/connected-accounts/complete` con los siguientes parámetros:
+
+| Parámetro      | Descripción                                                                                                                                                                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_session` | ID de sesión que representa la sesión autenticada actual del usuario principal. La aplicación cliente guarda el ID de sesión para verificarlo más adelante.                                                                                     |
+| `connect_code` | Un code de un solo uso y de corta duración recibido durante el proceso de autorización del proveedor externo. Este code se intercambia de forma segura en el servidor para obtener los tokens de acceso finales de la API externa.              |
+| `redirect_uri` | La URL de devolución de llamada exacta de tu aplicación, a la que se redirigió al usuario después de autorizar correctamente la conexión con el proveedor externo. Este valor debe coincidir con el `redirect_uri` usado para iniciar el flujo. |
+
+```bash lines
+curl --location "https://{yourDomain}/me/v1/connected-accounts/complete" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>" \
+--data '{
+    "auth_session": "<AUTH_SESSION>",
+    "connect_code": "<CONNECT_CODE>",
+    "redirect_uri": "<REDIRECT_URI>"
+}'
+```
+
+Si la operación se realiza correctamente, la API My Account devuelve una respuesta como la siguiente:
+
+| Parámetro     | Descripción                                                                                                                                                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | Identificador único de la cuenta conectada.                                                                                                                                                                                                             |
+| `connection`  | Nombre de la conexión.                                                                                                                                                                                                                                  |
+| `created_at`  | Marca de tiempo de cuándo se creó la cuenta conectada y se vinculó al perfil del usuario.                                                                                                                                                               |
+| `scopes`      | Los alcances específicos de OAuth (permisos) a los que el usuario concedió acceso a su aplicación al conectarse al proveedor externo. Estos alcances determinan qué acciones puede realizar su aplicación en la API externa.                            |
+| `access_type` | Indica el tipo de acceso concedido. Un valor habitual es `offline`, lo que significa que se obtuvo y almacenó correctamente un Token de actualización, lo que permite que su aplicación mantenga el acceso incluso cuando el usuario está desconectado. |
+
+```json
+{
+  "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+  "connection": "google-oauth2",
+  "created_at": "2025-10-13T21:09:04.126Z",
+  "scopes": [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.addons.execute",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+    "https://www.googleapis.com/auth/calendar.settings.readonly",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid"
+  ],
+  "access_type": "offline"
+}
+```
+
+<div id="manage-connected-accounts">
+  ## Gestionar cuentas conectadas
+</div>
+
+Para gestionar las cuentas conectadas de un usuario, usa la colección `/me/v1/connected-accounts`.
+
+Antes de usar la colección `/connected-accounts`, [obtén un token de acceso para Connected Accounts](#get-access-token-for-connected-accounts).
+
+<div id="query-connected-accounts-connections">
+  ### Consultar las conexiones de cuentas vinculadas
+</div>
+
+Realiza una solicitud `GET` al endpoint `/me/v1/connected-accounts/connections` para obtener una lista de conexiones vinculadas al perfil del usuario:
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/me/v1/connected-accounts/connections" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+Si la operación se realiza correctamente, la API My Accounts devuelve una respuesta similar a la siguiente:
+
+```json
+{
+  "connections": [
+    {
+      "name": "google-oauth2",
+      "strategy": "google-oauth2",
+      "scopes": [
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "openid"
+      ]
+    },
+    {
+      "name": "custom",
+      "strategy": "oauth2",
+      "scopes": [
+        "openid"
+      ]
+    }
+  ]
+}
+```
+
+<div id="query-connected-accounts">
+  ### Consultar cuentas conectadas
+</div>
+
+Realiza una solicitud `GET` al endpoint `/me/v1/connected-accounts/accounts` para obtener una lista de cuentas conectadas vinculadas al perfil del usuario:
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/me/v1/connected-accounts/accounts" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+Si la solicitud se realiza correctamente, la API My Accounts devuelve una respuesta como la siguiente:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+      "connection": "google-oauth2",
+      "access_type": "offline",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ],
+      "created_at": "2025-10-13T21:09:04.126Z"
+    },
+    {
+      "id": "cac_fH32E6CWN7HcWZN5w9Vieq",
+      "connection": "custom",
+      "access_type": "offline",
+      "scopes": [
+        "offline_access",
+        "openid",
+        "profile"
+      ],
+      "created_at": "2025-10-13T18:06:47.216Z"
+    }
+  ]
+}
+```
+
+También puede usar la Management API para obtener una lista de cuentas conectadas de un perfil de usuario haciendo una solicitud `GET` al endpoint `/users/{userId}/connected-accounts`:
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/api/v2/users/{userId}/connected-accounts" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>"
+```
+
+Si la operación se realiza correctamente, la Management API devuelve una respuesta como la siguiente:
+
+```json
+{
+  "connected_accounts": [
+    {
+      "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+      "connection": "google-oauth2",
+      "connection_id": "con_uBbSbbSpqGqOTvRu",
+      "strategy": "google-oauth2",
+      "access_type": "offline",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ],
+      "created_at": "2025-10-13T21:09:04.126Z"
+    }
+  ]
+}
+```
+
+<div id="query-connected-accounts-for-a-given-connection">
+  ### Consultar cuentas conectadas para una conexión específica
+</div>
+
+Realice una solicitud `GET` al endpoint `/me/v1/connected-accounts/accounts` y pase el nombre de la conexión como parámetro de consulta para devolver una lista de cuentas conectadas filtradas por una conexión específica vinculada a un perfil de usuario:
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/me/v1/connected-accounts/accounts?connection={connectionName}" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+Si la operación se realiza correctamente, la API My Accounts devuelve una respuesta como la siguiente, filtrada por las conexiones `google-oauth2`:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+      "connection": "google-oauth2",
+      "access_type": "offline",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ],
+      "created_at": "2025-10-13T21:09:04.126Z"
+    }
+  ]
+}
+```
+
+<div id="delete-connected-account">
+  ### Eliminar una cuenta conectada
+</div>
+
+Realice una solicitud `DELETE` al endpoint `/me/v1/connected-accounts/accounts/{connectedAccountId}` para eliminar una cuenta conectada con un ID determinado:
+
+```bash lines
+curl -X DELETE --location "https://{yourDomain}/me/v1/connected-accounts/accounts/{connectedAccountId}" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+Cuando eliminas una cuenta conectada, Auth0 elimina del Token Vault los tokens de acceso y de actualización del proveedor externo. Esto no revoca automáticamente los tokens del proveedor externo, y el token de actualización todavía podría usarse para obtener nuevos tokens de acceso. Debes revocar manualmente los tokens del proveedor externo si se han compartido o copiado en otro sitio.
+
+Si la operación se completa correctamente, la API My Accounts devuelve una respuesta como la siguiente:
+
+```
+HTTP/1.1 204 No Content
+```

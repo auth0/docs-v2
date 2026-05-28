@@ -1,0 +1,126 @@
+---
+description: Aprenda a configurar Auth0 para pasar las pruebas de certificación de OpenID FAPI.
+title: Configurar Auth0 para pasar las pruebas de certificación de OpenID FAPI
+validatedOn: 2026-01-22
+---
+
+Esta sección contiene algunas recomendaciones sobre cómo configurar su cliente si desea probar su solución con las [pruebas de conformidad de OpenID FAPI](https://openid.net/certification/certification-fapi_op_testing/).
+
+Para pasar las pruebas de conformidad de <Tooltip tip="OpenID: estándar abierto de autenticación que permite a las aplicaciones verificar la identidad de los usuarios sin recopilar ni almacenar información de inicio de sesión." cta="Ver glosario" href="/es/docs/glossary?term=OpenID">OpenID</Tooltip> FAPI, primero configure lo siguiente:
+
+* Establezca la propiedad `compliance_level` en el perfil deseado: `fapi1_adv_pkj_par`, `fapi1_adv_mtls_par`, `fapi2_sp_pkj_mtls` o `fapi2_sp_mtls_mtls`
+* [Configure mTLS](/es/docs/get-started/applications/configure-mtls) (incluidos los [alias de mTLS](/es/docs/get-started/applications/configure-mtls/configure-mtls-for-a-tenant#enable-mtls-aliases)) o [configure Private Key JWT](/es/docs/get-started/applications/configure-private-key-jwt)
+* [Configure la vinculación de tokens de mTLS](/es/docs/get-started/applications/configure-mtls/configure-mtls-for-a-client#enable-token-binding)
+* Configure las [solicitudes de autorización enviadas](/es/docs/get-started/applications/configure-par)
+* Asegúrese de que la propiedad `oidc_conformant` esté establecida en `true` para cualquier cliente utilizado en la prueba. Este es el valor predeterminado para los clientes creados con Auth0 Dashboard.
+
+Luego, siga las instrucciones que se indican a continuación para completar la configuración de las pruebas de conformidad de OpenID FAPI:
+
+* [Asegúrese de que Auth0 solicite el consentimiento del usuario](#ensure-auth0-prompts-users-for-consent)
+* [Configure los claims de ACR compatibles para el inquilino](#configure-supported-acr-claims-for-the-tenant)
+* [Quite la propiedad alg del endpoint JWKS](#remove-the-alg-property-from-jwks-endpoint)
+* [Agregue una Action para exigir scope y redirect&#95;uri](#add-action-to-require-scope-and-redirect-uri)
+* [(Solo para perfiles FAPI2) Asegúrese de que el claim `iss` se devuelva en las respuestas](#fapi2-profiles-only-ensure-iss-claim-is-returned-in-responses)
+
+<div id="ensure-auth0-prompts-users-for-consent">
+  ### Asegúrese de que Auth0 pida consentimiento a los usuarios
+</div>
+
+Debe asegurarse de que Auth0 pida consentimiento a los usuarios. Puede omitir este paso si el cliente está configurado como una aplicación de primera parte y el <Tooltip tip="Servidor de recursos: servidor que aloja recursos protegidos. Los servidores de recursos aceptan y responden a solicitudes de recursos protegidos." cta="Ver glosario" href="/es/docs/glossary?term=Resource+Server">Servidor de recursos</Tooltip> o la API permiten omitir el consentimiento para aplicaciones de primera parte. Para asegurarse de que Auth0 pida consentimiento a los usuarios, establezca la propiedad `is_first_party` del cliente en `false`:
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/clients/YOUR_CLIENT_ID' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "is_first_party": false  
+}'
+```
+
+Luego, promueva su conexión al nivel del dominio:
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/connections/YOUR_CONNECTION_ID' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "is_domain_connection": true
+}'
+```
+
+<div id="configure-supported-acr-claims-for-the-tenant">
+  #### Configure las claims de ACR admitidas para el inquilino
+</div>
+
+Las pruebas de FAPI pasan un valor de ACR obligatorio de `urn:mace:incommon:iap:silver`. Para incluir el valor de ACR obligatorio en el <Tooltip tip="token de ID: Credencial destinada al propio cliente, en lugar de para acceder a un recurso." cta="Ver glosario" href="/es/docs/glossary?term=ID+token">token de ID</Tooltip>, agregue `urn:mace:incommon:iap:silver` a la lista de valores de ACR admitidos para el inquilino:
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/tenants/settings' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+    "acr_values_supported": ["urn:mace:incommon:iap:silver"]
+}'
+```
+
+<div id="remove-the-alg-property-from-jwks-endpoint">
+  #### Elimine la propiedad `alg` del endpoint JWKS
+</div>
+
+Para permitir que las claves se utilicen con varios algoritmos, no solo con RS256, elimine la propiedad `alg` del inquilino de la salida del endpoint `/.well-known/jwks.json`:
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/tenants/settings' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+    "flags": {
+        "remove_alg_from_jwks": true
+    }
+}'
+```
+
+<div id="add-action-to-require-scope-and-redirect_uri">
+  #### Añada una Action para exigir `scope` y `redirect_uri`
+</div>
+
+De forma predeterminada, Auth0 permite solicitudes sin `scope` y, si no se proporciona ninguno, asume el `scope` `openid`. Auth0 también permite solicitudes sin `redirect_uri`, que puede configurar en [Actions](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/redirect-with-actions). Sin embargo, las pruebas de conformidad de FAPI requieren que Auth0 sea más estricto.
+
+Añada la siguiente Action para aplicar las restricciones necesarias a `scope` y `redirect_uri`:
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.request.body || !event.request.body.refresh_token) {
+    // Requerir un scope
+    if (!event.request.query.scope) {
+      api.access.deny('scope must be provided in the request');
+    }
+    // Para mejorar el mensaje de error si redirect_uri no está presente
+    if (!event.request.query.redirect_uri) {
+      api.access.deny('redirect_uri must be provided in the request');
+    }
+  }
+};
+```
+
+<div id="fapi2-profiles-only-ensure-iss-claim-is-returned-in-responses">
+  #### (Solo perfiles FAPI2) Asegúrese de que la claim `iss` se devuelva en las respuestas
+</div>
+
+El perfil de seguridad de FAPI 2.0 exige que el parámetro `iss` se devuelva en las respuestas de autorización de acuerdo con [RFC9207](https://www.rfc-editor.org/info/rfc9207). Por motivos de compatibilidad, Auth0 no lo hace de forma predeterminada. Para habilitar este comportamiento, establezca la propiedad `authorization_response_iss_parameter_supported` en la configuración del inquilino en `true`.
+
+```bash lines
+curl --location --request PATCH "https://{YOUR_DOMAIN}/api/v2/tenants/settings" \
+  --header "Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --data-raw '{
+    "authorization_response_iss_parameter_supported": true
+  }'
+```
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [Configura la autenticación JWT con clave privada](/es/docs/get-started/applications/configure-private-key-jwt)
+* [Configura la autenticación mTLS](/es/docs/get-started/applications/configure-mtls)

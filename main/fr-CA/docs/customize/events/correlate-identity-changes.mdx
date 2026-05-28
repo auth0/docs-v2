@@ -1,0 +1,356 @@
+---
+description: Réagissez aux changements d’identité dans Auth0 en mettant à jour les systèmes CRM, de facturation ou tiers avec Event Streams.
+title: Mettre en corrélation les changements d’identité avec des systèmes externes
+---
+
+Avec Event Streams, vous pouvez réagir aux changements d’identité dans Auth0 et répercuter ces changements dans des systèmes externes comme des plateformes CRM, des services de facturation ou des outils de gestion des licences SaaS. Au lieu d’interroger périodiquement la Management API pour obtenir des mises à jour, votre intégration reçoit les événements en temps réel et les associe aux enregistrements de vos systèmes cibles.
+
+<div id="why-correlate-identity-changes">
+  ## Pourquoi corréler les changements d&#39;identité
+</div>
+
+Établir une corrélation entre les événements d&#39;identité Auth0 et des systèmes externes est utile lorsque vous devez :
+
+* Mettre à jour un dossier dans un CRM lorsque le courriel ou les données de profil d&#39;un utilisateur changent.
+* Avertir un système de facturation ou de gestion des licences lorsqu&#39;un compte est désactivé ou supprimé.
+* Déclencher des flux de conformité lorsque les attributs d&#39;un utilisateur changent, par exemple lors de mises à jour du consentement ou du rôle.
+* Garder les segments d&#39;utilisateurs des plateformes marketing synchronisés avec les données d&#39;identité actuelles.
+
+<div id="how-it-works">
+  ## Fonctionnement
+</div>
+
+1. Auth0 publie un événement lorsqu’un profil d’utilisateur est créé, mis à jour ou supprimé.
+2. Votre Event Stream transmet cet événement à une destination (webhook, AWS EventBridge ou Auth0 Action).
+3. Votre gestionnaire associe l’utilisateur Auth0 à un enregistrement dans le système externe et applique la mise à jour correspondante.
+
+Les types d’événements suivants sont pertinents pour la corrélation des données :
+
+| Type d’événement | Déclenchement                                        |
+| ---------------- | ---------------------------------------------------- |
+| `user.created`   | Un nouveau profil d’utilisateur est créé dans Auth0. |
+| `user.updated`   | Un profil d’utilisateur existant est modifié.        |
+| `user.deleted`   | Un profil d’utilisateur est supprimé d’Auth0.        |
+
+<div id="prerequisites">
+  ## Prérequis
+</div>
+
+Avant de commencer, assurez-vous d’avoir :
+
+* Un locataire Auth0 avec la fonctionnalité Events activée. Pour en savoir plus sur la disponibilité selon les forfaits, consultez [Créer un Event Stream](/fr-CA/docs/customize/events/create-an-event-stream).
+* Un Event Stream actif abonné aux types d’événements dont vous avez besoin. Pour en savoir plus, consultez [Créer un Event Stream](/fr-CA/docs/customize/events/create-an-event-stream).
+* Des identifiants d’API pour le système externe que vous prévoyez de mettre à jour (par exemple, une clé d’API de CRM ou un jeton OAuth).
+
+<div id="implement-identity-correlation">
+  ## Mettre en place la corrélation des identités
+</div>
+
+Les sections ci-dessous montrent comment corréler des événements Auth0 avec une plateforme CRM. Les fonctions de gestion sont les mêmes, quelle que soit votre destination Event Stream. La section [Acheminer les événements par type](#route-events-by-type) montre comment router les événements vers des destinations de type webhook et Auth0 Action.
+
+<div id="map-auth0-users-to-external-records">
+  ### Associer les utilisateurs Auth0 à des enregistrements externes
+</div>
+
+La plupart des systèmes externes identifient les contacts à l’aide d’une adresse de courriel ou d’un ID externe stocké dans `app_metadata` d’Auth0. Définissez une fonction de recherche qui retrouve l’enregistrement externe correspondant à un utilisateur Auth0 donné.
+
+```javascript wrap lines
+async function findCrmContact(user) {
+    const externalId = user.app_metadata?.crm_contact_id;
+
+    if (externalId) {
+        return externalId;
+    }
+
+    // Recourir à la recherche par courriel
+    const response = await fetch(
+        `https://api.example-crm.com/contacts?email=${encodeURIComponent(user.email)}`,
+        { headers: { "Authorization": `Bearer ${CRM_API_TOKEN}` } }
+    );
+
+    const results = await response.json();
+    return results.length > 0 ? results[0].id : null;
+}
+```
+
+<div id="handle-usercreated">
+  ### Traiter user.created
+</div>
+
+Lorsqu’un nouvel utilisateur est créé dans Auth0, créez le contact correspondant dans votre système externe.
+
+```javascript wrap lines
+async function handleUserCreated(user) {
+    const response = await fetch("https://api.example-crm.com/contacts", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            email: user.email,
+            name: user.name,
+            phone: user.phone_number,
+            externalId: user.user_id
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`CRM create failed: ${response.status}`);
+    }
+}
+```
+
+<div id="handle-userupdated">
+  ### Traiter user.updated
+</div>
+
+Lorsqu’un profil utilisateur est modifié, mettez à jour le contact CRM correspondant avec les nouvelles données.
+
+```javascript wrap lines
+async function handleUserUpdated(user) {
+    const contactId = await findCrmContact(user);
+
+    if (!contactId) {
+        console.log(`No CRM contact found for user ${user.user_id}, skipping.`);
+        return;
+    }
+
+    await fetch(`https://api.example-crm.com/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            email: user.email,
+            name: user.name,
+            phone: user.phone_number
+        })
+    });
+}
+```
+
+<div id="handle-userdeleted">
+  ### Gérer user.deleted
+</div>
+
+Lorsqu’un utilisateur est supprimé d’Auth0, désactivez l’enregistrement correspondant dans votre système externe ou marquez-le en conséquence.
+
+```javascript wrap lines
+async function handleUserDeleted(user) {
+    const contactId = await findCrmContact(user);
+
+    if (!contactId) {
+        return;
+    }
+
+    await fetch(`https://api.example-crm.com/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status: "deactivated" })
+    });
+}
+```
+
+<div id="route-events-by-type">
+  ### Acheminer les événements par type
+</div>
+
+Utilisez un routeur principal pour acheminer chaque événement vers le gestionnaire approprié. Les exemples ci-dessous montrent comment acheminer les événements pour des destinations de type webhook et Auth0 Action.
+
+<Tabs>
+  <Tab title="Webhook">
+    ```javascript wrap lines
+    app.post("/webhook", async (req, res) => {
+        const { type, data } = req.body;
+        const user = data.object;
+
+        try {
+            switch (type) {
+                case "user.created":
+                    await handleUserCreated(user);
+                    break;
+                case "user.updated":
+                    await handleUserUpdated(user);
+                    break;
+                case "user.deleted":
+                    await handleUserDeleted(user);
+                    break;
+                default:
+                    console.log(`Unhandled event type: ${type}`);
+            }
+
+            res.sendStatus(204);
+        } catch (err) {
+            console.error("Error processing event:", err);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    });
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      Renvoyez une réponse HTTP `2XX` le plus rapidement possible. Si vos appels d’API externes sont lents, placez l’événement dans une file d’attente interne et traitez-le de façon asynchrone. Pour en savoir plus, consultez [Bonnes pratiques relatives aux événements](/fr-CA/docs/customize/events/events-best-practices).
+    </Callout>
+  </Tab>
+
+  <Tab title="Auth0 Action">
+    ```javascript wrap lines
+    exports.onExecuteEventStream = async (event, api) => {
+        const eventType = event.message.type;
+        const user = event.message.data.object;
+
+        switch (eventType) {
+            case "user.created":
+                await handleUserCreated(user);
+                break;
+            case "user.updated":
+                await handleUserUpdated(user);
+                break;
+            case "user.deleted":
+                await handleUserDeleted(user);
+                break;
+            default:
+                console.log(`Unhandled event type: ${eventType}`);
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<div id="handle-edge-cases">
+  ## Gérer les cas limites
+</div>
+
+Lorsque vous faites correspondre des données d’identité entre plusieurs systèmes, tenez compte des éléments suivants :
+
+* **Enregistrements externes manquants.** Un événement `user.updated` peut arriver pour un utilisateur qui n’existe pas encore dans votre système externe. Déterminez s’il faut créer l’enregistrement ou le consigner pour un examen manuel.
+* **Limites de débit des API externes.** Si Auth0 envoie une rafale d’événements (par exemple, lors d’une importation en bloc), votre gestionnaire peut dépasser les limites de débit de l’API externe. Utilisez une file d’attente asynchrone avec temporisation exponentielle pour rester dans ces limites.
+* **Données partielles.** Les événements `user.updated` n’incluent pas toujours tous les champs du profil. Appliquez uniquement les champs présents dans la charge utile de l’événement pour éviter d’écraser des données par des valeurs vides.
+
+<div id="example-correlate-with-hubspot-crm">
+  ## Exemple : corréler avec HubSpot CRM
+</div>
+
+L’Auth0 Action suivante présente un gestionnaire de corrélation complet qui crée, met à jour et supprime des contacts dans HubSpot CRM. L’Action utilise l’API Contacts de HubSpot pour rechercher des contacts existants par courriel et appliquer l’opération correspondante.
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const userData = event.message.data.object;
+    const HUBSPOT_TOKEN = event.secrets.HUBSPOT_TOKEN;
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+
+    const headers = {
+        "Authorization": `Bearer ${HUBSPOT_TOKEN}`,
+        "Content-Type": "application/json"
+    };
+
+    switch (eventType) {
+        case "user.created": {
+            const response = await fetch(BASE_URL, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    properties: {
+                        email: userData.email,
+                        firstname: userData.given_name,
+                        lastname: userData.family_name
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HubSpot create failed: ${response.status}`);
+            }
+            break;
+        }
+        case "user.updated": {
+            // Rechercher un contact existant par courriel
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({
+                        properties: {
+                            firstname: userData.given_name,
+                            lastname: userData.family_name
+                        }
+                    })
+                });
+            }
+            break;
+        }
+        case "user.deleted": {
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "DELETE",
+                    headers
+                });
+            }
+            break;
+        }
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+```
+
+Pour stocker la clé d’API HubSpot en toute sécurité, ajoutez un secret nommé `HUBSPOT_TOKEN` dans l’éditeur Action. Pour en savoir plus, consultez [les secrets d’Action](/fr-CA/docs/customize/actions/write-your-first-action#add-a-secret).
+
+<div id="verify-correlation">
+  ## Vérifiez la corrélation
+</div>
+
+Après avoir déployé votre gestionnaire, créez ou mettez à jour un utilisateur de test dans Auth0, puis confirmez ce qui suit :
+
+1. L’enregistrement correspondant dans votre système externe reflète la modification.
+2. Supprimez l’utilisateur de test dans Auth0. Confirmez que l’enregistrement externe est désactivé ou supprimé.
+3. Consultez les journaux de votre gestionnaire pour repérer toute erreur ou tout événement ignoré.
+
+Pour en savoir plus sur les tests des flux d’événements, consultez [Tests des événements, observabilité et récupération après échec](/fr-CA/docs/customize/events/event-testing-observability-and-failure-recovery).
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Types d’événements](/fr-CA/docs/customize/events/event-types)
+* [Créer un Event Stream](/fr-CA/docs/customize/events/create-an-event-stream)
+* [Bonnes pratiques en matière d’événements](/fr-CA/docs/customize/events/events-best-practices)

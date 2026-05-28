@@ -1,0 +1,374 @@
+---
+description: リフレッシュトークンメタデータとセッションメタデータのユースケースの実装例を紹介します。 
+title: リフレッシュトークンメタデータとセッションメタデータのユースケース
+validatedOn: 2026-03-06
+---
+
+[リフレッシュトークンメタデータ](/ja/docs/secure/tokens/refresh-tokens/refresh-token-metadata)と[セッションメタデータ](/ja/docs/manage-users/sessions/session-metadata)を組み合わせることで、ユーザーの Auth0 セッションのライフサイクル全体を通じて保持されるデータを作成し、保存できます。この記事では、次のユースケースの例を紹介します。
+
+* [永続的なカスタムクレームを作成する](/ja/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#create-persistent-custom-claims)
+* [一意のセッション ID を作成する](/ja/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#create-a-unique-session-id)
+* [テナント識別子を伝播する](/ja/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#create-a-tenant-identifier)
+* [アップストリーム IDプロバイダー (IdP) からの一時的なデータを管理する](/ja/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#manage-transient-data-from-upstream-identity-providers-idps)
+* [セキュリティと不正検知を強化する](/ja/docs/secure/tokens/refresh-tokens/refresh-token-metadata/use-cases#enhance-security-and-fraud-detection)
+
+詳しくは、[A guide to Auth0 Session and Refresh Token Metadata](https://auth0.com/blog/auth0-session-refresh-token-metadata-guide)を参照してください。
+
+<Warning>
+  Auth0 のセッションメタデータは安全なデータストアではないため、機密情報の保存には使用しないでください。これには、シークレットや、社会保障番号、クレジットカード番号などの高リスクの個人識別情報 (PII) が含まれます。Auth0 を利用するお客様には、メタデータに保存するデータを十分に評価し、ID およびアクセス管理の目的に必要なものだけを保存することを強く推奨します。詳しくは、[Auth0 General Data Protection Regulation Compliance](/ja/docs/secure/data-privacy-and-compliance/gdpr)を参照してください。
+</Warning>
+
+<div id="create-persistent-custom-claims">
+  ## 永続的なカスタムクレームを作成する
+</div>
+
+リフレッシュトークンメタデータとセッションメタデータを組み合わせることで、[ID](/ja/docs/secure/tokens#id-tokens) トークンや [access](/ja/docs/secure/tokens/access-tokens) トークンに含まれる情報を拡張する、永続的なカスタムクレームを作成できます。
+
+永続的なカスタムクレームを使用すると、次のようなアプリケーション固有のデータにアクセスできます。
+
+* ユーザーのロール
+* 権限
+* テナント ID
+* リフレッシュトークンの交換全体を通じて、認可やパーソナライズに必要なその他の属性
+
+永続的なカスタムクレームを作成し、`api.refreshToken.setMetadata()` を使用してそれらをリフレッシュトークンメタデータに割り当てるには、[post-login](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) [Action](/ja/docs/customize/actions) トリガーを設定します。
+
+```javascript custom claim Action example expandable
+/**
+ * @param {Event} event - ユーザーと認証トランザクションに関する詳細。
+ * @param {PostLoginActionAPI} api - 完了した認証トランザクションを変更するためのインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let customClaimValue1;
+  let customClaimValue2;
+
+  // --- カスタムクレームの計算をシミュレートするヘルパー関数 ---
+  // 実際のシナリオでは、ユーザーデータや外部 API などに基づいて
+  // 複雑なロジックを実行します。
+  const calculateCustomClaims = (user) => {
+    // 計算完了後に返す
+    return { claim1: value1, claim2: value2 };
+  };
+
+  // --- 初回ログインかリフレッシュトークン交換かを判定する ---
+  // event.request.body.grant_type が 'refresh_token' でない場合、初回のインタラクティブログインと見なす
+  const isRefreshTokenGrant = event.request.body.grant_type === 'refresh_token';
+
+  if (!isRefreshTokenGrant) {
+    // --- 初回ログイン（例: パスワード、ソーシャル、MFA-OOB）---
+    // カスタムクレームの値を計算する
+    const calculatedClaims = calculateCustomClaims(event.user);
+    customClaimValue1 = calculatedClaims.claim1;
+    customClaimValue2 = calculatedClaims.claim2;
+
+    // 計算した値を永続化するためにリフレッシュトークンメタデータに保存する
+    // リフレッシュトークンを発行する場合はメタデータを追加する
+if (event.transaction.requested_scopes.indexOf('offline_access') > -1) {
+api.refreshToken.setMetadata('customClaim1', customClaimValue1);
+api.refreshToken.setMetadata('customClaim2', customClaimValue2);
+}
+
+  } else {
+    // --- リフレッシュトークン交換 ---
+    // リフレッシュトークンメタデータからカスタムクレームの値を取得して使用する
+    customClaimValue1 = event.refresh_token?.metadata?.customClaim1;
+    customClaimValue2 = event.refresh_token?.metadata?.customClaim2;
+
+  } 
+  // --- 最後に、決定した値をカスタムクレームとしてトークンに追加する ---
+  api.idToken.setCustomClaim('custom_claim_1', customClaimValue1);
+  api.accessToken.setCustomClaim('custom_claim_1', customClaimValue1);
+
+  api.idToken.setCustomClaim('custom_claim_2', customClaimValue2);
+  api.accessToken.setCustomClaim('custom_claim_2', customClaimValue2);
+};
+```
+
+[リフレッシュトークン交換](/ja/docs/secure/tokens/refresh-tokens/use-refresh-tokens#use-refresh-tokens)中、後続の `post-login` Action トリガーでは、`event.refresh_token.metadata` オブジェクトを使用してこれらのカスタムクレームにアクセスし、`api.idToken.setCustomClaim()` および `api.accessToken.setCustomClaim()` を使って新たに発行されるトークンに適用できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  1 つの `post-login` Action で、`event.request.body.grant_type` オブジェクトを使用してクレームの永続性を管理しながら、異なる `grant_type` シナリオに対応できます。`event.refresh_token` オブジェクトは、リフレッシュトークン交換中にのみ読み取り専用で利用できます。
+</Callout>
+
+<div id="create-a-unique-session-id">
+  ## 一意のセッション ID を作成する
+</div>
+
+リフレッシュトークンメタデータとセッションメタデータを組み合わせることで、[リフレッシュトークンのローテーション](docs/secure/tokens/refresh-tokens/refresh-token-rotation)中も含めて、ユーザーのセッション期間全体を通して引き継がれる永続的なセッション識別子として、一意のセッション ID を作成できます。
+
+一意のセッション ID を使用すると、次のことが可能になります。
+
+* デバッグや監査のために、ユーザーのセッションを正確に記録する。
+* アプリケーションが内部のセッション状態を追跡するための仕組みを提供する。
+* [APIs](/ja/docs/get-started/apis#apis) で、詳細なログ記録、レート制限、コンテキストに応じた認可判断を実現する。
+* 複数のトークンライフサイクルにまたがって、一貫した UX を適用する。
+
+[post-login](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action トリガーを設定し、`api.session.setMetadata()` および `api.refreshToken.setMetadata()` オブジェクトを使用して一意のセッション ID を作成し、ユーザーのセッションに割り当てます。
+
+`api.idToken.setCustomClaim()` および `api.accessToken.setCustomClaim()` オブジェクトを使用して、一意のセッション ID をカスタムクレームとして ID トークンとアクセストークンに追加します。
+
+```javascript unique session ID Action example expandable
+/**
+ * @param {Event} event - ユーザーと認証トランザクションに関する詳細。
+ * @param {PostLoginActionAPI} api - 完了した認証トランザクションを変更するためのインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let sessionId;
+
+  // 1) 'ses_id' というセッションメタデータキーが既に存在するか確認する。
+  if (event.session && event.session.metadata && event.session.metadata.ses_id) {
+    sessionId = event.session.metadata.ses_id;
+  }
+  // セッションメタデータに見つからない場合は、リフレッシュトークンメタデータを確認する。
+  // これは、実際のセッションが存在しない ROPG フローに特に関連する。
+  else if (event.refresh_token && event.refresh_token.metadata && event.refresh_token.metadata.ses_id) {
+    sessionId = event.refreshToken.metadata.ses_id;
+  }
+
+  // 'ses_id' が存在しない場合は、新しく生成する 
+  if (!sessionId) {
+    sessionId = generateSesId(); // UUID を生成するための独自ヘルパー関数
+
+    // 新しく生成した 'ses_id' をセッションメタデータに保存する
+    // セッションが実際に発行されている場合、またはイベントに存在する場合のみ実行する。 
+    if (event.session) {
+      api.session.setMetadata('ses_id', sessionId);
+    }
+
+    // 'ses_id' をリフレッシュトークンメタデータに保存する。
+    // リフレッシュトークンが実際に発行されている場合、またはイベントに存在する場合のみ実行する。
+    if (event.refresh_token) {
+      api.refreshToken.setMetadata('ses_id', sessionId);
+    }
+  } else {
+    // リフレッシュトークンメタデータに ses_id が含まれていることを確認する（欠落している場合や
+    // 別の場所で更新された場合に備えて）。ユーザーが最初に offline_access を要求せず、後から追加した場合に発生する可能性がある。
+    if (event.refresh_token && event.refresh_token.metadata && !event.refresh_token.metadata.ses_id) {
+        api.refreshToken.setMetadata('ses_id', sessionId);
+    }
+  }
+
+
+  // 2) この 'ses_id' をカスタムクレームとして IDトークンとアクセストークンの両方に追加する。
+  api.idToken.setCustomClaim('ses_id', sessionId);
+  api.accessToken.setCustomClaim('ses_id', sessionId);
+};
+```
+
+リフレッシュトークン交換時に、後続の post-login Action トリガーでは、`event.refresh_token.metadata` オブジェクトを使ってこれらのカスタムクレームにアクセスし、`api.idToken.setCustomClaim()` および `api.accessToken.setCustomClaim()` を使用して、新たに発行されるリフレッシュトークンに適用できます。
+
+<div id="create-a-tenant-identifier">
+  ## テナント識別子を作成する
+</div>
+
+リフレッシュトークンメタデータとセッションメタデータを組み合わせると、永続的なテナント識別子を作成してマルチテナントアプリケーションを管理できます。これは、1 つのアプリケーションインスタンスで複数の顧客組織に対応する場合に、ユーザーのセッション全体を通じて保持されます。
+
+永続的なテナント識別子を使用すると、次のことが可能になります。
+
+* 動的なアクセス制御を追加し、アプリケーションや API でテナントごとの権限を簡単に適用する
+* ユーザーの現在のテナントコンテキストに応じて、関連性の高いコンテンツや機能を提供するカスタマイズされたユーザー体験を実現する
+* Auth0 内でテナントの識別と伝播を一元化し、マルチテナンシーのロジックを簡素化する
+* すべてのトークンで一貫したテナントコンテキストを確保し、テナント間でのデータ露出を防ぐことで、セキュリティを強化する
+* API 呼び出しやトークン更新のたびにテナントコンテキストを判断するための、繰り返しのデータベースクエリや複雑なロジックを減らし、スケーラビリティを向上させる
+
+[post-login](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action トリガーを設定し、認証リクエスト時に渡される `ext-tenantId` の値をアプリケーションに照会するか、位置情報からテナントを推定するか、またはユーザーに使用するテナントを選択させることで、ユーザーのアクティブなテナントを特定します。
+
+テナントを特定したら、`api.session.setMetadata()` と `api.refreshToken.setMetadata()` を使用してテナント識別子の値をユーザーのセッションに割り当て、さらに `api.idToken.setCustomClaim()` と `api.accessToken.setCustomClaim()` を使用して、その値を ID トークンとアクセストークンのカスタムクレームとして追加します。
+
+```javascript tenant identifier Action example expandable
+/** 
+ * @param {Event} event - ユーザーと認証トランザクションに関する詳細。
+ * @param {PostLoginActionAPI} api - 完了した認証トランザクションを変更するためのインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let tenantId;
+
+  // 1) 'tenant_id' というセッションメタデータキーが既に存在するか確認する。
+  if (event.session && event.session.metadata && event.session.metadata.tenant_id) {
+    tenantId = event.session.metadata.tenant_id;
+  }
+  // セッションメタデータに見つからない場合は、リフレッシュトークンメタデータを確認する。
+  // これは、実際のセッションが存在しない ROPG フローに特に関連する。
+  else if (event.refresh_token && event.refresh_token.metadata && event.refresh_token.metadata.tenant_id) {
+    tenantId = event.refreshToken.metadata.tenant_id;
+  }
+
+  // 'tenant_id' がまだ不明な場合は特定する 
+  if (!tenantId) {
+    // tenant_id が ext- パラメーターとして渡されたと想定する
+    tenantId = event.request.query['ext-tenantId'];
+
+    // イベント内のジオロケーションやフォームから取得することもある。
+    // フォームを使用する場合は、ここでフォームを開き、
+    // 残りのコードを onContinuePostLogin 関数内で
+    // 実行する
+  
+    // 新たに取得した 'tenant_id' をセッションメタデータに保存する 
+    // セッションが実際に発行されている場合、またはイベントに存在する場合のみ実行する。 
+    if (event.session) {
+      api.session.setMetadata('tenant_id', tenantId);
+    }
+
+    // 'tenant_id' をリフレッシュトークンメタデータに保存する。
+    // リフレッシュトークンが実際に発行されている場合、またはイベントに存在する場合のみ実行する。
+    if (event.refresh_token) {
+      api.refreshToken.setMetadata('tenant_id', tenantId);
+    }
+  } else {
+    // リフレッシュトークンメタデータに tenant_id が含まれていることも確認する。
+    // 値が欠落していたり、別の場所で更新されている場合に備えるため。
+    // ユーザーが最初に offline_access をリクエストせず、後から追加した場合に発生する可能性がある。
+    if (event.refresh_token && event.refresh_token.metadata && !event.refresh_token.metadata.tenant_id) {
+        api.refreshToken.setMetadata('tenant_id', tenantId);
+    }
+  }
+
+
+  // 2) この 'tenant_id' をカスタムクレームとして IDトークンとアクセストークンの両方に追加する。
+  api.idToken.setCustomClaim('tenant_id', tenantId);
+  api.accessToken.setCustomClaim('tenant_id', tenantId);
+};
+```
+
+リフレッシュトークン交換時には、後続の`post-login` Action で `event.refresh_token.metadata` オブジェクトを使ってこれらのカスタムクレームにアクセスし、`api.idToken.setCustomClaim()` および `api.accessToken.setCustomClaim()` を使用して、新しく発行されるリフレッシュトークンに適用できます。
+
+<div id="manage-transient-data-from-upstream-identity-providers-idps">
+  ## 上流のIDプロバイダー (IdP) からの一時データを管理する
+</div>
+
+リフレッシュトークンメタデータとセッションメタデータを組み合わせることで、ユーザーのAuth0プロファイルに永続的に保存することなく、上流のIdPから受け取る一時的なデータやコンテキストデータを、ユーザーのセッション全体にわたって管理できます。
+
+一時データを使用すると、次のことが可能になります。
+
+* 一時データやセッション固有のデータを保存せずに、ユーザープロファイルをクリーンに保つ
+* さまざまなIdPごとの多様なデータ要件に対応しながら、永続的なユーザープロファイルにスキーマ変更や不要なデータ増加を持ち込まずに済むため、柔軟性を高める
+* 一時データを必要な期間だけ保存することで、データプライバシーや保持ポリシーへの準拠を促進する
+* Auth0 Actionsとメタデータによってデータのライフサイクル管理が簡素化されるため、一時的なIdPデータの処理にかかる開発負荷を軽減する
+
+[post-login](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action トリガーを設定し、`event.request`、`event.user`、`event.context` オブジェクトに含まれるユーザープロファイルデータを特定します。
+
+どのデータが一時データまたはコンテキストデータに該当するかを判断し、`api.session.setMetadata()` と `api.refreshToken.setMetadata()` を使用してそのデータをユーザーのセッションに割り当てます。また、`api.idToken.setCustomClaim()` と `api.accessToken.setCustomClaim()` を使用して、その一時データをIDトークンおよびアクセストークンのカスタムクレームとして追加します。
+
+```javascript transient data Action example expandable
+/**
+ * @param {Event} event - ユーザーと認証トランザクションに関する詳細。
+ * @param {PostLoginActionAPI} api - 完了した認証トランザクションを変更するためのインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  let deviceIdentifier;
+  let groups;
+
+  // 例: リクエストヘッダーまたはコンテキストからデバイス情報を抽出する
+  // これは例示であり、実際のデバイスフィンガープリンティングはより複雑になる場合があります
+  if (event.request.user_agent) {
+    deviceIdentifier = event.request.user_agent;
+  } else {
+    deviceIdentifier = 'unknown';
+  }
+
+  // 例: 上流の接続のコンテキストから IdP 情報を抽出する
+  // これは上流の IdP と情報の渡し方に大きく依存します。
+  // SAML/OIDC 接続からのカスタムクレームまたはコンテキスト変数（例: "groups"）を想定
+  if (event.user.groups) {
+    groups = event.user.groups;
+  } else {
+    groups = [];
+  }
+
+  // 一時データをセッションメタデータに保存する
+  api.session.setMetadata('deviceIdentifier', deviceIdentifier);
+  api.session.setMetadata('groups', groups);
+
+  // リフレッシュをまたいで永続化するため、一時データをリフレッシュトークンメタデータに保存する
+  if (event.refreshToken) {
+    api.refreshToken.setMetadata('deviceIdentifier', deviceIdentifier);
+    api.refreshToken.setMetadata('groups', groups);
+  }
+
+  // 必要に応じて、API で必要な場合はアクセストークンにクレームとして追加する
+  // アプリケーション固有のクレームにはカスタム名前空間を使用することがベストプラクティスです。
+  api.accessToken.setCustomClaim('https://myapp.example.com/device_id', deviceIdentifier);
+  api.accessToken.setCustomClaim('https://myapp.example.com/groups', groups);
+
+  // 例: 上流の IdP がこの認証イベントに対して「保証レベル」を提供する場合
+  if (event.transaction && event.transaction.acr_values) { // acr: 認証コンテキストクラスリファレンス
+      api.session.setMetadata('authLevel', event.transaction.acr_values);
+      if (event.refreshToken) {
+        api.refreshToken.setMetadata('authLevel', event.transaction.acr_values);
+      }
+      api.accessToken.setCustomClaim('https://myapp.example.com/auth_level', event.transaction.acr_values);
+  }
+};
+```
+
+リフレッシュトークン交換時には、後続の`post-login` Actionトリガーで`event.refresh_token.metadata`オブジェクトを通じてこれらのカスタムクレームにアクセスし、`api.accessToken.setCustomClaim()`を使用して新たに発行されるリフレッシュトークンに適用できます。
+
+<div id="enhance-security-and-fraud-detection">
+  ## セキュリティと不正検知を強化する
+</div>
+
+リフレッシュトークンメタデータとセッションメタデータを組み合わせることで、リフレッシュトークンのローテーションや[サイレント認証](/ja/docs/authenticate/login/configure-silent-authentication)リクエストを含む、ユーザーのセッション全体を通じたコンテキスト情報の追跡と比較が可能になり、適応型セキュリティを実装できます。
+
+適応型セキュリティを実装すると、次のことが可能になります。
+
+* ユーザーのコンテキストデータにおける不審な変化を自動的に検出して対応することで、脅威を先回りして検知し、セッションの乗っ取りや不正アクセスのリスクを低減します。
+* 実際に異常が検出された場合にのみ MFA や追加の検証を求めることで、正当なユーザーの負担を減らし、一律に MFA を要求する場合と比べてユーザー体験を向上させます。
+
+[post-login](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger#login-/-post-login) Action トリガーを設定して、デバイスフィンガープリント、地理的位置、ネットワーク属性、行動属性などのコンテキストに関するユーザーデータを特定します。比較用のコンテキストデータは、`api.session.setMetadata()` オブジェクトを使用してユーザーのセッションに保存します。
+
+```javascript security detection Action example expandable
+/**
+ * @param {Event} event - ユーザーと認証トランザクションに関する詳細。
+ * @param {PostLoginActionAPI} api - 完了した認証トランザクションを変更するためのインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // --- 現在のコンテキストデータを取得 ---
+  // Auth0が提供するja3/ja4フィンガープリントを使用する
+  const {ja3, ja4} = event.security_context;
+  // ja3/ja4がメタデータに未登録の場合は追加する
+  // (初回ログイン時はメタデータが設定されていない)
+  if (event.session && !event.session.metadata) {
+    api.session.setMetadata('ja3', ja3);
+    api.session.setMetadata('ja4', ja4);
+  } else {
+    // 保存済みフィンガープリントと受信したフィンガープリントを比較する 
+    if(ja3 != event.session?.metadata?.ja3 || ja4 != event.session?.metadata?.ja4) {
+      // フィンガープリントが一致しない場合、MFAチャレンジを要求する
+      api.authentication.challengeWith(
+        { type: 'otp'}, 
+        { additionalFactors: [
+          { type: 'push-notification'}, { type: 'phone' }
+        ]}
+      );
+    }    
+  }
+};
+```
+
+リフレッシュトークン交換時またはサイレント認証時には、後続の`post-login Action`トリガーで、リスク評価や適応的な対応を適用できます。
+
+<div id="access-metadata-with-the-management-api">
+  ## Management API でメタデータにアクセスする
+</div>
+
+Auth0 Management API の `GET` [/api/v2/refresh-tokens/&#123;id&#125;](/ja/docs/api/management/v2/refresh-tokens/get-refresh-token) および [/api/v2/sessions/&#123;id&#125;](/ja/docs/api/management/v2/sessions/get-session) エンドポイントを使用すると、リフレッシュトークンまたはセッションのメタデータに保存されているデータを取得できます。
+
+レスポンスには、保存済みのデータを含む `metadata` フィールドが含まれます。
+
+```json
+{
+  "id": "object_id",
+  "metadata": {
+    "deviceIdentifier": "deviceIdentifier"
+  }
+}
+```
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [リフレッシュトークン](/ja/docs/secure/tokens/refresh-tokens): リフレッシュトークンの詳細を確認してください。
+* [セッション](/ja/docs/manage-users/sessions): セッションの詳細を確認してください。
+* [Actions イベントオブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object): `post-login` イベントオブジェクトとそのプロパティの詳細を確認してください。
+* [Actions API オブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object): `post-login` API オブジェクトとそのメソッドの詳細を確認してください。

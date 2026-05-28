@@ -1,0 +1,356 @@
+---
+description: Event Streams を使用して、Auth0 のアイデンティティ変更に応じて CRM、請求、またはサードパーティシステムを更新します。
+title: 外部システムとアイデンティティの変更を関連付ける
+---
+
+Event Streams を使用すると、Auth0 で発生するアイデンティティの変更に応じて、それらの変更を CRM プラットフォーム、請求サービス、SaaS ライセンスツールなどの外部システムに反映できます。更新を確認するために Management API をポーリングする代わりに、統合はイベントをリアルタイムで受信し、連携先システム内のレコードと照合できます。
+
+<div id="why-correlate-identity-changes">
+  ## アイデンティティの変更を関連付ける理由
+</div>
+
+Auth0 のアイデンティティイベントを外部システムと関連付けると、次のような場合に役立ちます。
+
+* ユーザーのメールアドレスやユーザープロファイルデータが変更されたときに、CRM レコードを更新する。
+* アカウントが無効化または削除されたときに、請求システムやライセンス管理システムに通知する。
+* 同意やロールの更新など、ユーザー属性が変更されたときに、コンプライアンスワークフローをトリガーする。
+* マーケティングプラットフォーム内のユーザーセグメントを、最新のアイデンティティデータと一致した状態に保つ。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+1. Auth0 は、ユーザープロファイルが作成、更新、または削除されるとイベントを発行します。
+2. Event Stream は、そのイベントを送信先 (webhook、AWS EventBridge、または Auth0 Action) に配信します。
+3. ハンドラーは Auth0 のユーザーを外部システム内のレコードに対応付け、該当する更新を適用します。
+
+データの関連付けには、次のイベントタイプが関係します。
+
+| イベントタイプ        | トリガーされるタイミング                  |
+| -------------- | ----------------------------- |
+| `user.created` | Auth0 で新しいユーザープロファイルが作成されたとき。 |
+| `user.updated` | 既存のユーザープロファイルが変更されたとき。        |
+| `user.deleted` | ユーザープロファイルが Auth0 から削除されたとき。  |
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+開始する前に、次の項目を用意してください。
+
+* Events が有効な Auth0 テナント。プランの提供状況の詳細については、[Event Stream を作成する](/ja/docs/customize/events/create-an-event-stream)を参照してください。
+* 必要なイベントタイプをサブスクライブしている有効な Event Stream。詳細については、[Event Stream を作成する](/ja/docs/customize/events/create-an-event-stream)を参照してください。
+* 更新対象の外部システムの API 認証情報 (例: CRM API キーまたは OAuth トークン) 。
+
+<div id="implement-identity-correlation">
+  ## アイデンティティの関連付けを実装する
+</div>
+
+以下のセクションでは、Auth0 のイベントを CRM プラットフォームに関連付ける方法を説明します。ハンドラー関数は、Event Stream の送信先にかかわらず共通です。[イベントをタイプ別にルーティングする](#route-events-by-type) セクションでは、webhook と Auth0 Action の両方の送信先にイベントをディスパッチする方法を示します。
+
+<div id="map-auth0-users-to-external-records">
+  ### Auth0 ユーザーを外部レコードに対応付ける
+</div>
+
+ほとんどの外部システムでは、メールアドレス、または Auth0 の `app_metadata` に保存された外部 ID を使って連絡先を識別します。指定した Auth0 ユーザーに対応する外部レコードを特定するルックアップ関数を定義します。
+
+```javascript wrap lines
+async function findCrmContact(user) {
+    const externalId = user.app_metadata?.crm_contact_id;
+
+    if (externalId) {
+        return externalId;
+    }
+
+    // メールアドレスによる検索にフォールバック
+    const response = await fetch(
+        `https://api.example-crm.com/contacts?email=${encodeURIComponent(user.email)}`,
+        { headers: { "Authorization": `Bearer ${CRM_API_TOKEN}` } }
+    );
+
+    const results = await response.json();
+    return results.length > 0 ? results[0].id : null;
+}
+```
+
+<div id="handle-usercreated">
+  ### user.created を処理する
+</div>
+
+Auth0 で新しいユーザーが作成されたら、外部システムにも対応する連絡先を作成します。
+
+```javascript wrap lines
+async function handleUserCreated(user) {
+    const response = await fetch("https://api.example-crm.com/contacts", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            email: user.email,
+            name: user.name,
+            phone: user.phone_number,
+            externalId: user.user_id
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`CRM create failed: ${response.status}`);
+    }
+}
+```
+
+<div id="handle-userupdated">
+  ### user.updated を処理する
+</div>
+
+ユーザープロファイルが変更されたら、対応する CRM の連絡先を新しいデータで更新します。
+
+```javascript wrap lines
+async function handleUserUpdated(user) {
+    const contactId = await findCrmContact(user);
+
+    if (!contactId) {
+        console.log(`No CRM contact found for user ${user.user_id}, skipping.`);
+        return;
+    }
+
+    await fetch(`https://api.example-crm.com/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            email: user.email,
+            name: user.name,
+            phone: user.phone_number
+        })
+    });
+}
+```
+
+<div id="handle-userdeleted">
+  ### user.deleted の処理
+</div>
+
+Auth0 からユーザーが削除された場合は、外部システム内の対応するレコードを無効化するか、削除済みとしてフラグ付けします。
+
+```javascript wrap lines
+async function handleUserDeleted(user) {
+    const contactId = await findCrmContact(user);
+
+    if (!contactId) {
+        return;
+    }
+
+    await fetch(`https://api.example-crm.com/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${CRM_API_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status: "deactivated" })
+    });
+}
+```
+
+<div id="route-events-by-type">
+  ### イベントをタイプごとにルーティングする
+</div>
+
+トップレベルのルーターを使用して、各イベントを適切なハンドラーに振り分けます。以下の例は、Webhook と Auth0 Action の送信先に対してイベントをルーティングする方法を示しています。
+
+<Tabs>
+  <Tab title="Webhook">
+    ```javascript wrap lines
+    app.post("/webhook", async (req, res) => {
+        const { type, data } = req.body;
+        const user = data.object;
+
+        try {
+            switch (type) {
+                case "user.created":
+                    await handleUserCreated(user);
+                    break;
+                case "user.updated":
+                    await handleUserUpdated(user);
+                    break;
+                case "user.deleted":
+                    await handleUserDeleted(user);
+                    break;
+                default:
+                    console.log(`Unhandled event type: ${type}`);
+            }
+
+            res.sendStatus(204);
+        } catch (err) {
+            console.error("Error processing event:", err);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    });
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      HTTP `2XX` レスポンスは、できるだけ速やかに返してください。外部 API の呼び出しに時間がかかる場合は、イベントを内部キューに入れて非同期に処理してください。詳しくは、[イベントのベストプラクティス](/ja/docs/customize/events/events-best-practices) を参照してください。
+    </Callout>
+  </Tab>
+
+  <Tab title="Auth0 Action">
+    ```javascript wrap lines
+    exports.onExecuteEventStream = async (event, api) => {
+        const eventType = event.message.type;
+        const user = event.message.data.object;
+
+        switch (eventType) {
+            case "user.created":
+                await handleUserCreated(user);
+                break;
+            case "user.updated":
+                await handleUserUpdated(user);
+                break;
+            case "user.deleted":
+                await handleUserDeleted(user);
+                break;
+            default:
+                console.log(`Unhandled event type: ${eventType}`);
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<div id="handle-edge-cases">
+  ## エッジケースへの対処
+</div>
+
+システム間でアイデンティティデータを照合する際は、次の点を考慮してください。
+
+* **外部レコードの欠落。** `user.updated` イベントが、外部システムにまだ存在しないユーザーについて届くことがあります。レコードを作成するか、手動で確認できるようログに記録するかを決めてください。
+* **外部 API のレート制限。** Auth0 がイベントを短時間にまとめて配信すると (たとえば一括インポート中) 、ハンドラーが外部 API のレート制限を超える可能性があります。制限内に収めるには、バックオフ付きの非同期キューを使用してください。
+* **部分的なデータ。** すべての `user.updated` イベントに、すべてのユーザープロファイルフィールドが含まれるわけではありません。空の値でデータを上書きしないよう、イベントペイロードに含まれるフィールドのみを適用してください。
+
+<div id="example-correlate-with-hubspot-crm">
+  ## 例: HubSpot CRM と関連付ける
+</div>
+
+次の Auth0 Action は、HubSpot CRM で連絡先を作成、更新、削除する完全な関連付けハンドラーの例です。この Action は、HubSpot Contacts API を使用してメールアドレスで既存の連絡先を検索し、対応する操作を実行します。
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const userData = event.message.data.object;
+    const HUBSPOT_TOKEN = event.secrets.HUBSPOT_TOKEN;
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+
+    const headers = {
+        "Authorization": `Bearer ${HUBSPOT_TOKEN}`,
+        "Content-Type": "application/json"
+    };
+
+    switch (eventType) {
+        case "user.created": {
+            const response = await fetch(BASE_URL, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    properties: {
+                        email: userData.email,
+                        firstname: userData.given_name,
+                        lastname: userData.family_name
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HubSpot create failed: ${response.status}`);
+            }
+            break;
+        }
+        case "user.updated": {
+            // メールアドレスで既存の連絡先を検索する
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({
+                        properties: {
+                            firstname: userData.given_name,
+                            lastname: userData.family_name
+                        }
+                    })
+                });
+            }
+            break;
+        }
+        case "user.deleted": {
+            const searchResponse = await fetch(`${BASE_URL}/search`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    filterGroups: [{
+                        filters: [{
+                            propertyName: "email",
+                            operator: "EQ",
+                            value: userData.email
+                        }]
+                    }]
+                })
+            });
+
+            const searchResult = await searchResponse.json();
+
+            if (searchResult.total > 0) {
+                const contactId = searchResult.results[0].id;
+                await fetch(`${BASE_URL}/${contactId}`, {
+                    method: "DELETE",
+                    headers
+                });
+            }
+            break;
+        }
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+```
+
+HubSpot API キーを安全に保存するには、Action エディターで `HUBSPOT_TOKEN` という名前のシークレットを追加します。詳細については、[Action Secrets](/ja/docs/customize/actions/write-your-first-action#add-a-secret)を参照してください。
+
+<div id="verify-correlation">
+  ## 関連付けを確認する
+</div>
+
+ハンドラーをデプロイしたら、Auth0 でテストユーザーを作成または更新し、次の点を確認します。
+
+1. 外部システム内の対応するレコードに変更が反映されていること。
+2. Auth0 でテストユーザーを削除します。外部システム側のレコードが無効化または削除されていることを確認します。
+3. エラーやスキップされたイベントがないか、ハンドラーのログを確認します。
+
+Event Stream のテストについて詳しくは、[Event Testing, Observability, and Failure Recovery](/ja/docs/customize/events/event-testing-observability-and-failure-recovery) を参照してください。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [イベントタイプ](/ja/docs/customize/events/event-types)
+* [Event Stream の作成](/ja/docs/customize/events/create-an-event-stream)
+* [イベントのベストプラクティス](/ja/docs/customize/events/events-best-practices)

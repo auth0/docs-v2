@@ -1,0 +1,76 @@
+---
+description: OpenID Connect（OIDC）によるシングルサインオンでユーザーを認証する必要がある従来型の Web アプリケーションのシナリオ。
+title: シングルサインオンを使用する従来型の Web アプリケーション
+---
+
+このシナリオでは、ExampleCo という架空の企業向けに Web アプリケーションを構築します。このアプリは、ExampleCo の従業員と契約社員が利用することを想定しています。従業員は既存の企業ディレクトリ (Active Directory) を使用し、契約社員は別個のユーザーストアで管理されます。
+
+<Info>
+  ### 要点
+
+  * Auth0 は、認証と認可のために OAuth 2.0 や <Tooltip tip="OpenID: アプリケーションがログイン情報を収集・保存することなく、ユーザーのアイデンティティを検証できる認証のためのオープン標準です。" cta="用語集を見る" href="/ja/docs/glossary?term=OpenID+Connect+%28OIDC%29">OpenID Connect (OIDC) </Tooltip> などのオープン標準をサポートしています ([どのプロトコルを使用するか](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-1#which-protocol-to-use) を参照)
+  * OIDC は複数の認可フローをサポートしており、Web アプリケーションに最も適しているのは Authorization Code Flow です ([認証フロー](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-1#authentication-flow) を参照)
+  * アプリケーションは Auth0 でアプリケーションとして設定されます ([Application](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-2#application) を参照)
+  * IDプロバイダーは Auth0 で接続として設定されます ([Connections](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-2#connections) を参照)
+  * Auth0 は、ユーザーがアプリケーションにログインするための Lock ウィジェットを提供しています ([User Login](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-3#user-login) を参照)
+  * Web アプリケーションは、ユーザーがログインしている状態を追跡するためにセッション状態を管理する必要があります。これに加えて、Auth0 と IDプロバイダーもセッション情報を管理します ([Session Management](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-3#session-management) を参照)
+  * 一方、ユーザーをログアウトする場合も、3 層のセッション管理が関係します ([User Logout](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-3#user-logout) を参照)
+  * アクセス制御は Auth0 Authorization Extension で管理できます ([Access Control](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-3#access-control) を参照)
+</Info>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  ここでいう Regular Web App とは、主にサーバー側でページの `GET`、`POST`、および状態維持のための cookie を使用するアプリを指します。これは、API を呼び出すクライアント側の JavaScript コードに大きく依存する Web SPA (Single-Page App) とは対照的です。
+</Callout>
+
+<div id="the-premise">
+  ## 前提
+</div>
+
+ExampleCo はコンサルティング系のスタートアップ企業です。現在、従業員は約 100 名おり、複数の業務を外部の委託業者に委託しています。従業員の大半は本社オフィスで勤務していますが、一部のチームはリモートで働いています。さらに、一部の従業員は顧客先へ頻繁に出張し、モバイルデバイスから業務を行っています。
+
+すべての従業員と外部委託業者は、毎週スプレッドシートを使ってタイムシートを記入する必要があります。現在のシステムは非効率であるため、同社は、より優れた自動化されたソリューションへ移行する必要があると判断しました。
+
+同社は利用可能な複数のタイムシートアプリケーションを評価した結果、現時点では非常にシンプルなアプリケーションを求めていることから、独自の社内向けソリューションを構築するほうが費用対効果が高いと結論づけました。このアプリは ASP.NET Core を使用して構築されます。開発者がすでにこの技術を使っており、1 週間ほどでアプリを用意できるためです。
+
+<div id="goals-requirements">
+  ### 目標と要件
+</div>
+
+ExampleCo は新しいソリューションを迅速に立ち上げたいと考え、まずはシンプルに始めて、従業員からのフィードバックを集めながら段階的に機能を拡張していくことにしました。
+
+このアプリケーションは、ログインしているユーザーのみが利用できる必要があります。各ユーザーにはロールが割り当てられ、そのロールに応じて、実行できるアクションや閲覧できるデータが決まります。
+
+<Info>
+  ### 認証と認可
+
+  ExampleCo は各ユーザーを**認証**し、**認可**したいと考えています。認証は本人確認に関するもので、ユーザーが本人であることを検証します。認可は、ユーザーがどのリソースにアクセスできるか、またそのリソースに対して何を実行できるかを判断するものです。
+</Info>
+
+ExampleCo のタイムシートアプリは、User と Admin の 2 つのロールをサポートする必要があります。
+
+* User ロールを持つユーザーは、日付、アプリケーション、勤務時間を指定してタイムシートのエントリを追加できます。Admin ロールにもこの権限があります。
+* User ロールを持つユーザーは、自分のタイムシートエントリにのみアクセスできる必要があります。
+* Admin ロールを持つユーザーは、さらに次のことができます。
+
+  * 他のユーザーのタイムシートエントリを承認または却下する。
+  * アプリケーションのドロップダウンリストの値を編集する (追加、編集、削除) 。
+
+各ユーザーは、週末までに自分のタイムシートを記入する必要があります。タイムシートは毎日登録することも、1 週間分をまとめて追加することもできます。タイムシートは Admin による確認と承認が必要です。却下されたエントリは各従業員が更新し、承認のために再提出する必要があります。
+
+この会社では全従業員に Active Directory を使用しており、従業員は Active Directory の認証情報を使って Timesheet アプリケーションにサインインします。外部委託先の契約者は username とパスワードでサインインできます。契約者は ExampleCo の社内ディレクトリには含まれていません。
+
+ExampleCo はユーザーのログイン時の負担を最小限に抑えたい一方で、操作に応じたセキュリティレベルは維持したいと考えています。たとえば、タイムシートエントリの送信は、承認よりもリスクの低い操作です。しかし、承認済みのタイムシートは顧客への請求に使用されるため、セキュリティは重要な要件です。認証戦略は、会社の成長に合わせて柔軟に対応できる必要があります。たとえば、Admin に対して <Tooltip tip="多要素認証（MFA）: ユーザー名とパスワードに加えて、SMS で送信されるコードなどの認証要素を使用するユーザー認証プロセス。" cta="用語集を見る" href="/ja/docs/glossary?term=multi-factor+authentication">多要素認証</Tooltip> のような追加の認証要件を簡単に加えられる必要があります。
+
+このソリューションは、会社のオフィスに出社している従業員にも、リモートで勤務している従業員にも、VPN 接続の運用負荷なしで利用できる必要があります。そのため、このアプリは Heroku や Microsoft Azure などのクラウドプロバイダー上にデプロイする必要があります。
+
+<Frame>![ソリューションの図](/docs/images/cdy7uua7fh8z/7hg1vqzNEJ2RG1JYw0pxFp/d5e88b45ef76d06b1e8d35ab49186e1d/solution-diagram.png)</Frame>
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [ソリューション概要 (Web Apps + SSO) ](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-1)
+* [Auth0 の設定 (Web Apps + SSO) ](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-2)
+* [アプリケーションの実装 (Web Apps + SSO) ](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-3)
+* [ASP.NET Core の実装 (Web Apps + SSO) ](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/implementation-aspnetcore)
+* [結論 (Web Apps + SSO) ](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps/part-4)

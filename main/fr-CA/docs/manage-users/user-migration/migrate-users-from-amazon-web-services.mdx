@@ -1,0 +1,119 @@
+---
+description: Comment migrer des utilisateurs depuis Amazon Web Services
+title: Migrer des utilisateurs depuis Amazon Web Services
+---
+
+En date d’avril 2023, la migration en bloc d’utilisateurs d’Amazon Web Services (AWS) vers Auth0 n’est pas possible. Auth0 recommande d’utiliser la **migration automatique**, aussi appelée **chargement différé**, en suivant les étapes ci-dessous.
+
+1. [Configurez une base de données personnalisée](/fr-CA/docs/authenticate/database-connections/custom-db/create-db-connection) dans Auth0 et pointez-la vers votre groupe d’utilisateurs Amazon Cognito.
+2. Définissez l’option Import Users to Auth0 à True.
+3. Définissez deux scripts : l’un pour récupérer un utilisateur et l’autre pour connecter un utilisateur.
+4. Avec les scripts Auth0 [get-user](/fr-CA/docs/authenticate/database-connections/custom-db/templates/get-user) et [login](/fr-CA/docs/authenticate/database-connections/custom-db/templates/login), utilisez le [package npm amazon-cognito-identity-js APK](https://www.npmjs.com/package/amazon-cognito-identity-js) pour migrer automatiquement vos utilisateurs.
+
+Voici un exemple de code JavaScript.
+
+<div id="get-userjs">
+  ##### get-user.js
+</div>
+
+```javascript lines expandable
+/*
+    Nécessite que les variables globales Auth0 soient définies - https://auth0.com/docs/rules/configure-global-variables-for-rules
+    Pour les tests en local (ou si vous ne souhaitez pas utiliser les variables globales Auth0) :
+    const configuration = {
+      "accessKeyId": "GQZDJNME56E3AJUBXMFOO",
+      "secretAccessKey": "your-cognito-secret-access-key",
+      "region": "eu-west-1",
+      "UserPoolId": "eu-west-1_V69pvauTp"
+    */
+
+    function getUser(username, callback) {
+const userParameters =  ["email", "email_verified", "custom:designation"];
+const AWS = require('aws-sdk@2.593.0');
+AWS.config.update({ "accessKeyId": configuration.accessKeyId, "secretAccessKey": configuration.secretAccessKey, "region": configuration.region });
+const cognito = new AWS.CognitoIdentityServiceProvider();
+
+cognito.adminGetUser({
+    UserPoolId: configuration.UserPoolId,
+    Username: username
+}, (err, data) => {
+    if (err) {
+        console.log(err);
+        if (err.code === "UserNotFoundException") return callback(null);
+        else callback(err);
+    }
+    else {
+        console.log(data);
+        if (data.code === "UserNotFoundException") return callback(null);
+        else {
+            let profile = {
+                "user_id": data.UserAttributes.find(item=>item.Name==="sub").Value,
+                "username": data.Username,
+            };
+            userParameters.forEach(customParameterName => {
+                profile[customParameterName] = data.UserAttributes.find(item=>item.Name===customParameterName).Value;
+            });
+            return callback(null, profile);
+        }
+    }
+
+});
+
+    }
+```
+
+<div id="loginjs">
+  ##### login.js
+</div>
+
+```javascript lines expandable
+/*
+    Consulter l'article StackOverflow sur le problème potentiel avec window : https://stackoverflow.com/questions/40219518/aws-cognito-unauthenticated-login-error-window-is-not-defined-js
+
+    Nécessite que les variables globales Auth0 soient définies - https://auth0.com/docs/rules/configure-global-variables-for-rules
+
+    Pour les tests en local (ou si vous ne souhaitez pas utiliser les variables globales Auth0) :
+    const configuration = {
+      "ClientId": "7tY2xt2NHwj3ZWfovz0wHrJ22IDr15XTyVlo08Xx",
+      "UserPoolId": "eu-west-1_V69pvauTp"
+    */
+
+    function login(username, password, callback) {
+global.fetch = require('node-fetch@2.6.0');
+var AmazonCognitoIdentity = require('amazon-cognito-identity-js@3.0.14');
+var poolData = {
+    UserPoolId: configuration.UserPoolId,
+    ClientId: configuration.ClientId
+
+};
+var userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+
+var authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+    Username: username,
+    Password: password
+});
+var userData = {
+    Username: username,
+    Pool: userPool
+};
+var cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+cognitoUser.authenticateUser(authenticationDetails, {
+    onSuccess: function (result) {
+        //console.log(result);
+        var idTokenPayload = result.getIdToken().payload;
+        console.log(idTokenPayload);
+        var profile = {
+          user_id: idTokenPayload.sub,
+          email: idTokenPayload.email,
+          /* à définir à false si vous ne validez pas les adresses courriel */
+          email_verified: true,
+        };
+        console.log({ result, idTokenPayload, profile });
+        callback(null, profile);
+    },
+    onFailure: (function (err) {
+        return callback(new WrongUsernameOrPasswordError(username))
+    })
+});
+    }
+```

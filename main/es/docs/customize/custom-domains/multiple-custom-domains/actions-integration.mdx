@@ -1,0 +1,294 @@
+---
+description: Aprenda a usar varios dominios personalizados con Auth0 Actions para crear lógica de autenticación específica del dominio.
+title: Integración de Actions con múltiples dominios personalizados
+---
+
+import {AuthCodeBlock} from "/snippets/es/AuthCodeBlock.jsx";
+
+Las [Auth0 Actions](/es/docs/customize/actions) te permiten personalizar la autenticación con código personalizado. Si usas [varios dominios personalizados](/es/docs/customize/custom-domains/multiple-custom-domains), puedes acceder a la información del dominio personalizado en tus Actions para implementar lógica específica del dominio, dirigir a los usuarios a organizaciones, aplicar políticas de acceso y personalizar las notificaciones.
+
+<div id="accessing-custom-domain-information">
+  ## Acceder a la información del dominio personalizado
+</div>
+
+Actions permiten acceder a la información del dominio personalizado mediante el objeto `event.custom_domain`. Este objeto contiene el nombre de dominio y cualquier metadato configurado para ese dominio.
+
+<div id="available-triggers">
+  ### Desencadenadores disponibles
+</div>
+
+El objeto `event.custom_domain` está disponible en los siguientes desencadenadores de Actions:
+
+| Desencadenador                | Referencia del objeto de evento                                                                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Credentials Exchange          | [Objeto de evento](/es/docs/customize/actions/explore-triggers/machine-to-machine-trigger/credentials-exchange-event-object)                                                    |
+| Custom Email Provider         | [Objeto de evento](/es/docs/customize/email/smtp-email-providers/custom/action-triggers-custom-email-provider-event-object)                                                     |
+| Custom Phone Provider         | [Objeto de evento](/es/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/actions-triggers-custom-phone-provider-event-object) |
+| Post Login                    | [Objeto de evento](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object)                                                 |
+| Post User Registration        | [Objeto de evento](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger/post-user-registration-event-object)                    |
+| Post Password Change          | [Objeto de evento](/es/docs/customize/actions/explore-triggers/password-reset-triggers/post-change-password-trigger/post-change-password-event-object)                          |
+| Pre User Registration         | [Objeto de evento](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-event-object)                      |
+| Reset Password Post Challenge | [Objeto de evento](/es/docs/customize/actions/explore-triggers/password-reset-triggers/post-challenge-trigger/post-challenge-event-object)                                      |
+
+<Note>
+  El objeto `event.custom_domain` solo está disponible en los desencadenadores en los que la solicitud se origina en un contexto de dominio personalizado. Si no se usó ningún dominio personalizado, esta propiedad será `undefined`.
+</Note>
+
+<div id="event-object-structure">
+  ### Estructura del objeto de evento
+</div>
+
+Usa el dominio `login.example.com` configurado con metadatos de dominio:
+
+| Key            | Value                     |
+| -------------- | ------------------------- |
+| allow&#95;list | example1.com,example2.com |
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  console.log(event.custom_domain);
+};
+```
+
+Se mostraría en la consola:
+
+```json
+{
+  "domain": "login.example.com",
+  "domain_metadata": {
+    "allow_list": "example1.com,example2.com"
+  }
+}
+```
+
+<div id="common-use-cases">
+  ## Casos de uso habituales
+</div>
+
+<div id="conditional-logic-by-domain">
+  ### Lógica condicional por dominio
+</div>
+
+Aplique reglas diferentes según se utilice un dominio personalizado o un dominio canónico:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (
+    domain === undefined ||
+    domain.includes('.auth0.com') || // Nube pública
+    domain.includes('.auth0app.com') // Nube privada
+  ) {
+    return api.access.deny('Please use the custom domain to log in.');
+  }
+};
+```
+
+<div id="email-domain-based-access-control">
+  ### Control de acceso basado en dominios de correo electrónico
+</div>
+
+Aplique políticas de acceso específicas para cada dominio de correo electrónico mediante metadatos de dominio personalizados:
+
+```javascript
+const getEmailDomain = (email) => {
+  if (!email || typeof email !== 'string') {
+    return null;
+  }
+
+  const parts = email.split('@');
+  
+  // Verificar que haya exactamente un '@' (o al menos que exista un dominio)
+  // maneja casos como "invalid-email" o "user@"
+  if (parts.length < 2 || !parts[1]) {
+    return null;
+  }
+
+  return parts[1].toLowerCase().trim();
+}
+
+exports.onExecutePreUserRegistration = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      'access_denied',
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const email = event.user.email;
+  
+  if (email === undefined) {
+    return api.access.deny(
+      'access_denied',
+      `Access denied - Users cannot access without email.`
+    );
+  }
+
+  const domainAllowList = event.custom_domain?.domain_metadata?.allow_list?.split(',') || [];
+  const emailDomain = getEmailDomain(email);
+
+  if (domainAllowList.includes(emailDomain) === false) {
+    return api.access.deny(
+      'access_denied',
+      `Access denied - Users from ${emailDomain} cannot access ${domain}.`
+    );
+  }
+};
+```
+
+<div id="application-metadata-based-access-control">
+  ### Control de acceso basado en metadatos de la aplicación
+</div>
+
+Implemente políticas de acceso para grupos de aplicaciones y dominios mediante metadatos de la aplicación y del dominio:
+
+```javascript
+exports.onExecuteCredentialsExchange = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+  
+  if (
+    domain === undefined ||
+    domain.includes(event.tenant.id)
+  ) {
+    return; // Omitir para el dominio canónico
+  }
+
+  const applicationGroup = new Set(event.client.metadata?.domain_group?.split(',') || []);
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];
+  const intersection = domainGroup.filter(x => applicationGroup.has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      'invalid_request',
+      `Access denied - Cannot get access from application ${event.client.name} and ${domain}.`
+    );
+  }
+};
+```
+
+<div id="connection-metadata-based-access-control">
+  ### Control de acceso basado en metadatos de conexión
+</div>
+
+Aplique políticas de acceso para grupos de conexiones y dominios mediante metadatos de conexión y dominio:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const connectionGroup = new Set(event.connection.metadata?.domain_group?.split(',') || []);
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];
+  const intersection = domainGroup.filter(x => connectionGroup.has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access connection ${event.connection.name} from ${domain}.`
+    );
+  }
+};
+```
+
+<div id="organization-metadata-based-access-control">
+  ### Control de acceso basado en metadatos de la organización
+</div>
+
+Aplique políticas de acceso para grupos de organizaciones y dominios mediante metadatos de la organización y del dominio:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const organization = event.organization;
+
+  if (organization === undefined) {
+    return; // Omitir para autenticación sin organización
+  }
+
+  const domain = event.custom_domain?.domain;
+
+  if (domain === undefined) {
+    return api.access.deny(
+      `Access denied - Users cannot access without custom domain.`
+    );
+  }
+
+  const organizationGroup = new Set(organization.metadata?.domain_group?.split(',') || []);
+  const domainGroup = event.custom_domain?.domain_metadata?.domain_group?.split(',') || [];  
+  const intersection = domainGroup.filter(x => organizationGroup.has(x));
+
+  if (intersection.length === 0) {
+    return api.access.deny(
+      `Access denied - Users cannot access organization ${organization.name} from ${domain}.`
+    );
+  }
+};
+```
+
+<div id="region-based-requests">
+  ### Solicitudes por región
+</div>
+
+Realice solicitudes a servicios externos específicos de cada región en función de los metadatos del dominio personalizado:
+
+```javascript
+exports.onExecuteCustomEmailProvider = async (event, api) => {
+  const regionServiceEndpoint = event.custom_domain?.domain_metadata?.region_service_endpoint;
+
+  if (regionServiceEndpoint === undefined) {
+    return api.notification.drop(`Missing regional service endpoint configuration at custom domain.`);
+  }
+
+  const notification = event.notification;
+  const messageBody = {
+    body: notification.html
+  };
+
+  try {
+    await fetch(regionServiceEndpoint, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': event.secrets.API_KEY,
+      },
+      body: JSON.stringify(messageBody),
+    });
+  } catch (err) {
+    api.notification.drop('External service failure');
+  }
+};
+```
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+<div id="actions-documentation">
+  ### Documentación de Actions
+</div>
+
+* [Información general de Auth0 Actions](/es/docs/customize/actions)
+* [Explorar los desencadenadores de Actions](/es/docs/customize/actions/explore-triggers)
+* [Limitaciones de Actions](/es/docs/customize/actions/limitations)
+
+<div id="event-object-references">
+  ### Referencias de objetos de evento
+</div>
+
+* [Objeto de evento de Post-Login](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object)
+* [Objeto de evento de Pre-User Registration](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger/pre-user-registration-event-object)
+* [Objeto de evento de Custom Email Provider](/es/docs/customize/email/smtp-email-providers/custom/action-triggers-custom-email-provider-event-object)
+* [Objeto de evento de Custom Phone Provider](/es/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider/actions-triggers-custom-phone-provider-event-object)
+
+<div id="related-topics">
+  ### Temas relacionados
+</div>
+
+* [Varios dominios personalizados](/es/docs/customize/custom-domains/multiple-custom-domains)
+* [Organizaciones](/es/docs/manage-users/organizations)
+* [Proveedores de correo electrónico personalizados](/es/docs/customize/email/smtp-email-providers/custom)

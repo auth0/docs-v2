@@ -1,0 +1,128 @@
+---
+description: 認証リクエストで state パラメーターを使用して、CSRF 攻撃の防止と元の状態の復元に役立てる方法を説明します
+title: OAuth 2.0 の state パラメーターで攻撃を防止し、ユーザーをリダイレクトする
+---
+
+認可プロトコルでは、アプリケーションの直前の状態を復元できる `state` パラメーターが提供されています。`state` パラメーターは、認可リクエストでクライアントが設定した状態オブジェクトの一部を保持し、レスポンスでクライアントが利用できるようにします。
+
+<div id="csrf-attacks">
+  ## CSRF 攻撃
+</div>
+
+`state` パラメーターを使用する主な目的は、開始しようとしている各認証リクエストに、一意で推測困難な値を関連付けることで [CSRF 攻撃](https://en.wikipedia.org/wiki/Cross-site_request_forgery) を軽減することです。この値を使うことで、レスポンスで返された値が送信した値と一致することを確認し、攻撃を防ぐことができます。
+
+`state` パラメーターは文字列であるため、そこに追加の情報をエンコードすることもできます。認証リクエストを開始する際にランダムな値を送信し、レスポンスを処理する際に受信した値を検証します。検証を行えるように、クライアントアプリケーション側 (cookie、session、または localstorage 内) に何らかの情報を保存します。一致しない state を含むレスポンスを受け取った場合、それが送信していないリクエストに対するレスポンスであるか、誰かがレスポンスを偽造しようとしている可能性があるため、攻撃の標的になっていると判断できます。
+
+CSRF 攻撃は、攻撃者が偽造したリクエストへのレスポンスを見る手段を持たないため、ユーザーデータの取得ではなく、アクションを開始する状態変更リクエストを主に標的とします。最も基本的なケースでは、state パラメーターには、認証リクエストと返されたレスポンスを対応付けるための <Tooltip tip="Nonce: リプレイ攻撃を検出して防止するために、認証プロトコルで一度だけ発行される任意の数。" cta="用語集を見る" href="/ja/docs/glossary?term=nonce">nonce</Tooltip> を使用する必要があります。
+
+シングルページアプリケーションの Auth0.js を含む、最近のほとんどの OIDC および <Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/ja/docs/glossary?term=OAuth">OAuth</Tooltip> SDK では、state の生成と検証が自動的に処理されます。
+
+<div id="set-and-compare-state-parameter-values">
+  ### state パラメーターの値を設定して比較する
+</div>
+
+1. リクエストを IDプロバイダー (IdP) にリダイレクトする前に、アプリでランダムな文字列を生成します。例:
+
+   ```text lines
+   xyzABC123
+   ```
+
+   state に指定できる長さは無制限ではありません。`414 Request-URI Too Large` エラーが発生する場合は、より短い値を試してください。
+
+2. その文字列をローカルに保存します。例:
+
+   ```text lines
+   storeStateLocally(xyzABC123)
+   ```
+
+3. リクエストに `state` パラメーターを追加します (必要に応じて URL エンコードします) 。例:
+
+   ```javascript lines
+   // 文字列をエンコードする   
+   tenant.auth0.com/authorize?...&state=xyzABC123
+   ```
+
+   リクエストの送信後、ユーザーは Auth0 によってアプリケーションにリダイレクトされます。このリダイレクトには `state` の値が含まれます。使用する接続の種類によっては、この値はリクエスト本文またはクエリー文字列に含まれる場合があることに注意してください。
+
+   ```text lines
+   /callback?...&state=xyzABC123
+   ```
+
+4. 返された `state` の値を取得し、先ほど保存した値と比較します。値が一致する場合は認証レスポンスを受け入れ、一致しない場合は拒否します。
+
+   ```javascript lines
+   // 文字列をデコードする
+   var decodedString = Base64.decode(encodedString);
+   if(receivedState === retrieveStateStoredLocally()) {
+    // 承認されたリクエスト
+   } 
+   else {
+     // このレスポンスは自分宛てではないため、拒否する
+   }
+   ```
+
+<div id="redirect-users">
+  ## ユーザーをリダイレクトする
+</div>
+
+`state` パラメーターを使用すると、認証プロセスの開始前にユーザーがいた場所へ戻せるように、アプリケーションの状態をエンコードできます。たとえば、ユーザーがアプリケーション内の保護されたページにアクセスしようとして、その操作によって認証リクエストが発生した場合は、認証の完了後にユーザーを本来アクセスしようとしていたページへリダイレクトできるよう、その URL を保存できます。
+
+nonce をローカル環境 (cookie、session、またはローカルストレージ) で生成して保存し、リダイレクト URL など必要な状態データもあわせて保持します。プロトコルメッセージでは、この nonce を state として使用します。返された state が保存済みの nonce と一致する場合は、その OAuth2 メッセージを受け入れ、対応する状態データをストレージから取得します。これは auth0.js で採用している方法です。
+
+<div id="use-the-stored-url-to-redirect-users">
+  ### 保存した URL を使ってユーザーをリダイレクトする
+</div>
+
+1. 上で説明したように、CSRF 攻撃を軽減するために使用した nonce の state パラメーター値を設定します。
+
+2. nonce をローカルに保存し、その nonce をキーとして、ユーザーがアクセスしようとしていた URL など、その他のアプリケーション状態情報をすべて保存します。例:
+
+   ```json lines
+   {
+     "xyzABC123" : {
+       redirectUrl: '/protectedResource',
+       expiresOn: [...]
+     }
+   }
+   ```
+
+3. ユーザーを認証し、[生成した nonce を state として送信します](/ja/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/mitigate-replay-attacks-when-using-the-implicit-flow)。
+
+4. コールバック処理とレスポンス検証の一環として、返された state がローカルに保存した nonce と一致することを確認します。一致した場合は、残りのアプリケーション状態 (`redirectUrl` など) を取得します。
+
+5. コールバック処理が完了したら、あらかじめ保存しておいた URL にユーザーをリダイレクトします。
+
+<div id="alternate-redirect-method">
+  ### 代替リダイレクト方式
+</div>
+
+1. nonce 値を生成して、ローカルに保存します。
+2. 必要な state (リダイレクト URL など) を nonce とともに保護されたメッセージにエンコードします (改ざんを防ぐため、このメッセージは暗号化または署名する必要があります) 。
+3. レスポンスの処理時にメッセージの保護を解除し、保存されていた nonce とその他のプロパティを取得します。
+4. 含まれている nonce がローカルに保存した値と一致することを検証し、一致した場合は OAuth2 メッセージを受け入れます。
+
+<div id="limitations-and-considerations">
+  ## 制限事項と考慮事項
+</div>
+
+* アプリケーションの種類に応じて、適切な保存方法を選択してください。
+
+| App Type        | Storage Recommendation |
+| --------------- | ---------------------- |
+| Regular Web App | Cookie またはセッション        |
+| SPA             | ブラウザーのローカルストレージ        |
+| Native App      | メモリまたはローカルストレージ        |
+
+* セキュリティの観点では、リクエストもレスポンスも完全性が保護されていないため、ユーザーが改ざんできてしまいます。これは、`redirect_uri` にパラメーターを追加する場合も同様です。
+* state パラメーターの値に使用できる長さは無制限ではありません。`414 Request-URI Too Large` エラーが発生する場合は、より短い値を試してください。
+* URL を平文で、または予測可能な形で渡すのは安全ではありません。state パラメーターの値が次の条件を満たすようにしてください。
+
+  * CSRF 攻撃やフィッシング攻撃への対策として使用できるよう、一意で推測不能であること。
+  * Cookie に保存する場合は、偽造を防ぐために署名すること。
+
+<div id="learn-more">
+  ## 詳しく見る
+</div>
+
+* [どの OAuth 2.0 フローを使用すべきですか？](/ja/docs/get-started/authentication-and-authorization-flow/which-oauth-2-0-flow-should-i-use)
+* [セッション](/ja/docs/manage-users/sessions)

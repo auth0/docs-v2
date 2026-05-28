@@ -1,0 +1,148 @@
+---
+description: Découvrez comment configurer une connexion SAML Auth0 pour prendre en charge l’ouverture de session SAML initiée par le fournisseur d’identité pour les applications OIDC.
+title: Configurer l’ouverture de session SAML initiée par l’IdP vers des applications OIDC
+---
+
+Auth0 fournit une méthode pour convertir une réponse <Tooltip tip="Identity Provider (IdP) : service qui stocke et gère les identités numériques." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=Identity+Provider">fournisseur d’identité</Tooltip> (IdP) <Tooltip tip="Identity Provider (IdP) : service qui stocke et gère les identités numériques." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=SAML">SAML</Tooltip> initiée par l’IdP en une réponse <Tooltip tip="Security Assertion Markup Language (SAML) : protocole normalisé permettant à deux parties d’échanger des renseignements d’authentification sans mot de passe." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=OpenID">OpenID</Tooltip> Connect (OIDC) pour une application.
+
+Le protocole OIDC ne prend pas en charge les flux d’authentification initiés par l’IdP, mais cette méthode vous permet de simuler un flux d’authentification initié par l’IdP à l’aide du [flux implicite avec envoi de formulaire](/fr-CA/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post).
+
+<Warning>
+  Nous vous recommandons fortement de démarrer le flux de connexion dans l’application OIDC plutôt qu’à partir de l’IdP. Pour en savoir plus, consultez [Configurer l’authentification unique (SSO) initiée par le fournisseur d’identité SAML](/fr-CA/docs/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on).
+</Warning>
+
+Si vous souhaitez implémenter cette méthode, vous devez :
+
+* Ajouter à votre application un gestionnaire de route de connexion personnalisée.
+* Mettre à jour votre connexion SAML pour :
+
+  1. Accepter les réponses SAML entrantes initiées par l’IdP.
+  2. Rediriger vers une application par défaut qui envoie une requête d’authentification initiée par le fournisseur de services.
+
+<div id="how-it-works">
+  ## Fonctionnement
+</div>
+
+<Frame>![Diagramme du flux de connexion SAML initiée par le fournisseur d’identité vers les applications OIDC](/docs/images/cdy7uua7fh8z/5vinAB4pSSwaKDgliTkAhh/0c5822149426b986bbcc851d07666187/idp-provider-init-saml-sign-in0.png)</Frame>
+
+1. L’utilisateur accède au point de terminaison de connexion de l’IdP SAML.
+2. L’IdP SAML renvoie la page de connexion.
+3. L’utilisateur soumet ses identifiants à l’IdP SAML.
+4. L’IdP SAML crée une session pour l’utilisateur, puis renvoie une page HTML avec un formulaire POST et la réponse SAML.
+5. La page envoie automatiquement la réponse SAML au locataire Auth0 au moyen d’un appel HTTP `POST`.
+6. Le locataire Auth0 redirige le navigateur de l’utilisateur vers le gestionnaire de la route de connexion personnalisée de l’application OIDC, avec le jeton d’identité sous forme de fragment d’URL.
+7. Le navigateur appelle le gestionnaire de la route de connexion personnalisée de l’application OIDC avec le paramètre `connection` et le jeton d’identité.
+8. L’application OIDC ignore le jeton d’identité, lit le paramètre `connection`, crée un paramètre `state` pour la session, puis redirige le navigateur de l’utilisateur vers le point de terminaison `/authorize` du locataire Auth0.
+9. Le navigateur appelle le point de terminaison `/authorize` du locataire Auth0 avec les paramètres `connection` et `state` fournis.
+10. Le locataire Auth0 génère une demande de connexion SAML, puis redirige le navigateur de l’utilisateur vers le point de terminaison de connexion de l’IdP SAML.
+11. Le navigateur envoie la demande de connexion SAML au point de terminaison de connexion de l’IdP SAML.
+12. L’IdP SAML retrouve la session de l’utilisateur, puis renvoie une page HTML avec un formulaire POST et la réponse SAML.
+13. La page envoie automatiquement la réponse SAML au locataire Auth0 au moyen d’un appel HTTP `POST`.
+14. Le locataire Auth0 redirige le navigateur de l’utilisateur vers le gestionnaire de la route de connexion de l’application.
+15. Le navigateur appelle le gestionnaire de la route de connexion de l’application avec le paramètre `state` fourni et le jeton d’identité.
+16. L’application OIDC vérifie le paramètre `state`, lit le jeton d’identité et crée une session d’application pour l’utilisateur.
+
+<div id="create-the-custom-login-route-handler">
+  ## Créer le gestionnaire de route de connexion personnalisée
+</div>
+
+Le gestionnaire de route de connexion personnalisée appelle la méthode de connexion de votre application. Il doit accepter le paramètre `connection` et l’inclure dans la requête d’authentification envoyée à votre locataire Auth0.
+
+Nous vous recommandons d’associer le gestionnaire de route de connexion personnalisée à un point de terminaison différent de celui de votre gestionnaire de route de connexion standard. Par exemple, si votre gestionnaire de route de connexion standard est associé au point de terminaison `/login`, vous pouvez associer le gestionnaire de route de connexion personnalisée au point de terminaison `/startlogin`.
+
+<Warning>
+  Si vous n’utilisez pas de SDK Auth0 pour gérer l’authentification, vous devez vous assurer que la méthode de connexion de votre application transmet une valeur pour le paramètre `state` au point de terminaison `/authorize` et valide le paramètre `state` dans la réponse du fournisseur d’identité afin de vous protéger contre les attaques CSRF. Pour en savoir plus, consultez [Prévenir les attaques et rediriger les utilisateurs avec les paramètres state d’OAuth 2.0](/fr-CA/docs/secure/attack-protection/state-parameters).
+</Warning>
+
+<div id="example">
+  ### Exemple
+</div>
+
+Si vous utilisez le [SDK Auth0 pour application monopage](/fr-CA/docs/libraries/auth0-single-page-app-sdk), vous pouvez ajouter un gestionnaire de route de connexion personnalisée et mettre à jour la méthode de connexion pour prendre en charge le paramètre connection, comme suit :
+
+```javascript lines expandable
+const router = {
+  "/": () => showContent("content-home"),
+  "/profile": () =>
+    requireAuth(() => showContent("content-profile"), "/profile"),
+  "/login": () => login(),
+  "/startlogin": () => startlogin()
+};
+
+//nouvelle méthode pour démarrer la connexion depuis le rappel initié par l'IdP
+const startlogin = async () => {
+  console.log(window.location.href)
+  let myURL = new URL(window.location.href);
+  let conn = myURL.searchParams.get("connection");
+  return  login(null, conn);
+}
+
+/**
+ * Démarre le flux d'authentification
+ */
+const login = async (targetUrl, connection) => {
+  try {
+    console.log("Logging in", targetUrl);
+
+    const options = {
+      redirect_uri: window.location.origin,
+    };
+
+    if (connection) {
+      options.connection = connection;
+    }
+
+    if (targetUrl) {
+      options.appState = { targetUrl };
+    }
+
+    await auth0.loginWithRedirect(options);
+  } catch (err) {
+    console.log("Log in failed", err);
+  }
+};
+```
+
+<div id="create-the-query-string">
+  ## Créer la chaîne de requête
+</div>
+
+La chaîne de requête contient le paramètre `redirect_uri`. La valeur du paramètre doit être encodée dans l’URL et se compose de :
+
+1. Le point de terminaison de l’application associé au gestionnaire de la route de connexion personnalisée.
+2. Le paramètre `connection` avec comme valeur le nom de votre connexion SAML.
+
+<div id="example">
+  ### Exemple
+</div>
+
+Si le point de terminaison de votre application est `https://exampleco.com/startlogin` et que le nom de votre connexion SAML est `my-saml-connection`, la chaîne de requête sera `redirect_uri=https%3A%2F%2Fexampleco.com%2Fstartlogin%3Fconnection%3Dmy-saml-connection`.
+
+<div id="configure-the-application">
+  ## Configurer l’application
+</div>
+
+1. Accédez à [Auth0 Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications).
+2. Créez une nouvelle application pour représenter l’application OIDC dans Auth0.
+3. Mettez à jour **Allowed Callback URLs** pour y inclure le point de terminaison de l’application associé à votre gestionnaire de route de connexion personnalisée.
+
+<div id="configure-the-connection">
+  ## Configurer la connexion
+</div>
+
+1. Accédez à [Auth0 Dashboard &gt; Authentication &gt; Enterprise &gt; SAML](https://manage.auth0.com/#/connections/enterprise/samlp).
+2. Créez une nouvelle connexion SAML.
+3. Passez à la vue **IdP-Initiated SSO**.
+4. Sélectionnez **Accept Requests**.
+5. Pour **Default Application**, sélectionnez l’application que vous avez créée précédemment.
+6. Pour **Response Protocol**, sélectionnez **OpenID Connect**.
+7. Pour **Query String**, entrez la chaîne de requête que vous avez créée précédemment.
+
+<div id="learn-more">
+  ## Pour en savoir plus
+</div>
+
+* [Connecter votre application à des fournisseurs d’identité SAML](/fr-CA/docs/authenticate/identity-providers/enterprise-identity-providers/saml)
+* [Configurer l’authentification unique (SSO) initiée par le fournisseur d’identité SAML](/fr-CA/docs/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on)
+* [Déconnecter les utilisateurs des fournisseurs d’identité SAML](/fr-CA/docs/authenticate/login/logout/log-users-out-of-saml-idps)
+* [Résoudre les problèmes de configuration SAML](/fr-CA/docs/troubleshoot/authentication-issues/troubleshoot-saml-configurations)

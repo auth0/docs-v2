@@ -1,0 +1,201 @@
+---
+description: Découvrez comment une API peut vérifier si un utilisateur s’est authentifié avec l’authentification multifacteur en examinant son jeton d’accès.
+title: Configurer l’authentification renforcée pour les API
+---
+
+Avec l’authentification renforcée, les applications qui donnent accès à différents types de ressources peuvent exiger que les utilisateurs s’authentifient au moyen d’un mécanisme plus robuste pour accéder à des informations sensibles ou effectuer certaines transactions.
+
+Par exemple, l’utilisateur d’une application bancaire peut être autorisé à transférer de l’argent entre des comptes seulement après avoir confirmé son identité au moyen de l’<Tooltip tip="Authentification multifacteur (MFA) : processus d’authentification de l’utilisateur qui utilise un facteur en plus du nom d’utilisateur et du mot de passe, comme un code envoyé par SMS." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=multi-factor+authentication">authentification multifacteur</Tooltip> (MFA).
+
+Lorsque votre <Tooltip tip="Audience : identifiant unique de l’audience d’un jeton émis. Appelée aud dans un jeton, sa valeur contient l’ID d’une application (ID client) pour un ID Token ou d’une API (identificateur d’API) pour un jeton d’accès." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=audience">audience</Tooltip> est une API, vous pouvez mettre en œuvre l’authentification renforcée avec Auth0 à l’aide de scopes, de <Tooltip tip="Jeton d’accès : information d’identification d’autorisation, sous la forme d’une chaîne opaque ou d’un JWT, utilisée pour accéder à une API." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=access+tokens">jetons d’accès</Tooltip> et d’[Actions](/fr-CA/docs/customize/actions). Lorsqu’une application veut accéder aux ressources protégées d’une API, elle doit fournir un jeton d’accès. Les ressources auxquelles elle peut accéder dépendent des autorisations incluses dans le jeton d’accès. Ces autorisations sont définies sous forme de [scopes](/fr-CA/docs/get-started/apis/scopes/api-scopes).
+
+<div id="validate-access-tokens-for-mfa">
+  ## Valider les jetons d’accès dans le cadre de la MFA
+</div>
+
+En plus de vérifier le scope, l’API doit [valider le jeton d’accès](/fr-CA/docs/secure/tokens/access-tokens/validate-access-tokens) pour :
+
+* Vérifier la signature du jeton, qui sert à confirmer que l’expéditeur est bien celui qu’il prétend être et à s’assurer que le message n’a pas été modifié en cours de route.
+* Valider les claims standard :
+
+| Claim | Description                 |
+| ----- | --------------------------- |
+| `exp` | Expiration du jeton         |
+| `iss` | Émetteur du jeton           |
+| `aud` | Destinataire prévu du jeton |
+
+<div id="scenario-bank-transactions-with-push-notifications">
+  ## Scénario : transactions bancaires avec notifications push
+</div>
+
+Dans le scénario suivant, une application authentifie un utilisateur à l’aide d’un nom d’utilisateur et d’un mot de passe, puis demande le solde d’un compte. Avant de récupérer les renseignements sur le solde du compte, l’utilisateur doit s’authentifier avec le facteur push Guardian.
+
+L’API bancaire peut accepter deux niveaux d’autorisation différents : consulter le solde du compte (scope `view:balance`) ou transférer des fonds (scope `transfer:funds`). Lorsque l’application demande à l’API de récupérer le solde de l’utilisateur, le jeton d’accès doit contenir le scope `view:balance`. Pour transférer de l’argent vers un autre compte, le jeton d’accès doit contenir le scope `transfer:funds`.
+
+<div id="workflow">
+  ### Flux de travail
+</div>
+
+1. L’utilisateur se connecte à l’application à l’aide d’un nom d’utilisateur et d’un mot de passe. La connexion standard lui permet d’interagir avec l’API et de récupérer son solde. Cela signifie que le jeton d’accès que l’application reçoit après son authentification contient le scope `view:balance`.
+2. L’application envoie une requête à l’API pour récupérer le solde, en utilisant le jeton d’accès comme justificatif d’authentification.
+3. L’API valide le jeton et envoie les renseignements sur le solde à l’application afin que l’utilisateur puisse les consulter.
+4. L’utilisateur veut transférer des fonds d’un compte à un autre, ce qui est considéré comme une transaction de grande valeur nécessitant le scope `transfer:funds`. L’application envoie une requête à l’API en utilisant le même jeton d’accès.
+5. L’API valide le jeton et refuse l’accès parce qu’il ne contient pas le scope `transfer:funds` requis.
+6. L’application redirige l’utilisateur vers Auth0, où une Action est utilisée pour lui demander de s’authentifier avec MFA, puisqu’un scope de grande valeur a été demandé. Une fois l’authentification MFA réussie, un nouveau jeton d’accès incluant le bon scope est généré et envoyé à l’application dans la réponse.
+7. L’application envoie une nouvelle requête de transfert de fonds en utilisant le nouveau jeton d’accès, qui inclut cette fois le scope `transfer:funds`.
+8. L’API valide le jeton, l’écarte, puis poursuit l’opération.
+
+<div id="prerequisites">
+  ### Prérequis
+</div>
+
+Pour ce scénario, vous devez configurer les éléments suivants dans Auth0 Dashboard :
+
+* [Enregistrer une application web monopage](/fr-CA/docs/get-started/auth0-overview/create-applications/single-page-web-apps).
+* [Créer une connexion de base de données](https://manage.auth0.com/#/connections/database).
+* [Enregistrer l’API](/fr-CA/docs/get-started/auth0-overview/set-up-apis). Créez deux scopes : `view:balance` et `transfer:funds`.
+* [Activer MFA](/fr-CA/docs/secure/multi-factor-authentication/enable-mfa) pour utiliser les notifications push.
+
+<div id="create-an-action">
+  ### Créer une Action
+</div>
+
+Créez une Action qui demande à l’utilisateur de s’authentifier avec MFA lorsque le scope `transfer:funds` est demandé. Accédez à [Auth0 Dashboard &gt; Actions &gt; Flows](https://manage.auth0.com/#/actions/flows) et créez une Action contenant le contenu suivant :
+
+```javascript
+{
+exports.onExecutePostLogin = async (event, api) => {
+  const CLIENTS_WITH_MFA = ['REPLACE_WITH_{yourClientId}'];
+  // exécuter uniquement pour les applications spécifiées
+  if (CLIENTS_WITH_MFA.includes(event.client.client_id)) {
+    // demander la MFA uniquement si le scope transfer:funds a été demandé
+    if (event.transaction.requested_scopes.indexOf('transfer:funds') > -1)
+      api.multifactor.enable('any', { allowRememberBrowser: false });
+    }
+  }
+},
+```
+
+* La variable `CLIENTS_WITH_MFA` contient les <Tooltip tip="ID client : valeur d’identification attribuée à votre ressource enregistrée par Auth0." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=client+IDs">ID client</Tooltip> des applications auxquelles vous voulez appliquer cette Action. Vous pouvez supprimer cette partie (ainsi que la condition `if` qui suit) si vous n’en avez pas besoin.
+* La propriété `event.transaction.requested_scopes` contient tous les scopes demandés par la requête d’authentification. Si elle inclut la valeur `transfer:funds`, nous demandons une authentification MFA en définissant la propriété `context.multifactor` sur la valeur appropriée. Dans ce cas, nous demandons la MFA à l’aide de [push](/fr-CA/docs/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa).
+
+<div id="configure-app">
+  ### Configurer l’application
+</div>
+
+Configurez l’application pour qu’elle envoie à l’API la requête d’authentification appropriée, selon que l’utilisateur tente ou non d’effectuer un virement, une transaction à montant élevé. Notez que la seule différence entre les deux requêtes d’authentification (avec ou sans MFA) est le scope.
+
+* Avec MFA :
+
+  export const codeExample1 = ` https://{yourDomain}/authorize?
+  audience=https://my-banking-api&
+  scope=openid%20view:balance%20transfer:funds&
+  response_type=id_token%20token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&
+  nonce=NONCE&
+  state=OPAQUE_VALUE`;
+
+<AuthCodeBlock children={codeExample1} language="text" />
+
+* Sans MFA :
+
+  export const codeExample2 = ` https://{yourDomain}/authorize?
+  audience=https://my-banking-api&
+  scope=openid%20view:balance&
+  response_type=id_token%20token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&
+  nonce=NONCE&
+  state=OPAQUE_VALUE`;
+
+<AuthCodeBlock children={codeExample2} language="text" />
+
+| Paramètre       | Réglage                                                                                                                                                                                                                                                                                                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audience`      | Définissez cette valeur sur l’**Identifier** de votre API (vous le trouverez dans [API Settings](https://manage.auth0.com/#/apis/)). Dans notre exemple, cette valeur est `https://my-banking-api`.                                                                                                                                                          |
+| `response_type` | Définissez cette valeur sur `id_token token` afin d’obtenir à la fois un ID Token et un jeton d’accès dans la réponse.                                                                                                                                                                                                                                       |
+| `client_id`     | Définissez cette valeur sur l’ID client de votre application (vous le trouverez dans [Application Settings](https://manage.auth0.com/#/applications/\{yourClientId}/settings)).                                                                                                                                                                              |
+| `redirect_uri`  | Définissez cette valeur sur une URL de votre application vers laquelle Auth0 doit rediriger l’utilisateur après l’authentification (vous la trouverez dans [Application Settings](https://manage.auth0.com/#/applications/\{yourClientId}/settings)).                                                                                                        |
+| `nonce`         | Définissez cette valeur sur une chaîne sécurisée qui sera incluse dans la réponse d’Auth0. Elle est [utilisée pour prévenir les attaques par rejeu de jetons](/fr-CA/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/mitigate-replay-attacks-when-using-the-implicit-flow) et est requise pour `response_type=id_token token`. |
+| `state`         | Définissez cette valeur sur une valeur opaque qu’Auth0 inclut lors de la redirection vers l’application. Cette valeur doit être utilisée par l’application pour prévenir les attaques CSRF.                                                                                                                                                                  |
+
+<div id="configure-api">
+  ### Configurer l’API
+</div>
+
+Configurez l’API pour valider le jeton reçu et vérifier les autorisations accordées.
+
+1. Configurez deux points de terminaison pour notre API :
+   `GET /balance` : pour récupérer le solde actuel
+   `POST /transfer` : pour transférer des fonds
+2. Utilisez `Node.js` et plusieurs modules :
+
+   1. [express](https://expressjs.com/) : ajoute le framework d’applications Web Express.
+   2. [jwks-rsa](https://github.com/auth0/node-jwks-rsa) : récupère les clés de signature RSA à partir d’un point de terminaison **JWKS** (jeu de clés Web JSON). Avec `expressJwtSecret`, nous pouvons générer un fournisseur de secrets qui fournira à `express-jwt` la bonne clé de signature en fonction du `kid` dans l’en-tête JWT.
+   3. [express-jwt](https://github.com/auth0/express-jwt) : vous permet d’authentifier les requêtes HTTP à l’aide de JWT dans vos applications Node.js. Il fournit plusieurs fonctions qui facilitent l’utilisation des JWT.
+   4. [express-jwt-authz](https://github.com/auth0/express-jwt-authz) : vérifie si le jeton d’accès contient un scope précis.
+3. Installez les dépendances :
+   `npm install express express-jwt jwks-rsa express-jwt-authz --save`
+4. Définissez les points de terminaison de l’API, créez une fonction middleware pour valider le jeton d’accès et sécurisez les points de terminaison à l’aide de ce middleware. Le code de votre fichier `server.js` devrait ressembler à l’exemple de script suivant :
+
+export const codeExample3 = `   // définir les dépendances
+    const express = require('express');
+    const app = express();
+    const jwt = require('express-jwt');
+    const jwksRsa = require('jwks-rsa');
+    const jwtAuthz = require('express-jwt-authz');
+
+    // Créer un middleware pour vérifier le JWT
+    const checkJwt = jwt({
+      // Fournir dynamiquement une clé de signature en fonction du kid dans l'en-tête et des clés de signature fournies par le point de terminaison JWKS
+      secret: jwksRsa.expressJwtSecret({
+        cache: true,
+        rateLimit: true,
+        jwksRequestsPerMinute: 5,
+        jwksUri: \`https://{yourDomain}/.well-known/jwks.json\`
+      }),
+
+      // Valider l'audience et l'émetteur
+      audience: 'https://my-banking-api', // remplacez par l'audience de votre API, disponible dans Auth0 Dashboard > APIs
+      issuer: 'https://{yourDomain}/',
+      algorithms: [ 'RS256' ] // nous utilisons RS256 pour signer nos jetons
+    });
+
+    // créer le point de terminaison pour consulter le solde
+    app.get('/balance', checkJwt, jwtAuthz(['view:balance']), function (req, res) {
+      // code qui récupère le solde de l'utilisateur et le renvoie à l'application appelante
+      res.status(201).send({message: "Voici le point de terminaison GET /balance"});
+    });
+
+
+    // créer le point de terminaison pour transférer des fonds
+    app.post('/transfer', checkJwt, jwtAuthz(['transfer:funds']), function (req, res) {
+      // code qui transfère des fonds d'un compte à un autre
+      res.status(201).send({message: "Voici le point de terminaison POST /transfer"});
+    });
+
+    // démarrer le serveur d’API sur localhost:8080
+    app.listen(8080);
+    console.log('Écoute sur http://localhost:8080');
+`;
+
+<AuthCodeBlock children={codeExample3} language="javascript" />
+
+Chaque fois que l’API reçoit une requête, voici ce qui se produit :
+
+1. Le point de terminaison appelle le middleware `checkJwt`.
+   2. `express-jwt` décode le jeton et transmet la requête, l’en-tête et la charge utile à `jwksRsa.expressJwtSecret`.
+   3. `jwks-rsa` télécharge toutes les clés de signature à partir du point de terminaison JWKS et vérifie si l’une d’elles correspond au `kid` de l’en-tête du jeton d’accès. Si aucune clé de signature ne correspond au `kid` reçu, une erreur est générée. S’il y a correspondance, la bonne clé de signature est transmise à `express-jwt`.
+   4. `express-jwt` poursuit ensuite son propre traitement pour valider la signature du jeton, l’expiration, l’audience et l’émetteur.
+   5. `jwtAuthz` vérifie si le scope exigé par le point de terminaison fait partie du jeton d’accès. Si les scopes spécifiés sont absents du jeton d’accès, la requête est rejetée avec un message d’erreur 403.
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Jetons d’accès](/fr-CA/docs/secure/tokens/access-tokens)
+* [Valider les jetons d’accès](/fr-CA/docs/secure/tokens/access-tokens/validate-access-tokens)
+* [Cas d’utilisation des Actions](/fr-CA/docs/customize/actions/use-cases)
+* [Scopes de l’API](/fr-CA/docs/get-started/apis/scopes/api-scopes)
+* [Configurer l’authentification renforcée pour les applications Web](/fr-CA/docs/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-web-apps)

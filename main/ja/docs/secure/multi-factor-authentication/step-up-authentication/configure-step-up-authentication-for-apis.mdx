@@ -1,0 +1,201 @@
+---
+description: アクセストークンを確認して、ユーザーが MFA でログインしたかどうかを API が判定する方法を学びます。
+title: API のステップアップ認証を設定する
+---
+
+ステップアップ認証を使用すると、さまざまな種類のリソースへのアクセスを提供するアプリケーションで、機密情報へのアクセスや特定のトランザクションの実行にあたり、より強力な認証方式をユーザーに要求できます。
+
+たとえば、銀行アプリのユーザーが口座間で送金できるのは、<Tooltip tip="多要素認証 (MFA): SMS で送信されるコードなど、ユーザー名とパスワードに加えて認証要素を使用するユーザー認証プロセス。" cta="用語集を表示" href="/ja/docs/glossary?term=multi-factor+authentication">多要素認証</Tooltip> (MFA) で本人確認を完了した後に限るようにできます。
+
+<Tooltip tip="オーディエンス: 発行されたトークンの対象を一意に識別する値。トークン内では aud という名前で表され、その値には、IDトークン の場合はアプリケーション (クライアントID)、アクセストークン の場合は API (API Identifier) の ID が含まれます。" cta="用語集を表示" href="/ja/docs/glossary?term=audience">オーディエンス</Tooltip> が API の場合、Auth0 ではスコープ、<Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を表示" href="/ja/docs/glossary?term=access+tokens">アクセストークン</Tooltip>、および [Actions](/ja/docs/customize/actions) を使用してステップアップ認証を実装できます。アプリケーションが API の保護されたリソースにアクセスするには、アクセストークンを提示する必要があります。アクセスできるリソースは、アクセストークンに含まれる権限によって決まります。これらの権限は [スコープ](/ja/docs/get-started/apis/scopes/api-scopes) として定義されます。
+
+<div id="validate-access-tokens-for-mfa">
+  ## MFA 用アクセストークンを検証する
+</div>
+
+スコープの確認に加えて、API では次の目的のために[アクセストークンを検証する](/ja/docs/secure/tokens/access-tokens/validate-access-tokens)必要があります。
+
+* トークンの署名を検証して、トークンの送信者が正当な送信元であること、およびメッセージが途中で改ざんされていないことを確認します。
+* 標準クレームを検証します。
+
+| クレーム  | 説明         |
+| ----- | ---------- |
+| `exp` | トークンの有効期限  |
+| `iss` | トークンの発行者   |
+| `aud` | トークンの想定受信者 |
+
+<div id="scenario-bank-transactions-with-push-notifications">
+  ## シナリオ: プッシュ通知による銀行取引
+</div>
+
+次のシナリオでは、アプリケーションが username とパスワードでユーザーを認証し、その後、口座残高の照会を要求します。口座残高情報を取得する前に、ユーザーは Guardian のプッシュ認証要素で認証する必要があります。
+
+銀行 API は、2 つの異なる認可レベルを受け入れることができます。口座残高の表示 (スコープ `view:balance`) または資金の振替 (スコープ `transfer:funds`) です。アプリケーションが API にユーザーの残高の取得を要求する場合、アクセストークンには `view:balance` スコープが含まれている必要があります。別の口座に送金するには、アクセストークンに `transfer:funds` スコープが含まれている必要があります。
+
+<div id="workflow">
+  ### ワークフロー
+</div>
+
+1. ユーザーは username とパスワード認証を使用してアプリケーションにログインします。通常のログインでは、このユーザーは API を操作して残高を取得できます。つまり、ユーザーの認証後にアプリケーションが受け取るアクセストークンには `view:balance` スコープが含まれます。
+2. アプリケーションは、アクセストークンを認証情報として使用し、残高を取得するリクエストを API に送信します。
+3. API はトークンを検証し、ユーザーが残高を表示できるよう、残高情報をアプリケーションに返します。
+4. ユーザーは、ある口座から別の口座へ資金を送金しようとします。これは高額トランザクションと見なされ、`transfer:funds` スコープが必要です。アプリケーションは同じアクセストークンを使用して API にリクエストを送信します。
+5. API はトークンを検証し、必要な `transfer:funds` スコープがトークンに含まれていないため、アクセスを拒否します。
+6. アプリケーションは Auth0 にリダイレクトし、そこで Action を使用して、高額なスコープが要求されたためユーザーに MFA による認証を求めます。ユーザーが MFA での認証に成功すると、正しいスコープを含む新しいアクセストークンが生成され、レスポンスの一部としてアプリケーションに送信されます。
+7. アプリケーションは、今度は `transfer:funds` スコープを含む新しいアクセストークンを使用して、再度資金送金のリクエストを送信します。
+8. API はトークンを検証し、それを破棄して処理を続行します。
+
+<div id="prerequisites">
+  ### 前提条件
+</div>
+
+このシナリオでは、Dashboard で以下の項目を設定する必要があります。
+
+* [シングルページ Web アプリを登録する](/ja/docs/get-started/auth0-overview/create-applications/single-page-web-apps)。
+* [データベース接続を作成する](https://manage.auth0.com/#/connections/database)。
+* [API を登録する](/ja/docs/get-started/auth0-overview/set-up-apis)。`view:balance` と `transfer:funds` の 2 つのスコープを作成します。
+* プッシュ通知を使用するには、[MFA を有効にする](/ja/docs/secure/multi-factor-authentication/enable-mfa)。
+
+<div id="create-an-action">
+  ### Action を作成する
+</div>
+
+`transfer:funds` スコープが要求されたときに、ユーザーに MFA での認証を求める Action を作成します。[Dashboard &gt; Actions &gt; Flows](https://manage.auth0.com/#/actions/flows) に移動し、次の内容を含む Action を作成します。
+
+```javascript
+{
+exports.onExecutePostLogin = async (event, api) => {
+  const CLIENTS_WITH_MFA = ['REPLACE_WITH_{yourClientId}'];
+  // 指定されたクライアントに対してのみ実行する
+  if (CLIENTS_WITH_MFA.includes(event.client.client_id)) {
+    // スコープ transfer:funds がリクエストされた場合にのみ MFA を要求する
+    if (event.transaction.requested_scopes.indexOf('transfer:funds') > -1)
+      api.multifactor.enable('any', { allowRememberBrowser: false });
+    }
+  }
+},
+```
+
+* `CLIENTS_WITH_MFA` 変数には、この Action を適用したいアプリケーションの <Tooltip tip="クライアントID: Auth0 が登録済みリソースに付与する識別子。" cta="用語集を表示" href="/ja/docs/glossary?term=client+IDs">クライアントID</Tooltip> が含まれます。不要な場合は、これ (および後続の `if` 条件) を削除できます。
+* `event.transaction.requested_scopes` プロパティには、認証リクエストで要求されたすべてのスコープが含まれます。これに `transfer:funds` が含まれている場合は、`context.multifactor` プロパティを適切な値に設定して MFA を要求します。この例では、[プッシュ](/ja/docs/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa) を使用した MFA を要求しています。
+
+<div id="configure-app">
+  ### アプリを設定する
+</div>
+
+ユーザーが高額取引である資金振替を実行しようとしているかどうかに応じて、適切な認証リクエストをAPIに送信するようアプリを設定します。MFAありとMFAなしの2つの認証リクエストの違いは、スコープだけであることに注意してください。
+
+* MFAあり:
+
+  export const codeExample1 = ` https://{yourDomain}/authorize?
+  audience=https://my-banking-api&
+  scope=openid%20view:balance%20transfer:funds&
+  response_type=id_token%20token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&
+  nonce=NONCE&
+  state=OPAQUE_VALUE`;
+
+<AuthCodeBlock children={codeExample1} language="text" />
+
+* MFAなし:
+
+  export const codeExample2 = ` https://{yourDomain}/authorize?
+  audience=https://my-banking-api&
+  scope=openid%20view:balance&
+  response_type=id_token%20token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&
+  nonce=NONCE&
+  state=OPAQUE_VALUE`;
+
+<AuthCodeBlock children={codeExample2} language="text" />
+
+| パラメーター          | 設定                                                                                                                                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audience`      | APIの**Identifier**に設定します ([API Settings](https://manage.auth0.com/#/apis/)で確認できます) 。ここでは `https://my-banking-api` を設定しています。                                                                                                                |
+| `response_type` | レスポンスでIDトークンとアクセストークンの両方を取得するため、`id_token token` に設定します。                                                                                                                                                                                   |
+| `client_id`     | アプリケーションのクライアントIDに設定します ([Application Settings](https://manage.auth0.com/#/applications/\{yourClientId}/settings)で確認できます) 。                                                                                                                |
+| `redirect_uri`  | 認証後にAuth0がリダイレクトする、アプリケーション内のURLに設定します ([Application Settings](https://manage.auth0.com/#/applications/\{yourClientId}/settings)で確認できます) 。                                                                                                 |
+| `nonce`         | Auth0からのレスポンスに含まれる、安全な文字列値に設定します。これは[トークンリプレイ攻撃の防止に使用され](/ja/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/mitigate-replay-attacks-when-using-the-implicit-flow)、`response_type=id_token token` では必須です。 |
+| `state`         | アプリケーションへのリダイレクト時にAuth0が含める不透明な値に設定します。この値は、アプリケーションがCSRF攻撃を防ぐために使用する必要があります。                                                                                                                                                              |
+
+<div id="configure-api">
+  ### API を設定する
+</div>
+
+受信したトークンを検証し、許可された権限を確認するように API を設定します。
+
+1. API に 2 つのエンドポイントを設定します。
+   `GET /balance`: 現在の残高を取得する
+   `POST /transfer`: 資金を送金する
+2. `Node.js` といくつかのモジュールを使用します。
+
+   1. [express](https://expressjs.com/): Express Web アプリケーションフレームワークを追加します。
+   2. [jwks-rsa](https://github.com/auth0/node-jwks-rsa): **JWKS** (JSON Web Key Set) エンドポイントから RSA 署名キーを取得します。`expressJwtSecret` を使用すると、JWT ヘッダー内の `kid` に基づいて適切な署名キーを `express-jwt` に提供するシークレットプロバイダーを生成できます。
+   3. [express-jwt](https://github.com/auth0/express-jwt): Node.js アプリケーションで JWT を使用して HTTP リクエストを認証できます。JWT を扱いやすくするための複数の関数が用意されています。
+   4. [express-jwt-authz](https://github.com/auth0/express-jwt-authz): アクセストークンに特定のスコープが含まれているかどうかを確認します。
+3. 依存関係をインストールします。
+   `npm install express express-jwt jwks-rsa express-jwt-authz --save`
+4. API エンドポイントを定義し、アクセストークンを検証するミドルウェア関数を作成して、そのミドルウェアでエンドポイントを保護します。`server.js` ファイルのコードは、次のサンプルスクリプトのようになります。
+
+export const codeExample3 = `   // 依存関係を設定
+    const express = require('express');
+    const app = express();
+    const jwt = require('express-jwt');
+    const jwksRsa = require('jwks-rsa');
+    const jwtAuthz = require('express-jwt-authz');
+
+    // JWT を検証するミドルウェアを作成
+    const checkJwt = jwt({
+      // ヘッダー内の kid と JWKS エンドポイントから取得した署名鍵に基づいて、署名鍵を動的に指定
+      secret: jwksRsa.expressJwtSecret({
+        cache: true,
+        rateLimit: true,
+        jwksRequestsPerMinute: 5,
+        jwksUri: \`https://{yourDomain}/.well-known/jwks.json\`
+      }),
+
+      // オーディエンスと発行者を検証
+      audience: 'https://my-banking-api', // API の audience に置き換えてください。Dashboard > APIs で確認できます
+      issuer: 'https://{yourDomain}/',
+      algorithms: [ 'RS256' ] // トークンの署名には RS256 を使用します
+    });
+
+    // 残高取得エンドポイントを作成
+    app.get('/balance', checkJwt, jwtAuthz(['view:balance']), function (req, res) {
+      // ユーザーの残高を取得し、呼び出し元のアプリに返す処理
+      res.status(201).send({message: "これは GET /balance エンドポイントです"});
+    });
+
+
+    // 資金移動エンドポイントを作成
+    app.post('/transfer', checkJwt, jwtAuthz(['transfer:funds']), function (req, res) {
+      // ある口座から別の口座へ資金を移動する処理
+      res.status(201).send({message: "これは POST /transfer エンドポイントです"});
+    });
+
+    // localhost:8080 で API サーバーを起動
+    app.listen(8080);
+    console.log('http://localhost:8080 で待ち受け中');
+`;
+
+<AuthCodeBlock children={codeExample3} language="javascript" />
+
+API がリクエストを受信するたびに、次の処理が実行されます。
+
+1. エンドポイントが `checkJwt` ミドルウェアを呼び出します。
+   2. `express-jwt` がトークンをデコードし、リクエスト、ヘッダー、ペイロードを `jwksRsa.expressJwtSecret` に渡します。
+   3. `jwks-rsa` が JWKS エンドポイントからすべての署名鍵をダウンロードし、それらのいずれかがアクセストークンのヘッダー内の `kid` と一致するかを確認します。一致する署名鍵がない場合はエラーがスローされます。一致するものがある場合は、適切な署名鍵を `express-jwt` に渡します。
+   4. `express-jwt` は続いて、独自のロジックに従ってトークンの署名、有効期限、オーディエンス、発行者を検証します。
+   5. `jwtAuthz` は、エンドポイントが必要とするスコープがアクセストークンに含まれているかどうかを確認します。指定されたスコープがアクセストークンに含まれていない場合、リクエストは 403 エラーで拒否されます。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [アクセストークン](/ja/docs/secure/tokens/access-tokens)
+* [アクセストークンを検証する](/ja/docs/secure/tokens/access-tokens/validate-access-tokens)
+* [Actions のユースケース](/ja/docs/customize/actions/use-cases)
+* [API のスコープ](/ja/docs/get-started/apis/scopes/api-scopes)
+* [Web アプリ向けのステップアップ認証を設定する](/ja/docs/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-web-apps)

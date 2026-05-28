@@ -1,0 +1,526 @@
+---
+description: Token Vault の Connected Accounts を設定して使用する方法を学びます。
+sidebarTitle: Token Vault の Connected Accounts
+title: Token Vault の Connected Accounts
+---
+
+Token Vault の Connected Accounts を使用すると、アプリケーションは [Token Vault](/ja/docs/secure/tokens/token-vault) を介して、ユーザーに代わって外部 API に安全にアクセスできます。標準的なユーザー認証では、ソーシャルまたはエンタープライズのIDプロバイダーを通じてユーザーのログインを処理します。一方、Connected Accounts では、ユーザープロファイルを Google、GitHub、Slack などの外部サービスに関連付けることで、ユーザーに代わって外部 API への委任アクセスを可能にします。
+
+ユーザーが [サポート対象の外部プロバイダー](/ja/docs/secure/tokens/token-vault#supported-external-providers) への接続とアクセスの承認に成功すると、Auth0 は次の処理を行います。
+
+* そのアカウントを 接続済みアカウント としてユーザーに関連付けます。
+* 接続済みアカウント用の外部プロバイダーのアクセストークンとリフレッシュトークンを Token Vault に保存します。
+
+Token Vault の Connected Accounts は、複数の外部アカウントに関連付けられた単一の Auth0 ユーザープロファイルを作成および管理し、シームレスな認可を可能にします。その後、アプリケーションは Token Vault に保存されている認証情報を取得して、ユーザーに代わって外部 API を操作します。
+
+<div id="user-authentication-vs-connected-accounts">
+  ## ユーザー認証と Connected Accounts の違い
+</div>
+
+サポートされているソーシャル接続またはエンタープライズ接続に対して [Connected Accounts を設定](#configure-connected-accounts)すると、Auth0 はソーシャルまたはエンタープライズのログインフロー (`/authorize` エンドポイント) ではなく、Connected Accounts フロー (`/me/v1/connected-accounts` エンドポイント) を使用して、アクセストークンとリフレッシュトークンを取得し、Token Vault に保存します。Connected Accounts フローが正常に完了すると、Auth0 はそのユーザーアカウントをユーザープロファイルの `connected_accounts` 配列に追加します。これに対して、ソーシャルまたはエンタープライズのログインフローでは、Auth0 はそのユーザーアカウントをユーザープロファイルの `identities` 配列に追加します。
+
+次の表は、ユーザー認証フローと Connected Accounts フローの違いを説明しています。
+
+|     | ユーザー認証                               | Connected Accounts                                                                                 |
+| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| フロー | `/authorize` エンドポイントを使用するログインフロー     | My Account API の `/me/v1/connected-accounts` エンドポイントを使用する Connected Accounts フロー                   |
+| 目的  | ソーシャルまたはエンタープライズの IDプロバイダーでユーザーを認証する | ユーザーがサポート対象の外部プロバイダー経由でログインし、アカウントを接続してその接続を認可すると、接続済みアカウントのアクセストークンとリフレッシュトークンを Token Vault に保存する |
+
+サポートされているソーシャル接続またはエンタープライズ接続では、ユーザー認証、Connected Accounts、またはその両方を有効にできます。次の表は、接続にスコープを渡す方法を含め、Purpose 設定ごとの動作を説明しています。
+
+| Authentication | Connected Accounts | 動作                                                                                                                                      | スコープ                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enabled        | Disabled           | この接続は、有効な IDプロバイダーとしてユーザーを認証するために `/authorize` ログインフローを使用します。                                                                           | Auth0 Dashboard または Management API を使用して、接続に必要なスコープを渡します。実行時には、このリストに認可リクエストの `connection_scope` パラメーターに含まれる追加のスコープが自動的に補完されます。                                                                                                                                                                                                                                                 |
+| Disabled       | Enabled            | この接続は、Connected Accounts フローを使用して、その接続のトークンを取得し、Token Vault に保存します。この接続は、ユーザー認証のために `/authorize` ログインフローを使用せず、有効な IDプロバイダーの一覧からも除外されます。 | Auth0 Dashboard または Management API を使用して、接続に必要なスコープを渡します。実行時には、認可リクエストの `scopes` パラメーターに含まれるスコープが、接続で必要とされ、かつ Auth0 Dashboard で有効になっている `offline_access` を除き、Auth0 Dashboard で選択したスコープより優先されます。<br /><br />**注:** 接続で必要な場合、Auth0 は `offline_access` を有効にするよう求めます。これにより、クライアントアプリケーションは Auth0 からリフレッシュトークンを取得できるようになります。接続に対して `offline_access` を Auth0 Dashboard で有効にする必要があります。 |
+| Enabled        | Enabled            | この接続は、有効な IDプロバイダーとしてユーザーを認証するために `/authorize` ログインフローを使用します。また、Connected Accounts フローを使用して、その接続のアクセストークンを取得し、Token Vault に保存します。       | Auth0 Dashboard と Management API を使用して、接続に必要なスコープを渡します。実行時には、`scopes` パラメーターに含まれるスコープが、接続で必要とされ、かつ Auth0 Dashboard で有効になっている `offline_access` を除き、Auth0 Dashboard で選択したスコープより優先されます。<br /><br />**注:** 接続で必要な場合、Auth0 は `offline_access` を有効にするよう求めます。これにより、クライアントアプリケーションは Auth0 からリフレッシュトークンを取得できるようになります。接続に対して `offline_access` を Auth0 Dashboard で有効にする必要があります。            |
+
+<div id="how-it-works">
+  ## 動作の仕組み
+</div>
+
+Connected Accounts フローでは、[My Account API](/ja/docs/manage-users/my-account-api) を使用して、サポートされている外部プロバイダーにまたがるユーザーの接続済みアカウントを作成および管理します。
+
+ユーザーがクライアントアプリケーションから Connected Accounts リクエストを開始する前に、クライアントアプリケーションは My Account API にアクセスするため、Connected Accounts のスコープを含む[アクセストークンを取得する](/ja/docs/manage-users/my-account-api#get-an-access-token)必要があります。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  アプリケーションで [Organizations](/ja/docs/manage-users/organizations) を使用している場合は、Connected Accounts フローを開始する前に、対象の組織でユーザーを認証してください。Token Vault は接続済みアカウントをユーザーの Auth0 プロファイルに保存するため、各組織メンバーは自分の外部アカウントを接続して認可することになります。
+</Callout>
+
+次のシーケンス図は、Connected Accounts フローのエンドツーエンドの流れを示しています。
+
+<Frame>![](/docs/images/token-vault/connected_accounts_flow_diagram.png)</Frame>
+
+ユーザーが Auth0 を通じてサポート対象の外部プロバイダーでログインすると、クライアントアプリケーションから Connected Accounts リクエストを開始できます。
+
+1. クライアントアプリケーションは、外部プロバイダーに送信するスコープやその他のパラメーターを渡して、My Account API の `/me/v1/connected-accounts/connect` エンドポイントに `POST` リクエストを送信します。詳しくは、[Connected Accounts リクエストを開始する](#initiate-connected-accounts-request)を参照してください。
+2. My Account API は、一意の `auth_session` と、ユーザーを Web ブラウザーにリダイレクトするための `ticket` を含む `connect_uri` を作成します。クライアントアプリケーションは、後で検証するために `auth_session` を保存します。[DPoP](/ja/docs/secure/sender-constraining/demonstrating-proof-of-possession-dpop) が構成されている場合、My Account API は DPoP Proof JWT を検証します。
+3. クライアントアプリケーションは、ブラウザーでユーザー認証と認可を行うため、クエリーパラメーターとして `ticket` を含む `connect_uri` にユーザーをリダイレクトします。クライアントアプリケーションは、[Authorization Code Flow with PKCE](/ja/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) と同様に、`code_challenge` または `code_challenge_method` を URL に渡すこともできます。
+4. ユーザーは同意画面で接続を行い、その接続に必要な権限を認可します。
+5. ユーザーが接続を正常に認可すると、外部プロバイダーはユーザーを My Account API にリダイレクトし、My Account API は単回使用の `connect_code` を含む `redirect_uri` を使ってユーザーをクライアントアプリケーションにリダイレクトします。
+6. クライアントアプリケーションは、`/me/v1/connected-accounts/complete` エンドポイントに `POST` リクエストを送信して、`connect_code`、`code_verifier` (該当する場合) 、および元の `auth_session` を My Account API に提示します。詳しくは、[Connected Accounts リクエストを完了する](#complete-connected-accounts-request)を参照してください。
+7. My Account API は、次の点を確認してリクエストを検証します。
+   * `auth_session` が、そのユーザーに対して元々発行された ID と一致すること
+   * リクエストが Connected Accounts フローを開始したときと同じデバイスから送信されていること
+   * DPoP Proof JWT (構成されている場合)
+   * 単回使用の `connect_code`
+   * `code_verifier` (PKCE フローを使用している場合)
+8. 検証に成功すると、Auth0 認可サーバーはユーザープロファイルの `connected_accounts` 配列にアカウントを追加し、接続済みアカウントのアクセストークンとリフレッシュトークンを Token Vault に保存します。
+9. My Account API は、アカウントが正常に接続されたことを示す `200` ステータスコードをクライアントアプリケーションに返して、フローを完了します。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+Connected Accounts を設定する前に、次の設定が完了していることを確認してください。
+
+* 各接続済みアカウントに関連付けられたアクセストークンとリフレッシュトークンを Token Vault に安全に保存できるよう、クライアントアプリケーションの [Token Vault を設定](/ja/docs/secure/tokens/token-vault/configure-token-vault) します。
+* 認証済みユーザーがアカウントの接続と管理に使用する [My Account API を設定](#configure-my-account-api) します。
+* My Account API のアクセストークンを取得できるよう、[Multi-Resource Refresh Token (MRRT) を設定](#configure-multi-resource-refresh-token) します。
+* (任意) アクセストークンに sender constraint を適用してトークンの盗難を防ぐため、My Account API とクライアントアプリケーションの [DPoP を設定](/ja/docs/secure/sender-constraining/configure-sender-constraining) します。My Account API は、デフォルトで DPoP にバインドされたアクセストークンを受け入れることができます。
+
+<div id="configure-my-account-api">
+  ### My Account API を設定する
+</div>
+
+Connected Accounts を使用するには、Auth0 Dashboard で My Account API を設定します。
+
+1. **Applications &gt; APIs** に移動し、[My Account API を有効化](/ja/docs/manage-users/my-account-api#activate-the-my-account-api)します。
+2. 有効化したら、**Auth0 My Account API** を選択し、**Application Access** タブを開きます。
+3. 対象のクライアントアプリケーションを見つけて **Edit** を選択し、[アプリケーションアクセスポリシー](/ja/docs/get-started/apis/api-access-policies-for-applications)を設定します。
+4. **User Access** を選択し、**Authorization** で **Authorized** を選択します。
+5. 権限については、そのアプリケーションに対して [Connected Accounts スコープ](/ja/docs/manage-users/my-account-api#scope) を **All** で選択します。
+6. **Save** を選択します。これにより、クライアントアプリケーションがユーザーに代わって Connected Accounts のスコープで My Account API にアクセスできるようにする[クライアントグラント](/ja/docs/get-started/applications/application-access-to-apis-client-grants)が作成されます。
+7. [Multi-Resource Refresh Token](/ja/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token#multi-resource-refresh-token) を使用している場合は、**Settings** タブに移動します。**Access Settings** で **Allow Skipping User Consent** を選択します。
+
+<div id="configure-multi-resource-refresh-token">
+  ### Multi-Resource Refresh Token を設定する
+</div>
+
+Multi-Resource Refresh Token (MRRT) を設定すると、ユーザーが再認証しなくても、My Account API やその他の API 向けの新しいアクセストークンと交換できる、単一の長期有効なリフレッシュトークンを取得できます。
+
+MRRT は [Auth0 Dashboard](https://manage.auth0.com) または [Management API](https://auth0.com/docs/api/management/v2) で設定できます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Auth0 Dashboard で MRRT を設定するには、次の手順に従います。
+
+    1. **Applications &gt; Applications** に移動し、対象のアプリケーションを選択します。
+    2. **Multi-Resource Refresh Token** で **Edit Configuration** を選択します。
+    3. My Account API で MRRT を有効にするには、**My Account API** をオンにします。
+  </Tab>
+
+  <Tab title="Management API">
+    クライアントアプリケーションに対して MRRT を設定するには、`/api/v2/clients/{clientId}` エンドポイントに `PATCH` リクエストを送信し、リフレッシュトークンポリシーに My Account API 識別子と Connected Accounts のスコープを追加します。
+
+    ```bash lines
+    curl -X PATCH --location "https://${account.namespace}/api/v2/clients/{clientId}" \
+        -H "Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>" \
+        -H "Content-Type: application/json" \
+        -d '{
+              "is_first_party": true,
+              "refresh_token": {
+                "expiration_type": "non-expiring",
+                "leeway": 0,
+                "infinite_token_lifetime": true,
+                "infinite_idle_token_lifetime": true,
+                "token_lifetime": 31557600,
+                "idle_token_lifetime": 2592000,
+                "rotation_type": "non-rotating",
+                "policies": [
+                  {
+                    "audience": "https://'"$DOMAIN"'/me/",
+                    "scope": [
+                      "create:me:connected_accounts",
+                      "read:me:connected_accounts",
+                      "delete:me:connected_accounts"
+                    ]
+                  }
+                ]
+              }
+            }'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="configure-connected-accounts">
+  ## Connected Accounts を設定する
+</div>
+
+接続の Connected Accounts を設定する前に、その接続がクライアントアプリケーションに対して有効になっていることを確認してください。
+
+Auth0 Dashboard で次の操作を行います。
+
+1. **Authentication &gt; Social Connections** または **Enterprise Connections** に移動し、接続を選択します。
+2. **Applications** を選択し、クライアントアプリケーションに対してその接続をオンにします。
+
+Connected Accounts は、[Auth0 Dashboard](https://manage.auth0.com) または [Management API](https://auth0.com/docs/api/management/v2) を使用して設定できます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Auth0 Dashboard を使用して Connected Accounts を設定するには:
+
+    1. **Authentication &gt; Social Connections** または **Enterprise Connections** に移動します。
+    2. **Create Connection** を選択するか、既存の接続を選択します。
+    3. **Purpose** で **Connected Accounts for Token Vault** をオンにします。**Purpose** の設定によっては、Auth0 Dashboard で `offline_access` を有効にする必要があります。これにより、クライアントアプリケーションは Connected Accounts フロー中に外部プロバイダーからリフレッシュトークンを取得できるようになります。詳しくは、[ユーザー認証と Connected Accounts の違い](#user-authentication-vs-connected-accounts) を参照してください。
+    4. **Save** をクリックします。
+  </Tab>
+
+  <Tab title="Management API">
+    Management API を使用して Connected Accounts を設定するには、`/connections/{connectionId}` エンドポイントに `PATCH` リクエストを送信して、`connected_accounts` を `true` に設定します。
+
+    ```bash lines
+    curl -L -X PATCH "https://{yourDomain}/api/v2/connections/{connectionId}" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -H "Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>" \
+    -d '{"connected_accounts":{"active":true}}'
+    ```
+  </Tab>
+</Tabs>
+
+<div id="get-access-token-for-connected-accounts">
+  ## Connected Accounts のアクセストークンを取得する
+</div>
+
+Connected Accounts のリクエストを開始する前に、Connected Accounts のスコープを含む My Account API 用の[アクセストークンを取得](/ja/docs/manage-users/my-account-api#scope)してください。
+
+以下のセクションでは、My Account API 用のアクセストークンを取得するために [Multi-Resource Refresh Token (MRRT)](/ja/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token) を使用する方法を説明します。
+
+<div id="fetch-a-refresh-token">
+  ### リフレッシュトークンを取得する
+</div>
+
+クライアントアプリケーションで [MRRT を設定](#configure-multi-resource-refresh-token)したら、認可コードフローを開始し、取得した認可コードをリフレッシュトークンに交換します。
+
+以下は、リフレッシュトークンを返すための `offline_scope` と、My Account API 識別子 `https://{yourDomain}/me/` に対する使い捨ての認可コードを含む、コンフィデンシャルクライアント向けの認可コードフローリクエストです。
+
+```bash lines
+open "https://{yourDomain}/authorize?client_id=<CLIENT_ID>&response_type=code&prompt=login&scope=openid%20profile%20offline_access&redirect_uri=<REDIRECT_URI>&state=<STATE>&audience=https://my-example-api.com"
+```
+
+1 回限り有効な認可 code を、`/token` エンドポイントでリフレッシュトークンに交換します。
+
+```bash lines
+curl -s --request POST \
+  --url "https://{yourDomain}/oauth/token" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- <<EOF | jq -r '.refresh_token'
+{
+  "grant_type": "authorization_code",
+  "code": "<CONNECT_CODE>",
+  "client_id": "<CLIENT_ID>",
+  "client_secret": "<CLIENT_SECRET>",
+  "redirect_uri": "<REDIRECT_URI>"
+}
+EOF
+```
+
+<div id="exchange-refresh-token-for-my-account-api-access-token">
+  ### リフレッシュトークンを My Account API のアクセストークンに交換する
+</div>
+
+リフレッシュトークンを取得したら、リフレッシュトークンのグラントタイプを使用して、Connected Accounts のスコープが付与された My Account API のアクセストークンに交換します。
+
+```bash lines
+curl -s -X POST "https://{yourDomain}/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=refresh_token" \
+  --data-urlencode "client_id=<CLIENT_ID>" \
+  --data-urlencode "client_secret=<CLIENT_SECRET>" \
+  --data-urlencode "refresh_token=<REFRESH_TOKEN>" \
+  --data-urlencode "audience=https://{yourDomain}/me/" \
+  --data-urlencode "scope=openid profile offline_access create:me:connected_accounts read:me:connected_accounts delete:me:connected_accounts"
+```
+
+<div id="initiate-connected-accounts-request">
+  ## Connected Accounts リクエストを開始する
+</div>
+
+Connected Accounts リクエストを開始するには、次のパラメーターを指定して、My Account API の `/me/v1/connected-accounts/connect` エンドポイントに `POST` リクエストを送信します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Google のソーシャル接続では、接続の設定時に Auth0 Dashboard で `offline_access` を選択していることを確認してください。これは、クライアントアプリケーションが Auth0 認可サーバーからリフレッシュトークンを取得するために必要です。
+</Callout>
+
+| パラメーター         | 説明                                                                                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection`   | 接続の名前です。Google のソーシャル接続の場合は、`google-oauth2` に設定します。                                                                                                                                                                                         |
+| `redirect_uri` | クライアントアプリケーションのコールバック URL です。                                                                                                                                                                                                               |
+| `state`        | 攻撃を防ぐために、リクエストに関連付ける一意のランダム文字列です。                                                                                                                                                                                                           |
+| `scopes`       |  (省略可能) 文字列の配列として外部プロバイダーに渡すスコープです。<br /><br />Google のソーシャル接続にスコープを渡す場合は、少なくとも `openid` と `profile` を含めてください。実行時には、接続で必要とされ、かつ Auth0 Dashboard で有効になっている `offline_access` を除き、`scopes` パラメーターに含まれるスコープが Auth0 Dashboard で選択したスコープより優先されます。 |
+
+```bash lines
+curl --request POST "https://{yourDomain}/me/v1/connected-accounts/connect" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>" \
+--data '{
+    "connection": "google-oauth2",
+    "redirect_uri": "<REDIRECT_URI>",
+    "state": "<STATE>",
+    "scopes": ["openid","profile"] // 渡されたスコープはすべて、Auth0 Dashboardで選択したスコープを上書きします
+}'
+```
+
+成功した場合、My Account API は次のようなレスポンスを返します。
+
+| Parameter        | Description                                                                      |
+| ---------------- | -------------------------------------------------------------------------------- |
+| `auth_session`   | プライマリユーザーの現在の認証済みセッションを表すセッション ID。クライアントアプリケーションは、後で検証できるようにこのセッション ID を保存します。   |
+| `connect_uri`    | クライアントアプリケーションがユーザーをリダイレクトする URL。この URL を開くと、外部プロバイダーでの認可を処理するためのウェブブラウザーが起動します。 |
+| `connect_params` | `connect_uri` に必要な追加パラメーター。My Account API がリクエストの検証に使用する一時チケットが含まれます。            |
+| `expires_in`     | セッションの有効期限 (秒単位) 。                                                               |
+
+```json
+{
+  "auth_session": "PKM-CYkdx2FyLb4Oob4ED91cSE7i_XJ4SVJByik0xKQxz9CgUZ5JlYr-aMPty0Xr",
+  "connect_uri": "https://{yourDomain}.us.auth0.com/connect",
+  "connect_params": {
+    "ticket": "9375f326-5846-4b57-ae8b-8042573f7c1f"
+  },
+  "expires_in": 300
+}
+```
+
+Web ブラウザーで、`ticket` をクエリパラメーターとして指定した `connect_uri` にアクセスします。同意画面でスコープの一覧を承認し、URL フラグメントから `connect_code` を抽出して保存します。
+
+```bash lines
+open https://{yourDomain}.us.auth0.com/connected-accounts/connect?ticket={tickedId}
+```
+
+<div id="complete-connected-accounts-request">
+  ## Connected Accounts リクエストを完了する
+</div>
+
+Connected Accounts リクエストを完了するには、次のパラメーターを指定して `/me/v1/connected-accounts/complete` エンドポイントに `POST` リクエストを送信します。
+
+| Parameter      | Description                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
+| `auth_session` | プライマリユーザーの現在の認証済みセッションを表すセッション ID。クライアントアプリケーションは、後で検証できるようにこのセッション ID を保存します。                                  |
+| `connect_code` | 外部プロバイダーの認可フローで受け取る、使い捨てで短時間のみ有効な code。この code は、外部 API の最終的なアクセストークンを取得するために、サーバー側で安全に引き換えられます。                |
+| `redirect_uri` | 外部プロバイダーとの接続の認可が正常に完了した後にユーザーがリダイレクトされる、アプリケーションの正確なコールバック URL。この値は、フローの開始時に使用した `redirect_uri` と一致している必要があります。 |
+
+```bash lines
+curl --location "https://{yourDomain}/me/v1/connected-accounts/complete" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>" \
+--data '{
+    "auth_session": "<AUTH_SESSION>",
+    "connect_code": "<CONNECT_CODE>",
+    "redirect_uri": "<REDIRECT_URI>"
+}'
+```
+
+成功すると、My Account API は次のようなレスポンスを返します。
+
+| Parameter     | Description                                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `id`          | 接続済みアカウントの一意の識別子。                                                                                           |
+| `connection`  | 接続の名前。                                                                                                      |
+| `created_at`  | 接続済みアカウントが作成され、ユーザープロファイルにリンクされた日時を示すタイムスタンプ。                                                               |
+| `scopes`      | 外部プロバイダーへの接続時に、ユーザーがアプリケーションに付与した OAuth スコープ (権限) 。これらのスコープによって、アプリケーションが実行できる外部 API の操作が決まります。             |
+| `access_type` | 付与されたアクセスの種類を示します。一般的な値は `offline` で、これはリフレッシュトークンが正常に取得されて保存され、ユーザーがオフラインのときでもアプリケーションがアクセスを維持できることを意味します。 |
+
+```json
+{
+  "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+  "connection": "google-oauth2",
+  "created_at": "2025-10-13T21:09:04.126Z",
+  "scopes": [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.addons.execute",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+    "https://www.googleapis.com/auth/calendar.settings.readonly",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid"
+  ],
+  "access_type": "offline"
+}
+```
+
+<div id="manage-connected-accounts">
+  ## 接続済みアカウントの管理
+</div>
+
+ユーザーの接続済みアカウントを管理するには、`/me/v1/connected-accounts` コレクションを使用します。
+
+`/connected-accounts` コレクションを使用する前に、[接続済みアカウント用のアクセストークンを取得](#get-access-token-for-connected-accounts)してください。
+
+<div id="query-connected-accounts-connections">
+  ### 接続済みアカウントの接続を照会する
+</div>
+
+ユーザープロファイルに関連付けられている接続の一覧を返すには、`/me/v1/connected-accounts/connections` エンドポイントに `GET` リクエストを送信します:
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/me/v1/connected-accounts/connections" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+成功した場合、My Accounts API は次のようなレスポンスを返します。
+
+```json
+{
+  "connections": [
+    {
+      "name": "google-oauth2",
+      "strategy": "google-oauth2",
+      "scopes": [
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "openid"
+      ]
+    },
+    {
+      "name": "custom",
+      "strategy": "oauth2",
+      "scopes": [
+        "openid"
+      ]
+    }
+  ]
+}
+```
+
+<div id="query-connected-accounts">
+  ### 接続済みアカウントを照会する
+</div>
+
+ユーザープロフィールに関連付けられた接続済みアカウントの一覧を取得するには、`/me/v1/connected-accounts/accounts` エンドポイントに `GET` リクエストを送信します。
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/me/v1/connected-accounts/accounts" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+成功した場合、My Accounts API は次のようなレスポンスを返します。
+
+```json
+{
+  "accounts": [
+    {
+      "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+      "connection": "google-oauth2",
+      "access_type": "offline",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ],
+      "created_at": "2025-10-13T21:09:04.126Z"
+    },
+    {
+      "id": "cac_fH32E6CWN7HcWZN5w9Vieq",
+      "connection": "custom",
+      "access_type": "offline",
+      "scopes": [
+        "offline_access",
+        "openid",
+        "profile"
+      ],
+      "created_at": "2025-10-13T18:06:47.216Z"
+    }
+  ]
+}
+```
+
+Management API を使用して `/users/{userId}/connected-accounts` エンドポイントに `GET` リクエストを送信すると、ユーザープロファイルに紐付けられたアカウントの一覧を取得することもできます。
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/api/v2/users/{userId}/connected-accounts" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <YOUR_MANAGEMENT_API_TOKEN>"
+```
+
+成功した場合、Management API は次のようなレスポンスを返します。
+
+```json
+{
+  "connected_accounts": [
+    {
+      "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+      "connection": "google-oauth2",
+      "connection_id": "con_uBbSbbSpqGqOTvRu",
+      "strategy": "google-oauth2",
+      "access_type": "offline",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ],
+      "created_at": "2025-10-13T21:09:04.126Z"
+    }
+  ]
+}
+```
+
+<div id="query-connected-accounts-for-a-given-connection">
+  ### 指定した接続の接続済みアカウントを照会する
+</div>
+
+`GET` リクエストを `/me/v1/connected-accounts/accounts` エンドポイントに送信し、クエリパラメーターとして接続名を指定すると、ユーザープロファイルに関連付けられた指定の接続でフィルタリングされた接続済みアカウントの一覧が返されます。
+
+```bash lines
+curl -X GET --location "https://{yourDomain}/me/v1/connected-accounts/accounts?connection={connectionName}" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+成功すると、My Accounts API は `google-oauth2` 接続で絞り込まれた、次のようなレスポンスを返します。
+
+```json
+{
+  "accounts": [
+    {
+      "id": "cac_6ZqSK7Kj1R8LDZJvSb1tAn",
+      "connection": "google-oauth2",
+      "access_type": "offline",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.addons.execute",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/calendar.settings.readonly",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "openid"
+      ],
+      "created_at": "2025-10-13T21:09:04.126Z"
+    }
+  ]
+}
+```
+
+<div id="delete-connected-account">
+  ### 接続済みアカウントを削除
+</div>
+
+指定した ID の接続済みアカウントを削除するには、`/me/v1/connected-accounts/accounts/{connectedAccountId}` エンドポイントに `DELETE` リクエストを実行します。
+
+```bash lines
+curl -X DELETE --location "https://{yourDomain}/me/v1/connected-accounts/accounts/{connectedAccountId}" \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer <MY_ACCOUNT_API_TOKEN>"
+```
+
+接続済みアカウントを削除すると、Auth0 は Token Vault から外部プロバイダーのアクセストークンとリフレッシュトークンを削除します。これにより外部プロバイダーのトークンが自動的に失効するわけではなく、リフレッシュトークンを使って引き続き新しいアクセストークンを取得できる可能性があります。トークンが他の場所で共有またはコピーされている場合は、外部プロバイダーのトークンを手動で失効させる必要があります。
+
+成功すると、My Accounts API は次のようなレスポンスを返します。
+
+```
+HTTP/1.1 204 No Content
+```

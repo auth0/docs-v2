@@ -1,0 +1,166 @@
+---
+description: Auth0 のカスタムドメイン用プロキシとして使用するための Cloudflare の設定方法について説明します。
+title: Cloudflare をリバースプロキシとして構成する
+---
+
+<Card title="利用可否は Auth0 プランによって異なります">
+  この機能を利用できるかどうかは、Auth0 プランまたはカスタム契約によって異なります。詳しくは、[Auth0 の料金ページ](https://auth0.com/pricing)を参照してください。
+</Card>
+
+推奨される方法で Cloudflare をリバースプロキシとして設定するには、以下の機能を備えた Cloudflare Enterprise Plan が必要です。
+
+| 機能                    | 説明                                                                                                                                                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host Header Override  | Cloudflare の各種ルールを使用して Host ヘッダーを書き換えます。詳しくは、[Cloudflare Docs の Rewrite Host headers](https://developers.cloudflare.com/rules/origin-rules/tutorials/change-uri-path-and-host-header/)を参照してください。                                          |
+| True-Client-IP Header | True-Client-IP Header を有効にすると、オリジンサーバーへのすべてのリクエストに、エンドユーザーの IP アドレスを含む True-Client-IP ヘッダーが追加されます。詳しくは、[Cloudflare の Understanding the True-Client-IP Header](https://developers.cloudflare.com/network/true-client-ip-header/)を参照してください。 |
+
+<div id="configure-cloudflare">
+  ## Cloudflare を設定する
+</div>
+
+<Warning>
+  前提条件として、選択したカスタムドメインの親ドメインを [Cloudflare ダッシュボードで追加して有効化](https://developers.cloudflare.com/learning-paths/get-started/add-domain-to-cf/minimize-downtime/#activate-your-domain)しておく必要があります。また、使用するカスタムドメインが Cloudflare ゾーン内にまだ存在していないことも確認してください。すでに存在する場合、Cloudflare の検証は失敗します。
+</Warning>
+
+Cloudflare をリバースプロキシとして設定するには、Cloudflare で CNAME レコード、Page Rule、Transform Rule を作成する必要があります。
+
+1. まだ設定していない場合は、[自己管理証明書を使用して カスタムドメイン を設定および検証](/ja/docs/customize/custom-domains/self-managed-certificates)します。後で必要になるため、**Origin Domain Name** と **cname-api-key** の値を控えておいてください。
+2. 対象ゾーンの Cloudflare ダッシュボードで、次の設定を使用して [CNAME レコードを作成](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/#create-dns-records)します。
+
+   | Setting      | Value                            |
+   | ------------ | -------------------------------- |
+   | 名前           | カスタムドメイン名                        |
+   | Target       | 先ほど控えた **Origin Domain Name** の値 |
+   | Proxy Status | `Proxied`                        |
+3. 選択したカスタムドメイン配下のすべての URL を対象として、次の設定で [Page Rule を作成](https://developers.cloudflare.com/rules/page-rules/)します。
+
+   | Setting              | Value                            |
+   | -------------------- | -------------------------------- |
+   | Host Header Override | 先ほど控えた **Origin Domain Name** の値 |
+   | True-Client-IP       | `Enable`                         |
+4. [Transform Rule を作成](https://developers.cloudflare.com/rules/transform/request-header-modification/create-dashboard/)します。
+
+   <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+     Page Rule と Transform Rule の代わりに Cloudflare Workers を使用して、自己管理証明書のカスタムドメイン要件を満たすリバースプロキシを設定することもできますが、カスタムコードが不要になるため、ルールベースの方法を推奨します。
+   </Callout>
+
+   1. **Modify Request Header** ビューに切り替えます。
+   2. **Create Rule** を選択し、任意の名前を指定します。
+   3. **When incoming requests match** で **Custom filter expression** を選択し、選択したカスタムドメインに関連するリクエストだけを対象にする式を設定します。たとえば、**Hostname** フィールドの完全一致を使用します。
+   4. **Modify request header** で **Set static** を選択し、次のフィールドを設定します。
+
+      | Field       | Value                       |
+      | ----------- | --------------------------- |
+      | Header name | `cname-api-key`             |
+      | Value       | 先ほど控えた **cname-api-key** の値 |
+5. 選択したカスタムドメインで [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/) が有効になっており、[encryption mode](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/) が少なくとも **Full** に設定されていることを確認します。
+
+<div id="use-managed-challenges">
+  ## Managed Challenges を使用する
+</div>
+
+Cloudflare の [Managed Challenges](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/#managed-challenges) を使用すると、リクエストが Auth0 Universal Login に到達する前に、ボットによるトラフィックをフィルタリングできます。リクエストがルールに一致すると、Cloudflare がそのリクエストを横取りし、検証チャレンジを表示します。チャレンジページは HTML を返すため、Managed Challenges と互換性があるのはブラウザベースのフローのみです。これを API エンドポイントやヘッドレスフローに適用すると、クライアントは想定されたレスポンスではなく HTML のチャレンジページを受け取ることになるため、それらのフローは動作しなくなります。
+
+<div id="universal-login-browser-based-endpoints">
+  ### Universal Login のブラウザベースのエンドポイント
+</div>
+
+次のエンドポイントはブラウザに HTML ページを返し、Managed Challenges に対応しています。
+
+| Endpoint                                                                                                                               | Description                        |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `/u/email-verification`                                                                                                                | メールアドレスの確認                         |
+| `/u/login`                                                                                                                             | 識別子プロンプトおよび identifier-first プロンプト |
+| Organization endpoints: <br /><ul><li>`u/organization`</li><li>`/u/organization-picker`</li><li>`/u/pre-organization-picker`</li></ul> | 組織選択プロンプト                          |
+| `/u/login/password`                                                                                                                    | パスワードプロンプト                         |
+| `/u/login-email-verification`                                                                                                          | メールアドレス確認プロンプト                     |
+| `/u/signup`                                                                                                                            | 識別子プロンプト                           |
+| `/u/signup/password`                                                                                                                   | パスワードプロンプト                         |
+| `/u/consent`                                                                                                                           | 同意プロンプト                            |
+| `/u/customized-consent`                                                                                                                | カスタマイズされた同意プロンプト                   |
+| `/u/reset-password`                                                                                                                    | パスワードリセットプロンプト                     |
+| `/u/reset-password/request`                                                                                                            | パスワードリセット用のメールアドレスまたはusernameプロンプト |
+| `/u/reset-password/change`                                                                                                             | 新しいパスワードのプロンプト                     |
+| `/u/reset-verify`                                                                                                                      | パスワードリセットの確認                       |
+| `/u/mfa-begin-enroll-options`                                                                                                          | MFA登録の認証要素選択                       |
+| `/u/mfa-enroll-options`                                                                                                                | MFA登録オプション                         |
+| `/u/mfa-otp`                                                                                                                           | OTP プロンプト                          |
+| `/u/mfa-push`                                                                                                                          | プッシュ通知プロンプト                        |
+| `/u/mfa-webauthn`                                                                                                                      | WebAuthn およびパスキープロンプト              |
+| `/u/mfa-recovery-code`                                                                                                                 | リカバリーコードプロンプト                      |
+| `/u/mfa-sms`                                                                                                                           | SMS プロンプト                          |
+| `/u/mfa-email`                                                                                                                         | MFA メールアドレスプロンプト                   |
+| `/u/mfa-voice`                                                                                                                         | MFA 音声プロンプト                        |
+| `/u/passkey-enrollment`                                                                                                                | パスキー登録                             |
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Classic Universal Login を使用している場合は、Managed Challenge ルールに `/login` も含めてください。
+</Callout>
+
+<div id="endpoints-to-exclude">
+  ### 除外するエンドポイント
+</div>
+
+次のエンドポイントには Managed Challenge を適用しないでください。これらはサーバー、SDK、またはリソースサーバーから呼び出されるため、インタラクティブなチャレンジには対応できません。
+
+| エンドポイント                             | 説明                                          |
+| ----------------------------------- | ------------------------------------------- |
+| `/oauth/token`                      | トークンエンドポイント                                 |
+| `/oauth/revoke`                     | トークン失効エンドポイント                               |
+| `/userinfo`                         | UserInfo エンドポイント                            |
+| `/.well-known/openid-configuration` | OIDC ディスカバリドキュメント                           |
+| `/.well-known/jwks.json`            | JSON Web Key Set。リソースサーバーがトークンを検証するために取得します |
+| `/api/v2/*`                         | Management API                              |
+| `/co/authenticate`                  | クロスオリジン認証                                   |
+| `/dbconnections/signup`             | データベース接続: サインアップ                            |
+| `/dbconnections/change_password`    | データベース接続: パスワード変更                           |
+| `/usernamepassword/login`           | Classic Universal Login のフォーム送信             |
+| `/mfa/challenge`                    | チャレンジリクエスト                                  |
+| `/mfa/associate`                    | 認証器の関連付け                                    |
+| `/passwordless/start`               | パスワードレス: 開始リクエスト                            |
+| `/samlp/*`                          | SAML プロトコルエンドポイント                           |
+| `/wsfed/*`                          | WS-Federation エンドポイント                       |
+| `/v2/logout`                        | バックチャネルログアウトフローではサーバー側から呼び出される場合があります       |
+
+<div id="example-rule">
+  ### ルールの例
+</div>
+
+Managed Challenge をブラウザベースの Universal Login フローにのみ適用するには、Cloudflare で [WAF Custom Rule](https://developers.cloudflare.com/waf/custom-rules/) を作成します。ルールのアクションを **Managed Challenge** に設定し、次の式を使用します。`YOUR_CUSTOM_DOMAIN` はカスタムドメイン (たとえば `login.example.com`) に置き換えてください。
+
+```text
+(http.host eq "YOUR_CUSTOM_DOMAIN" and (
+  http.request.uri.path eq "/authorize" or
+  starts_with(http.request.uri.path, "/u/") or
+  http.request.uri.path eq "/login"
+))
+```
+
+これにより、チャレンジの適用対象はブラウザ表示を伴う Universal Login エンドポイントのみに限定され、API トラフィックやマシン間通信への影響を防げます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  いくつかのユースケースでは、動作が異なる場合があります。
+
+  * **クリアランス Cookie の維持**: ブラウザーが Managed Challenge を通過すると、Cloudflare は通常、セッション中有効なクリアランス Cookie を発行します。設定によっては、ルールの適用対象を `/authorize` のみに限定するだけで、すべての `/u/*` パスに適用しなくても Universal Login フロー全体をカバーできる場合があります。
+  * **OAuth 以外のエントリポイント**: SAML の SP 開始型または WS-Federation のエントリポイントから始まるフローでは、`/authorize` ではなく `/samlp/*` または `/wsfed/*` が使用されます。これらのパスは除外リストに含まれているため、Managed Challenge を適用しないでください。
+</Callout>
+
+<div id="configure-auth0">
+  ## Auth0 を設定する
+</div>
+
+リクエストボディに次のペイロードを指定して、Auth0 の <Tooltip tip="Management API: お客様が管理タスクを実行できるようにするプロダクトです。" cta="用語集を見る" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip> の [カスタムドメイン設定を更新](https://auth0.com/docs/api/management/v2#!/Custom_Domains/patch_custom_domains_by_id) エンドポイントを呼び出します。
+
+```json lines
+{
+  "custom_client_ip_header": "true-client-ip"
+}
+```
+
+<div id="learn-more">
+  ## 詳しくはこちら
+</div>
+
+* [カスタムドメインで使用する機能を設定する](/ja/docs/customize/custom-domains/configure-features-to-use-custom-domains)
+* [カスタムドメインのトラブルシューティング](/ja/docs/troubleshoot/integration-extensibility-issues/troubleshoot-custom-domains)
+* [TLS (SSL) のバージョンと暗号スイート](/ja/docs/customize/custom-domains/self-managed-certificates/tls-ssl)

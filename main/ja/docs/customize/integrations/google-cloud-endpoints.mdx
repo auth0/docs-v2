@@ -1,0 +1,539 @@
+---
+description: Auth0 を使用して Google Cloud Endpoints API を保護する方法。
+title: Auth0 を使用して Google Cloud Endpoints を保護する
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+import {AuthCodeGroup} from "/snippets/ja/AuthCodeGroup.jsx";
+
+[Google Cloud Endpoints (GCE)](https://cloud.google.com/endpoints/) は API 管理システムで、API の作成、保守、保護に役立つ機能を提供します。GCE は [OpenAPI](https://www.openapis.org/) を使用して、API のエンドポイント、入力と出力、エラー、セキュリティに関する説明を定義します。
+
+OpenAPI 仕様の詳細については、GitHub 上の [OpenAPI Specification](https://github.com/OAI/OpenAPI-Specification) リポジトリを参照してください。
+
+このチュートリアルでは、Auth0 を使用して Google Cloud Endpoints を保護する方法について説明します。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+開始する前に、デプロイ済みの GCE API が必要です。まだ API を作成していない場合は、Google ドキュメントの [Cloud Endpoints クイックスタート](https://cloud.google.com/endpoints/docs/quickstart-endpoints) を完了してください。
+
+この quickstart では、`/airportName` という単一のエンドポイントを持つシンプルな GCE API を作成します。このエンドポイントは、空港の 3 文字の [IATA code](https://en.wikipedia.org/wiki/IATA_airport_code) から空港の名前を返します。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url 'https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO'
+  ```
+
+  ```csharp C# lines
+  var client = new RestClient("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO");
+  var request = new RestRequest(Method.GET);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse<String> response = Unirest.get("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'GET',
+    url: 'https://%7ByourGceProject%7D.appspot.com/airportName',
+    params: {iataCode: 'SFO'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  conn.request("GET", "%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Get.new(url)
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="define-the-api-in-auth0">
+  ## Auth0 で API を定義する
+</div>
+
+[Auth0 Dashboard &gt; Applications &gt; APIs](https://manage.auth0.com/#/apis) に移動し、新しい API を作成します。
+
+<Frame>![Dashboard - API の作成 - 統合 - Google Endpoints](/docs/images/cdy7uua7fh8z/7wUHnYBFp1jnbBurqoThpD/c3a31b64884c3adc2251a225a1ddd1dd/Create_API_-_EN.png)</Frame>
+
+次の手順で使用するため、**API の<Tooltip tip="対象者: 発行されたトークンの対象者を一意に識別する値です。トークン内では aud という名前で、その値には IDトークン の場合はアプリケーション（クライアントID）、アクセストークン の場合は API（API 識別子）の ID が含まれます。" cta="用語集を見る" href="/ja/docs/glossary?term=Audience">対象者</Tooltip>**識別子 (上のスクリーンショットでは `http://google_api`) を控えておきます。
+
+<div id="update-the-api-configuration">
+  ## API Configuration を更新する
+</div>
+
+次に、GCE API の OpenAPI 設定ファイルを更新します。quickstart で作成したサンプル API では、このファイルは `openapi.yaml` になります。
+
+<div id="add-security-definitions">
+  ### セキュリティ定義を追加する
+</div>
+
+設定ファイルを開き、新しい `securityDefinitions` セクションを追加します。このセクションに、次のフィールドを含む新しい定義 (`auth0_jwt`) を追加します。
+
+| Field                | Description                                                                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `authorizationUrl`   | 認可 URL です。`"https://{yourDomain}/authorize"` に設定します                                                                                                   |
+| `flow`               | OAuth2 セキュリティスキームで使用するフローです。有効な値は `"implicit"`、`"password"`、`"application"`、`"accessCode"` です。                                                        |
+| `type`               | セキュリティスキームのタイプです。有効な値は `"basic"`、`"apiKey"`、`"oauth2"` です                                                                                             |
+| `x-google-issuer`    | クレデンシャルの発行元です。`"https://{yourDomain}/"` に設定します                                                                                                        |
+| `x-google-jwks_uri`  | [JSON Web Token (JWT)](/ja/docs/glossary?term=JSON+Web+Token+%28JWT%29) の署名を検証するための公開鍵セットの URI です。`"https://\{yourDomain}/.well-known/jwks.json"` に設定します |
+| `x-google-audiences` | API の識別子です。この値が、API に対して Auth0 Dashboard で定義した値と一致していることを確認してください。                                                                                    |
+
+{/* codeblockOld.header.login.logInButton codeblockOld.header.login.configureSnippet */}
+
+export const codeExample1 = `securityDefinitions:
+  auth0_jwt:
+    authorizationUrl: "https://{yourDomain}/authorize"
+    flow: "implicit"
+    type: "oauth2"
+    x-google-issuer: "https://{yourDomain}/"
+    x-google-jwks_uri: "https://{yourDomain}/.well-known/jwks.json"
+    x-google-audiences: "{yourApiIdentifier}"`;
+
+<AuthCodeBlock children={codeExample1} language="yaml" />
+
+<div id="update-the-endpoint">
+  ### エンドポイントを更新する
+</div>
+
+次に、前の手順で作成した `securityDefinition` を指定した `security` フィールドを追加して、エンドポイントを更新します。
+
+```yaml lines
+paths:
+  "/airportName":
+    get:
+      description: "Get the airport name for a given IATA code."
+      operationId: "airportName"
+      parameters:
+        -
+          name: iataCode
+          in: query
+          required: true
+          type: string
+      responses:
+        200:
+          description: "Success."
+          schema:
+            type: string
+        400:
+          description: "The IATA code is invalid or missing."
+      security:
+       - auth0_jwt: []
+```
+
+上記の例では、`security` フィールドにより、`/airportName` パスが `auth0-jwt` 定義で保護されることを GCE プロキシに伝えています。
+
+OpenAPI の設定を更新すると、次のようになります。
+
+{/* codeblockOld.header.login.logInButton codeblockOld.header.login.configureSnippet */}
+
+export const codeExample2 = `---
+swagger: "2.0"
+info:
+  title: "空港コード"
+  description: "3文字の IATA コードから空港名を取得します。"
+  version: "1.0.0"
+host: "{yourGceProject}.appspot.com"
+schemes:
+  - "https"
+paths:
+  "/airportName":
+    get:
+      description: "指定した IATA コードに対応する空港名を取得します。"
+      operationId: "airportName"
+      parameters:
+        -
+          name: iataCode
+          in: query
+          required: true
+          type: string
+      responses:
+        200:
+          description: "成功。"
+          schema:
+            type: string
+        400:
+          description: "IATA コードが無効であるか、指定されていません。"
+      security:
+       - auth0_jwt: []
+securityDefinitions:
+  auth0_jwt:
+    authorizationUrl: "https://{yourDomain}/authorize"
+    flow: "implicit"
+    type: "oauth2"
+    x-google-issuer: "https://{yourDomain}/"
+    x-google-jwks_uri: "https://{yourDomain}/.well-known/jwks.json"
+    x-google-audiences: "{yourApiIdentifier}"`;
+
+<AuthCodeBlock children={codeExample2} language="yaml" />
+
+<div id="redeploy-the-api">
+  ### API を再デプロイする
+</div>
+
+次に、設定変更を反映するため、GCE API を再デプロイします。[Cloud Endpoints クイックスタート](https://cloud.google.com/endpoints/docs/quickstart-endpoints) の手順に沿って進めている場合は、Google の Cloud Shell で次のコマンドを入力して再デプロイできます。
+
+```bash lines
+cd endpoints-quickstart/scripts
+./deploy_api.sh
+```
+
+<div id="test-the-api">
+  ## API をテストする
+</div>
+
+再デプロイしたら、セキュリティなしで API を再度呼び出します。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url 'https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO'
+  ```
+
+  ```csharp C# lines
+  var client = new RestClient("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO");
+  var request = new RestRequest(Method.GET);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse<String> response = Unirest.get("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'GET',
+    url: 'https://%7ByourGceProject%7D.appspot.com/airportName',
+    params: {iataCode: 'SFO'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  conn.request("GET", "%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Get.new(url)
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+次のレスポンスが返されます。
+
+```json lines
+{
+ "code": 16,
+ "message": "JWT validation failed: Missing or invalid credentials",
+ "details": [
+  {
+   "@type": "type.googleapis.com/google.rpc.DebugInfo",
+   "stackEntries": [],
+   "detail": "auth"
+  }
+ ]
+}
+```
+
+これがまさに期待どおりの結果です！
+
+次に、[Auth0 Dashboard](https://manage.auth0.com/#/apis) で Google Endpoints API 定義の **Test** ページに移動し、Response の下にある <Tooltip tip="アクセストークン: API へのアクセスに使用される認可資格情報で、不透明な文字列または JWT の形式です。" cta="用語集を表示" href="/ja/docs/glossary?term=Access+Token">アクセストークン</Tooltip> をコピーします。
+
+認可された状態でアクセスするには、`Bearer {ACCESS_TOKEN}` を指定した Authorization ヘッダーを付けて、API に `GET` リクエストを送信します。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url 'https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO' \
+    --header 'authorization: Bearer {accessToken}'
+  ```
+
+  ```csharp C# lines
+  var client = new RestClient("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO");
+  var request = new RestRequest(Method.GET);
+  request.AddHeader("authorization", "Bearer {accessToken}");
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	req.Header.Add("authorization", "Bearer {accessToken}")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse<String> response = Unirest.get("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+    .header("authorization", "Bearer {accessToken}")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'GET',
+    url: 'https://%7ByourGceProject%7D.appspot.com/airportName',
+    params: {iataCode: 'SFO'},
+    headers: {authorization: 'Bearer {accessToken}'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer {accessToken}"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  headers = { 'authorization': "Bearer {accessToken}" }
+
+  conn.request("GET", "%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO", headers=headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://%7ByourGceProject%7D.appspot.com/airportName?iataCode=SFO")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Get.new(url)
+  request["authorization"] = 'Bearer {accessToken}'
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+これで完了です。

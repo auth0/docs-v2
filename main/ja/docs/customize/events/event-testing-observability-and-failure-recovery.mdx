@@ -1,0 +1,202 @@
+---
+description: イベントとイベントストリームのテストおよび管理について説明します。
+title: イベントのテスト、可観測性、障害復旧
+---
+
+以下のセクションでは、イベントストリームのテスト方法とイベントの管理方法について説明します。
+
+<div id="test-the-event-stream">
+  ## イベントストリームをテストする
+</div>
+
+イベントストリームを作成して有効にすると、新しいストリームをテストできます。現在、Auth0 は無効化されたイベントストリームへのイベント送信をサポートしていません。
+
+イベントストリームをテストするには、まず次のコマンドを実行し、任意の認証情報を指定してアプリケーション用のユーザーを作成します。
+
+<Tabs>
+  <Tab title="Auth0 CLI">
+    ```bash lines
+    auth0 users create # プロンプトに従ってテストユーザーを作成します
+    ```
+  </Tab>
+
+  <Tab title="cURL">
+    ```bash lines
+    curl -s \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -X POST https://$TENANT/api/v2/users \
+      -d '{
+            "email": "nick-testing-21@example.com",
+            "password": "Password123!",
+            "connection": "Username-Password-Authentication"
+          }'
+    ```
+  </Tab>
+</Tabs>
+
+ユーザーが作成されると、イベントストリームで `user.created` イベントがトリガーされ、レスポンスが返されるはずです。この例では、イベントストリームの送信先としてウェブフックを使用しています。
+
+```json lines expandable
+"Webhook received": {
+  "id": "evt_6SfwXrtm8nVcjzzNCFFH1L",
+  "source": "urn:auth0:",
+  "specversion": "1.0",
+  "type": "user.created",
+  "time": "2025-02-02T17:56:01.573Z",
+  "data": {
+    "object": {
+      "created_at": "2025-02-02T17:56:01.566Z",
+      "email": "nick-testing-21@example.com",
+      "email_verified": false,
+      "identities": [
+        {
+          "connection": "Username-Password-Authentication",
+          "isSocial": false,
+          "provider": "auth0",
+          "user_id": "679fb1b1e809445f129bc18d"
+        }
+      ],
+      "name": "nick-testing-21@example.com",
+      "nickname": "nick-testing-21",
+      "picture": "test.png",
+      "updated_at": "2025-02-02T17:56:01.566Z",
+      "user_id": "auth0|679fb1b1e809445f129bc18d"
+    }
+  },
+  "a0tenant": "acme",
+  "a0stream": "est_38ANnv8pQhqsZrX2VFbftv",
+  "a0purpose": "test"
+}
+```
+
+次を実行すると、特定のイベントストリームのイベント配信失敗を一覧表示できます。
+
+<Tabs>
+  <Tab title="Auth0 CLI">
+    ```bash lines
+    auth0 api get event-streams/$EVENT_STREAM_ID/deliveries
+    ```
+  </Tab>
+
+  <Tab title="cURL">
+    ```bash lines
+    curl -s -H "Authorization: Bearer $TOKEN" \
+      "https://$TENANT/api/v2/event-streams/${EVENT_STREAM_ID}/deliveries" | jq .
+    ```
+  </Tab>
+</Tabs>
+
+空の配信失敗配列が返された場合、イベントストリームは正常に動作しています。
+
+<div id="observability">
+  ## 可観測性
+</div>
+
+イベントストリームの信頼性を確保するため、配信失敗を定期的に確認し、必要に応じてアラートを発報する監視プロセスを実装します。
+
+配信失敗は、次の原因で発生する可能性があります。
+
+* イベントストリームが無効になっている。
+* イベントストリームが利用できない。
+* 接続エラー。
+
+<div id="polling-deliveries-endpoint">
+  ### Deliveries エンドポイントのポーリング
+</div>
+
+失敗したイベントを確認するため、**5 分**ごとに Deliveries エンドポイントをポーリングします。最近のイベント配信を取得するには、次の API 呼び出しを使用します。
+
+<Tabs>
+  <Tab title="Auth0 CLI">
+    ```bash lines
+    auth0 api get event-streams/$EVENT_STREAM_ID/deliveries
+    ```
+  </Tab>
+
+  <Tab title="cURL">
+    ```bash lines
+    curl -s -H "Authorization: Bearer $TOKEN" \
+      "https://$TENANT/api/v2/event-streams/${EVENT_STREAM_ID}/deliveries" | jq .
+    ```
+  </Tab>
+</Tabs>
+
+失敗が検出された場合:
+
+* 失敗したイベントの詳細をログに記録します。
+* 問題を確認して原因を特定できるよう、適切なチームまたはシステムに通知します。
+
+<div id="recovery">
+  ## 復旧
+</div>
+
+イベント配信は自動的に再試行されます。詳しくは、[ベストプラクティス](/ja/docs/customize/events/event-testing-observability-and-failure-recovery#batch-redelivery-of-failed-events)を参照してください。
+
+配信に失敗した場合は、Redelivery API を使用してイベント配信を再度試行できます。
+
+<div id="redeliver-a-single-failed-event">
+  ### 失敗した単一のイベントを再配信する
+</div>
+
+特定の失敗したイベントを再試行するには、次を使用します。
+
+<Tabs>
+  <Tab title="Auth0 CLI">
+    ```bash lines
+    EVENT_ID=<your event id>
+    auth0 api POST event-streams/$EVENT_STREAM_ID/redeliver/$EVENT_ID --data '{}'
+    ```
+  </Tab>
+
+  <Tab title="cURL">
+    ```bash lines
+    curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+      "https://<your-domain>/api/v2/event-streams/$EVENT_STREAM_ID/redeliver/$EVENT_ID"
+    ```
+  </Tab>
+</Tabs>
+
+<div id="batch-redelivery-of-failed-events">
+  ### 失敗したイベントの一括再配信
+</div>
+
+イベントストリーム内の失敗したすべてのイベントを再試行するには、次のようにします。
+
+<Tabs>
+  <Tab title="Auth0 CLI">
+    ```bash wrap lines
+    auth0 api POST event-streams/$EVENT_STREAM_ID/redeliver --data '{}'
+    ```
+  </Tab>
+
+  <Tab title="cURL">
+    ```bash lines
+    curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+      "https://<your-tenant>.auth0.com/api/v2/event-streams/<event_stream_id>/redeliver"
+    ```
+  </Tab>
+</Tabs>
+
+<div id="auto-disable-mechanism">
+  ### 自動無効化の仕組み
+</div>
+
+Auth0 は、失敗が過剰に発生した場合、イベントストリームを自動的に無効化します。
+
+| 条件          | 実行されるアクション             |
+| ----------- | ---------------------- |
+| 500 回連続で失敗  | イベントストリームは自動的に無効化されます。 |
+| 合計 5000 回失敗 | イベントストリームは自動的に無効化されます。 |
+
+* イベントストリームが自動的に無効化された場合、失敗したイベントを処理するには、**必ず** Redelivery API を使用する必要があります。
+* 合計失敗数が 5000 未満になるまで、イベントストリームを手動で再有効化することは**できません**。
+* 失敗数が減ったら、API を使用してストリームを再有効化できます。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [イベントタイプ](/ja/docs/customize/events/event-types)
+* [イベントストリームを作成する](/ja/docs/customize/events/create-an-event-stream)
+* [イベントのベストプラクティス](/ja/docs/customize/events/events-best-practices)

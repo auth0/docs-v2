@@ -1,0 +1,914 @@
+---
+title: Go API を保護する
+sidebarTitle: Go API
+description: このガイドでは、go-jwt-middleware v3 SDK を使用して、JWT アクセストークンで Go API のエンドポイントを保護する方法を説明します。
+mode: wide
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+export const envSnippet = `# Auth0テナントドメインのURL。
+# カスタムドメインを使用している場合は、代わりにその値を設定します。
+AUTH0_DOMAIN='{yourDomain}'
+
+# Auth0 API の識別子（ステップ 2）
+# 例: https://my-go-api.example.com
+AUTH0_AUDIENCE='{yourApiIdentifier}'`;
+
+<Accordion title="AI を使用して Auth0 を統合する" icon="microchip-ai" iconType="solid" defaultOpen>
+  Claude Code、Cursor、GitHub Copilot などの AI コーディングアシスタントを使用している場合は、[agent skills](https://agentskills.io/home) を使って数分で Auth0 API 認証を自動的に追加できます。
+
+  **インストール:**
+
+  ```bash
+  npx skills add auth0/agent-skills --skill auth0-quickstart --skill go-jwt-middleware
+  ```
+
+  **次に、AI アシスタントに次のように依頼します。**
+
+  ```text
+  Add Auth0 JWT authentication to my Go API
+  ```
+
+  AI アシスタントは、Auth0 API の作成、認証情報の取得、`go-jwt-middleware` のインストール、バリデーターの設定、JWT 検証による API エンドポイントの保護を自動的に行います。[agent skills の完全なドキュメント →](/ja/docs/quickstart/agent-skills)
+</Accordion>
+
+<Note>
+  **前提条件:** 開始する前に、以下がインストールされていることを確認してください。
+
+  * **[Go](https://go.dev/doc/install)** 1.24 以降 (go-jwt-middleware v3 でジェネリクスをサポートするために必要)
+  * **[Git](https://git-scm.com/downloads)** バージョン管理用
+
+  インストールの確認: `go version`
+</Note>
+
+<div id="get-started">
+  ## はじめに
+</div>
+
+公開アクセス、JWT 認証、スコープベースの権限保護という 3 つの異なる保護レベルを示すエンドポイントを備えた Go API を構築します。完全な実装では、Go の標準 `net/http` ライブラリと [go-jwt-middleware v3](https://github.com/auth0/go-jwt-middleware) を使用します。
+
+<Card title="GitHub でサンプルを表示" href="https://github.com/auth0-samples/auth0-golang-api-samples/tree/master/01-Quickstart-Go-API" icon="github">
+  テストを含む完全な動作例
+</Card>
+
+<Steps>
+  <Step title="新規プロジェクトを作成" stepNumber={1}>
+    Go API 用の新しいディレクトリを作成し、モジュールを初期化します。
+
+    ```shellscript
+    mkdir myapi && cd myapi
+    go mod init github.com/yourorg/myapi
+    ```
+
+    必要な依存パッケージをインストールします。
+
+    ```shellscript
+    go get github.com/auth0/go-jwt-middleware/v3
+    go get github.com/joho/godotenv
+    go mod download
+    ```
+
+    プロジェクトの構成を作成します：
+
+    ```shellscript
+    mkdir -p cmd/server internal/auth internal/config internal/handlers
+    touch .env cmd/server/main.go internal/config/auth.go internal/auth/claims.go internal/auth/validator.go internal/auth/middleware.go internal/handlers/api.go
+    ```
+
+    <Accordion title="想定される go.mod を見る">
+      ```go go.mod
+      module github.com/yourorg/myapi
+
+      go 1.24
+
+      require (
+          github.com/auth0/go-jwt-middleware/v3 v3.1.0
+          github.com/joho/godotenv v1.5.1
+      )
+      ```
+    </Accordion>
+  </Step>
+
+  <Step title="Auth0 APIを設定する" stepNumber={2}>
+    次に、Auth0テナントに新しいAPIを作成し、環境変数をプロジェクトに追加する必要があります。
+
+    Auth0 API の設定方法は 2 つあります。CLI コマンドを使うか、Auth0 Dashboard から手動で設定します。
+
+    <Tabs>
+      <Tab title="CLI">
+        Auth0 API を作成するには、プロジェクトのルートディレクトリで次のコマンドを実行します。
+
+        <CodeGroup>
+          ```shellscript Mac
+          # Auth0 CLI をインストール（まだインストールしていない場合）
+          brew tap auth0/auth0-cli && brew install auth0
+
+          # Auth0 API を作成
+          auth0 apis create \
+            --name "My Go API" \
+            --identifier https://my-go-api.example.com
+          ```
+
+          ```powershell Windows
+          # Auth0 CLI をインストール（まだインストールしていない場合）
+          scoop bucket add auth0 https://github.com/auth0/scoop-auth0-cli.git
+          scoop install auth0
+
+          # Auth0 API を作成
+          auth0 apis create `
+            --name "My Go API" `
+            --identifier https://my-go-api.example.com
+          ```
+        </CodeGroup>
+
+        作成後、**Identifier** と **Domain** の値をコピーし、`.env` ファイルを作成します。
+
+        <AuthCodeBlock children={envSnippet} language="bash" />
+
+        <Note>
+          このコマンドでは次の処理が行われます。
+
+          1. 認証済みかどうかを確認し、必要に応じてログインを求めます
+          2. 指定した Identifier で Auth0 API を作成します
+          3. ドメインと Identifier を含む API の詳細を表示します
+        </Note>
+      </Tab>
+
+      <Tab title="Dashboard">
+        1. [Auth0 Dashboard](https://manage.auth0.com/dashboard/) に移動します
+        2. **Applications** → **APIs** → **Create API** に進みます
+        3. API の名前を入力します (例: &quot;My Go API&quot;)
+        4. **Identifier** を設定します (例: `https://my-go-api.example.com`)
+           * これは API のオーディエンスであり、有効な URL 形式である必要があります
+           * 実在する URL である必要はなく、単なる識別子です
+        5. **Signing Algorithm** は **RS256** のままにします
+        6. **Create** をクリックします
+        7. **Settings** タブから **Identifier** の値をコピーします
+
+        次の値を含む `.env` ファイルを作成します。
+
+        ```bash .env
+        AUTH0_DOMAIN=YOUR_AUTH0_DOMAIN
+        AUTH0_AUDIENCE=YOUR_API_IDENTIFIER
+        ```
+
+        <Warning>
+          `YOUR_AUTH0_DOMAIN` は Auth0 テナントのドメイン (例: `dev-abc123.us.auth0.com`) に、`YOUR_API_IDENTIFIER` は Auth0 Dashboard の API Identifier (例: `https://my-go-api.example.com`) に置き換えてください。
+        </Warning>
+      </Tab>
+    </Tabs>
+
+    <Tip>
+      **セキュリティ**: `.env` ファイルは絶対にバージョン管理へコミットしないでください。`.gitignore` ファイルに `.env` を追加してください。
+    </Tip>
+  </Step>
+
+  <Step title="API の権限を定義する" stepNumber={3}>
+    Permissions (スコープ) を使用して、リソースへのアクセス方法を定義できます。たとえば、マネージャーには `read` アクセスを付与し、管理者には `write` アクセスを付与します。
+
+    1. API の設定で、**Permissions** タブをクリックします
+    2. 次の権限を作成します。
+
+    | Permission      | Description      |
+    | --------------- | ---------------- |
+    | `read:messages` | API からメッセージを読み取る |
+
+    <Info>
+      このチュートリアルでは、スコープで保護されたエンドポイントを保護するために `read:messages` スコープを使用します。アプリケーションの要件に応じて、追加の権限を定義できます。
+    </Info>
+  </Step>
+
+  <Step title="設定ローダーを作成" stepNumber={4}>
+    環境変数の読み込みと検証を行う設定パッケージを作成します。
+
+    ```go internal/config/auth.go lines
+    package config
+
+    import (
+        "fmt"
+        "os"
+    )
+
+    type AuthConfig struct {
+        Domain   string
+        Audience string
+    }
+
+    func LoadAuthConfig() (*AuthConfig, error) {
+        domain := os.Getenv("AUTH0_DOMAIN")
+        if domain == "" {
+            return nil, fmt.Errorf("AUTH0_DOMAIN environment variable required")
+        }
+
+        audience := os.Getenv("AUTH0_AUDIENCE")
+        if audience == "" {
+            return nil, fmt.Errorf("AUTH0_AUDIENCE environment variable required")
+        }
+
+        return &AuthConfig{
+            Domain:   domain,
+            Audience: audience,
+        }, nil
+    }
+    ```
+
+    **この処理で行うこと:**
+
+    * 環境変数から Auth0 のドメインとオーディエンスを読み込みます
+    * 起動時に、必要な設定が揃っていることを検証します
+    * アプリケーション全体で使用できる型安全な設定構造体を返します
+  </Step>
+
+  <Step title="カスタムクレームとJWTバリデーターの作成" stepNumber={5}>
+    カスタムクレームを使用すると、JWT からアプリケーション固有のデータを抽出して検証できます。validator は、Auth0 に対してトークンを検証する中核コンポーネントです。
+
+    <Tabs>
+      <Tab title="claims.go">
+        ```go internal/auth/claims.go lines
+        package auth
+
+        import (
+            "context"
+            "fmt"
+            "strings"
+        )
+
+        // CustomClaims には、JWT から解析するカスタムデータが含まれます。
+        type CustomClaims struct {
+            Scope string `json:"scope"`
+        }
+
+        // Validate は、カスタムクレームの形式が正しいことを確認します。
+        func (c *CustomClaims) Validate(ctx context.Context) error {
+            if c.Scope == "" {
+                return nil
+            }
+
+            if strings.TrimSpace(c.Scope) != c.Scope {
+                return fmt.Errorf("scope claim has invalid whitespace")
+            }
+
+            if strings.Contains(c.Scope, "  ") {
+                return fmt.Errorf("scope claim contains double spaces")
+            }
+
+            return nil
+        }
+
+        // HasScope は、クレームに特定のスコープが含まれているかどうかを確認します。
+        func (c *CustomClaims) HasScope(expectedScope string) bool {
+            if c.Scope == "" {
+                return false
+            }
+
+            scopes := strings.Split(c.Scope, " ")
+            for _, scope := range scopes {
+                if scope == expectedScope {
+                    return true
+                }
+            }
+            return false
+        }
+        ```
+      </Tab>
+
+      <Tab title="validator.go">
+        ```go internal/auth/validator.go lines
+        package auth
+
+        import (
+            "fmt"
+            "net/url"
+            "time"
+
+            "github.com/auth0/go-jwt-middleware/v3/jwks"
+            "github.com/auth0/go-jwt-middleware/v3/validator"
+        )
+
+        func NewValidator(domain, audience string) (*validator.Validator, error) {
+            // issuer URL を構築します（末尾のスラッシュが必要です）
+            issuerURL, err := url.Parse("https://" + domain + "/")
+            if err != nil {
+                return nil, fmt.Errorf("failed to parse issuer URL: %w", err)
+            }
+
+            // v3 の options パターンを使用して JWKS プロバイダーを初期化します
+            provider, err := jwks.NewCachingProvider(
+                jwks.WithIssuerURL(issuerURL),
+                jwks.WithCacheTTL(5*time.Minute),
+            )
+            if err != nil {
+                return nil, fmt.Errorf("failed to create JWKS provider: %w", err)
+            }
+
+            // v3 の options パターンを使用して validator を作成します
+            jwtValidator, err := validator.New(
+                validator.WithKeyFunc(provider.KeyFunc),
+                validator.WithAlgorithm(validator.RS256),
+                validator.WithIssuer(issuerURL.String()),
+                validator.WithAudience(audience),
+                validator.WithCustomClaims(func() validator.CustomClaims {
+                    return &CustomClaims{}
+                }),
+                validator.WithAllowedClockSkew(30*time.Second),
+            )
+            if err != nil {
+                return nil, fmt.Errorf("failed to create validator: %w", err)
+            }
+
+            return jwtValidator, nil
+        }
+        ```
+      </Tab>
+    </Tabs>
+
+    **重要なポイント:**
+
+    * `Validate` メソッドは、JWT の解析後にミドルウェアによって自動的に呼び出されます
+    * `HasScope` は、権限ベースのアクセス制御のためにスペース区切りのスコープを解析します
+    * validator は JWKS キャッシュ (TTL 5 分) を使用し、30 秒のクロックスキューを許容します
+    * RS256 アルゴリズムは、[algorithm confusion attacks](https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/) を防ぐために明示的に設定されています
+  </Step>
+
+  <Step title="HTTPミドルウェアとハンドラーを作成する" stepNumber={6}>
+    このミドルウェアは、HTTP リクエスト用バリデーターをラップします。ハンドラーでは、公開、非公開、スコープベースの 3 つの保護レベルを示しています。
+
+    <Tabs>
+      <Tab title="middleware.go">
+        ```go internal/auth/middleware.go lines
+        package auth
+
+        import (
+            "log/slog"
+            "net/http"
+
+            jwtmiddleware "github.com/auth0/go-jwt-middleware/v3"
+            "github.com/auth0/go-jwt-middleware/v3/validator"
+        )
+
+        func NewMiddleware(jwtValidator *validator.Validator) (*jwtmiddleware.JWTMiddleware, error) {
+            return jwtmiddleware.New(
+                jwtmiddleware.WithValidator(jwtValidator),
+                jwtmiddleware.WithValidateOnOptions(false),
+                jwtmiddleware.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+                    slog.Error("JWT validation failed", "error", err, "path", r.URL.Path)
+                    w.Header().Set("Content-Type", "application/json")
+                    w.WriteHeader(http.StatusUnauthorized)
+                    w.Write([]byte(`{"message":"Failed to validate JWT."}`))
+                }),
+            )
+        }
+        ```
+      </Tab>
+
+      <Tab title="api.go">
+        ```go internal/handlers/api.go expandable lines
+        package handlers
+
+        import (
+            "encoding/json"
+            "net/http"
+
+            "github.com/yourorg/myapi/internal/auth"
+            jwtmiddleware "github.com/auth0/go-jwt-middleware/v3"
+            "github.com/auth0/go-jwt-middleware/v3/validator"
+        )
+
+        // PublicHandler - 認証は不要
+        func PublicHandler(w http.ResponseWriter, r *http.Request) {
+            response := map[string]string{
+                "message": "Hello from a public endpoint! You don't need to be authenticated to see this.",
+            }
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(response)
+        }
+
+        // PrivateHandler - 有効な JWT が必要
+        func PrivateHandler(w http.ResponseWriter, r *http.Request) {
+            response := map[string]string{
+                "message": "Hello from a private endpoint! You need to be authenticated to see this.",
+            }
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(response)
+        }
+
+        // ScopedHandler - 'read:messages' 権限が必要
+        func ScopedHandler(w http.ResponseWriter, r *http.Request) {
+            claims, err := jwtmiddleware.GetClaims[*validator.ValidatedClaims](r.Context())
+            if err != nil {
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusUnauthorized)
+                w.Write([]byte(`{"message":"Unauthorized."}`))
+                return
+            }
+
+            customClaims, ok := claims.CustomClaims.(*auth.CustomClaims)
+            if !ok || !customClaims.HasScope("read:messages") {
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusForbidden)
+                w.Write([]byte(`{"message":"Insufficient scope."}`))
+                return
+            }
+
+            response := map[string]string{
+                "message": "Hello from a private endpoint! You need to be authenticated and have a scope of read:messages to see this.",
+            }
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(response)
+        }
+        ```
+      </Tab>
+    </Tabs>
+
+    **保護レベル:**
+
+    * **Public** (`/api/public`) — 認証は不要です
+    * **Private** (`/api/private`) — 有効な JWT が必要です
+    * **Scoped** (`/api/private-scoped`) — 有効な JWT と `read:messages` 権限が必要です
+  </Step>
+
+  <Step title="メインサーバーを作成" stepNumber={7}>
+    本番運用向けのタイムアウトとグレースフルシャットダウンを設定し、メインのエントリポイントですべてを組み合わせます：
+
+    ```go cmd/server/main.go expandable lines
+    package main
+
+    import (
+        "context"
+        "log"
+        "net/http"
+        "os"
+        "os/signal"
+        "time"
+
+        "github.com/yourorg/myapi/internal/auth"
+        "github.com/yourorg/myapi/internal/config"
+        "github.com/yourorg/myapi/internal/handlers"
+        "github.com/joho/godotenv"
+    )
+
+    func main() {
+        // .envファイルから環境変数を読み込む
+        if err := godotenv.Load(); err != nil {
+            log.Println("No .env file found, using environment variables")
+        }
+
+        // Auth0の設定を読み込む
+        cfg, err := config.LoadAuthConfig()
+        if err != nil {
+            log.Fatalf("Failed to load config: %v", err)
+        }
+
+        // JWTバリデーターを作成する
+        jwtValidator, err := auth.NewValidator(cfg.Domain, cfg.Audience)
+        if err != nil {
+            log.Fatalf("Failed to create validator: %v", err)
+        }
+
+        // HTTPミドルウェアを作成する
+        middleware, err := auth.NewMiddleware(jwtValidator)
+        if err != nil {
+            log.Fatalf("Failed to create middleware: %v", err)
+        }
+
+        // ルーティングを設定する
+        mux := http.NewServeMux()
+        mux.HandleFunc("/api/public", handlers.PublicHandler)
+        mux.Handle("/api/private", middleware.CheckJWT(http.HandlerFunc(handlers.PrivateHandler)))
+        mux.Handle("/api/private-scoped", middleware.CheckJWT(http.HandlerFunc(handlers.ScopedHandler)))
+
+        // 本番環境向けタイムアウトを設定してサーバーを構成する
+        srv := &http.Server{
+            Addr:         ":8080",
+            Handler:      mux,
+            ReadTimeout:  15 * time.Second,
+            WriteTimeout: 15 * time.Second,
+            IdleTimeout:  60 * time.Second,
+        }
+
+        // ゴルーチンでサーバーを起動する
+        go func() {
+            log.Println("Server starting on :8080")
+            if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+                log.Fatalf("Server failed: %v", err)
+            }
+        }()
+
+        // グレースフルシャットダウン
+        quit := make(chan os.Signal, 1)
+        signal.Notify(quit, os.Interrupt)
+        <-quit
+
+        log.Println("Shutting down server...")
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+
+        if err := srv.Shutdown(ctx); err != nil {
+            log.Fatalf("Server forced to shutdown: %v", err)
+        }
+
+        log.Println("Server exited")
+    }
+    ```
+
+    <Accordion title="プロジェクト構成">
+      ```
+      myapi/
+      ├── cmd/
+      │   └── server/
+      │       └── main.go              # アプリケーションのエントリーポイント
+      ├── internal/
+      │   ├── auth/
+      │   │   ├── claims.go            # カスタム JWT クレーム
+      │   │   ├── middleware.go         # JWT ミドルウェア
+      │   │   └── validator.go         # JWT バリデーター
+      │   ├── config/
+      │   │   └── auth.go              # 設定ローダー
+      │   └── handlers/
+      │       └── api.go               # HTTP ハンドラー（公開、非公開、スコープ付き）
+      ├── .env                         # 環境変数（コミット対象外）
+      ├── .gitignore
+      ├── go.mod
+      └── go.sum
+      ```
+    </Accordion>
+  </Step>
+
+  <Step title="API を実行してテストする" stepNumber={8}>
+    開発サーバーを起動します：
+
+    ```shellscript
+    go run cmd/server/main.go
+    ```
+
+    次のように表示されます: `Server starting on :8080`
+
+    公開エンドポイントをテストします (認証不要) :
+
+    ```bash
+    curl http://localhost:8080/api/public
+    ```
+
+    次のように表示されます:
+
+    ```json
+    {
+      "message": "Hello from a public endpoint! You don't need to be authenticated to see this."
+    }
+    ```
+
+    トークンなしでプライベートエンドポイントをテストします (失敗するはずです) :
+
+    ```bash
+    curl http://localhost:8080/api/private
+    ```
+
+    401 Unauthorized エラーが表示されます。
+
+    ```json
+    {
+      "message": "Failed to validate JWT."
+    }
+    ```
+
+    有効なトークンでテストするには、[Auth0 Dashboard](https://manage.auth0.com/#/apis) で対象のAPIを開き、**Test** タブをクリックしてアクセストークンをコピーします。次に、以下を実行します。
+
+    ```bash
+    curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+         http://localhost:8080/api/private
+    ```
+
+    スコープが設定されたエンドポイントをテストします (`read:messages` 権限が必要です) :
+
+    ```bash
+    curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+         http://localhost:8080/api/private-scoped
+    ```
+  </Step>
+</Steps>
+
+<Check>
+  **チェックポイント**
+
+  これで、保護された Go API を用意できているはずです。API は次のように動作します。
+
+  1. パブリックエンドポイントへのリクエストは、認証なしで受け入れる
+  2. 保護されたエンドポイントへのリクエストは、有効なトークンがない場合は拒否する
+  3. JWT を Auth0 のドメインとオーディエンスに照らして検証する
+  4. スコープを使用して、権限ベースのアクセス制御を適用する
+</Check>
+
+***
+
+<div id="calling-your-api">
+  ## API の呼び出し
+</div>
+
+保護された API は、`Authorization` ヘッダーで Bearer トークンとしてアクセストークンを渡すことで、任意のアプリケーションから呼び出せます。
+
+<Accordion title="クライアントコードの例" defaultOpen>
+  <CodeGroup>
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:8080/api/private \
+      --header 'authorization: Bearer YOUR_ACCESS_TOKEN'
+    ```
+
+    ```go Go
+    package main
+
+    import (
+        "fmt"
+        "net/http"
+        "io"
+    )
+
+    func main() {
+        url := "http://localhost:8080/api/private"
+
+        req, _ := http.NewRequest("GET", url, nil)
+        req.Header.Add("authorization", "Bearer YOUR_ACCESS_TOKEN")
+
+        res, _ := http.DefaultClient.Do(req)
+        defer res.Body.Close()
+
+        body, _ := io.ReadAll(res.Body)
+
+        fmt.Println(res)
+        fmt.Println(string(body))
+    }
+    ```
+
+    ```javascript Node.js
+    const axios = require("axios").default;
+
+    const options = {
+      method: 'GET',
+      url: 'http://localhost:8080/api/private',
+      headers: {authorization: 'Bearer YOUR_ACCESS_TOKEN'}
+    };
+
+    axios.request(options).then(function (response) {
+      console.log(response.data);
+    }).catch(function (error) {
+      console.error(error);
+    });
+    ```
+
+    ```python Python
+    import http.client
+
+    conn = http.client.HTTPConnection("localhost", 8080)
+    headers = { 'authorization': "Bearer YOUR_ACCESS_TOKEN" }
+
+    conn.request("GET", "/api/private", headers=headers)
+
+    res = conn.getresponse()
+    data = res.read()
+
+    print(data.decode("utf-8"))
+    ```
+  </CodeGroup>
+</Accordion>
+
+<Accordion title="アクセストークンの取得">
+  <Tabs>
+    <Tab title="シングルページアプリケーションまたはモバイルアプリ">
+      シングルページアプリケーションまたはモバイル/ネイティブアプリケーションから API を呼び出す場合は、認可フローの完了後にアクセストークンを取得します。トークンの取得方法や API の呼び出し方法は、開発しているアプリケーションの種類や使用しているフレームワークによって異なります。
+
+      <CardGroup cols={2}>
+        <Card title="シングルページアプリケーション" icon="browser" href="/ja/docs/quickstart/spa">
+          React、Vue、Angular のクイックスタート (例付き)
+        </Card>
+
+        <Card title="モバイル / ネイティブアプリケーション" icon="mobile" href="/ja/docs/quickstart/native">
+          iOS、Android、React Native のクイックスタート
+        </Card>
+      </CardGroup>
+    </Tab>
+
+    <Tab title="Machine-to-Machine (M2M)">
+      ユーザーが資格情報を入力しないコマンドラインツールや別のサービスから API を呼び出す場合は、[OAuth Client Credentials flow](https://auth0.com/docs/api/authentication#client-credentials) を使用する必要があります。
+
+      <Steps>
+        <Step title="M2M アプリケーションの登録">
+          Auth0 Dashboard で [Machine to Machine Application](https://manage.auth0.com/#/applications) を登録します。
+        </Step>
+
+        <Step title="認証情報の取得">
+          [Application Settings](https://auth0.com/docs/get-started/dashboard/application-settings) から **クライアントID** と **クライアントシークレット** をコピーします。
+        </Step>
+
+        <Step title="アクセストークンのリクエスト">
+          Client Credentials flow を使用してアクセストークンを取得します。
+
+          ```bash
+          curl --request POST \
+            --url 'https://YOUR_AUTH0_DOMAIN/oauth/token' \
+            --header 'content-type: application/x-www-form-urlencoded' \
+            --data grant_type=client_credentials \
+            --data 'client_id=YOUR_CLIENT_ID' \
+            --data client_secret=YOUR_CLIENT_SECRET \
+            --data audience=YOUR_API_IDENTIFIER
+          ```
+        </Step>
+      </Steps>
+
+      <Warning>
+        **トークンの再利用**: Auth0 では、発行された Machine to Machine アクセストークン数に基づいて課金されます。アプリケーションがアクセストークンを取得したら、リクエストするトークン数を最小限に抑えるため、有効期限が切れるまでそのトークンを再利用してください。
+      </Warning>
+    </Tab>
+  </Tabs>
+</Accordion>
+
+***
+
+<div id="advanced-usage">
+  ## 高度な使用方法
+</div>
+
+<Accordion title="DPoP（所有証明）セキュリティ">
+  **DPoP (Demonstrating Proof-of-Possession)&#x20;**&#x20;は RFC 9449 で定義されており、トークンを暗号鍵にバインドすることでトークンの盗難を防ぎ、セキュリティを強化します。
+
+  ```go internal/auth/middleware.go
+  func NewMiddleware(jwtValidator *validator.Validator) *jwtmiddleware.JWTMiddleware {
+      return jwtmiddleware.New(
+          jwtmiddleware.WithValidator(jwtValidator),
+          jwtmiddleware.WithDPoPMode(jwtmiddleware.DPoPRequired),
+          jwtmiddleware.WithLogger(slog.Default()),
+      )
+  }
+  ```
+
+  **DPoP モード:**
+
+  * `DPoPAllowed` (デフォルト) — Bearer トークンと DPoP トークンの両方を受け入れます
+  * `DPoPRequired` — DPoP トークンのみを受け入れ、Bearer は拒否します
+  * `DPoPDisabled` — Bearer トークンのみを受け入れ、DPoP は拒否します
+
+  <Note>
+    DPoP は、金融 API、医療 API、高いセキュリティが求められるエンタープライズアプリケーションに推奨されます。詳しくは [DPoP ドキュメント](https://github.com/auth0/go-jwt-middleware#dpop-support)を参照してください。
+  </Note>
+</Accordion>
+
+<Accordion title="CORS 設定">
+  Webアプリケーションからのリクエストを許可するには、CORS を有効にします。簡単なミドルウェアや、[rs/cors](https://github.com/rs/cors) のようなライブラリを使用できます。
+
+  ```bash
+  go get github.com/rs/cors
+  ```
+
+  ```go cmd/server/main.go
+  import "github.com/rs/cors"
+
+  // mux を CORS ミドルウェアでラップする
+  handler := cors.New(cors.Options{
+      AllowedOrigins:   []string{"http://localhost:3000"},
+      AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
+      AllowedHeaders:   []string{"Authorization", "Content-Type"},
+      AllowCredentials: true,
+  }).Handler(mux)
+
+  srv := &http.Server{
+      Addr:    ":8080",
+      Handler: handler,
+  }
+  ```
+
+  本番環境では、ワイルドカードではなく明示的なオリジンを指定してください。
+</Accordion>
+
+<Accordion title="slog による構造化ログ">
+  トークン検証をデバッグするために、詳細なログを有効にします。
+
+  ```go internal/auth/middleware.go
+  middleware := jwtmiddleware.New(
+      jwtmiddleware.WithValidator(jwtValidator),
+      jwtmiddleware.WithLogger(slog.Default()),
+  )
+  ```
+
+  起動時の確認を追加します。
+
+  ```go cmd/server/main.go
+  log.Printf("Validator configured:")
+  log.Printf("  Issuer: https://%s/", cfg.Domain)
+  log.Printf("  Audience: %s", cfg.Audience)
+  log.Printf("  Algorithm: RS256")
+  ```
+</Accordion>
+
+***
+
+<div id="troubleshooting">
+  ## トラブルシューティング
+</div>
+
+<AccordionGroup>
+  <Accordion title="よくある問題と解決策">
+    ### 「JWT の検証に失敗しました」または 401 Unauthorized
+
+    **問題:** API がアクセストークンを見つけられないか、検証できません。
+
+    **解決策:**
+
+    1. `Authorization` ヘッダーが含まれていることを確認します: `Authorization: Bearer YOUR_TOKEN`
+    2. トークンの前に `Bearer` が含まれていることを確認します
+    3. トークンの有効期限が切れていないことを確認します
+    4. **アクセストークン**を使用しており、IDトークンではないことを確認します
+
+    ### 「aud claim mismatch」
+
+    **問題:** トークンのオーディエンスが API と一致していません。
+
+    **解決策:** `AUTH0_AUDIENCE` が Auth0 Dashboard の API Identifier と完全に一致していることを確認します。オーディエンスの末尾にスラッシュを付けてはいけません。
+
+    ```bash
+    # 正しい
+    AUTH0_AUDIENCE=https://my-go-api.example.com
+
+    # 誤り（末尾にスラッシュあり）
+    AUTH0_AUDIENCE=https://my-go-api.example.com/
+    ```
+
+    また、クライアントアプリケーションは正しい `audience` パラメーターを指定してトークンをリクエストする必要があります。
+
+    ### 「unexpected signing method」
+
+    **問題:** トークンのアルゴリズムがバリデーターの設定と一致していません。
+
+    **解決策:**
+
+    1. Auth0 はデフォルトで RS256 (非対称) を使用します
+    2. バリデーターに `validator.RS256` を指定していることを確認します
+    3. 明示的に設定している場合を除き、Auth0 のトークンに `validator.HS256` を使用しないでください
+
+    ### JWKS エンドポイントに到達できない
+
+    **問題:** JWKS キャッシュプロバイダーが Auth0 の公開鍵エンドポイントに接続できません。
+
+    **解決策:**
+
+    1. Auth0 へのネットワーク接続を確認します (ファイアウォール/プロキシ設定)
+    2. JWKS エンドポイントを手動でテストします: `curl https://YOUR_AUTH0_DOMAIN/.well-known/jwks.json`
+    3. Auth0 のリージョン (us/eu/au) が正しいことを確認します
+
+    ### import パスが誤っている
+
+    **問題:** `cannot find package "github.com/auth0/go-jwt-middleware/v3/..."`
+
+    **解決策:** すべての import で `/v3` サフィックスを使用していることを確認します。
+
+    ```go
+    // 正しい
+    import "github.com/auth0/go-jwt-middleware/v3/validator"
+
+    // 誤り
+    import "github.com/auth0/go-jwt-middleware/validator"
+    ```
+
+    ### クロックスキュー / トークン期限切れエラー
+
+    **問題:** サーバーの時刻がずれているため、有効なトークンが期限切れと判定されます。
+
+    **解決策:** バリデーターにはすでに 30 秒のクロックスキュー許容値が含まれています。さらに必要な場合は、次のように調整します。
+
+    ```go
+    validator.WithAllowedClockSkew(60*time.Second)
+    ```
+
+    ### クレームの抽出に失敗する
+
+    **問題:** ジェネリクスの使用時に `Failed to retrieve claims` が発生します。
+
+    **解決策:** 正しい型パラメーターを使用していることを確認します。
+
+    ```go
+    claims, err := jwtmiddleware.GetClaims[*validator.ValidatedClaims](r.Context())
+    ```
+  </Accordion>
+</AccordionGroup>
+
+***
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+保護されたAPIを用意したら、次のトピックも確認してください。
+
+* **[ロールベースアクセス制御](https://auth0.com/docs/manage-users/access-control/rbac)** — きめ細かな権限を実装する
+* **[アクセストークンのベストプラクティス](https://auth0.com/docs/secure/tokens/access-tokens)** — トークンのセキュリティについて学ぶ
+* **[API を監視する](https://auth0.com/docs/deploy-monitor/logs)** — ログ記録と監視を設定する
+* **[本番環境チェックリスト](https://auth0.com/docs/deploy-monitor/production-checks)** — リリース前のセキュリティレビューを行う
+
+***
+
+<div id="resources">
+  ## リソース
+</div>
+
+* **[go-jwt-middleware GitHub](https://github.com/auth0/go-jwt-middleware)** — ソースコード、サンプル、DPoP のサポート
+* **[Go API Sample](https://github.com/auth0-samples/auth0-golang-api-samples)** — 完全に動作するサンプル
+* **[Auth0 Community](https://community.auth0.com/)** — コミュニティからサポートを受ける

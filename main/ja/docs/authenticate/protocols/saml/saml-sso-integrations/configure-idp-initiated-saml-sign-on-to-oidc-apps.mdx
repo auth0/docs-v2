@@ -1,0 +1,148 @@
+---
+description: OIDC アプリケーションで IDプロバイダー（IdP）起点のサインオンをサポートするように Auth0 の SAML 接続を設定する方法を説明します。
+title: OIDC アプリ向けに IdP 起点の SAML サインオンを設定する
+---
+
+Auth0 には、<Tooltip tip="IDプロバイダー（IdP）: デジタル ID を保存および管理するサービス。" cta="用語集を見る" href="/ja/docs/glossary?term=Identity+Provider">IDプロバイダー</Tooltip> 起点の (IdP) <Tooltip tip="Security Assertion Markup Language (SAML): パスワードを使用せずに 2 者間で認証情報をやり取りできる標準化プロトコル。" cta="用語集を見る" href="/ja/docs/glossary?term=SAML">SAML</Tooltip> レスポンスを、アプリケーション向けの <Tooltip tip="OpenID: 認証のためのオープンスタンダード。" cta="用語集を見る" href="/ja/docs/glossary?term=OpenID">OpenID</Tooltip> Connect (OIDC) レスポンスに変換する方法があります。
+
+OIDC プロトコルは IdP 起点の認証フローをサポートしていませんが、この方法を使うと、[フォーム POST を使用する Implicit Flow](/ja/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post) によって IdP 起点の認証フローをシミュレートできます。
+
+<Warning>
+  ログインフローは IdP ではなく OIDC アプリケーションから開始することを強くお勧めします。詳しくは、[SAML IDプロバイダー起点のシングルサインオンを設定する](/ja/docs/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on) を参照してください。
+</Warning>
+
+この方法を実装するには、次の対応が必要です。
+
+* アプリケーションにカスタムのログインルートハンドラーを追加します。
+* SAML 接続を次のように更新します。
+
+  1. 受信した IdP 起点の SAML レスポンスを受け入れる。
+  2. SP 起点の認証リクエストを送信するデフォルトのアプリケーションにリダイレクトする。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+<Frame>![IDプロバイダー起点の SAML サインインから OIDC アプリケーションへのフロー図](/docs/images/cdy7uua7fh8z/5vinAB4pSSwaKDgliTkAhh/0c5822149426b986bbcc851d07666187/idp-provider-init-saml-sign-in0.png)</Frame>
+
+1. ユーザーが SAML IdP のログインエンドポイントにアクセスします。
+2. SAML IdP がログインページを返します。
+3. ユーザーが認証情報を SAML IdP に送信します。
+4. SAML IdP はユーザーのセッションを作成し、Form Post と SAML レスポンスを含む HTML ページを返します。
+5. ページは HTTP `POST` 呼び出しによって、SAML レスポンスを Auth0 テナントに自動送信します。
+6. Auth0 テナントは、IDトークンを URL フラグメントとして付加し、ユーザーのブラウザーを OIDC アプリケーションのカスタムログインルートハンドラーにリダイレクトします。
+7. ブラウザーは、`connection` パラメーターと IDトークンを指定して、OIDC アプリケーションのカスタムログインルートハンドラーを呼び出します。
+8. OIDC アプリケーションは IDトークンを無視し、`connection` パラメーターを解析し、セッション用の `state` パラメーターを作成したうえで、ユーザーのブラウザーを Auth0 テナントの `/authorize` エンドポイントにリダイレクトします。
+9. ブラウザーは、指定された `connection` パラメーターと `state` パラメーターを使用して、Auth0 テナントの `/authorize` エンドポイントを呼び出します。
+10. Auth0 テナントは SAML ログインリクエストを生成し、ユーザーのブラウザーを SAML IdP のログインエンドポイントにリダイレクトします。
+11. ブラウザーは SAML ログインリクエストを SAML IdP のログインエンドポイントに送信します。
+12. SAML IdP はユーザーのセッションを見つけ、Form Post と SAML レスポンスを含む HTML ページを返します。
+13. ページは HTTP `POST` 呼び出しによって、SAML レスポンスを Auth0 テナントに自動送信します。
+14. Auth0 テナントは、ユーザーのブラウザーをアプリケーションのログインルートハンドラーにリダイレクトします。
+15. ブラウザーは、指定された `state` パラメーターと IDトークンを指定して、アプリケーションのログインルートハンドラーを呼び出します。
+16. OIDC アプリケーションは `state` パラメーターを検証し、IDトークンを解析して、ユーザーのアプリケーションセッションを作成します。
+
+<div id="create-the-custom-login-route-handler">
+  ## カスタムログインルートハンドラーを作成する
+</div>
+
+カスタムログインルートハンドラーは、アプリケーションのログインメソッドを呼び出します。このハンドラーは `connection` パラメーターを受け取り、それを Auth0 テナントに送信する認証リクエストに含める必要があります。
+
+カスタムログインルートハンドラーは、標準のログインルートハンドラーとは別のエンドポイントに関連付けることをお勧めします。たとえば、標準のログインルートハンドラーが `/login` エンドポイントに関連付けられている場合は、カスタムログインルートハンドラーを `/startlogin` エンドポイントに関連付けることができます。
+
+<Warning>
+  認証の処理に Auth0 SDK を使用していない場合は、CSRF 攻撃を防ぐために、アプリケーションのログインメソッドが `/authorize` エンドポイントに `state` パラメーター値を渡し、IDプロバイダーからのレスポンスに含まれる `state` パラメーターを検証する必要があります。詳細については、[OAuth 2.0 の state パラメーターで攻撃を防ぎ、ユーザーをリダイレクトする](/ja/docs/secure/attack-protection/state-parameters)を参照してください。
+</Warning>
+
+<div id="example">
+  ### 例
+</div>
+
+[Auth0 Single Page App SDK](/ja/docs/libraries/auth0-single-page-app-sdk) を使用している場合は、カスタムのログインルートハンドラーを追加し、`connection` パラメーターに対応するようにログインメソッドを次のように更新できます。
+
+```javascript lines expandable
+const router = {
+  "/": () => showContent("content-home"),
+  "/profile": () =>
+    requireAuth(() => showContent("content-profile"), "/profile"),
+  "/login": () => login(),
+  "/startlogin": () => startlogin()
+};
+
+//IdP起点のコールバックからログインを開始する新しいメソッド
+const startlogin = async () => {
+  console.log(window.location.href)
+  let myURL = new URL(window.location.href);
+  let conn = myURL.searchParams.get("connection");
+  return  login(null, conn);
+}
+
+/**
+ * 認証フローを開始する
+ */
+const login = async (targetUrl, connection) => {
+  try {
+    console.log("Logging in", targetUrl);
+
+    const options = {
+      redirect_uri: window.location.origin,
+    };
+
+    if (connection) {
+      options.connection = connection;
+    }
+
+    if (targetUrl) {
+      options.appState = { targetUrl };
+    }
+
+    await auth0.loginWithRedirect(options);
+  } catch (err) {
+    console.log("Log in failed", err);
+  }
+};
+```
+
+<div id="create-the-query-string">
+  ## クエリ文字列を作成する
+</div>
+
+クエリ文字列には `redirect_uri` パラメーターが含まれます。このパラメーターの値は URL エンコードする必要があり、次の要素で構成されます。
+
+1. カスタムログインルートハンドラーに関連付けられたアプリケーションのエンドポイント。
+2. 値に SAML 接続名を指定した `connection` パラメーター。
+
+<div id="example">
+  ### 例
+</div>
+
+アプリケーションのエンドポイントが `https://exampleco.com/startlogin` で、SAML 接続の名前が `my-saml-connection` の場合、クエリ文字列は `redirect_uri=https%3A%2F%2Fexampleco.com%2Fstartlogin%3Fconnection%3Dmy-saml-connection` です。
+
+<div id="configure-the-application">
+  ## アプリケーションを設定する
+</div>
+
+1. [Auth0 Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications) に移動します。
+2. Auth0 で OIDC アプリケーションを表す新しい Application を作成します。
+3. **Allowed Callback URLs** を更新し、カスタムログインルートハンドラーに対応するアプリケーションエンドポイントを追加します。
+
+<div id="configure-the-connection">
+  ## 接続を設定する
+</div>
+
+1. [Auth0 Dashboard &gt; Authentication &gt; Enterprise &gt; SAML](https://manage.auth0.com/#/connections/enterprise/samlp) に移動します。
+2. 新しい SAML 接続を作成します。
+3. **IdP-Initiated SSO** ビューに切り替えます。
+4. **Accept Requests** を選択します。
+5. **Default Application** で、事前に作成したアプリケーションを選択します。
+6. **Response Protocol** で、**OpenID Connect** を選択します。
+7. **Query String** に、事前に作成したクエリ文字列を入力します。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [アプリを SAML IDプロバイダーに接続](/ja/docs/authenticate/identity-providers/enterprise-identity-providers/saml)
+* [SAML IDプロバイダー起点のシングルサインオンを設定](/ja/docs/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on)
+* [SAML IDプロバイダーからユーザーをログアウトさせる](/ja/docs/authenticate/login/logout/log-users-out-of-saml-idps)
+* [SAML 構成のトラブルシューティング](/ja/docs/troubleshoot/authentication-issues/troubleshoot-saml-configurations)

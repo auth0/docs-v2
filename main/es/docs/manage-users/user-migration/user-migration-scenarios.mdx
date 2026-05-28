@@ -1,0 +1,252 @@
+---
+description: Escenarios de migración de usuarios desde varias plataformas mediante distintos métodos.
+title: Escenarios de migración de usuarios
+---
+
+A continuación, se presentan algunos escenarios de ejemplo para migrar usuarios de Gigya, Okta y Stormpath a Auth0. Cada uno de estos escenarios asume que tiene cuentas en esas plataformas.
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+Configure la [conexión de base de datos personalizada](/es/docs/authenticate/database-connections/custom-db).
+
+1. Cree una nueva conexión de base de datos en [Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/#/connections/database). Asegúrese de seleccionar la vista **Custom Database** y de activar el interruptor **Use my own database**.
+2. Conecte la base de datos a la aplicación: en la configuración de la conexión de base de datos, seleccione la vista **Applications**. Busque la sección **Applications Using This Connection** y habilite la conexión de base de datos para cada aplicación.
+
+<div id="scenario-1-migrate-users-from-gigya-to-auth0">
+  ## Escenario 1: Migrar usuarios de Gigya a Auth0
+</div>
+
+1. Exporte los usuarios de Gigya:
+   Use [IdentitySync de Gigya](https://help.sap.com/docs/SAP_CUSTOMER_DATA_CLOUD/8b8d6fffe113457094a17701f63e3d6a/2b717202e42a4165aa7f75f7eecab64f.html) para transformar y exportar los datos de usuario para que coincidan con un esquema de destino. Para obtener más información sobre este proceso, consulte [Gigya IdentitySync: Using IdentitySync](https://help.sap.com/docs/SAP_CUSTOMER_DATA_CLOUD/8b8d6fffe113457094a17701f63e3d6a/2b717202e42a4165aa7f75f7eecab64f.html?locale=en-US).<br /><br />
+
+   Siga las instrucciones para transformar los datos de usuario de la base de datos de Gigya al [esquema](/es/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples) correcto y exportar los datos transformados en formato JSON.
+2. Importe sus usuarios de Gigya a Auth0:
+   Puede importar usuarios con la [Extensión de importación/exportación de usuarios](/es/docs/manage-users/user-migration/user-import-export-extension) o con la [Management API](https://auth0.com/docs/api/management/v2).
+
+   * **Extensión de importación/exportación de usuarios**: Vaya a [Auth0 Dashboard &gt; Extensions](https://manage.auth0.com/#/extensions), seleccione la extensión **User Import / Export** e instálela. Una vez instalada, puede hacer clic en ella para abrir una interfaz de importación/exportación.<br /><br />
+
+     Arrastre el archivo JSON exportado con los usuarios de Gigya al área de carga designada y seleccione la base de datos que creó anteriormente. Seleccione **Start Importing Users** para iniciar la importación. Para obtener más información, consulte [Extensión de importación/exportación de usuarios](/es/docs/manage-users/user-migration/user-import-export-extension).
+   * **Management API**: [Cree un trabajo](https://auth0.com/docs/api/management/v2#!/Jobs/post_users_imports) para importar sus usuarios a Auth0. Para obtener instrucciones detalladas, consulte [Importación masiva de usuarios](/es/docs/manage-users/user-migration/bulk-user-imports).
+
+<div id="scenario-2-migrate-users-from-okta-to-auth0">
+  ## Escenario 2: Migrar usuarios de Okta a Auth0
+</div>
+
+1. Habilite la importación de usuarios: vaya a [Auth0 Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/#/connections/database) y seleccione la conexión de base de datos. En **Settings**, habilite la opción **Import Users to Auth0**.
+2. Cree el [script de Login](/es/docs/authenticate/database-connections/custom-db/templates/login): el script de **Login** se ejecuta cuando un usuario intenta iniciar sesión, pero su cuenta no se encuentra en la base de datos de Auth0. Debe crear un script que llame al endpoint de [Autenticación primaria](https://developer.okta.com/docs/api/resources/authn.html#primary-authentication) de Okta y pase el correo electrónico y la contraseña como parámetros `username` y `password`.
+   Si la autenticación se realiza correctamente, Okta devolverá un [objeto Authentication Transaction](https://developer.okta.com/docs/api/resources/authn.html#authentication-transaction-model) que contiene el [perfil del usuario](https://developer.okta.com/docs/api/resources/authn.html#user-profile-object) en los [recursos incrustados](https://developer.okta.com/docs/api/resources/authn.html#embedded-resources). Luego, puede extraer la información del usuario y pasarla a Auth0 en la función de callback.<br /><br />
+
+   En la vista **Custom Database** de tu conexión de base de datos, busca **Database Action Scripts** y selecciona **Login**.
+
+   ```javascript lines expandable
+   function login (email, password, callback) {
+     // Reemplaza {yourOktaDomain} con tu propio dominio de Okta
+     var url = 'https:/{yourOktaDomain}/api/v1/authn';
+
+     // Realiza la solicitud POST para autenticar a un usuario
+     request({
+       url: url,
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+         'Accept': 'application/json'
+       },
+       body: {
+         username: email,
+         password: password,
+         options: {
+           multiOptionalFactorEnroll: false,
+           warnBeforePasswordExpired: false
+         }
+       },
+       json: true
+     }, function (error, response, body) {
+       // Verifica que la respuesta sea exitosa
+       if (response.statusCode !== 200) return callback();
+
+       // Obtén el usuario del cuerpo de la respuesta
+       var user = body._embedded.user;
+
+       // Define los datos que deseas almacenar en Auth0 y migra el usuario
+       return callback(null, {
+           user_id : user.id,
+           username: user.profile.login,
+           email: user.profile.login,
+           // Establecemos email_verified en true porque asumimos que, si eran
+           // usuarios válidos en Okta, ya han verificado su correo electrónico.
+           // Si este campo no se establece, el usuario recibirá un correo electrónico
+           // pidiéndole que verifique su cuenta
+           email_verified: true,
+           name: user.profile.firstName + ' ' + user.profile.lastName
+         });
+     });
+   }
+   ```
+
+   Haz clic en el botón **Try** sobre el script para comprobar si funciona.
+3. Cree el [script Get User](/es/docs/authenticate/database-connections/custom-db/templates/get-user): el script **Get User** se ejecuta cuando el usuario intenta restablecer su contraseña, pero no se encuentra su cuenta en la base de datos de Auth0. Deberá crear un script que llame al endpoint [Get User with Login](https://developer.okta.com/docs/api/resources/users.html#get-user-with-login) de Okta, pasando el correo electrónico del usuario como parámetro `login`.
+   También deberá [crear un token de API](https://developer.okta.com/docs/api/getting_started/getting_a_token.html), que debe enviarse a este endpoint en el encabezado `Authorization`.
+   Si la operación se realiza correctamente, Okta devolverá un [objeto de usuario](https://developer.okta.com/docs/api/resources/users.html#user-model) con la información del usuario. Una vez más, puede extraer la información del usuario y pasarla a Auth0 en la función de callback.<br /><br />
+
+   En la vista **Custom Database** de tu conexión de base de datos, busca **Database Action Scripts** y selecciona **Get User**.
+
+   ```javascript lines expandable
+   function getByEmail(email, callback) {
+     // Reemplaza {yourOktaDomain} con tu propio dominio de Okta
+     var url = 'https://{yourOktaDomain}/api/v1/users/' + encodeURIComponent(email);
+
+     // Realiza una solicitud GET para encontrar un usuario por correo electrónico
+     // Reemplaza {yourOktaApiToken} con un token de API de Okta 
+     // (consulta https://developer.okta.com/docs/api/getting_started/getting_a_token.html) 
+     request({
+       url: url,
+       method: 'GET',
+       headers: {
+         'Content-Type': 'application/json',
+         'Accept': 'application/json',
+         'Authorization': 'SSWS ' + '{yourOktaApiToken}'
+       },
+       json: true
+     }, function (error, response, body) {
+       // Asegúrate de que la respuesta sea exitosa
+       if (response.statusCode !== 200) return callback();
+
+       // Define los datos que se almacenarán en Auth0 y migra el usuario
+       return callback(null, {
+         user_id: body.id,
+         username: body.profile.login,
+         email: body.profile.login,
+         email_verified: true,
+         name: body.profile.firstName + ' ' + body.profile.lastName
+       });
+     });
+   }
+   ```
+
+   Haz clic en el botón **Try** situado encima del script para comprobar que el script funciona.
+4. Pruebe la conexión de base de datos personalizada: haga clic en **Try connection**. Aparecerá el [widget Lock de Auth0](/es/docs/libraries/lock). Introduzca el correo electrónico y la contraseña del usuario de Okta y haga clic en **Log In.** Debería ver una página web que indique que la conexión funciona, con información del usuario.
+5. Para ver los usuarios importados recientemente, vaya a [Auth0 Dashboard &gt; Gestión de usuarios &gt; Usuarios](https://manage.auth0.com/#/users).
+
+<div id="scenario-3-migrate-users-from-stormpath-to-auth0">
+  ## Escenario 3: Migrar usuarios de Stormpath a Auth0
+</div>
+
+1. Habilite la importación de usuarios: vaya a [Auth0 Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/#/connections/database) y seleccione su conexión de base de datos. En **Settings**, habilite la opción **Import Users to Auth0**.
+2. Habilite aplicaciones para su conexión: seleccione la pestaña **Aplicaciones**. Habilite las aplicaciones que usarán la conexión de base de datos.
+3. Cree el [script de Login](/es/docs/authenticate/database-connections/custom-db/templates/login): el script **Login** se ejecuta cuando un usuario intenta iniciar sesión, pero no se encuentra su cuenta en la base de datos de Auth0. Deberá crear un script que llame a la API de Stormpath para autenticar al usuario y pasar sus credenciales como parámetros `username` y `password`.<br /><br />
+
+   Tras una autenticación correcta, la respuesta de Stormpath incluirá la URL de la cuenta del usuario. Haga una segunda solicitud a la URL de la cuenta para obtener la información del usuario. Luego, puede extraer la información del usuario y pasarla a Auth0 en la función de callback.
+
+   ```javascript lines expandable
+   function login(username, password, callback) {
+     // Reemplaza el atributo {yourStormpathClientId} con tu ID de Stormpath
+     var url = 'https://api.stormpath.com/v1/applications/{yourStormpathClientId}/loginAttempts';
+
+     // Stormpath requiere que las credenciales del usuario se pasen como un mensaje codificado en base64
+     var message = username + ':' + password;
+     var pass = new Buffer(message).toString('base64');
+
+     // Aquí realizamos la solicitud POST para autenticar a un usuario
+     request({
+       url: url,
+       method: 'POST',
+       auth: {
+         // Tu ID de cliente de API
+         user: '{yourStormpathClientId}',
+         // Tu secreto de cliente de API
+         password: '{yourStormpathClientSecret}'
+       },
+       headers: {
+         'Content-Type': 'application/json'
+       },
+       json: {
+         type: 'basic',
+         // Se pasan las credenciales codificadas en base64
+         value: pass
+       }
+     }, function (error, response, body) {
+       // Si la respuesta es exitosa, continuamos
+       if (response.statusCode !== 200) return callback();
+       // Una respuesta exitosa devolverá una URL para obtener la información del usuario
+       var accountUrl = body.account.href;
+
+       // Realizamos una segunda solicitud para obtener la información del usuario. Esta vez será una solicitud GET
+       request({
+         url: accountUrl,
+         method: 'GET',
+         auth: {
+           // Tu ID de cliente de API
+           user: '{yourStormpathClientId}',
+           // Tu secreto de cliente de API
+           password: '{yourStormpathClientSecret}'
+         }
+       }, function (errorUserInfo, responseUserInfo, bodyUserInfo) {
+         // Si obtenemos una respuesta exitosa, la procesamos
+         if (responseUserInfo.statusCode !== 200) return callback();
+
+         var parsedBody = JSON.parse(bodyUserInfo);
+         // Para obtener el identificador del usuario, eliminamos la ruta de la API de Stormpath
+         var id = parsedBody.href.replace('https://api.stormpath.com/v1/accounts/', '');
+
+         // Por último, definimos los datos que queremos almacenar en Auth0 y migramos al usuario
+         return callback(null, {
+           user_id : id,
+           username: parsedBody.username,
+           email: parsedBody.email,
+           // Establecemos email_verified en true porque asumimos que, si el usuario era válido
+           // en Stormpath, ya verificó su correo electrónico
+           // Si este campo no se establece, el usuario recibirá un correo electrónico solicitándole
+           // que verifique su cuenta
+           email_verified: true,
+           // Agrega cualquier campo adicional que desees trasladar desde Stormpath
+         });
+       });
+     });
+   }
+   ```
+
+   Haga clic en el botón **Try** situado encima del script para probarlo y verificar si funciona.
+4. Cree el [script Get User](/es/docs/authenticate/database-connections/custom-db/templates/get-user): el script **Get User** se ejecuta cuando el usuario intenta restablecer la contraseña, pero su cuenta no se encuentra en la base de datos de Auth0. Deberá crear un script que llame al endpoint `/accounts` de la API de Stormpath y pase el correo electrónico del usuario como parámetro `email`.
+   Si la operación se realiza correctamente, Stormpath devolverá la información del usuario. Puede extraer esa información y pasarla a Auth0 en la función de callback.
+
+   ```javascript lines expandable
+   function getByEmail(email, callback) {
+     // Reemplaza el atributo {yourStormpathClientId} con tu ID de Stormpath
+     var url = 'https://api.stormpath.com/v1/applications/{yourStormpathClientId}/accounts';
+
+     request({
+       url: url,
+       method: 'GET',
+       auth: {
+         // Tu ID de cliente de API
+         user: '{yourStormpathClientId}',
+         // Tu secreto del cliente de API
+         password: '{yourStormpathClientSecret}'
+       },
+       qs: { q: email }
+     }, function (error, response, body) {
+       if (response.statusCode !== 200) return callback();
+
+       var parsedBody = JSON.parse(body);
+       var user = parsedBody.items[0];
+
+       if (!user) return callback();
+
+       var id = user.href.replace('https://api.stormpath.com/v1/accounts/', '');
+
+       return callback(null, {
+         user_id: id,
+         username: user.username,
+         email: user.email,
+         email_verified: true,
+         // Agrega los campos adicionales que desees migrar desde Stormpath
+       });
+     });
+   }
+   ```
+
+   Haz clic en el botón **Try** situado encima del script para probarlo y comprobar que funciona.
+5. Pruebe la conexión de base de datos personalizada: haga clic en **Try connection**. Aparecerá el [widget Auth0 Lock](/es/docs/libraries/lock). Introduzca el correo electrónico y la contraseña del usuario de Stormpath y haga clic en **Log In.** Debería ver una página web que indique que la conexión funciona, con información sobre el usuario.
+6. Para ver los usuarios recién importados, ve a [Dashboard &gt; User Management &gt; Users](https://manage.auth0.com/#/users).

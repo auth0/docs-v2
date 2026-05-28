@@ -1,0 +1,327 @@
+---
+description: エンタープライズ接続向けに Private Key JWT クライアント認証 を実装する方法を説明します。
+title: Okta と OIDC 接続向けの Private Key JWT クライアント認証
+---
+
+Private Key <Tooltip tip="JSON Web Token (JWT): 2 者間でクレームを安全に表現するために使用される標準的な IDトークン 形式（多くの場合、アクセストークン形式としても使用）。" cta="用語集を表示" href="/ja/docs/glossary?term=JWT">JWT</Tooltip> クライアント認証 は、<Tooltip tip="JSON Web Token (JWT): 2 者間でクレームを安全に表現するために使用される標準的な IDトークン 形式（多くの場合、アクセストークン形式としても使用）。" cta="用語集を表示" href="/ja/docs/glossary?term=OpenID">OpenID</Tooltip> Connect (OIDC) と Okta Workforce エンタープライズ接続における、クライアント認証の代替方式です。クライアント認証は通常、共有された <Tooltip tip="Client Secret: クライアント（アプリケーション）が認可サーバーに対して認証するために使用するシークレット。クライアントと認可サーバーだけが知っている必要があり、推測できないよう十分にランダムでなければなりません。" cta="用語集を表示" href="/ja/docs/glossary?term=client+secret">クライアントシークレット</Tooltip> を渡して行いますが、Private Key JWT クライアント認証 では代わりに署名付き JWT を渡すことで、アプリケーションのセキュリティを強化します。
+
+この機能を使用すると、標準的な クライアントシークレット 認証でよく見られる、次のような一般的なセキュリティ上の問題を回避できます。
+
+* クライアントシークレット はリクエストごとに当事者間で送信する必要があるため、傍受や再利用のリスクが高まる。
+* 有効期限の適用や、悪意のある第三者による再利用の防止に使える仕組みが限られている。
+* 両当事者が クライアントシークレット を保持するため、漏えいや露出のリスクが高まる。
+
+OIDC および Okta Workforce エンタープライズ接続向けの Private Key JWT クライアント認証 は、<Tooltip tip="Auth0 Dashboard: サービスを設定するための Auth0 の主要プロダクト。" cta="用語集を表示" href="/ja/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip> または <Tooltip tip="Auth0 Dashboard: サービスを設定するための Auth0 の主要プロダクト。" cta="用語集を表示" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip> のいずれかで設定できます。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+OIDC 接続フローでは、`/oauth/token` や `/oauth/par` などの認証エンドポイントを使用して、<Tooltip tip="認可サーバー: ユーザーのアクセス範囲の定義に関与する集中管理型サーバーです。たとえば、認可サーバーはユーザーが利用できるデータ、タスク、機能を制御できます。" cta="用語集を見る" href="/ja/docs/glossary?term=authorization+server">認可サーバー</Tooltip> または OpenID プロバイダーに対してクライアントの身元を検証します。Private Key JWT クライアント認証 では、クライアントシークレットの代わりに、署名付きのクライアントアサーション JWT を OpenID プロバイダーに渡します。
+
+クライアントアサーション JWT には、次のクレームが含まれます。
+
+* OpenID プロバイダーの <Tooltip tip="対象者: 発行されたトークンの対象者を一意に識別する値です。トークン内では aud という名前で表され、その値には IDトークン の場合はアプリケーション（クライアントID）、アクセストークン の場合は API（API Identifier）の ID が含まれます。" cta="用語集を見る" href="/ja/docs/glossary?term=token+endpoint">トークンエンドポイント</Tooltip> を識別する `aud` (<Tooltip tip="対象者: 発行されたトークンの対象者を一意に識別する値です。トークン内では aud という名前で表され、その値には IDトークン の場合はアプリケーション（クライアントID）、アクセストークン の場合は API（API Identifier）の ID が含まれます。" cta="用語集を見る" href="/ja/docs/glossary?term=audience">対象者</Tooltip>) 。
+* 1 回限りの使用またはリプレイ攻撃の防止を可能にする `jti` (JWT ID) 。
+* トークンの有効期間を制限する `exp` (有効期限) 。
+* <Tooltip tip="クライアントID: Auth0 に登録されたリソースに付与される識別値です。" cta="用語集を見る" href="/ja/docs/glossary?term=client+ID">クライアントID</Tooltip> を示す `sub` と `iss`。
+
+Private Key JWT クライアント認証 では、共有クライアントシークレットを使わないことで、より安全な認証方式を実現できます。代わりに、JWT はクライアントの秘密鍵で署名され、OpenID プロバイダーがアクセスできるのは公開鍵のみです.
+
+<div id="private-key-jwt-client-authentication-flow">
+  ### Private Key JWT クライアント認証フロー
+</div>
+
+ユーザーがアップストリームの<Tooltip tip="IDプロバイダー（IdP）: デジタルアイデンティティを保存および管理するサービス。" cta="用語集を見る" href="/ja/docs/glossary?term=identity+provider">IDプロバイダー</Tooltip> (IdP) での認証を完了すると、認可コードとともに Auth0 にリダイレクトされます。この認可コードは、OpenID プロバイダーのトークンエンドポイントでトークンと交換されます。接続で Private Key JWT が有効になっている場合、OpenID プロバイダーのトークンエンドポイントへの呼び出しでは、より安全に認証するため、クライアントシークレットの代わりにクライアントアサーションを使用します。
+
+以下の手順は、一般的な Private Key JWT クライアント認証フローを示しています。
+
+<Frame>![Private Key JWT クライアント認証フローを示す図。](/docs/images/cdy7uua7fh8z/4JOxbdG7aweqpDHCJ8VOZq/aea18936c0cbdbfbb39d0cd79af3987e/Client_Assertion_JWT_-_Diagram.png)</Frame>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このフローを完了するには、まず Auth0 Dashboard または Management API を使用して、`token_endpoint_auth_method=private_key_jwt` を指定した新規または既存の OIDC または Okta Workforce 接続を設定する必要があります。詳細については、[Configure Private Key JWT Client Authentication](#configure-private-key-jwt-client-authentication) セクションを参照してください。
+</Callout>
+
+1. 接続を設定すると、Auth0 は 2 組の公開鍵と秘密鍵のペアを自動的に生成して保存します。
+
+   * 一方の鍵ペアはアクティブな `current` セットで、もう一方のセットには、[鍵ローテーション](#rotate-signing-keys)をサポートするため `next` というラベルが付けられます。
+2. 次に、IdP に応じて以下のいずれかを行います。
+
+   * `current` 公開鍵をダウンロードし、そのファイルを認可サーバーにアップロードする、または
+   * [`jwks_uri`](#retrieve-signing-keys) を認可サーバーにコピー＆ペーストする。
+3. ユーザーが、アプリケーションへのログインなど、認証が必要な操作を実行します。
+4. Auth0 は認証を開始するために認可サーバーへリクエストを送信します。
+5. 認可サーバーは、認証画面と同意画面をユーザーに表示します。
+6. ユーザーは認可サーバーで認証を行い、同意します。
+7. 認可サーバーは Auth0 に認可コードを送信します。
+8. Auth0 はクライアントアサーション JWT を生成し、`current` 秘密鍵を使用して署名します。
+9. Auth0 はクライアントアサーション JWT を認可サーバーに渡します。
+10. 認可サーバーは、指定された `client_id` に基づいてクライアントを特定します。
+11. `jwks_uri` が指定されている場合、認可サーバーは Auth0 から公開鍵を取得します。そうでない場合は、手順 2 で登録された公開鍵を特定します。
+12. `jwks_uri` が要求された場合、Auth0 は公開鍵を JWKS として返します。
+13. 認可サーバーは、`client_assertion` JWT のヘッダー内の `kid` で識別される `current` 公開鍵を使って署名を検証し、JWT を検証します。
+14. 認可サーバーはアクセストークンを生成します。
+15. 認可サーバーはアクセストークンを Auth0 に渡します。
+16. Auth0 はアクセストークンを使用して、リソースサーバーにリソースをリクエストします。
+17. リソースサーバーはリソースを返し、フローが完了します。
+
+<div id="configure-private-key-jwt-client-authentication">
+  ## Private Key JWT クライアント認証を設定する
+</div>
+
+OIDC および Okta Workforce エンタープライズ接続で Private Key JWT クライアント認証を使用するように設定するには、Auth0 Dashboard または Management API を使用します。各方法の手順を以下に示します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  * 秘密鍵と公開鍵の署名鍵ペアは、接続ごとに Auth0 によって自動的に生成されます。
+  * クライアントアサーション JWT への署名には、Okta および OIDC エンタープライズ接続で次のアルゴリズムを使用できます: `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `ES256`, `ES384`。指定しない場合のデフォルトは `RS256` です。
+  * 署名済み JWT は 60 秒後に自動的に期限切れになります。
+</Callout>
+
+<div id="auth0-dashboard">
+  #### Auth0 Dashboard
+</div>
+
+Auth0 Dashboard を使用すると、新規および既存の OIDC 接続と Okta Workforce 接続の両方で、Private Key JWT クライアント認証を設定できます。
+
+<Tabs>
+  <Tab title="新しい接続">
+    1. Auth0 Dashboard で、[Authentication &gt; Enterprise](https://manage.auth0.com/#/connections/enterprise) に移動します。
+    2. **OpenID Connect** または **Okta Workforce** の横にある **Create** を選択します。
+    3. **General** セクションで、接続の名前やディスカバリー URL など、新しい接続の詳細を入力します。
+    4. Private Key JWT を有効にするには、次の項目を設定します。
+
+       * **Communication Channel** を **Back Channel** に設定します。
+       * **Authentication Method** を **Private Key JWT** に設定します。
+    5. **Create** を選択して、新しい接続を保存します。
+  </Tab>
+
+  <Tab title="既存の接続">
+    1. Auth0 Dashboard で、[Authentication &gt; Enterprise](https://manage.auth0.com/#/connections/enterprise) に移動します。
+    2. **OpenID Connect** または **Okta Workforce** の横にある **Browse** を選択します。
+    3. 該当する接続を選択し、**Credentials** タブを開きます。
+    4. **Authentication Settings** で、次の項目を設定します。
+
+       * **Communication Channel** を **Back Channel** に設定します。
+       * **Authentication Method** を **Private Key JWT** に設定します。
+    5. **Save** を選択します。
+    6. 確認ポップアップで、**Change** を選択して変更を適用します。
+  </Tab>
+</Tabs>
+
+<div id="management-api">
+  #### Management API
+</div>
+
+Management API を使用すると、新規および既存の OIDC 接続に対して Private Key JWT クライアント認証 を設定できます。
+
+<Tabs>
+  <Tab title="新規接続">
+    Private Key JWT クライアント認証 を使用する新しい OIDC 接続を作成するには、以下の `connection.options` プロパティを適切に設定して、[Create a Connection](https://auth0.com/docs/api/management/v2/connections/post-connections) エンドポイントを呼び出します。
+
+    | プロパティ                             | 説明                                                                                                                                                                                                                                                      |
+    | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `type`                            | このプロパティを `back_channel` に設定します。                                                                                                                                                                                                                         |
+    | `token_endpoint_auth_method`      | IDプロバイダーのトークンエンドポイントで使用する認証方式です。署名付き JWT アサーションを使用してセキュリティを強化する場合は `private_key_jwt` に、リクエスト本文で認証情報を送信する場合は `client_secret_post` に設定します。デフォルトは `client_secret_post` です。`oidc` および `okta` ストラテジーにのみ適用されます。                                               |
+    | `token_endpoint_auth_signing_alg` | 任意。クライアントアサーションの署名に使用するアルゴリズムです。使用可能な値: `RS256`、`RS384`、`RS512`、`PS256`、`PS384`、`ES256`、`ES384`。未設定の場合のデフォルトは `RS256` です。`oidc` および `okta` ストラテジーにのみ適用されます。                                                                                             |
+    | `id_token_signed_response_algs`   | 任意。IDプロバイダーが発行した IDトークン の検証に使用できるアルゴリズムの一覧です。設定すると、Auth0 はこの一覧に含まれないアルゴリズムで署名された IDトークン を拒否します。使用可能な値: `RS256`、`RS384`、`RS512`、`PS256`、`PS384`、`ES256`、`ES384`。未設定の場合、Auth0 はサポートされている任意のアルゴリズムで署名された IDトークン を受け入れます。`oidc` および `okta` ストラテジーにのみ適用されます。 |
+    | `token_endpoint_jwtca_aud_format` | 任意。トークンエンドポイントでのクライアント認証に使用する JWT の `aud` (対象者) クレームの形式を指定します。OIDC の issuer URL を使用する場合は `issuer` に、トークンエンドポイント URL を使用する場合は `token_endpoint` に設定します。デフォルトは `token_endpoint` です。                                                                    |
+
+    **POST 呼び出しの例**
+
+    ```js lines
+    POST /api2/connections
+
+    {
+      strategy: 'oidc',
+      options: {
+        type: "back_channel",
+        token_endpoint_auth_method: "private_key_jwt",
+        token_endpoint_auth_signing_alg: "RS256",
+        id_token_signed_response_algs: ["RS256", "RS384"]
+      },
+      …
+    }
+    ```
+  </Tab>
+
+  <Tab title="既存の接続">
+    既存の OIDC 接続を Private Key JWT クライアント認証 を使用するように変更するには、以下の `connection.options` プロパティを適切に設定して、[Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) エンドポイントを呼び出します。
+
+    | プロパティ                             | 説明                                                                                                                                                                                                                                                      |
+    | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `type`                            | このプロパティを `back_channel` に設定します。                                                                                                                                                                                                                         |
+    | `token_endpoint_auth_method`      | IDプロバイダーのトークンエンドポイントで使用する認証方式です。署名付き JWT アサーションを使用してセキュリティを強化する場合は `private_key_jwt` に、リクエスト本文で認証情報を送信する場合は `client_secret_post` に設定します。デフォルトは `client_secret_post` です。`oidc` および `okta` ストラテジーにのみ適用されます。                                               |
+    | `token_endpoint_auth_signing_alg` | 任意。クライアントアサーションの署名に使用するアルゴリズムです。使用可能な値: `RS256`、`RS384`、`RS512`、`PS256`、`PS384`、`ES256`、`ES384`。未設定の場合のデフォルトは `RS256` です。`oidc` および `okta` ストラテジーにのみ適用されます。                                                                                             |
+    | `id_token_signed_response_algs`   | 任意。IDプロバイダーが発行した IDトークン の検証に使用できるアルゴリズムの一覧です。設定すると、Auth0 はこの一覧に含まれないアルゴリズムで署名された IDトークン を拒否します。使用可能な値: `RS256`、`RS384`、`RS512`、`PS256`、`PS384`、`ES256`、`ES384`。未設定の場合、Auth0 はサポートされている任意のアルゴリズムで署名された IDトークン を受け入れます。`oidc` および `okta` ストラテジーにのみ適用されます。 |
+    | `token_endpoint_jwtca_aud_format` | 任意。トークンエンドポイントでのクライアント認証に使用する JWT の `aud` (対象者) クレームの形式を指定します。OIDC の issuer URL を使用する場合は `issuer` に、トークンエンドポイント URL を使用する場合は `token_endpoint` に設定します。デフォルトは `token_endpoint` です。                                                                    |
+
+    **PATCH 呼び出しの例**
+
+    ```js lines
+    PATCH /api2/connections/{id}
+
+    {
+      strategy: 'oidc',
+      options: {
+        type: "back_channel",
+        token_endpoint_auth_method: "private_key_jwt",
+        token_endpoint_auth_signing_alg: "RS256",
+        id_token_signed_response_algs: ["RS256", "RS384"]
+      },
+      …
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<div id="retrieve-signing-keys">
+  ## 署名鍵の取得
+</div>
+
+接続が Private Key JWT クライアント認証 を使用するように設定されると、Auth0 Dashboard、Management API、または公開 JWKS URI を介して公開鍵を取得できます。
+
+<AccordionGroup>
+  <Accordion title="Auth0 Dashboard">
+    Auth0 Dashboard から署名鍵を取得するには、次の手順を実行します。
+
+    1. [Authentication &gt; Enterprise](https://manage.auth0.com/#/connections/enterprise) に移動します。
+    2. **OpenID Connect** または **Okta Workforce** の横にある **Browse** を選択します。
+    3. 対象の接続を選択し、**Credentials** タブを開きます。
+    4. **Credentials** セクションで、該当する署名キーの横にある **Download** アイコンを選択します。
+  </Accordion>
+
+  <Accordion title="Management API">
+    Management API で公開鍵を表示するには、接続の ID を使用して [Get connection keys](https://auth0.com/docs/api/management/v2/connections/get-keys) エンドポイントを呼び出します。
+
+    <Warning>
+      このエンドポイントを使用するには、`read:connections_keys` スコープが必要です。
+    </Warning>
+
+    **GET 呼び出しの例**
+
+    ```js lines
+    GET /api2/connections/{id}/keys
+    ```
+
+    **レスポンス例**
+
+    ```js lines expandable
+    {
+        cert: "-----BEGIN CERTIFICATE-----
+    MIIDDTCCAfWgAwIBAgIJP...Ek=
+    -----END CERTIFICATE-----",
+        pkcs7: "-----BEGIN PKCS7-----
+    MIIDPAYJKoZIhvcNAQcCo...AA==
+    -----END PKCS7-----
+    ",
+        kid: "E4CXqUP6r92yo0f_sdkdC",
+        next: true,
+        fingerprint: "7F:33:86:D9:4A:98:B2:DC:B0:41:74:54:DA:31:E7:74:42:32:96:8C",
+        thumbprint: "7F3386D94A98B2DCB0417454DA31E7744232968C"
+      }, 
+      {
+        cert: "-----BEGIN CERTIFICATE-----
+    MIIDDTCCAfWgAwIBAgI...Ss=
+    -----END CERTIFICATE-----",
+        pkcs7: "-----BEGIN PKCS7-----
+    MIIDPAYJKoZIhvcNAQ...AA==
+    -----END PKCS7-----
+    ",
+        kid: "_4WuXpXlwwmSE65saKWDM",
+        current: true,
+        current_since: "2025-01-24T08:50:06.662Z",
+        fingerprint: "33:7D:6F:35:46:31:AD:6E:69:43:01:A2:77:DF:8E:73:64:F6:E8:5B",
+        thumbprint: "337D6F354631AD6E694301A277DF8E7364F6E85B"
+      }, 
+      {
+        cert: "-----BEGIN CERTIFICATE-----
+    MIIDDTCCAfWgAwIBA...6Q=
+    -----END CERTIFICATE-----",
+        pkcs7: "-----BEGIN PKCS7-----
+    MIIDPAYJKoZIhvcN...AA==
+    -----END PKCS7-----
+    ",
+        kid: "roUD9STeDy9qBTx5XjaTz",
+        previous: true,
+        current_since: "2025-01-24T08:48:51.523Z",
+        current_until: "2025-01-24T08:50:06.663Z",
+        fingerprint: "44:D3:DD:3B:63:99:59:9A:39:D9:F4:F0:4F:1B:AC:BB:18:72:40:5C",
+        thumbprint: "44D3DD3B6399599A39D9F4F04F1BACBB1872405C"
+      }
+    ```
+  </Accordion>
+
+  <Accordion title="Public JWKS URI">
+    一部の IDプロバイダー では、private&#95;key&#95;jwt 用の公開鍵を公開 JWKS (JSON Web Key Set) URI の形式で提供できます。
+
+    接続の公開鍵が生成されている場合は、次の URI を IdP の設定に追加することで取得できます。
+
+    ```http wrap lines
+    https://{auth0 domain}/oauth/connection/{connection name}/.well-known/jwks.json
+    ```
+
+    <Warning>
+      JWKS URI はグローバルなレート制限の対象です。これらの制限に達しないよう、公開鍵をキャッシュできます。ベストプラクティスとして、Auth0 では、ログイン試行のたびに JWKS URI エンドポイントを呼び出さないよう、少なくとも 5～10 分のキャッシュ間隔を推奨しています。
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+<div id="rotate-signing-keys">
+  ## 署名鍵をローテーションする
+</div>
+
+Private Key JWT クライアント認証 は、共有クライアントシークレットのように固定的で長期間有効な認証情報と比べて、より高いセキュリティを実現するために署名鍵のローテーションをサポートしています。署名鍵をローテーションすると、1 つの鍵がさらされる期間を限定できるため、攻撃者に侵害されるリスクを低減できます。また、セキュリティインシデント発生時にも迅速に対応できます。
+
+サービスへの影響を避けるため、Auth0 では署名鍵を 1 年ごとにローテーションすることを推奨しています。署名鍵のローテーションには、Auth0 Dashboard または Management API を使用できます。
+
+<AccordionGroup>
+  <Accordion title="Auth0 Dashboard">
+    Auth0 Dashboard で署名鍵をローテーションするには、次の手順に従います。
+
+    1. [Authentication &gt; Enterprise](https://manage.auth0.com/#/connections/enterprise) に移動します。
+    2. **OpenID Connect** または **Okta Workforce** の横にある **Browse** を選択します。
+    3. 対象の接続を選択し、**Credentials** タブを開きます。
+    4. **Credentials** セクションで、**Rotate Keys** を選択します。
+    5. ポップアップで **Save** を選択し、ローテーションを確定します。
+
+    ローテーション後は、以前の鍵で署名された処理中の JWT は直ちに無効となり、IdP での検証に失敗する可能性があります。
+  </Accordion>
+
+  <Accordion title="Management API">
+    Management API で公開鍵を表示するには、接続の ID を使用して Rotate Connection Signing Keys エンドポイントを呼び出します。
+
+    <Warning>
+      このエンドポイントを使用するには、`create:connections_keys` と `update:connections_keys` の両方のスコープが必要です。
+    </Warning>
+
+    ```js lines
+    POST /v2/connections/{id}/keys/rotate
+    ```
+
+    ローテーション後は、以前の鍵で署名された処理中の JWT は直ちに無効となり、IdP での検証に失敗する可能性があります。
+  </Accordion>
+</AccordionGroup>
+
+<Card title="鍵ローテーションの仕組みを理解する">
+  OIDC または Okta Workforce の接続では、署名鍵に次のいずれかのステータスが割り当てられます。
+
+  * **Current**: 現在アプリケーションで使用されている署名鍵。
+  * **Next**: 現在の鍵が失効した後に、アプリケーションで次に使用される署名鍵。
+  * **Previous**: 期限切れ、またはその他の理由で失効し、現在は使用されていない署名鍵。
+
+  接続で Private Key JWT クライアント認証 を最初に有効にした時点では、`current` と `next` のキーペアのみが生成されます。鍵が `previous` としてマークされるのは、ローテーションが実行された後です。
+
+  署名鍵をローテーションすると、次の変更が発生します。
+
+  1. `current` 鍵は削除されて失効し、この鍵で署名された JWT は、IdP が `jwks_uri` で設定されている場合、IdP での検証に失敗します。
+  2. `current` 鍵には `previous` ステータスが割り当てられます。
+  3. `next` 鍵がアクティブな鍵となり、`current` ステータスが付与されます。以後、クライアントアサーション JWT はこの鍵で署名されます。
+  4. ローテーションされた鍵を置き換えるために、新しい署名鍵が自動的に生成されます。新しい署名鍵には `next` ステータスが付与されます。
+</Card>
+
+<div id="learn-more">
+  ## 詳しくはこちら
+</div>
+
+* [Auth0 アプリケーションを Okta Workforce Enterprise Connection に接続する](/ja/docs/authenticate/identity-providers/enterprise-identity-providers/okta)
+* [OpenID Connect IDプロバイダーに接続する](/ja/docs/authenticate/identity-providers/enterprise-identity-providers/oidc)

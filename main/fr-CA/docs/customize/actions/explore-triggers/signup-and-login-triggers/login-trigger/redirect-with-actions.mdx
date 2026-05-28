@@ -1,0 +1,354 @@
+---
+description: Découvrez comment utiliser les Actions post-login pour rediriger les utilisateurs avant la fin d’une transaction d’authentification.
+title: Redirection avec Actions
+---
+
+Vous pouvez utiliser les Actions post-login pour rediriger les utilisateurs avant la fin d’une transaction d’authentification. Cela vous permet de mettre en œuvre des flux d’authentification personnalisés qui nécessitent une interaction utilisateur supplémentaire au-delà du formulaire de connexion standard.
+
+Les redirections sont couramment utilisées pour effectuer une [authentification multifacteur (MFA)](/fr-CA/docs/secure/multi-factor-authentication) personnalisée dans Auth0, mais elles peuvent aussi servir à :
+
+* Permettre aux utilisateurs d’accepter une politique de confidentialité personnalisée, des conditions d’utilisation et des formulaires de divulgation de données.
+* Recueillir de façon sécurisée, une seule fois, des données de profil supplémentaires requises.
+* Permettre aux utilisateurs Active Directory distants de modifier leur mot de passe.
+* Exiger des utilisateurs qu’ils fournissent une vérification supplémentaire lorsqu’ils se connectent depuis des emplacements inconnus.
+* Recueillir plus d’informations sur vos utilisateurs que celles qu’ils ont fournies lors de leur inscription initiale.
+
+<div id="overview">
+  ## Vue d’ensemble
+</div>
+
+Dans les grandes lignes, une Redirect Action fonctionne comme suit :
+
+1. Une Action effectue une redirection vers une URL.
+2. Le pipeline des Actions est suspendu une fois que cette Action a terminé son exécution.
+3. L’utilisateur est redirigé vers l’URL avec un paramètre `state`.
+4. Une fois le flux externe terminé, le site externe redirige l’utilisateur vers un point de terminaison `/continue` avec le paramètre `state`.
+5. Le pipeline des Actions reprend sur la même Action qui a déclenché la redirection.
+
+<div id="start-a-redirect">
+  ## Lancer une redirection
+</div>
+
+Appelez la fonction `api.redirect.sendUserTo()` comme suit :
+
+```javascript lines
+/**
+* @param {Event} event - Détails sur l'utilisateur et le contexte dans lequel il se connecte.
+* @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  api.redirect.sendUserTo("https://my-app.exampleco.com");
+};
+```
+
+L’exécution de cette Action se termine, puis le pipeline des Actions est suspendu afin de rediriger l’utilisateur vers `https://my-app.exampleco.com`. Autrement dit, les Actions associées aux déclencheurs post-login qui s’exécutent après l’Action qui invoque la redirection ne s’exécuteront pas tant que le flux d’authentification n’aura pas repris. Si vous connaissez les Redirect Rules, notez qu’il s’agit d’une différence importante entre les Redirect Actions et les Redirect Rules.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Contrairement aux Redirect Rules, les Redirect Actions suspendent le pipeline des Actions lorsqu’une redirection est émise, puis le reprennent dans la même Action lorsque le flux d’authentification se poursuit.
+</Callout>
+
+Une fois l’exécution de l’Action terminée, Auth0 redirige l’utilisateur vers l’URL spécifiée dans la fonction `api.redirect.sendUserTo()`. Auth0 transmet également un paramètre `state` dans cette URL. Par exemple :
+
+`https://my-app.exampleco.com/?state=abc123`
+
+Votre URL de redirection devra extraire le paramètre `state` et le renvoyer à Auth0 pour reprendre la transaction d’authentification. Le paramètre `state` est une valeur opaque utilisée pour prévenir les [attaques de falsification de requête intersites (CSRF)](/fr-CA/docs/secure/security-guidance/prevent-threats).
+
+<div id="resume-the-authentication-flow">
+  ## Reprendre le flux d’authentification
+</div>
+
+Après la redirection, reprenez l’authentification en redirigeant l’utilisateur vers le point de terminaison `/continue` et en incluant le paramètre `state` reçu dans l’URL. Si vous ne renvoyez pas le `state` d’origine au point de terminaison `/continue`, Auth0 perdra le contexte de la transaction d’authentification et l’utilisateur ne pourra pas se connecter en raison d’une erreur `invalid_request`.
+
+Par exemple :
+
+`https://{yourAuth0Domain}/continue?state=THE_ORIGINAL_STATE`
+
+Dans cet exemple, `THE_ORIGINAL_STATE` est la valeur qu’Auth0 a générée et envoyée à l’URL de redirection. Par exemple, si votre Action redirige vers `https://my-app.exampleco.com/`, Auth0 utiliserait une URL de redirection semblable à `https://my-app.exampleco.com/?state=abc123`, ce qui ferait de `abc123` la valeur de `THE_ORIGINAL_STATE`. Pour reprendre la transaction d’authentification, vous redirigeriez vers :
+
+`https://{yourAuth0Domain}/continue?state=abc123`
+
+Lorsqu’un utilisateur est redirigé vers le point de terminaison `/continue`, le pipeline des Actions reprend à la même Action qui a invoqué la redirection en appelant la fonction `onContinuePostLogin`. Pour que les redirections fonctionnent correctement, vous devez inclure une fonction ayant la signature suivante dans la même Action qui a invoqué la redirection :
+
+```javascript lines
+/**
+* @param {Event} event - Détails sur l'utilisateur et le contexte dans lequel il se connecte.
+* @param {PostLoginAPI} api - Interface dont les méthodes peuvent être utilisées pour modifier le comportement de la connexion.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  api.redirect.sendUserTo("https://my-app.exampleco.com");
+};
+
+/**
+* @param {Event} event - Détails sur l'utilisateur et le contexte dans lequel il se connecte.
+* @param {PostLoginAPI} api - Interface dont les méthodes peuvent être utilisées pour modifier le comportement de la connexion.
+*/
+
+exports.onContinuePostLogin = async (event, api) => {
+}
+```
+
+<div id="pass-data-to-the-external-site">
+  ## Transmettre des données au site externe
+</div>
+
+Pour transmettre des données au site externe, nous vous recommandons de les encoder dans un [JWT](/fr-CA/docs/secure/tokens/json-web-tokens) signé afin que votre application puisse s’assurer qu’elles n’ont pas été altérées pendant leur transmission. Avec Actions, vous pouvez le faire à l’aide des fonctions `api.redirect.encodeToken` et `api.redirect.sendUserTo` :
+
+```javascript lines expandable
+/**
+* @param {Event} event - Détails sur l'utilisateur et le contexte dans lequel il se connecte.
+* @param {PostLoginAPI} api - Interface dont les méthodes peuvent être utilisées pour modifier le comportement de la connexion.
+*/
+exports.onExecutePostLogin = async (event, api) => {
+  const yourDomain = event.secrets.YOUR_AUTH0_DOMAIN || event.request.hostname
+
+  // Créer un jeton de session signé
+  const token = api.redirect.encodeToken({
+    secret: event.secrets.MY_REDIRECT_SECRET,
+    expiresInSeconds: 60, 
+    payload: {
+      // Claims personnalisés à ajouter au jeton
+      email: event.user.email,
+      externalUserId: 1234,
+      continue_uri: `https://${yourDomain}/continue`
+    },
+  });
+
+  // Rediriger l'utilisateur vers https://my-app.exampleco.com
+  // avec un paramètre de chaîne de requête `session_token` contenant
+  // le courriel.
+  api.redirect.sendUserTo("https://my-app.exampleco.com", {
+    query: { session_token: token }
+  });
+}
+```
+
+Le code ci-dessus ajoute un paramètre de chaîne de requête `session_token` à l’URL utilisée pour la redirection (en plus du paramètre `state` qu’Auth0 ajoute automatiquement). Ce jeton contiendra les éléments suivants :
+
+| Token Element    | Description                                                                                                                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`            | Le `user_id` Auth0 de l’utilisateur.                                                                                                                                                                                      |
+| `iss`            | Le nom d’hôte du domaine de votre locataire Auth0 (p. ex., `example.auth0.com`).                                                                                                                                          |
+| `exp`            | L’heure d’expiration (en secondes) spécifiée avec le paramètre `expiresInSeconds`. Elle doit être la plus courte possible afin d’éviter la réutilisation du jeton. La valeur par défaut est de 900 secondes (15 minutes). |
+| `ip`             | L’adresse IP de la demande d’authentification d’origine.                                                                                                                                                                  |
+| `email`          | Claim personnalisé dont la valeur est indiquée dans le paramètre `payload.email`.                                                                                                                                         |
+| `externalUserId` | Claim personnalisé dont la valeur est indiquée dans le paramètre `payload.externalUserId`.                                                                                                                                |
+| `signature`      | À l’aide du secret indiqué ci-dessus, le jeton sera signé avec l’algorithme HS256.                                                                                                                                        |
+
+<div id="ensure-the-token-has-not-been-tampered-with">
+  ### Assurez-vous que le jeton n’a pas été altéré
+</div>
+
+Le système externe doit vérifier que ce jeton n’a pas été altéré pendant sa transmission. Pour ce faire, il doit s’assurer que la signature du jeton est valide et, le cas échéant, que la session du système externe appartient au même utilisateur Auth0 que celui indiqué dans la claim `sub` du jeton.
+
+<div id="pass-data-back-to-auth0">
+  ## Renvoyer des données à Auth0
+</div>
+
+Une fois que l’utilisateur a terminé le flux personnalisé sur le site externe, il doit être redirigé vers le point de terminaison `/continue`. Dans certains cas, vous voudrez peut-être renvoyer des données à Auth0 pour influer sur l’authentification ou le <Tooltip tip="Flux d’autorisation : autorisation (ou processus) défini dans le cadre OAuth 2.0." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=authorization+flow">flux d’autorisation</Tooltip> de cet utilisateur (par exemple, si vous implémentez des vérifications CAPTCHA ou une <Tooltip tip="Authentification multifacteur (MFA) : processus d’authentification de l’utilisateur qui utilise un facteur en plus du nom d’utilisateur et du mot de passe, comme un code par SMS." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=MFA">MFA</Tooltip> personnalisée).
+
+<div id="use-app-metadata-where-possible">
+  ### Utilisez les métadonnées d’application lorsque possible
+</div>
+
+Si possible, le système distant devrait utiliser la [Auth0 Management API](https://auth0.com/docs/api/management/v2/) pour stocker des renseignements personnalisés dans les métadonnées d’application du profil utilisateur Auth0. Lorsque le flux de l’Action Auth0 reprend, ces renseignements sont accessibles dans l’objet `event.user.app_metadata`. Cette approche évite de transmettre des renseignements sensibles à Auth0 par le canal frontal.
+
+<div id="be-selective-when-storing-data-on-the-auth0-user-profile">
+  ### Soyez sélectif lorsque vous stockez des données dans le profil utilisateur Auth0
+</div>
+
+Évitez de stocker trop de données dans le profil utilisateur Auth0. Ces données sont destinées à des fins d’authentification et d’autorisation. Les fonctions de métadonnées et de recherche d’Auth0 ne sont pas conçues pour des scénarios qui exigent un volume élevé de recherches ou de mises à jour fréquentes, comme les études de marché. Votre système risque de rencontrer des problèmes d’évolutivité et de performance si vous utilisez Auth0 à de telles fins.
+
+Si votre application doit accéder à des données utilisateur importantes, l’approche recommandée consiste à stocker ces données dans un système externe et à enregistrer une clé étrangère (l’ID utilisateur) dans Auth0 afin que les systèmes back-end puissent récupérer ces données au besoin.
+
+<div id="send-data-on-the-front-channel">
+  ## Envoyer des données sur le canal frontal
+</div>
+
+Le transfert de données dans les deux sens sur le canal frontal augmente la surface d’attaque exploitable par les <Tooltip tip="Acteurs malveillants : entité (personne ou groupe) qui représente une menace pour l’entreprise ou l’environnement avec l’intention de causer du tort." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=bad+actors">acteurs malveillants</Tooltip>. Si vous devez envoyer des données sur le canal frontal, tenez compte des recommandations suivantes :
+
+<div id="pass-information-back-to-the-action">
+  ### Transmettre des informations à l’Action
+</div>
+
+Un jeton de session signé doit être utilisé pour transmettre des informations sensibles à Auth0. Ce jeton peut être validé facilement dans une Action à l’aide du code suivant :
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l'utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes peuvent être utilisées pour modifier le comportement de la connexion.
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  const payload = api.redirect.validateToken({
+    secret: event.secrets.PRECONFIGURED_SECRET,
+    tokenParameterName: 'my_token',
+  });
+
+  // utiliser les données encodées dans le token, par exemple : 
+  api.idToken.setCustomClaim('color', payload.favorite_color);
+}
+```
+
+Le jeton sera validé pour s’assurer que :
+
+* La signature est valide.
+* Le jeton n’est pas expiré.
+* La claim `state` du jeton correspond au paramètre `state` utilisé dans le cadre de la redirection.
+
+| Élément du jeton | Description                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`            | `user_id` Auth0 de l’utilisateur.                                                                                                                 |
+| `iss`            | Application ciblée par la redirection.                                                                                                            |
+| `exp`            | Doit être aussi court que possible pour éviter la réutilisation du jeton.                                                                         |
+| `state`          | Paramètre `state` envoyé au site distant dans le cadre de la redirection. Il doit être inclus dans le jeton afin d’éviter les attaques par rejeu. |
+| `other`          | Toute autre claim personnalisée sera exposée comme `payload` dans le code ci-dessus.                                                              |
+| `signature`      | Le jeton doit être signé avec l’algorithme HS256.                                                                                                 |
+
+Pour éviter les attaques par rejeu, le jeton doit être renvoyé à Auth0 au moyen d’une requête POST vers le point de terminaison `/continue`. L’option `tokenParameterName` dans le code vous permet de préciser le nom du champ qui contient votre jeton.
+
+<div id="custom-authentication-methods">
+  ## Méthodes d’authentification personnalisées
+</div>
+
+Après une redirection réussie dans le flux de connexion, les Actions peuvent enregistrer des événements de méthode d’authentification personnalisée dans la session de l’utilisateur. Le tableau `event.authentication.methods` contiendra une entrée pour la méthode personnalisée pendant toute la durée de la session du navigateur de l’utilisateur. Chaque entrée de ce tableau comprend un horodatage indiquant quand la méthode d’authentification a été enregistrée.
+
+Une action personnalisée peut déclencher une redirection si la méthode personnalisée requise ne se trouve pas dans le tableau `event.authentication.methods` ou si l’entrée est trop ancienne.
+
+Vous pouvez utiliser `api.redirect.sendUserTo()` pour envoyer l’utilisateur vers une page qui met en œuvre une méthode d’authentification personnalisée. Vous pouvez utiliser `api.authentication.recordMethod()` dans le gestionnaire `exports.onContinuePostLogin` pour enregistrer une entrée de la méthode terminée dans la session de l’utilisateur.
+
+L’entrée stockée dans le tableau `event.authentication.methods` aura une propriété `name` correspondant à l’URL choisie dans `api.authentication.recordMethod()`. L’URL enregistrée ici vous permet de rechercher parmi les méthodes d’authentification terminées de la transaction en cours afin de déterminer si votre méthode personnalisée a déjà été exécutée.
+
+Votre flux de travail peut exiger que la méthode personnalisée soit exécutée de nouveau périodiquement pendant la durée de la session d’un utilisateur. Par exemple, des scénarios de MFA personnalisés peuvent nécessiter une nouvelle vérification de l’utilisateur après un délai déterminé.
+
+L’exemple ci-dessous compare l’horodatage d’une entrée existante afin de déterminer quand réexécuter la méthode personnalisée :
+
+```javascript lines expandable
+const CUSTOM_METHOD_URL = "https://path.to.prompt";
+const PROMPT_TTL = 1000 * 60 * 60 * 24; // 24h
+
+/**
+ * Handler that will be called during the execution of a PostLogin flow.
+ *
+ * @param {Event} event - Details about the user and the context in which
+ * they are logging in.
+ * @param {PostLoginAPI} api - Interface whose methods can be used to
+ * change the behavior of the login.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Search authentication method records for an entry representing our
+  // custom method.
+  const methodRecord = event.authentication?.methods.find((record) =>
+    validateCustomRecord(record, CUSTOM_METHOD_URL, PROMPT_TTL)
+  );
+
+  if (!methodRecord) {
+    const sessionToken = api.redirect.encodeToken({
+      payload: {
+        user_id: event.user.user_id,
+      },
+      secret: event.secrets.SESSION_TOKEN_SECRET,
+    });
+
+    // We didn't find a valid record, so we send the user to the
+    // URL that implements the custom method with the signed
+    // data we encoded in `sessionToken`.
+    api.redirect.sendUserTo(CUSTOM_METHOD_URL, {
+      query: { session_token: sessionToken },
+    });
+  }
+};
+
+/**
+ * Gestionnaire qui sera invoqué lorsque cette action reprend après une
+ * redirection externe. Si votre fonction onExecutePostLogin n'effectue pas
+ * de redirection, cette fonction peut être ignorée sans risque.
+ *
+ * @param {Event} event - Détails sur l'utilisateur et le contexte dans lequel
+ * il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes peuvent être utilisées pour
+ * modifier le comportement de la connexion.
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  const payload = api.redirect.validateToken({
+    secret: event.secrets.SESSION_TOKEN_SECRET,
+    tokenParameterName: "session_token",
+  });
+
+  if (!validateSessionToken(payload)) {
+    return api.access.deny("Unauthorized");
+  }
+
+  // Record the completion of our custom authentication method.
+  // THIS NEW API IS ONLY AVAILABLE IN `onContinuePostLogin`.
+  api.authentication.recordMethod(CUSTOM_METHOD_URL);
+};
+
+function validateCustomRecord(record, url, ttl) {
+  if (!record) {
+    // No record means it isn't valid.
+    return false;
+  }
+
+  if (record.url !== url) {
+    // This isn't a record of our custom method.
+    return false;
+  }
+
+  // Timestamps are rendered as ISO8601 strings.
+  const timestamp = new Date(record.timestamp);
+
+  // The record is valid if it was recorded recently enough.
+  return timestamp.valueOf() >= Date.now() - ttl;
+}
+
+function validateSessionToken(payload) {
+  // Custom validation logic for the data returned by the
+  // custom method goes here.
+  return true;
+}
+```
+
+L’API `api.authentication.recordMethod()` est offerte uniquement dans le gestionnaire `exports.onContinuePostLogin`. Cela permet d’éviter d’éventuelles exploitations lors de la connexion en enregistrant la méthode personnalisée une fois la redirection terminée.
+
+<div id="restrictions-and-limitations">
+  ## Restrictions et limites
+</div>
+
+Les Redirect Actions ne fonctionnent pas avec :
+
+* [le point de terminaison Resource Owner](https://auth0.com/docs/api/authentication/reference#resource-owner)
+* [l’échange par mot de passe](/fr-CA/docs/get-started/authentication-and-authorization-flow/resource-owner-password-flow)
+* [l’échange de jeton d’actualisation](/fr-CA/docs/secure/tokens/refresh-tokens)
+
+<div id="resource-owner-endpoint">
+  ### Point de terminaison Resource Owner
+</div>
+
+Il est impossible d’utiliser des Actions de redirection lorsque vous appelez le point de terminaison [Get Token](https://auth0.com/docs/api/authentication#resource-owner-password) de l’Authentication API pour le flux d’octroi par mot de passe du <Tooltip tip="Resource Owner : entité (comme un utilisateur ou une application) capable d’accorder l’accès à une ressource protégée." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=Resource+Owner">Resource Owner</Tooltip>. Comme l’utilisateur ne se trouve pas dans un flux de redirection au départ, vous ne pouvez pas le rediriger dans une Action.
+
+<div id="flows-where-promptnone">
+  ### Flux où prompt=none
+</div>
+
+Puisque l’objectif de `prompt=none` est d’éviter toute situation où l’utilisateur devrait fournir une saisie, toute redirection entraînera une erreur `error=interaction_required`.
+
+Comme les Actions s’exécutent après la création d’une session d’authentification, vous ne pouvez pas utiliser `prompt=none` si vous avez une Rule de redirection qui tente de bloquer l’accès aux jetons dans certaines conditions (par exemple, une MFA personnalisée, un captcha à la connexion, etc.).
+
+Vous ne pouvez pas créer un flux de redirection qui bloque l’accès aux jetons et contourne l’Action de redirection avec `prompt=none`, car après une tentative échouée, un utilisateur peut simplement relancer l’appel avec `prompt=none` et obtenir des jetons, puisque sa session d’authentification aura déjà été créée, même si les Actions ont échoué la première fois.
+
+<div id="refresh-tokens">
+  ### Jetons d’actualisation
+</div>
+
+Comme l’utilisation d’un <Tooltip tip="Jeton d’actualisation : jeton utilisé pour obtenir un nouveau jeton d’accès sans obliger les utilisateurs à se reconnecter." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=refresh+token">jeton d’actualisation</Tooltip> nécessite un appel sur un canal secondaire au point de terminaison [Get Token](https://auth0.com/docs/api/authentication#refresh-token) de l’Authentication API, cette opération échouera également si vous tentez d’effectuer une redirection.
+
+Il est difficile de vérifier de façon sécuritaire que les restrictions de connexion ont bien été appliquées. Il n’existe pas d’identifiant de session stable dans le contexte qui pourrait servir à recueillir des renseignements associés à la session, par exemple si cet utilisateur a satisfait aux défis MFA. Par conséquent, vous ne pouvez pas utiliser `prompt=none` du tout.
+
+Chaque fois que `api.redirect.sendUserTo()` est appelé dans une Action, si `prompt=none` a été transmis, l’autorisation échoue avec `error=interaction_required`, mais comme la session de l’utilisateur est créée même si les Actions échouent, nous ne pouvons pas tenir pour acquis qu’un utilisateur a satisfait aux défis de redirection et, par conséquent, nous ne pouvons pas utiliser `prompt=none` comme moyen d’obtenir des jetons.
+
+Dans ce cas précis, nous vous recommandons d’utiliser exclusivement des jetons d’actualisation, car vous pouvez vous assurer qu’un utilisateur a satisfait aux défis si ces défis sont requis pour générer un jeton d’actualisation.
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Gérer les métadonnées de l’utilisateur avec le déclencheur d’Action post-login](/fr-CA/docs/manage-users/user-accounts/metadata/manage-user-metadata)

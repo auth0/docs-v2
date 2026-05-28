@@ -1,0 +1,294 @@
+---
+description: Amazon API Gateway チュートリアルのステップ 1
+title: AWS API Gateway チュートリアル ステップ 1
+---
+
+<Warning>
+  この機能はデリゲーションを使用します。デフォルトでは、2017 年 6 月 8 日時点でアドオンを利用していないテナントでは、デリゲーションは無効になっています。現在、デリゲーションを必要とするアドオンを使用しているレガシーテナントは、この機能を引き続き利用できます。将来的にデリゲーション機能が変更またはサービスから削除される場合は、現在利用中のお客様に事前に通知し、移行に十分な時間が提供されます。さらに、デリゲーションはカスタムドメインの使用をサポートしていないため、これに依存する機能はカスタムドメインと併用すると完全には動作しない可能性がある点に注意してください。
+</Warning>
+
+<div id="step-1-set-up-the-amazon-api-gateway">
+  ## ステップ 1 - Amazon API Gateway を設定する
+</div>
+
+このステップを完了すると、次のことが完了しています。
+
+* AWS Lambda 関数を使用して Amazon API Gateway を設定し、Amazon DynamoDB テーブルにペットを保存および取得するサービスロジックを実行できるようにする。
+* ペットの一覧を取得および更新するための、認証不要の REST サービスメソッドを 2 つ作成する。
+
+開始する前に、[Node.js](https://nodejs.org/) をインストールしておいてください。
+
+<div id="step-1-create-the-amazon-dynamodb-table">
+  ### ステップ 1. Amazon DynamoDB テーブルを作成する
+</div>
+
+[Amazon DynamoDB Console](https://console.aws.amazon.com/dynamodb) で、**Create Table** をクリックします。
+
+<Frame>![DynamoDB コンソール - テーブルの作成](/docs/images/cdy7uua7fh8z/2ZPhi7Ddx4TznSXEEhUSDK/52a06412f7c5e6d0ef0d13c6ffe17611/dynamodb-create-table.png)</Frame>
+
+テーブルに関連する項目を設定します。
+
+* **テーブル名**: Pets
+* **プライマリキー**: username
+* **プライマリキーの型**: String
+* **デフォルト設定を使用**: 未選択
+* **読み込みキャパシティーユニット**: 3
+* **書き込みキャパシティーユニット**: 3
+
+<Frame>![DynamoDB コンソール - 新しく作成したテーブルの設定](/docs/images/cdy7uua7fh8z/6MYJV97Xa3DxajG8DYj2dx/e428ab2ce137176d7771c61a9c528f7c/configure-newly-created-table.png)</Frame>
+
+**Create** をクリックして、指定した設定でテーブルを作成します。
+
+テーブルの作成中に、Table details セクションにある Amazon Resource Name (ARN) を控えておいてください。次のステップでテーブルの ARN が必要になります。
+
+<Frame>![DynamoDB コンソール - テーブルの詳細 - Amazon Resource Name](/docs/images/cdy7uua7fh8z/4ZFemddtUD8tRi0NUvzXJ2/38abd951974cad385ef7417f48adf359/table-arn.png)</Frame>
+
+<div id="step-2-create-the-policy-that-grants-aws-lambda-functions-access-to-the-dynamodb-pets-table">
+  ### ステップ 2. AWS Lambda 関数に DynamoDB Pets テーブルへのアクセスを許可するポリシーを作成する
+</div>
+
+[AWS IAM Console](https://console.aws.amazon.com/iam) に移動します。
+
+左側のメニューで **Roles** をクリックし、続けて **Create New Role** ボタンをクリックします。
+
+<Frame>![IAM Console - Roles - Create New Roles](/docs/images/cdy7uua7fh8z/4mgCTXLpycHLA8RbYoEFim/5d9eb81be979355aa9cd10d476ead515/roles.png)</Frame>
+
+ロール名に `APIGatewayLambdaExecRole` を入力し、**Next Step** をクリックします。
+
+ロールタイプを選択します。AWS Service Roles で、AWS Lambda を選択します。
+
+<Frame>![IAM Console - Select the Role Type - Service Roles - AWS Lambda](/docs/images/cdy7uua7fh8z/326kKGbahlvIwVFTi61Gfw/026d1fc0c8c6e3a489ec4fb840f551da/select-role-type.png)</Frame>
+
+Attach Policy 画面では、**Next Step** をクリックしてこの手順をスキップします。この時点で、入力した情報を確認します。内容に問題がなければ、**Create Role** をクリックします。完了すると、IAM ホームページに作成したロールが表示されます。
+
+先ほど作成したロール **APIGatewayLambdaExecRole** を選択します。Inline Policies の下向き矢印をクリックし、**Click Here** リンクをクリックします。
+
+Custom Policy を選択して **Select** をクリックします。ポリシー名に `LogAndDynamoDBAccess` を入力し、次のコードをポリシードキュメントとして追加します (先に DynamoDB テーブルの Amazon Resource Name (ARN) を更新してください) 。**Apply Policy** をクリックします。
+
+```json lines
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AccessCloudwatchLogs",
+      "Action": ["logs:*"],
+      "Effect": "Allow",
+      "Resource": "arn:aws:logs:*:*:*"
+    },
+    {
+      "Sid": "PetsDynamoDBReadWrite",
+                  "Effect": "Allow",
+      "Action": [
+                  "dynamodb:DeleteItem",
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                  ],
+      "Resource": ["DYNAMODB_TABLE_ARN_VALUE_FROM_PREVIOUS_STEP"]
+    }
+   ]
+}
+```
+
+<div id="step-2-create-the-aws-lambda-functions">
+  ### ステップ 2. AWS Lambda 関数を作成する
+</div>
+
+次の 3 つのステップでは、DynamoDB テーブル内のペット情報を取得および更新する AWS Lambda 関数を作成します。
+
+<div id="create-the-lambda-function-for-getpetinfo">
+  #### GetPetInfo の Lambda 関数を作成する
+</div>
+
+[AWS Lambda Console](https://console.aws.amazon.com/lambda) で、**Create a Lambda Function** を選択します (AWS Lambda 関数をまだ作成したことがない場合は、**Get Started Now** をクリックします) 。
+
+[Select blueprint] 画面で、**Blank Function** をクリックします。
+
+次に、トリガーを設定するよう求められます。この時点では設定する必要はないため、**Next** をクリックして先に進みます。
+
+最後に、関数の設定を行います。
+
+該当するフィールドに次の情報を入力します。
+
+* **Name**: `GetPetInfo`
+* **Runtime**: Node.js 6.10
+
+以下のコードを **Lambda function code** 領域に貼り付け、DynamoDB テーブルからペット情報を読み取れるようにします。
+
+```javascript lines
+var AWS = require('aws-sdk');
+var DOC = require('dynamodb-doc');
+var dynamo = new DOC.DynamoDB();
+
+exports.handler = function(event, context) {
+   var cb = function(err, data) {
+      if(err) {
+         console.log('error on GetPetsInfo: ',err);
+         context.done('Unable to retrieve pet information', null);
+      } else {
+         if(data.Item && data.Item.pets) {
+             context.done(null, data.Item.pets);
+         } else {
+              context.done(null, {});
+         }
+      }
+   };
+
+   dynamo.getItem({TableName:"Pets", Key:{username:"default"}}, cb);
+};
+```
+
+ロールには、**Choose an existing role** を選択します。次に、Existing Role として **APIGatewayLambdaExecRole** を選択します。その他の設定はすべて既定値のままにします。
+
+**Next** をクリックして、入力内容を確認します。問題がなければ、**Create function** をクリックします。
+
+**Test** をクリックし、Input test event は既定値のままにします (Hello World テンプレートが使用されます) 。テストが完了すると、Execution Result セクションに空の出力 (`{}`) が表示されます。テーブルは空のままです。
+
+<div id="create-the-lambda-function-for-updatepetinfo">
+  #### UpdatePetInfo 用の Lambda 関数を作成する
+</div>
+
+`GetPetInfo` 関数の作成時と同じ手順を繰り返しますが、関数コードには代わりに次のコードを使用します。
+
+```javascript lines
+var AWS = require('aws-sdk');
+var DOC = require('dynamodb-doc');
+var dynamo = new DOC.DynamoDB();
+exports.handler = function(event, context) {
+    var item = { username:"default",
+                 pets: event.pets || {}
+            };
+
+    var cb = function(err, data) {
+        if(err) {
+            console.log(err);
+            context.fail('unable to update pets at this time');
+        } else {
+            console.log(data);
+                context.done(null, data);
+        }
+    };
+    dynamo.putItem({TableName:"Pets", Item:item}, cb);
+};
+```
+
+**Actions** ドロップダウンをクリックし、**Configure sample event** を選択して、関数をテストします。サンプルデータとして以下を入力し、**Submit** をクリックします。
+
+```json lines
+{
+  "pets": [{
+    "id": 1,
+    "type": "dog",
+    "price": 249.99
+  }]
+}
+```
+
+空の戻り値 (`{}`) が表示されるはずです。
+
+`GetPetInfo` Lambda 関数に戻って、もう一度 **Test** をクリックします。今度は 1 匹のペットが表示されるはずです。
+
+<div id="create-the-third-lambda-function">
+  #### 3 つ目の Lambda 関数を作成する
+</div>
+
+Lambda 関数をもう 1 つ追加で作成します。この関数自体は何も行いませんが、後のセクションで説明する CORS の OPTIONS メソッドで必要になります。
+
+上記の手順に従って、`NoOp` という名前の Lambda 関数を作成します。関数のコードは次のとおりです。
+
+```js lines
+exports.handler = function(event, context) {
+    context.succeed('');
+}
+```
+
+この3つ目の Lambda 関数を作成する代わりに、API Gateway に [OPTIONS メソッドを作成](#method-options)することもできます。
+
+<div id="step-3-create-the-amazon-api-gateway-api">
+  ### ステップ 3. Amazon API Gateway API を作成する
+</div>
+
+2 つのメソッドを持つ API を作成します。1 つはペット情報を `GET` するメソッド、もう 1 つはペット情報を `POST` するメソッドです。
+
+<div id="method-get-pet-information">
+  #### メソッド: GET Pet Information
+</div>
+
+[Amazon API Gateway Console](https://console.aws.amazon.com/apigateway) に移動し、**Create API** をクリックします。初めて API を作成する場合は、代わりに **Get Started** を促す画面が表示されます。
+
+初めて API を作成する場合は、Example API を作成するよう求められます。ポップアップ通知を閉じるために **OK** をクリックし、**Example API** ボタンではなく **New API** ラジオボタンを選択します。
+
+API 名を `SecurePets` にして、**Create API** をクリックします。
+
+`SecurePets` API の Resources タブに移動し、**Create Resource** アクションをクリックします。
+
+リソース名を `Pets` にして、もう一度 **Create Resource** をクリックします。
+
+左側のペインで `/pets` を選択し、**CreateMethod** ボタンをクリックします。
+
+ドロップダウンで GET を選択し、チェックマーク ボタンをクリックします。`GET` メソッドに次の設定値を指定します。
+
+* **Integration type**: Lambda Function;
+* **Lambda Region**: 使用しているリージョン;
+* **Lambda Function**: GetPetInfo.
+
+Lambda 関数に権限を付与するよう求めるポップアップが表示されたら、**Save** をクリックし、続けて **OK** をクリックします。
+
+次に表示される Method Execution ウィンドウで、**Test** をクリックします。
+
+レスポンス本文に 1 件のペット情報が返されるはずです。
+
+<div id="method-post-pet-information">
+  #### メソッド: POST ペット情報
+</div>
+
+ペット情報を `POST` するための API の作成は、ペット情報を `GET` するための API の作成とほぼ同じです。
+
+左側のペインで `/pets` を選択し、**CreateMethod** をクリックします。
+
+ドロップダウンで POST を選択し、チェックマーク ボタンをクリックします。
+
+Integration Type で Lambda Function を選択し、現在使用しているリージョンを選択して、Lambda 関数 には UpdatePetInfo を選択します。
+
+ポップアップが表示されて Lambda 関数 に権限を付与するよう求められたら、**Save** をクリックし、続けて **OK** をクリックします。
+
+**Test** をクリックし、リクエスト本文に以下を貼り付けます。
+
+```json lines
+{"pets": [
+    {"id": 1, "type": "dog", "price": 249.99},
+    {"id": 2, "type": "cat", "price": 124.99}
+  ]
+}
+```
+
+空の戻り値 (`{}`) が表示されるはずです。
+
+GET メソッドに戻り、**Test** をもう一度クリックして、レスポンス本文に、テーブルに 2 匹のペットが一覧表示されていることが示されるのを確認します。
+
+```json lines
+[
+  {
+    "id": 1,
+    "price": 249.99,
+    "type": "dog"
+  },
+  {
+    "id": 2,
+    "price": 124.99,
+    "type": "cat"
+  }
+]
+```
+
+<div id="method-options">
+  #### メソッド: OPTIONS
+</div>
+
+何も処理を行わない Lambda 関数を作成する代わりに、API Gateway に `OPTIONS` メソッドを作成できます。
+
+左側のペインで `/pets` を選択し、**CreateMethod** をクリックします。ドロップダウンで OPTIONS を選択し、チェックマーク ボタンをクリックします。Integration Type にはモックを選択します。**Save** をクリックします。
+
+Response Body は空のまま **Test** をクリックします。`no data` を示す Response Body が返されるはずです。
+
+この時点では、AWS Lambda 関数と Amazon API Gateway メソッドは、セキュリティなしで定義されています。

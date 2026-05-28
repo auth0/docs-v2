@@ -1,0 +1,252 @@
+---
+description: 複数の方法を用いた、各種プラットフォームからのユーザー移行シナリオ。
+title: ユーザー移行シナリオ
+---
+
+ここでは、Gigya、Okta、Stormpath から Auth0 にユーザーを移行する場合のサンプルシナリオをいくつか紹介します。いずれのシナリオでも、それらのプラットフォームにアカウントがあることを前提としています。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+[カスタムデータベース接続](/ja/docs/authenticate/database-connections/custom-db)を設定します。
+
+1. [Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/#/connections/database) で新しいデータベース接続を作成します。必ず **Custom Database** ビューを選択し、**Use my own database** スイッチを有効にしてください。
+2. データベースをアプリケーションに接続します。データベース接続の設定で **Applications** ビューを選択します。**Applications Using This Connection** セクションで、各アプリケーションに対してデータベース接続を有効にします。
+
+<div id="scenario-1-migrate-users-from-gigya-to-auth0">
+  ## シナリオ 1: Gigya から Auth0 にユーザーを移行する
+</div>
+
+1. Gigya ユーザーをエクスポートします:
+   [Gigya&#39;s IdentitySync](https://help.sap.com/docs/SAP_CUSTOMER_DATA_CLOUD/8b8d6fffe113457094a17701f63e3d6a/2b717202e42a4165aa7f75f7eecab64f.html) を使用して、ターゲット スキーマに合わせてユーザーデータを変換し、エクスポートします。このプロセスの詳細については、[Gigya IdentitySync: Using IdentitySync](https://help.sap.com/docs/SAP_CUSTOMER_DATA_CLOUD/8b8d6fffe113457094a17701f63e3d6a/2b717202e42a4165aa7f75f7eecab64f.html?locale=en-US) を参照してください。<br /><br />
+
+   手順に従って、Gigya データベース内のユーザーデータを正しい[スキーマ](/ja/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples)に変換し、変換後のデータを JSON 形式でエクスポートします。
+2. Gigya ユーザーを Auth0 にインポートします:
+   ユーザーは、[User Import/Export Extension](/ja/docs/manage-users/user-migration/user-import-export-extension) または [Management API](https://auth0.com/docs/api/management/v2) のいずれかを使用してインポートできます。
+
+   * **User Import/Export Extension**: [Auth0 Dashboard &gt; Extensions](https://manage.auth0.com/#/extensions) に移動し、**User Import / Export** 拡張機能を選択してインストールします。拡張機能をインストールしたら、それをクリックしてインポート / エクスポート インターフェイスを開くことができます。<br /><br />
+
+     エクスポートした Gigya ユーザーの JSON ファイルを指定されたアップロード領域にドラッグし、先ほど作成したデータベースを選択します。インポートを開始するには、**Start Importing Users** を選択します。詳細については、[User Import/Export Extension](/ja/docs/manage-users/user-migration/user-import-export-extension) を参照してください。
+   * **Management API**: Auth0 にユーザーをインポートする[ジョブを作成](https://auth0.com/docs/api/management/v2#!/Jobs/post_users_imports)します。詳しい手順については、[一括ユーザーインポート](/ja/docs/manage-users/user-migration/bulk-user-imports) を参照してください。
+
+<div id="scenario-2-migrate-users-from-okta-to-auth0">
+  ## シナリオ 2: Okta から Auth0 へユーザーを移行する
+</div>
+
+1. ユーザーのインポートを有効にする: [Auth0 Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/#/connections/database) に移動し、データベース接続を選択します。**Settings** で、**Import Users to Auth0** オプションを有効にします。
+2. [Login script](/ja/docs/authenticate/database-connections/custom-db/templates/login) を作成します。**Login** スクリプトは、ユーザーがログインを試みても、そのアカウントが Auth0 データベースに見つからない場合に実行されます。`username` および `password` パラメーターにメールアドレスとパスワードを渡して、Okta の [Primary Authentication](https://developer.okta.com/docs/api/resources/authn.html#primary-authentication) エンドポイントを呼び出すスクリプトを作成する必要があります。
+   認証が成功すると、Okta は [Authentication Transaction object](https://developer.okta.com/docs/api/resources/authn.html#authentication-transaction-model) を返します。このオブジェクトには、[embedded resources](https://developer.okta.com/docs/api/resources/authn.html#embedded-resources) 内に [ユーザーのユーザープロファイル](https://developer.okta.com/docs/api/resources/authn.html#user-profile-object) が含まれています。その後、ユーザー情報を抽出して、コールバック関数で Auth0 に渡すことができます。<br /><br />
+
+   データベース接続の **Custom Database** ビューで、**Database Action Scripts** を探し、**Login** を選択します。
+
+   ```javascript lines expandable
+   function login (email, password, callback) {
+     // {yourOktaDomain} を自身の Okta ドメインに置き換えてください
+     var url = 'https:/{yourOktaDomain}/api/v1/authn';
+
+     // ユーザーを認証するための POST リクエストを送信する
+     request({
+       url: url,
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+         'Accept': 'application/json'
+       },
+       body: {
+         username: email,
+         password: password,
+         options: {
+           multiOptionalFactorEnroll: false,
+           warnBeforePasswordExpired: false
+         }
+       },
+       json: true
+     }, function (error, response, body) {
+       // レスポンスが成功していることを確認する
+       if (response.statusCode !== 200) return callback();
+
+       // レスポンスボディからユーザーを取得する
+       var user = body._embedded.user;
+
+       // Auth0 に保存するデータを設定し、ユーザーを移行する
+       return callback(null, {
+           user_id : user.id,
+           username: user.profile.login,
+           email: user.profile.login,
+           // Okta で有効なユーザーであれば、すでにメールアドレスを確認済みと見なして
+           // email_verified を true に設定する
+           // このフィールドが設定されていない場合、ユーザーはアカウントの確認を求める
+           // メールを受信する
+           email_verified: true,
+           name: user.profile.firstName + ' ' + user.profile.lastName
+         });
+     });
+   }
+   ```
+
+   スクリプトの上にある **Try** ボタンをクリックして、スクリプトが正しく動作するかどうかをテストします。
+3. [Get User スクリプト](/ja/docs/authenticate/database-connections/custom-db/templates/get-user)を作成します: **Get User** スクリプトは、ユーザーがパスワードのリセットを試みたものの、Auth0 データベースにそのアカウントが見つからない場合に実行されます。ユーザーのメールアドレスを `login` パラメーターとして渡し、Okta の [Get User with Login](https://developer.okta.com/docs/api/resources/users.html#get-user-with-login) エンドポイントを呼び出すスクリプトを作成する必要があります。
+   また、[API トークンを作成](https://developer.okta.com/docs/api/getting_started/getting_a_token.html)する必要があります。このトークンは、`Authorization` ヘッダーでこのエンドポイントに渡す必要があります。
+   成功すると、Okta はユーザー情報を含む [User object](https://developer.okta.com/docs/api/resources/users.html#user-model) を返します。ここでも、ユーザー情報を抽出してコールバック関数で Auth0 に渡すことができます。<br /><br />
+
+   データベース接続の**Custom Database**ビューで、**Database Action Scripts**を見つけ、**Get User**を選択します。
+
+   ```javascript lines expandable
+   function getByEmail(email, callback) {
+     // {yourOktaDomain} を自分の Okta ドメインに置き換えてください
+     var url = 'https://{yourOktaDomain}/api/v1/users/' + encodeURIComponent(email);
+
+     // メールアドレスでユーザーを検索する GET リクエストを送信します
+     // {yourOktaApiToken} を Okta API トークンに置き換えてください
+     // (参照: https://developer.okta.com/docs/api/getting_started/getting_a_token.html) 
+     request({
+       url: url,
+       method: 'GET',
+       headers: {
+         'Content-Type': 'application/json',
+         'Accept': 'application/json',
+         'Authorization': 'SSWS ' + '{yourOktaApiToken}'
+       },
+       json: true
+     }, function (error, response, body) {
+       // レスポンスが成功したことを確認します
+       if (response.statusCode !== 200) return callback();
+
+       // Auth0 に保存するデータを設定してユーザーを移行します
+       return callback(null, {
+         user_id: body.id,
+         username: body.profile.login,
+         email: body.profile.login,
+         email_verified: true,
+         name: body.profile.firstName + ' ' + body.profile.lastName
+       });
+     });
+   }
+   ```
+
+   スクリプトが動作するかどうかを確認するには、スクリプト上部の **Try** ボタンをクリックします。
+4. カスタムデータベース接続をテストします。**接続を試す** をクリックします。[Auth0 Lock widget](/ja/docs/libraries/lock) が表示されます。Okta ユーザーのメールアドレスとパスワードを入力し、**ログイン** をクリックします。接続が正常に機能していることを示す Web ページと、ユーザー情報が表示されます。
+5. 新しくインポートされたユーザーを確認するには、[Auth0 Dashboard &gt; ユーザー管理 &gt; ユーザー](https://manage.auth0.com/#/users)を開きます。
+
+<div id="scenario-3-migrate-users-from-stormpath-to-auth0">
+  ## シナリオ 3: Stormpath から Auth0 にユーザーを移行する
+</div>
+
+1. ユーザーのインポートを有効にする: [Auth0 Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/#/connections/database) に移動し、データベース接続を選択します。**Settings** で、**Import Users to Auth0** オプションを有効にします。
+2. 接続でアプリケーションを有効にする: **Applications** ビューを選択します。データベース接続を使用するアプリケーションを有効にします。
+3. [Login script](/ja/docs/authenticate/database-connections/custom-db/templates/login) を作成します。**Login** スクリプトは、ユーザーがログインを試みても、そのアカウントが Auth0 データベースに見つからない場合に実行されます。`username` と `password` パラメーターにユーザーの認証情報を渡し、Stormpath の API を呼び出してユーザーを認証するスクリプトを作成する必要があります。<br /><br />
+
+   認証に成功すると、Stormpath からのレスポンスにユーザーアカウントの URL が含まれます。次に、そのアカウント URL に対して 2 回目のリクエストを実行し、ユーザー情報を取得します。取得したユーザー情報を抽出し、コールバック関数で Auth0 に渡すことができます。
+
+   ```javascript lines expandable
+   function login(username, password, callback) {
+     // {yourStormpathClientId} 属性をあなたの Stormpath ID に置き換えてください
+     var url = 'https://api.stormpath.com/v1/applications/{yourStormpathClientId}/loginAttempts';
+
+     // Stormpath ではユーザー資格情報を base64 エンコードされたメッセージとして渡す必要があります
+     var message = username + ':' + password;
+     var pass = new Buffer(message).toString('base64');
+
+     // ユーザーを認証するための POST リクエストを送信します
+     request({
+       url: url,
+       method: 'POST',
+       auth: {
+         // API クライアントID
+         user: '{yourStormpathClientId}',
+         // API クライアントシークレット
+         password: '{yourStormpathClientSecret}'
+       },
+       headers: {
+         'Content-Type': 'application/json'
+       },
+       json: {
+         type: 'basic',
+         // base64 エンコードされた資格情報を渡します
+         value: pass
+       }
+     }, function (error, response, body) {
+       // レスポンスが成功した場合は続行します
+       if (response.statusCode !== 200) return callback();
+       // 成功レスポンスにはユーザー情報を取得するための URL が含まれます
+       var accountUrl = body.account.href;
+
+       // ユーザー情報を取得するために2回目のリクエストを送信します（今回は GET リクエスト）
+       request({
+         url: accountUrl,
+         method: 'GET',
+         auth: {
+           // API クライアントID
+           user: '{yourStormpathClientId}',
+           // API クライアントシークレット
+           password: '{yourStormpathClientSecret}'
+         }
+       }, function (errorUserInfo, responseUserInfo, bodyUserInfo) {
+         // 成功レスポンスを受け取った場合は処理を続けます
+         if (responseUserInfo.statusCode !== 200) return callback();
+
+         var parsedBody = JSON.parse(bodyUserInfo);
+         // ユーザー識別子を取得するために Stormpath API の URL 部分を除去します
+         var id = parsedBody.href.replace('https://api.stormpath.com/v1/accounts/', '');
+
+         // 最後に、Auth0 に保存するデータを設定してユーザーを移行します
+         return callback(null, {
+           user_id : id,
+           username: parsedBody.username,
+           email: parsedBody.email,
+           // Stormpath で有効なユーザーであれば既にメールアドレスを確認済みと見なし、
+           // email_verified を true に設定します
+           // このフィールドを設定しない場合、ユーザーにアカウント確認を求める
+           // メールが送信されます
+           email_verified: true,
+           // Stormpath から引き継ぎたい追加フィールドをここに追加してください
+         });
+       });
+     });
+   }
+   ```
+
+   スクリプトをテストして動作するかどうかを確認するには、スクリプトの上にある **Try** ボタンをクリックします。
+4. [Get User script](/ja/docs/authenticate/database-connections/custom-db/templates/get-user) を作成します: **Get User** スクリプトは、ユーザーがパスワードリセットを試みた際に、そのアカウントが Auth0 データベース内に見つからない場合に実行されます。Stormpath API の `/accounts` エンドポイントを呼び出し、ユーザーのメールアドレスを `email` パラメーターとして渡すスクリプトを作成する必要があります。
+   成功すると、Stormpath はユーザー情報を返します。その情報を抽出し、コールバック関数を通じて Auth0 に渡すことができます。
+
+   ```javascript lines expandable
+   function getByEmail(email, callback) {
+     // {yourStormpathClientId} 属性をあなたの Stormpath ID に置き換えてください
+     var url = 'https://api.stormpath.com/v1/applications/{yourStormpathClientId}/accounts';
+
+     request({
+       url: url,
+       method: 'GET',
+       auth: {
+         // API クライアントID
+         user: '{yourStormpathClientId}',
+         // API クライアントシークレット
+         password: '{yourStormpathClientSecret}'
+       },
+       qs: { q: email }
+     }, function (error, response, body) {
+       if (response.statusCode !== 200) return callback();
+
+       var parsedBody = JSON.parse(body);
+       var user = parsedBody.items[0];
+
+       if (!user) return callback();
+
+       var id = user.href.replace('https://api.stormpath.com/v1/accounts/', '');
+
+       return callback(null, {
+         user_id: id,
+         username: user.username,
+         email: user.email,
+         email_verified: true,
+         // Stormpath から引き継ぎたい追加フィールドをここに追加してください
+       });
+     });
+   }
+   ```
+
+   スクリプトの上にある **Try** ボタンをクリックして、スクリプトが正しく動作するかどうかを確認します。
+5. カスタムデータベース接続をテストするには、**[接続を試す]** をクリックします。[Auth0 Lock ウィジェット](/ja/docs/libraries/lock)が表示されます。Stormpath ユーザーのメールアドレスとパスワードを入力し、**[ログイン]** をクリックします。接続が正しく機能していることを示す、ユーザー情報を含む Web ページが表示されます。
+6. 新しくインポートされたユーザーを確認するには、[Dashboard &gt; ユーザー管理 &gt; ユーザー](https://manage.auth0.com/#/users)に移動してください。

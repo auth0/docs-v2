@@ -1,0 +1,129 @@
+---
+description: Migra tu conexión de federación SAML existente de un dominio personalizado heredado de Auth0 a uno nuevo, para que tus inquilinos puedan aprovechar las capacidades de Multiple Custom Domain (MCD).
+title: Migración de SAML para dominios personalizados
+---
+
+import {AuthCodeBlock} from "/snippets/es/AuthCodeBlock.jsx";
+
+import {AuthCodeGroup} from "/snippets/es/AuthCodeGroup.jsx";
+
+Migra tu Conexión de federación SAML existente de un dominio personalizado heredado de Auth0 a uno nuevo, para que tus inquilinos puedan aprovechar las capacidades de Multiple Custom Domain (MCD).
+
+Los Proveedores de identidad (IdP) externos suelen estar configurados de forma fija con tu dominio anterior, por lo que debes implementar un proxy inverso inteligente que intercepte la respuesta SAML enviada a ese dominio y la redirija de forma segura a un nuevo dominio personalizado.
+
+Esto garantiza una migración sin interrupciones para los usuarios federados y te permite usar de inmediato tu nuevo dominio sin tener que esperar actualizaciones de configuración obligatorias por parte de tu IdP. 
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+Este proceso requiere configurar los componentes de Auth0 mediante Terraform y desplegar un Cloudflare Worker para la lógica de proxy.
+
+Antes de comenzar la migración, revise los siguientes requisitos:
+
+* Un inquilino con plan Enterprise y MCD habilitado.
+* Dos dominios personalizados verificados configurados en su inquilino de Auth0:
+  1. **Dominio heredado anterior** (para el proxy)
+  2. **Nuevo dominio de destino** (para la aplicación)
+* Terraform CLI y `Node.js/npm` instalados.
+* Una cuenta de Cloudflare con acceso al dominio que hospeda sus dominios personalizados.
+
+<div id="how-it-works">
+  ## Cómo funciona
+</div>
+
+Esta estrategia de migración utiliza un proxy inverso inteligente para hacer de puente entre tu dominio personalizado heredado y tu nuevo dominio. Este proxy se implementa en el dominio anterior para interceptar la respuesta de autenticación SAML enviada por tu Proveedor de identidad (IdP) externo.
+
+Esto es necesario porque la configuración del IdP está codificada de forma fija en el endpoint de tu dominio anterior. El proxy modifica los campos de control de la carga útil de SAML (como `Destination` y `Recipient`) para que reflejen con precisión el nuevo dominio personalizado.
+
+Por último, el proxy reenvía esta carga útil corregida al endpoint de inicio de sesión del nuevo dominio. Esto permite cambiar a tu nuevo dominio sin tiempo de inactividad y sin requerir cambios de configuración manuales por parte de tus socios de IdP.
+
+<div id="setup-and-configuration">
+  ## Preparación y configuración
+</div>
+
+Para preparar y configurar la migración:
+
+1. Clona el repositorio de migración:
+
+```bash
+git clone https://github.com/abbaspour/auth0-mcd-federation-migration.git
+cd auth0-mcd-federation-migration
+```
+
+2. Instale las dependencias:
+
+```bash
+npm install
+```
+
+3. Cree un archivo `terraform.auto.tfvars` en su directorio `tf` con las credenciales necesarias y la información del dominio:
+
+```bash
+# Variables del Proveedor de servicios (SP) de Auth0
+auth0_domain = "your-sp-tenant.auth0.com"
+auth0_existing_custom_domain = "oldfed.example.com"
+auth0_new_custom_domain = "id.example2.com"
+auth0_tf_client_id = "your-sp-client-id"
+auth0_tf_client_secret = "your-sp-client-secret"
+
+# Variables del Proveedor de identidad (IdP) de Auth0
+auth0_idp_domain = "your-idp-tenant.auth0.com"
+auth0_idp_tf_client_id = "your-idp-client-id"
+auth0_idp_tf_client_secret = "your-idp-client-secret"
+
+# Variables de Cloudflare
+cloudflare_api_key = "your-cloudflare-api-key"
+cloudflare_email = "your-cloudflare-email"
+cloudflare_zone_id = "your-cloudflare-zone-id"
+```
+
+4. Inicialice Terraform y aplíquelo:
+
+```bash
+cd tf
+terraform init
+terraform apply
+```
+
+Esto crea la aplicación y la conexión de SAML necesarias, configura el DNS mediante Cloudflare y prepara las variables de entorno para el worker.
+
+<div id="deploy-the-cloudflare-worker">
+  ### Despliega el worker de Cloudflare
+</div>
+
+Este proxy se encarga de la interceptación de la respuesta SAML y de la lógica de redirección. Para desplegarlo:
+
+1. Despliega el proxy de Cloudflare:
+
+```bash
+cd ..
+npx wrangler deploy
+```
+
+2. El worker recibe automáticamente las variables de entorno necesarias (como `AUTH0_EDGE_LOCATION` y `NEW_SP_DOMAIN`) desde la salida de Terraform.
+
+<div id="temporarily-update-saml-connection-parameters">
+  ### Actualizar temporalmente los parámetros de la conexión SAML
+</div>
+
+Tu dominio anterior recibe la respuesta SAML antes de reenviarla al dominio nuevo. Por lo tanto, los parámetros de validación esperados de la conexión SAML deben apuntar temporalmente a la URL de devolución de llamada del dominio anterior para evitar errores por discrepancias.
+
+1. Obtén un token de acceso de Management API para el inquilino de tu proveedor de servicios, con los alcances `read:connections` y `update:connections`:
+
+   ```bash
+   cd bin/
+   export access_token='<sp-tenant-management-api-token>'
+   ```
+
+2. Actualiza la URL de destino:
+
+   ```bash
+   ./sp-set-destination-url.sh -i <saml-connection-id> -d https://oldfed.example.com/login/callback
+   ```
+
+3. Actualiza la URL del destinatario:
+
+   ```bash
+   ./sp-set-recipient-url.sh -i <saml-connection-id> -r https://oldfed.example.com/login/callback
+   ```

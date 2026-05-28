@@ -1,0 +1,126 @@
+---
+description: OpenID FAPI Certification Tests に合格するための Auth0 の設定方法を説明します。
+title: OpenID FAPI Certification Tests に合格するための Auth0 の設定
+validatedOn: 2026-01-22
+---
+
+このセクションでは、[OpenID FAPI Conformance Tests](https://openid.net/certification/certification-fapi_op_testing/) を使用してソリューションをテストする場合の、クライアント設定に関する推奨事項を紹介します。
+
+<Tooltip tip="OpenID: アプリケーションがログイン情報を収集・保存することなく、ユーザーの本人確認を行えるようにする認証のためのオープン標準です。" cta="用語集を表示" href="/ja/docs/glossary?term=OpenID">OpenID</Tooltip> FAPI Conformance Tests に合格するには、まず次の設定を行います。
+
+* `compliance_level` プロパティを、目的のプロファイル (`fapi1_adv_pkj_par`、`fapi1_adv_mtls_par`、`fapi2_sp_pkj_mtls`、`fapi2_sp_mtls_mtls` のいずれか) に設定します
+* [mTLS を設定する](/ja/docs/get-started/applications/configure-mtls) ([mTLS aliases](/ja/docs/get-started/applications/configure-mtls/configure-mtls-for-a-tenant#enable-mtls-aliases) を含む) か、[Private Key JWT を設定する](/ja/docs/get-started/applications/configure-private-key-jwt) のいずれかを行います
+* [mTLS Token Binding を設定する](/ja/docs/get-started/applications/configure-mtls/configure-mtls-for-a-client#enable-token-binding)
+* [Pushed Authorization Requests](/ja/docs/get-started/applications/configure-par) を設定します
+* テストで使用するすべてのクライアントで、`oidc_conformant` プロパティが `true` に設定されていることを確認します。これは、Auth0 Dashboard で作成したクライアントのデフォルト値です。
+
+次に、以下の手順に従って OpenID FAPI Conformance Tests の設定を完了します。
+
+* [Auth0 がユーザーに同意を求めるようにする](#ensure-auth0-prompts-users-for-consent)
+* [テナントでサポートされる ACR クレームを設定する](#configure-supported-acr-claims-for-the-tenant)
+* [JWKS エンドポイントから alg プロパティを削除する](#remove-the-alg-property-from-jwks-endpoint)
+* [スコープと redirect&#95;uri を必須にする Action を追加する](#add-action-to-require-scope-and-redirect-uri)
+* [ (FAPI2 プロファイルのみ) レスポンスで `iss` クレームが返されることを確認する](#fapi2-profiles-only-ensure-iss-claim-is-returned-in-responses)
+
+<div id="ensure-auth0-prompts-users-for-consent">
+  ### Auth0 がユーザーに同意を求めるようにする
+</div>
+
+Auth0 がユーザーに同意を求めるよう、設定する必要があります。クライアントがファーストパーティアプリとして構成されており、<Tooltip tip="リソースサーバー: 保護されたリソースをホストするサーバー。リソースサーバーは、保護されたリソース要求を受け取り、それに応答します。" cta="用語集を見る" href="/ja/docs/glossary?term=Resource+Server">リソースサーバー</Tooltip> または API がファーストパーティアプリで同意をスキップすることをサポートしている場合は、この手順を省略できます。Auth0 がユーザーに同意を求めるようにするには、クライアントの `is_first_party` プロパティを `false` に設定します:
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/clients/YOUR_CLIENT_ID' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "is_first_party": false  
+}'
+```
+
+次に、接続をドメインレベルに昇格します:
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/connections/YOUR_CONNECTION_ID' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+  "is_domain_connection": true
+}'
+```
+
+<div id="configure-supported-acr-claims-for-the-tenant">
+  #### テナントでサポートされる ACR クレームを設定する
+</div>
+
+FAPI テストでは、必須の ACR 値として `urn:mace:incommon:iap:silver` が渡されます。必要な ACR 値を <Tooltip tip="IDトークン: リソースへのアクセスではなく、クライアント自体を対象とした認証情報です。" cta="用語集を表示" href="/ja/docs/glossary?term=ID+token">IDトークン</Tooltip> に含めるには、テナントでサポートされる ACR 値のリストに `urn:mace:incommon:iap:silver` を追加します。
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/tenants/settings' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+    "acr_values_supported": ["urn:mace:incommon:iap:silver"]
+}'
+```
+
+<div id="remove-the-alg-property-from-jwks-endpoint">
+  #### JWKS エンドポイントから alg プロパティを削除する
+</div>
+
+キーを RS256 に限定せず、複数のアルゴリズムで使用できるようにするには、`/.well-known/jwks.json` エンドポイントの出力からテナントの `alg` プロパティを削除します。
+
+```bash lines
+curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/tenants/settings' \
+  --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+    "flags": {
+        "remove_alg_from_jwks": true
+    }
+}'
+```
+
+<div id="add-action-to-require-scope-and-redirect_uri">
+  #### スコープと redirect_uri を必須にする Action を追加する
+</div>
+
+デフォルトでは、Auth0 はスコープなしのリクエストを許可し、スコープが指定されていない場合は `openid` スコープを前提とします。Auth0 は `redirect_uri` なしのリクエストも許可しており、これは [Actions](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/redirect-with-actions) で設定できます。ただし、FAPI 適合性テストでは、Auth0 により厳格な制限を適用する必要があります。
+
+スコープと `redirect_uri` に必要な制限を適用するには、次の Action を追加します。
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.request.body || !event.request.body.refresh_token) {
+    // スコープを必須にする
+    if (!event.request.query.scope) {
+      api.access.deny('scope must be provided in the request');
+    }
+    // redirect_uri が存在しない場合のエラーメッセージを改善する
+    if (!event.request.query.redirect_uri) {
+      api.access.deny('redirect_uri must be provided in the request');
+    }
+  }
+};
+```
+
+<div id="fapi2-profiles-only-ensure-iss-claim-is-returned-in-responses">
+  #### &#x20;(FAPI2 プロファイルのみ) レスポンスで `iss` クレームを返すようにする
+</div>
+
+FAPI 2.0 Security Profile では、[RFC9207](https://www.rfc-editor.org/info/rfc9207) に従い、認可レスポンスで `iss` パラメーターを返す必要があります。互換性上の理由から、Auth0 ではこれはデフォルトで有効になっていません。この動作を有効にするには、テナント設定の `authorization_response_iss_parameter_supported` プロパティを `true` に設定します。
+
+```bash lines
+curl --location --request PATCH "https://{YOUR_DOMAIN}/api/v2/tenants/settings" \
+  --header "Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --data-raw '{
+    "authorization_response_iss_parameter_supported": true
+  }'
+```
+
+<div id="learn-more">
+  ## 詳細
+</div>
+
+* [Private Key JWT 認証を設定する](/ja/docs/get-started/applications/configure-private-key-jwt)
+* [mTLS 認証を設定する](/ja/docs/get-started/applications/configure-mtls)

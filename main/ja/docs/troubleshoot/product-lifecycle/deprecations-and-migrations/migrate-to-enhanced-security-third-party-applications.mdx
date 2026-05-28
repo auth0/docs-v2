@@ -1,0 +1,434 @@
+---
+title: サードパーティアプリケーション向けの強化されたセキュリティへの移行
+description: 強化されたセキュリティ制御が、既存および新規作成のサードパーティアプリケーションにどのような影響を与えるかを説明します。
+validatedOn: 2026-04-07
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+import {AuthCodeGroup} from "/snippets/ja/AuthCodeGroup.jsx";
+
+2026年10月23日より、Auth0 は、Management API 経由で新規作成されるサードパーティアプリケーションのデフォルトのセキュリティモードを変更します。サードパーティアプリケーションでは、デフォルトで [OAuth 2.1 のベストプラクティス](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) に準拠した強化されたセキュリティ制御が適用されます。
+
+<Warning>
+  この変更の対象は、2026年4月23日以前からサードパーティアプリケーションを使用していたテナントのみで、影響を受けるのも新規作成されるアプリケーションに限られます。既存のサードパーティアプリケーションは、変更なしでこれまでどおり引き続き動作します。
+</Warning>
+
+Auth0 は、すべての新しいサードパーティアプリケーションで強化されたセキュリティ制御を採用することを強く推奨しています。強化された制御により、明示的な API 認可、PKCE の必須化、そして OAuth 2.1 とセキュリティのベストプラクティスに沿った厳選された機能セットが提供されます。さらに、強化された制御を備えたアプリケーションは、将来的にアプリケーションレベルのレート制限や管理ツールの改善といった機能の恩恵も受けられます。ただし、特定のユースケースでは、必要に応じて既存の動作を維持することも可能です。
+
+サードパーティアプリケーションの詳細については、[サードパーティアプリケーション](/ja/docs/get-started/applications/third-party-applications) を参照してください。各モードで利用できる機能の詳細な比較については、[機能比較](#feature-comparison) を参照してください。特定の統合パターンに関するガイダンスについては、[一般的なシナリオ](#common-scenarios) を参照してください。
+
+<div id="how-are-you-affected">
+  ## どのような影響がありますか？
+</div>
+
+この移行による影響は、次の 2 点です。
+
+<div id="1-management-api-default-the-deprecation">
+  ### 1. Management API のデフォルト (非推奨化)
+</div>
+
+`POST /api/v2/clients` でサードパーティアプリケーションを作成する場合、`third_party_security_mode` のデフォルト値は、2026 年 10 月 23 日に `permissive` (従来の動作) から `strict` (強化されたセキュリティ制御) へ変更されます。
+
+Auth0 Dashboard から作成されるすべてのサードパーティアプリケーションでは、すでに強化されたセキュリティ制御が使用されます。これは Auth0 Dashboard では設定できません。
+
+<div id="2-dynamic-client-registration-independent-configuration">
+  ### 2. Dynamic Client Registration (個別設定)
+</div>
+
+[Dynamic Client Registration](/ja/docs/get-started/applications/dynamic-client-registration) を使用している場合、DCR クライアントは別のテナント設定 `dynamic_client_registration_security_mode` によって制御されます。これは非推奨化とは別であり、個別に設定方針を決定する必要があります。
+
+<div id="migration-tasks">
+  ## 移行作業
+</div>
+
+<div id="review-your-third-party-applications">
+  ### サードパーティアプリケーションを確認する
+</div>
+
+移行パスを選択する前に、サードパーティアプリケーションがどのように動作しているかを確認し、現在の要件を把握してください。次の点を検討します。
+
+* どのグラントタイプを使用していますか？ (認可コード、implicit、クライアントクレデンシャル など)
+* OIDCスコープ (openid、profile、email) または IDトークンが必要ですか？
+* Classic Login またはレガシーエンドポイントを使用していますか？
+* どのように作成されていますか？ (Dashboard/API から手動で作成、または DCR による動的作成)
+
+サードパーティアプリケーションの数が少ない場合は、Auth0 Dashboard または Management API を使用して個別に確認できます。各アプリケーションには、現在のセキュリティモード (`strict` または `permissive`) を示す `third_party_security_mode` プロパティがあります。
+
+**既存の `permissive` アプリケーションを強化する**: API の [API アクセスポリシー](/ja/docs/get-started/apis/api-access-policies-for-applications) を見直し、必要に応じて **Require Client Grant** に設定することを検討してください。これにより、`permissive` のサードパーティアプリケーションがそれらの API にアクセスするには、明示的なグラントが必要になります。このポリシーはファーストパーティアプリケーションにも適用されるため、変更する前に既存の統合を確認してください。
+
+強化されたセキュリティ制御が統合にどのような影響を与えるかを理解するには、以下の [機能比較](#feature-comparison) を確認し、ご利用のケースが [一般的なシナリオ](#common-scenarios) のいずれかに当てはまるかを確認してください。[FAQ](#frequently-asked-questions) セクションでも、移行に関するよくある質問を取り上げています。
+
+<div id="step-1-choose-how-to-create-new-third-party-applications">
+  ### ステップ 1: 新しいサードパーティアプリケーションの作成方法を選択する
+</div>
+
+Management API 経由で作成する新しいサードパーティアプリケーションについて、強化されたセキュリティ制御を使用するか、従来の動作を維持するかを決定します。この選択は `POST /api/v2/clients` にのみ適用されます。Auth0 Dashboard で作成されるアプリケーションでは、常に強化されたセキュリティ制御が使用されます。
+
+<div id="option-a-complete-the-migration-recommended">
+  #### オプション A: 移行を完了する (推奨)
+</div>
+
+2026年10月23日までに移行を完了すると、強化されたセキュリティ制御がデフォルトになります。この方法により、サードパーティアプリケーションを OAuth 2.1 のベストプラクティスに沿った構成にし、将来の機能に備えることができます。
+
+<div id="1-test-enhanced-security-controls">
+  ##### 1. 強化されたセキュリティ制御をテストする
+</div>
+
+互換性を確認するため、強化されたセキュリティ制御を有効にしたテスト用のサードパーティアプリケーションを作成します。
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/api/v2/clients' \
+    --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    --header 'Content-Type: application/json' \
+    --data '{
+      "name": "Test Third-Party App",
+      "is_first_party": false,
+      "third_party_security_mode": "strict",
+      "app_type": "regular_web",
+      "callbacks": ["https://partner.example.com/callback"],
+      "grant_types": ["authorization_code", "refresh_token"]
+    }'
+  ```
+</AuthCodeGroup>
+
+レスポンスには、`tpc_` プレフィックス付きの `client_id` と `third_party_security_mode: "strict"` が含まれます。
+
+<div id="2-set-up-default-api-permissions">
+  ##### 2. デフォルト API 権限を設定する
+</div>
+
+強化されたセキュリティ制御が適用されるサードパーティアプリケーションでは、API にアクセスするために明示的なクライアントグラントが必要です。デフォルト権限では、すべてのサードパーティアプリケーションが自動的にアクセスできる API とスコープの基本セットを定義します。これは、アプリケーションごとに個別に権限を設定できない、動的に作成されるクライアントで特に重要です。
+
+また、個別のアプリケーションに対して (`client_id` ごとに) 固有の権限を定義し、デフォルトより広い、または狭いアクセス権を付与することもできます。両方が存在する場合は、アプリケーションごとの権限がデフォルトより優先されます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **Applications &gt; APIs** に移動します。
+    2. サードパーティアプリケーションにアクセスを許可する API を選択します。
+    3. **Settings** タブで、**Default Permissions for Third Party Apps** までスクロールします。
+    4. User Access および/または Client Access で **Authorized** を選択します。
+    5. 付与するスコープを選択します。
+    6. **Save** をクリックします。
+  </Tab>
+
+  <Tab title="Management API">
+    <AuthCodeGroup>
+      ```bash cURL
+      curl --request POST \
+        --url 'https://{yourDomain}/api/v2/client-grants' \
+        --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+        --header 'Content-Type: application/json' \
+        --data '{
+          "default_for": "third_party_clients",
+          "audience": "https://api.example.com",
+          "scope": ["read:items", "write:items"],
+          "subject_type": "user"
+        }'
+      ```
+    </AuthCodeGroup>
+  </Tab>
+</Tabs>
+
+サードパーティアプリケーションに対しては、ユーザーアクセス (`subject_type: "user"`) 用とマシンツーマシンアクセス (`subject_type: "client"`) 用に、それぞれ別のデフォルト権限を設定できます。
+
+詳しくは、[サードパーティアプリケーションのデフォルト権限](/ja/docs/get-started/applications/application-access-to-apis-client-grants#default-permissions-for-third-party-applications)を参照してください。
+
+<div id="3-validate-compatibility">
+  ##### 3. 互換性を確認する
+</div>
+
+強化されたセキュリティ制御を有効にした状態で、サードパーティアプリケーション作成のワークフローをテストします。次の点を確認してください。
+
+* アプリケーションが `authorization_code`、`refresh_token`、`client_credentials` のグラントタイプを使用できる
+* 認可フローに PKCE が実装されている
+* OIDC スコープを必要としない
+* Classic Login またはレガシーエンドポイントを必要としない
+* テナントに、サードパーティのログインフローで実行が必要なアクティブな [Rules](/ja/docs/customize/rules) がないこと。厳格なサードパーティアプリケーションでは Rules はサポートされておらず、エラーになります。Rules を使用している場合は、[Actions への移行](/ja/docs/customize/actions/migrate/migrate-from-rules-to-actions)を検討するか、パーミッシブモードを使用してください。
+
+互換性の問題が見つかった場合は、[Troubleshoot Third-Party Applications](/ja/docs/get-started/applications/third-party-applications/troubleshooting) を参照してください。
+
+<div id="4-complete-the-migration">
+  ##### 4. 移行を完了する
+</div>
+
+互換性を確認したら、**Create Permissive Third-Party Clients by Default** トグルをオフにして、移行を完了します。
+
+<Frame>![デフォルトで permissive なサードパーティクライアントを作成](/docs/images/third-party-applications/create_permissive_3p_clients_by_default.png)</Frame>
+
+Auth0 Dashboard で以下の操作を行います。
+
+1. **Settings &gt; Advanced** に移動します。
+2. **Migrations** セクションまでスクロールします。
+3. **Create Permissive Third-Party Clients by Default** をオフにします。
+4. **Save** を選択します。
+
+移行が完了すると、`POST /api/v2/clients` でサードパーティアプリケーションを作成する際に、次のいずれかを行えます。
+
+* `third_party_security_mode` パラメーターを省略する (強化されたセキュリティ制御がデフォルトで適用されます) 、または
+* `third_party_security_mode: "strict"` を明示的に設定する
+
+**2026 年 10 月 23 日以降**: 対象となるすべてのテナントで、**Create Permissive Third-Party Clients by Default** トグルは自動的にオフになります。従来の動作でアプリケーションを作成するには、`/api/v2/clients` エンドポイントへの `POST` リクエストで `third_party_security_mode: "permissive"` を明示的に指定する必要があります。
+
+<div id="option-b-preserve-existing-behavior-as-the-default">
+  #### オプション B: 既存の動作をデフォルトとして維持する
+</div>
+
+引き続き既存の動作をデフォルトとしてサードパーティアプリケーションを作成する必要がある場合は、強化されたセキュリティ制御を導入する準備が整うまで、**Create Permissive Third-Party Clients by Default** トグルを有効のままにしておくことができます。
+
+<Warning>
+  このオプションでは現在のワークフローを維持できますが、強化されたセキュリティ制御によるセキュリティ上のメリットは得られません。Auth0 は、すべての新しいサードパーティアプリケーションで強化されたセキュリティ制御を採用することを強く推奨します。
+</Warning>
+
+<div id="before-the-deadline">
+  ##### 期限前
+</div>
+
+**Create Permissive Third-Party Clients by Default** トグルは引き続き有効のままです (トグル自体の操作は不要です) 。ただし、期限後はセキュリティモードを明示的に指定するよう、ワークフローを準備しておく必要があります。
+
+アプリケーション作成コードを更新して、`third_party_security_mode: "permissive"` を明示的に渡してください。
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/api/v2/clients' \
+    --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    --header 'Content-Type: application/json' \
+    --data '{
+      "name": "Partner Integration",
+      "is_first_party": false,
+      "third_party_security_mode": "permissive",
+      "app_type": "regular_web",
+      "callbacks": ["https://partner.example.com/callback"]
+    }'
+  ```
+</AuthCodeGroup>
+
+期限前にこの方法をテストし、ワークフローでこの明示的なパラメーターを正しく処理できることを確認してください。
+
+<div id="after-the-deadline">
+  ##### 期限以降
+</div>
+
+2026年10月23日をもって、**Create Permissive Third-Party Clients by Default** トグルは自動的にオフになります。既存の動作で引き続きアプリケーションを作成するには、すべての `POST /api/v2/clients` リクエストで `third_party_security_mode: "permissive"` を明示的に設定する必要があります。
+
+`third_party_security_mode` パラメーターを省略すると、強化されたセキュリティ制御がデフォルトで適用されます。
+
+<div id="step-2-choose-how-to-handle-dynamic-client-registration">
+  ### ステップ 2: Dynamic Client Registration の扱いを選択する
+</div>
+
+[Dynamic Client Registration](/ja/docs/get-started/applications/dynamic-client-registration) を使用している場合は、DCR クライアントのセキュリティモードを個別に設定してください。これは [Management API のデフォルト変更](/ja/docs/troubleshoot/product-lifecycle/deprecations-and-migrations/migrate-to-enhanced-security-third-party-applications#1-management-api-default-the-deprecation) とは独立しており、いつでも設定できます。
+
+<Warning>
+  DCR で強化されたセキュリティ制御を有効にする前に、サードパーティアプリケーション向けの[デフォルト API 権限](/ja/docs/get-started/applications/application-access-to-apis-client-grants#default-permissions-for-third-party-applications)が設定されていることを確認してください。デフォルト API 権限が設定されていない場合、DCR クライアントはどの API にもアクセスできません。
+</Warning>
+
+<div id="review-current-dcr-behavior">
+  #### 現在の DCR の動作を確認する
+</div>
+
+現在の DCR セキュリティモード設定を確認します。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **Settings &gt; Advanced** に移動します。**Dynamic Client Registration (DCR) Security Mode** で、現在の値を確認します。
+
+    <Frame>![DCR Security Mode のドロップダウンが表示された Dashboard の Advanced Tenant Settings](/docs/images/third-party-applications/dcr-security-mode.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    `/api/v2/tenants/settings` endpoint に `GET` リクエストを送信して、テナント設定を取得します。
+
+    <AuthCodeGroup>
+      ```bash cURL
+      curl --request GET \
+        --url 'https://{yourDomain}/api/v2/tenants/settings' \
+        --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}'
+      ```
+    </AuthCodeGroup>
+
+    レスポンス内で `dynamic_client_registration_security_mode` プロパティを確認します。存在しない場合、DCR クライアントは現在、デフォルトで従来の動作を使用します。
+  </Tab>
+</Tabs>
+
+<div id="configure-dcr-security-mode">
+  #### DCR のセキュリティモードを設定する
+</div>
+
+動的に登録されたクライアントに適用するセキュリティモードを選択します。
+
+**オプション A: DCR クライアント向けの強化されたセキュリティ制御** (推奨)
+
+<Note>
+  DCR の strict モードを有効にする前に、サードパーティアプリケーションの[デフォルト API 権限](/ja/docs/get-started/applications/application-access-to-apis-client-grants#default-permissions-for-third-party-applications)を設定してください。デフォルト権限が設定されていない場合、DCR クライアントはいずれの API にもアクセスできません。
+</Note>
+
+`dynamic_client_registration_security_mode` を `strict` に設定します。
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request PATCH \
+    --url 'https://{yourDomain}/api/v2/tenants/settings' \
+    --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    --header 'Content-Type: application/json' \
+    --data '{
+      "dynamic_client_registration_security_mode": "strict"
+    }'
+  ```
+</AuthCodeGroup>
+
+**オプション B: DCR クライアントの既存の動作を維持する**
+
+`dynamic_client_registration_security_mode` は `permissive` のままにするか、`permissive` に設定します。
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request PATCH \
+    --url 'https://{yourDomain}/api/v2/tenants/settings' \
+    --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_TOKEN}' \
+    --header 'Content-Type: application/json' \
+    --data '{
+      "dynamic_client_registration_security_mode": "permissive"
+    }'
+  ```
+</AuthCodeGroup>
+
+詳しくは、[Dynamic Client Registration](/ja/docs/get-started/applications/dynamic-client-registration)を参照してください。
+
+<div id="feature-comparison">
+  ## 機能比較
+</div>
+
+次の表は、各セキュリティモードで利用できる機能を比較したものです。
+
+| 機能                 | 強化されたセキュリティ制御                                                                                                              | 従来の動作             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| **グラントタイプ**        | `authorization_code`, `refresh_token`, `client_credentials`                                                                | すべてのグラントタイプを利用可能  |
+| **PKCE**           | 必須                                                                                                                         | 任意                |
+| **OIDC**           | 利用できません。今後のリリースで対応予定です。                                                                                                    | サポート              |
+| **API 認可**         | 常に明示的なクライアントグラントが必要                                                                                                        | API のアクセスポリシーに従う  |
+| **Classic Login**  | サポートされません                                                                                                                  | サポート              |
+| **レガシーエンドポイント**    | 利用不可                                                                                                                       | 利用可能              |
+| **クライアントID形式**     | `tpc_` プレフィックス                                                                                                             | 標準形式              |
+| **設定可能なプロパティ**     | [厳選されたプロパティセット](/ja/docs/get-started/applications/third-party-applications/security-controls#restricted-client-configuration) | すべてのプロパティ         |
+| **今後の機能**          | レート制限、および今後提供予定の強化されたセキュリティ機能と管理機能                                                                                         | 利用不可              |
+| **Dashboard での作成** | 常に強化されたセキュリティ制御を使用                                                                                                         | Dashboard からは作成不可 |
+
+<div id="common-scenarios">
+  ## よくあるシナリオ
+</div>
+
+<div id="scenario-1-partner-integrations-using-modern-oauth">
+  ### シナリオ 1: モダンな OAuth を使用するパートナー統合
+</div>
+
+**状況**: PKCE を使用する認可コードフローを使用し、お使いの API にアクセスするパートナー統合があります。
+
+**推奨事項**: 強化されたセキュリティ制御 (オプション A) を採用します。これはモダンな OAuth 実装と完全に互換性があり、追加のセキュリティ上の利点も提供します。
+
+**手順**:
+
+1. API のデフォルト API 権限を設定します
+2. `third_party_security_mode: "strict"` を指定してパートナーアプリケーションを作成するテストを行います
+3. 移行用トグルをオフにして移行を完了します
+
+<div id="scenario-2-applications-requiring-oidc">
+  ### シナリオ 2: OIDC を必要とするアプリケーション
+</div>
+
+**状況**: サードパーティアプリケーションで、OIDC のスコープ (openid, profile, email) または IDトークンが必要です。
+
+**推奨事項**: サードパーティアプリケーション向けの OIDC サポートは、今後のリリースで提供される予定です。それまでは、既存の動作 (オプション B) を維持するか、API スコープのアクセストークンに移行してください。
+
+**手順**:
+
+* OIDC を使用する必要がある場合は、移行トグルを有効のままにし、アプリケーションの作成時に `third_party_security_mode: "permissive"` を明示的に指定します
+* または、OIDC スコープではなく API スコープを使用するように統合を更新します
+
+<div id="scenario-3-dynamic-client-registration-mcp-ai-agents">
+  ### シナリオ 3: Dynamic Client Registration (MCP、AI エージェント)
+</div>
+
+**状況**: AI エージェント、MCP Server、または開発者ポータルアプリケーションで DCR を使用しています。
+
+**推奨事項**: `dynamic_client_registration_security_mode: "strict"` を設定し、デフォルトの API 権限を設定します。MCP クライアント (Claude Code、VS Code) は、強化されたセキュリティ制御に対応しています。
+
+**手順**:
+
+1. デフォルトの API 権限を設定する
+2. Management API で `dynamic_client_registration_security_mode: "strict"` を設定する
+3. DCR 登録でテストする
+4. DCR クライアントがアクセストークンを取得できることを確認する
+
+<div id="scenario-4-applications-using-classic-login">
+  ### シナリオ 4: Classic Login を使用するアプリケーション
+</div>
+
+**状況**: サードパーティアプリケーションで、Universal Login ではなく Classic Login を使用しています。
+
+**推奨事項**: 強化されたセキュリティ制御が適用されるサードパーティアプリケーションでは、Classic Login はサポートされていません。Universal Login に移行するか、既存の動作を維持してください。
+
+**手順**:
+
+* 推奨: 強化されたセキュリティ制御を採用する前に Universal Login に移行する
+* 代替: 移行トグルを有効のままにし、`third_party_security_mode: "permissive"` を明示的に使用する
+
+<div id="troubleshooting">
+  ## トラブルシューティング
+</div>
+
+移行中によく発生するエラーの解決方法については、[サードパーティアプリケーションのトラブルシューティング](/ja/docs/get-started/applications/third-party-applications/troubleshooting)を参照してください。
+
+<div id="frequently-asked-questions">
+  ## よくある質問
+</div>
+
+<div id="can-i-change-the-security-mode-on-an-existing-application">
+  ### 既存のアプリケーションのセキュリティモードは変更できますか？
+</div>
+
+いいえ。`third_party_security_mode` はアプリケーションの作成時に設定され、後から変更することはできません。別のセキュリティモードを使用するには、新しいアプリケーションを作成してください。
+
+<div id="what-happens-to-my-existing-third-party-applications">
+  ### 既存のサードパーティアプリケーションはどうなりますか？
+</div>
+
+何も変わりません。既存のサードパーティアプリケーションは、現在とまったく同じように動作し続けます。この移行の影響を受けるのは、新しく作成されるアプリケーションのデフォルト設定のみです。
+
+<div id="can-i-use-both-security-modes-in-the-same-tenant">
+  ### 同じテナントで両方のセキュリティモードを使用できますか？
+</div>
+
+はい。一部のサードパーティアプリケーションでは強化されたセキュリティ制御を使用し、他のアプリケーションでは従来の動作を使用できます。セキュリティモードはアプリケーションごとに設定されます。
+
+<div id="what-about-dynamic-client-registration">
+  ### Dynamic Client Registration はどうなりますか？
+</div>
+
+DCR は、別の `dynamic_client_registration_security_mode` テナント設定によって制御されます。これは廃止予定とは別のものであり、個別に設定を判断する必要があります。詳細は、[Dynamic Client Registration](/ja/docs/get-started/applications/dynamic-client-registration) を参照してください。
+
+<div id="can-i-create-applications-with-existing-behavior-after-the-deadline">
+  ### 期限後も既存の挙動でアプリケーションを作成できますか？
+</div>
+
+はい。ただし、Management API を使用する場合に限られます。各アプリケーションの作成時に、`third_party_security_mode: "permissive"` を明示的に設定してください。Auth0 Dashboard では、既存の挙動でアプリケーションを作成することはできません。
+
+<div id="will-future-features-work-with-existing-behavior">
+  ### 今後の機能は既存の動作でも利用できますか？
+</div>
+
+今後追加される一部の機能 (アプリケーション レベルのレート制限など) は、強化されたセキュリティ制御が有効なアプリケーションでのみ利用できます。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [サードパーティアプリケーション](/ja/docs/get-started/applications/third-party-applications)
+* [サードパーティアプリケーションのセキュリティ制御](/ja/docs/get-started/applications/third-party-applications/security-controls)
+* [ファーストパーティアプリケーションとサードパーティアプリケーション](/ja/docs/get-started/applications/first-party-and-third-party-applications)
+* [APIへのアプリケーションアクセス: クライアントグラント](/ja/docs/get-started/applications/application-access-to-apis-client-grants)
+* [Dynamic Client Registration](/ja/docs/get-started/applications/dynamic-client-registration)
+* [サードパーティアプリケーションのトラブルシューティング](/ja/docs/get-started/applications/third-party-applications/troubleshooting)
+* [OAuth 2.1 仕様](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1)

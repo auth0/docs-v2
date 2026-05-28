@@ -1,0 +1,143 @@
+---
+description: Découvrez comment utiliser les balises de session Amazon Web Services (AWS) pour mettre en œuvre un contrôle d'accès basé sur les rôles (RBAC) pour les API et les ressources AWS.
+title: Utiliser les balises de session Amazon Web Services pour le contrôle d'accès basé sur les rôles
+---
+
+Avec les balises de session Amazon Web Services (AWS), vous pouvez baliser des ressources et attribuer aux utilisateurs des paires clé/valeur, ce qui vous permet de mettre en œuvre un contrôle d&#39;accès basé sur les rôles (RBAC) pour les API et les ressources AWS.
+
+Dans l&#39;exemple présenté dans ce guide, nous allons baliser nos ressources AWS avec des balises de session AWS, puis créer une politique pour un rôle AWS IAM qui permettra aux utilisateurs ayant ce rôle et les balises appropriées d&#39;effectuer des actions précises sur nos ressources AWS. Nous créerons ensuite une règle dans Auth0 qui associera notre rôle AWS IAM et les balises de session AWS appropriées à un utilisateur Auth0, puis les transmettra au moyen d&#39;assertions <Tooltip tip="Security Assertion Markup Language (SAML) : protocole normalisé permettant à deux parties d'échanger des renseignements d'authentification sans mot de passe." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=SAML">SAML</Tooltip> dans le jeton. Cet exemple s&#39;appuie sur celui fourni dans [Configurer Amazon Web Services pour l&#39;authentification unique (SSO)](/fr-CA/docs/customize/integrations/aws/configure-amazon-web-services-for-sso).
+
+Pour utiliser les balises de session AWS avec les API et les ressources AWS, vous devez :
+
+1. Baliser les instances AWS.
+2. Créer un rôle AWS IAM spécialisé.
+3. Créer une règle Auth0.
+4. Tester votre configuration.
+
+<div id="prerequisites">
+  ## Prérequis
+</div>
+
+* Vous devez disposer d’un [compte Amazon Web Services (AWS)](https://portal.aws.amazon.com/billing/signup#/start) dont vous êtes l’administrateur.
+* [Configurer AWS pour le SSO](/fr-CA/docs/customize/integrations/aws/configure-amazon-web-services-for-sso)
+* [Configurer quelques instances de machine virtuelle AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html). Pour l’exemple de ce guide, nous utilisons trois instances distinctes.
+
+<div id="tag-aws-instances">
+  ### Ajouter des balises aux instances AWS
+</div>
+
+Ajoutez des balises à vos ressources AWS. Suivez les instructions dans [Amazon Elastic Compute Cloud: Tag your Amazon EC2 resources](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Using_Tags.html).
+
+Vous devriez avoir créé trois instances. Ajoutez les balises suivantes :
+
+| Instance | Balises                                                                                            |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| 1        | Clé : `CostCenter`, valeur : `marketing`.<br />Clé : `Project`, valeur : `website`.                |
+| 2        | Clé : `CostCenter`, valeur : `engineering`.<br />Clé : `Project`, valeur : `management_dashboard`. |
+| 3        | Clé : `CostCenter`, valeur : `marketing`.<br />Clé : `Project`, valeur : `community_site`.         |
+
+<div id="create-a-specialized-aws-iam-role">
+  ### Créer un rôle IAM AWS spécialisé
+</div>
+
+Créez un rôle IAM à l’aide du fournisseur d’identité SAML AWS <Tooltip tip="Fournisseur d’identité (IdP) : service qui stocke et gère les identités numériques." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=identity+provider">fournisseur d’identité</Tooltip> que vous avez configuré dans les préalables. Suivez les instructions du [Guide de l’utilisateur AWS Identity and Access Management : créer un rôle pour la fédération SAML 2.0 (console)](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_saml.html).
+
+Pendant la configuration de votre rôle, assurez-vous d’utiliser les paramètres suivants :
+
+| Paramètre        | Description et exemple de valeur                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Fournisseur SAML | Nom du fournisseur d’identité que vous avez créé dans les préalables, par exemple `auth0SamlProvider`. Sélectionnez **Autoriser l’accès programmatique et l’accès à la console de gestion AWS**. |
+
+Lorsque vous êtes invité à **Joindre des stratégies d’autorisation**, créez une stratégie avec le JSON suivant et donnez-lui le nom `VirtualMachineAccessByCostCenter`.
+
+```json lines
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstances"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:ResourceTag/CostCenter": "<%= "${aws:PrincipalTag/CostCenter}" %>"
+                }
+            }
+        }
+    ]
+}
+```
+
+Une fois la stratégie créée, actualisez la liste des stratégies du rôle, puis filtrez-la et sélectionnez la nouvelle stratégie.
+
+Lorsque vous passez en revue vos paramètres, assurez-vous d’utiliser les paramètres suivants :
+
+| Paramètre           | Description                                                     |
+| ------------------- | --------------------------------------------------------------- |
+| Nom du rôle         | Nom descriptif de votre rôle, par exemple `AccessByCostCenter`. |
+| Description du rôle | Description de l’usage prévu de votre rôle.                     |
+
+<div id="create-an-auth0-rule">
+  ### Créer une règle dans Auth0
+</div>
+
+Pour associer le rôle AWS et les balises à un utilisateur, vous devrez [créer une règle](/fr-CA/docs/customize/rules/create-rules) dans Auth0. Ces valeurs seront ensuite transmises dans les assertions SAML du jeton. Pour cet exemple :
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Remplacez la valeur de la variable `awsAccount` par votre propre numéro de compte.
+</Callout>
+
+```javascript lines
+function(user, context, callback) {
+  var awsAccount = '013823792818';
+  var rolePrefix = `arn:aws:iam::` + awsAccount; 
+  var samlIdP = rolePrefix + `:saml-provider/auth0SamlProvider`;
+
+  user.awsRole = rolePrefix + `:role/AccessByCostCenter,` + samlIdP;
+  user.awsRoleSession = user.email;
+  user.awsTagKeys = ['CostCenter', 'Project'];
+  user.CostCenter = 'marketing';
+  user.Project = 'website';
+
+  context.samlConfiguration.mappings = {
+    'https://aws.amazon.com/SAML/Attributes/Role': 'awsRole',
+    'https://aws.amazon.com/SAML/Attributes/RoleSessionName': 'awsRoleSession',
+    'https://aws.amazon.com/SAML/Attributes/PrincipalTag:CostCenter': 'CostCenter',
+    'https://aws.amazon.com/SAML/Attributes/PrincipalTag:Project': 'Project'
+  };
+
+  callback(null, user, context);
+}
+```
+
+<div id="test-configuration">
+  ### Configuration de test
+</div>
+
+Vous devriez maintenant pouvoir vous connecter à la console AWS avec un utilisateur Auth0 et tester votre implémentation.
+
+Pour vous connecter, vous aurez besoin de l’ouverture de session <Tooltip tip="SSO : service qui, après qu’un utilisateur s’est connecté à une application, le connecte automatiquement à d’autres applications." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=SSO">SSO</Tooltip> pour la console AWS. Pour la trouver :
+
+1. Accédez à [Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications) et sélectionnez le nom de l’application pour l’afficher.
+2. Dans l’onglet **Addons**, activez le module complémentaire **SAML2 Web App**.
+3. Dans l’onglet **Usage**, repérez **Identity Provider Login URL**.
+4. Accédez à l’URL indiquée.
+5. Une fois connecté, dans **EC2**, sélectionnez **Instances**. Cliquez sur l’une des instances ayant un `CostCenter` de `marketing`, puis cliquez sur **Actions** &gt; **Instance State** &gt; **Stop**. Vous constaterez que l’action réussit.
+6. Cliquez sur l’instance ayant un `CostCenter` de `engineering`, puis cliquez sur **Actions** &gt; **Instance State** &gt; **Stop**. Vous constaterez que l’action échoue avec une erreur.
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Configurer Amazon Web Services pour l’authentification unique (SSO)](/fr-CA/docs/customize/integrations/aws/configure-amazon-web-services-for-sso)
+* [Configurer Amazon Web Services comme fournisseur de services SAML](/fr-CA/docs/authenticate/single-sign-on/outbound-single-sign-on/configure-auth0-saml-identity-provider/configure-saml2-web-app-addon-for-aws)

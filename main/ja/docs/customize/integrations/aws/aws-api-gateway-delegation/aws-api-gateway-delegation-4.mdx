@@ -1,0 +1,309 @@
+---
+description: Amazon API Gateway チュートリアルのステップ 4
+title: AWS API Gateway チュートリアルのステップ 4
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+<Warning>
+  この機能では委任を使用します。デフォルトでは、2017年6月8日時点でアドオンを使用していないテナントでは、委任は無効になっています。現在、委任を必要とするアドオンを使用している既存のテナントは、この機能を引き続き利用できます。今後、委任機能が変更されたり、サービスから削除されたりする場合は、現在利用中のお客様に事前に通知し、移行のための十分な時間が設けられます。なお、委任ではカスタムドメインの使用はサポートされていないため、それに依存する機能はカスタムドメインと併用すると完全に動作しない可能性があります。
+</Warning>
+
+<div id="step-4-use-multiple-roles-with-amazon-api-gateway">
+  ## ステップ 4 - Amazon API Gateway で複数のロールを使用する
+</div>
+
+このステップでは、認証情報に基づいて、ユーザーに異なる AWS IAM ロールを割り当てます。
+
+* Social Connections で認証したユーザーは購入者として扱われます。
+* Database Connections で認証したユーザーは管理者として扱われます。
+
+このロール割り当てのロジックは、次の 2 つの方法で実装します。
+
+* JavaScript
+* Auth0 ルール
+
+多くの Auth0 アプリケーションでは、ユーザーごとに異なるアクセスレベルを設定したい場合や、特定の ID に関する追加情報をサービスのロジックで利用したい場合があります。API レベルでアクセスを制限するだけで十分であれば、異なる AWS IAM ロールを使用できます (たとえば、管理者は更新機能を使ってペットを追加・削除できますが、ソーシャルユーザーはペットを購入することしかできません) 。
+
+次の図は、2 種類のユーザークラスに対する AWS IAM ロールの割り当てを示しています。1 つは Social Connections 経由で認証されたユーザー、もう 1 つは Database Connections 経由で認証されたユーザーです。また、AWS IAM ロールは AWS Lambda 関数のような他のエンティティにも割り当てることができ、アカウント内でそれらのエンティティに付与される権限を制御できることも示しています。つまり、IAM ロールとは、1 つ以上のポリシーによって定義され、エンティティに割り当てられる、AWS の機能に対する権限のまとまりです。
+
+コード内で判断を行いたい場合 (たとえば、ペットを購入するユーザーの与信チェックを行いたい場合など) は、ID 情報も受け渡す必要があります。これについては、以下の [ステップ 5 - ID トークンを使用して ID 情報を受け渡す](/ja/docs/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-5) で説明します。
+
+<div id="step-1-create-the-petpurchase-api-resource">
+  ### ステップ 1. PetPurchase API リソースを作成する
+</div>
+
+[Amazon API Gateway Console](https://console.aws.amazon.com/apigateway) で Pets API を選択します。すると、その Resources ページが表示されます。
+
+**Actions**、**Create Resource** の順にクリックします。新しい子リソースの名前を `Purchase` にします。**Create Resource** をクリックします。
+
+`purchase` リソースに OPTIONS メソッドを追加します。追加方法は、[Step 2 - Securing and Deploying the Amazon API Gateway の「Set Up Cors and Deploy the API」セクション](/ja/docs/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-2#set-up-cors-and-deploy-the-api) で前述した `pets` の場合と同様です。
+
+`PetPurchase` という名前の、ペット購入用の新しい AWS Lambda 関数を作成します。この関数は、次のようにペットに `isSold` 属性と `soldTo` 属性を追加します。
+
+```javascript lines expandable
+var AWS = require('aws-sdk');
+var DOC = require('dynamodb-doc');
+var dynamo = new DOC.DynamoDB();
+
+exports.handler = function(event, context) {
+   var petId = event.petId;
+   var user = event.userName;
+   var pets = {};
+   console.log('start PetsPurchase, petId', petId, ' userName', user);
+
+   var writecb = function(err, data) {
+      if(!err) {
+          context.done(null, pets);
+      } else {
+          console.log('error on GetPetsInfo: ',err);
+          context.done('failed on update', null);
+      }
+   };
+
+   var readcb = function(err, data) {
+      if(err) {
+          console.log('error on GetPetsInfo: ',err);
+          context.done('failed to retrieve pet information', null);
+      } else {
+          // ペットが存在するか確認する
+          if(data.Item && data.Item.pets) {
+              pets = data.Item.pets;
+              var found = false;
+
+              for(var i = 0; i < pets.length && !found; i++) {
+                  if(pets[i].id === petId) {
+                     if(!pets[i].isSold) {
+                        pets[i].isSold = true;
+                        pets[i].soldTo = user;
+                        var item = { username:"default",pets: pets};
+                        dynamo.putItem({TableName:"Pets", Item:item}, writecb);
+                        found = true;
+                     }
+                  }
+               }
+               if(!found) {
+                 console.log('pet not found');
+                 context.done('That pet is not available.', null);
+               }
+           } else {
+              console.log('pet already sold');
+              context.done('That pet is not available.', null);
+           }
+       }
+   };
+
+   dynamo.getItem({TableName:"Pets", Key:{username:"default"}}, readcb);
+};
+```
+
+Lambda 関数を定義したら、[`purchase` リソースに `PetPurchase` Lambda を呼び出す POST メソッドを追加します](/ja/docs/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-1#method-post-pet-information)。また、[Step 2 - Amazon API Gateway の保護とデプロイ の「Set Up Cors and Deploy the API」セクション](/ja/docs/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-2#set-up-cors-and-deploy-the-api)にあるメソッドレスポンス/統合レスポンス設定を使用して、`Access-Control-Allow-Origin` ヘッダーも値を `*` にして POST メソッドに必ず追加してください。
+
+次の内容を入力メッセージとして指定し、API Gateway メソッドをテストします。
+
+```json lines
+{
+    "petId": 1,
+    "userName": "fred flintstone"
+ }
+```
+
+テストレスポンスでは、ID 1 のペットが Fred Flintstone に売却されたことを確認できるはずです:
+
+```json lines
+[
+  {
+    "id": 1,
+    "price": 249.99,
+    "type": "dog",
+    "isSold": true,
+    "soldTo": "fred flintstone"
+  },
+
+  ...
+```
+
+<div id="step-2-use-iam-to-secure-the-purchasepet-api">
+  ### ステップ 2. IAM で PurchasePet API を保護する
+</div>
+
+<div id="update-iam">
+  #### IAM を更新する
+</div>
+
+API を保護するには、このチュートリアルの[パート 2](/ja/docs/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-2)で行った新しいロールの追加と同じ手順に従います。新しいロール名は `auth0-api-social-role` とします。
+
+IAM ポリシーで保護するメソッドの ARN は、次のようになります。
+
+```bash wrap lines
+arn:aws:execute-api:us-east-1:your-accountid:your-api-id/*/pets/purchase
+```
+
+信頼ポリシーも忘れずに更新してください。
+
+[Amazon API Gateway Console](https://console.aws.amazon.com/apigateway) に移動し、`/pets/purchase` リソースの POST メソッドを選択します。**Method Request** を選択し、**Authorization Type** を AWS&#95;IAM に変更します。チェックマークをクリックして設定を保存します。
+
+この時点で、API Gateway で使用できる 2 つのロールが定義されています。
+
+* `auth0-api-role`: ペットの更新を許可
+* `auth0-api-social-role`: ペットの購入を許可
+
+<div id="configure-login-with-amazon-and-update-auth0">
+  #### Login with Amazon を設定して Auth0 を更新する
+</div>
+
+Login with Amazon (LWA) を使用してソーシャルロールを作成できます。
+
+このチュートリアルには Login with Amazon を使用する手順が含まれていますが、他のソーシャルプロバイダーを使用することもできます。
+
+1. [Auth0 Dashboard &gt; Authentication &gt; Social](https://manage.auth0.com/#/connections/social) に移動し、**Create Connection** を選択します。
+2. 設定する接続を選択し、同意します。
+3. ソーシャル ID プロバイダーの `Client ID` と `Client Secret` をコピー＆ペーストし、**Attributes** (該当する場合は **Permissions** も) を選択して、**Save** をクリックします。
+4. **Applications** ビューを選択し、この接続を使用できるようにする各 Auth0 アプリケーションのスイッチを有効にして、**Save** を選択します。
+
+必要な情報を入力したら、**Try Connection** を選択して、すべてが正しく設定されていることを確認します。
+
+Amazon コンソールで LWA を設定する際は、Allowed Return URLs に Auth0 アプリケーションのコールバック URL を必ず入力してください。URL は `https://johndoe.auth0.com/login/callback` のような形式になります。Auth0 のヘルプページには、入力すべき内容が具体的に表示されます。
+
+[Auth0 Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications) に移動し、Application を選択して設定を表示します。**Connections** ビューを選択し、**Social** セクションで **Amazon** が有効になっていることを確認します。
+
+<div id="deploy-the-api-and-update-the-single-page-application">
+  #### API をデプロイしてシングルページアプリケーションを更新する
+</div>
+
+<div id="deploy-the-api">
+  ##### API をデプロイする
+</div>
+
+[Amazon API Gateway Console](https://console.aws.amazon.com/apigateway) を使用して、再度 [API をデプロイし、新しい JavaScript SDK を生成](/ja/docs/customize/integrations/aws/aws-api-gateway-delegation/aws-api-gateway-delegation-2#set-up-cors-and-deploy-the-api) します。
+
+この時点で、ペットの購入を有効にするために必要な設定変更は完了しています。これを反映するには、新しくダウンロードした SDK で、`pets` フォルダ内の以前のものと Amazon S3 バケット内のものを上書きしてください。
+
+<div id="update-the-login-controller-logic-to-choose-different-roles-for-different-types-of-users">
+  ##### ユーザーの種類に応じて異なるロールを選択するよう、ログインコントローラーのロジックを更新する
+</div>
+
+ログインコントローラーのロジックでは、`getOptionsForRole` を使ってユーザーごとに異なるロールを選択します。委任トークンを取得するときに、どのロールを使うかを Auth0 に指定できます (つまり、そのユーザーが管理者かどうかを指定できます) 。
+
+`pets/login/login.js` ファイルで、先ほど作成したソーシャルユーザー用 IAM ロールに合わせて、非管理者ユーザーの `role` と `principal` の値を変更します。
+
+この時点で、Amazon の認証情報 **または** 以前に作成したデータベースユーザーを使ってログインできるはずです。UI では、ソーシャルユーザーはペットを購入でき、管理者ユーザーはペットの追加と削除ができるようになっていることを確認してください。
+
+この機能をテストするには、`/pets/home/home.html` から `ng-show="isAdmin"` を削除して、UI の remove ボタンを一時的に非表示にできます。
+
+```html wrap lines
+<button ng-show="isAdmin" class="btn delete-btn" ng-click="removePet(pet.id)">remove</button>
+```
+
+変更をS3バケットにコピーした後、ソーシャルユーザーとしてログインした状態でペットを削除できるか試してください。
+
+<div id="update-the-home-controller-logic-to-allow-social-users-to-purchase-pets">
+  ##### ソーシャルユーザーがペットを購入できるよう、Home Controller のロジックを更新する
+</div>
+
+`home.js` で、ペットを購入できるように `buyPet` 関数を修正します：
+
+```javascript lines
+function buyPet(user, id) {
+    var apigClient = getSecureApiClient();
+
+    apigClient.petsPurchasePost({},{userName:user, petId:id})
+      .then(function(response) {
+        console.log(response);
+        $scope.pets = response.data;
+        $scope.$apply();
+      }).catch(function (response) {
+        alert('buy pets failed');
+        showError(response);
+    });
+}
+…
+```
+
+コードをS3バケットにコピーしたら、いったんログアウトし、Lock のログインダイアログで Amazon アイコンをクリックして、ソーシャルユーザーとして再度ログインしてください。前回のログイン状態が Lock ペインに残っている場合は、**SHOW ALL** をクリックする必要があるかもしれません。
+
+Amazon ユーザーとしてはペットを購入できますが、ペットの追加や削除はできない点に注意してください。一方、Database Connection に関連付けられたユーザーでログインした場合は、ペットの追加や削除はできますが、ペットを購入することはできません。
+
+<div id="enforce-role-assignment-with-auth0-rules">
+  ### Auth0 Rules を使用してロール割り当てを強制する
+</div>
+
+場合によっては、適切なロールを Application で判断することもできます (ここではその方法を示しています) 。ただし、セキュリティ上の理由から (ユーザーが必要以上に高い権限のロールを引き受けないようにするためなど) 、ユーザー権限はサーバー側で判断したいこともあります。
+
+Auth0 では、これは rules を使って実現します。rules とは、Auth0 の認証プロセス中に実行されるよう定義するサービスロジックです。たとえば、次のような rules を作成できます。
+
+* ブラウザーから Application へロール情報を渡さないようにする。
+* 認証元に基づいて、委任リクエストにロール情報を追加する。
+
+<div id="enforce-role-assignment">
+  #### ロール割り当てを制限する
+</div>
+
+Social Connection または Database Connection との関連付けに応じて、ユーザーが要求したロールが許可されているかどうかを確認するルールを追加します。
+
+1. [Auth0 Dashboard &gt; Auth Pipeline &gt; Rules](https://manage.auth0.com/#/rules) に移動し、**Create Rule** を選択します。
+2. **Empty rule** テンプレートを選択します
+3. ルール名を **AWS Pets** (またはそれに類する名前) にして、ルール本体に次の JavaScript コードを追加します。
+
+export const codeExample = `   function (user, context, callback) {
+  if(context.clientID === '{yourClientId}') {
+    var socialRoleInfo = {
+      role:"arn:aws:iam::<your account>:role/auth0-api-social-role",
+      principal: "arn:aws:iam::your account>:saml-provider/auth0"
+    };
+
+    var adminRoleInfo = {
+      role:"arn:aws:iam::<your account>:role/auth0-api-role",
+      principal: "arn:aws:iam::<your account>:saml-provider/auth0"
+    };
+
+    var requestRole = context.request.body.role;
+    var requestPrincipal = context.request.body.principal;
+    var allowedRole = null;
+
+    if(user.identities[0].isSocial === false) {
+      allowedRole = adminRoleInfo;
+    } else {
+      allowedRole = socialRoleInfo;
+    }
+
+    if((requestRole && requestRole !== allowedRole.role) ||
+      (requestPrincipal && requestPrincipal !== allowedRole.principal)) {
+        console.log('要求されたロールが一致していません:',requestRole, ':', requestPrincipal);
+        console.log('上書きします');
+    } else {
+      console.log('委任用のロール要求は有効か、ロールは要求されていません');
+    }
+
+    context.addonConfiguration = context.addonConfiguration || {};
+    context.addonConfiguration.aws = context.addonConfiguration.aws || {};
+    context.addonConfiguration.aws.role = allowedRole.role;
+    context.addonConfiguration.aws.principal = allowedRole.principal;
+    callback(null, user, context);
+
+  } else {
+    callback(null, user, context);
+  }
+}
+`;
+
+<AuthCodeBlock children={codeExample} language="javascript" />
+
+上記のコードは、統合に合わせて適切な値に置き換えてください。対象のフィールドは **Princial ARN**、**Role ARN**、**Client Secret** です。
+4. 変更を **保存** します。
+
+<div id="caveats">
+  #### 注意点
+</div>
+
+* Rules は、すべての認証リクエストに対してグローバル スコープで実行されます。ロジックは、特定のアプリケーションに関連付けられた認証リクエストに対してのみ実行するようにしてください (そのため、ここで使用しているスクリプトでは clientID を要求しています。この情報がない場合、Auth0 アカウントに関連付けられたすべての認証リクエストでロジックが実行されます。
+* 情報は、context と user を通じて Rule に渡されます。
+* Rule に渡されるオブジェクトは拡張できます。上記のコードでは、Rule はリクエスト ボディを確認してロール情報を取得します。ロールは、許可されたロールの context addonConfiguration に設定され、こちらが常にリクエスト ボディ内の設定より優先されます。
+
+<div id="debug-your-rule">
+  #### ルールをデバッグする
+</div>
+
+これでルールをデバッグする準備が整いました。**Try this Rule** を選択すると、ルールのロジックを試すスクリプトが表示されます。次に、**Try** を選択します。
+
+その後、ルールの実行結果が表示されます。

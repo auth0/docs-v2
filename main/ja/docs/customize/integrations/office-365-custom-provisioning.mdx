@@ -1,0 +1,303 @@
+---
+description: Microsoft Office 365 のカスタムプロビジョニングの設定方法について説明します。
+title: Office 365 カスタムプロビジョニング
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+既定の Office 365 のセットアップには、Active Directory と DirSync/Azure AD Sync Services が含まれており、これらによって Azure AD 内の AD ユーザーが同期・プロビジョニングされ、<Tooltip tip="シングルサインオン（SSO）: ユーザーが 1 つのアプリケーションにログインすると、そのユーザーは他のアプリケーションにも自動的にログインされるサービスです。" cta="用語集を表示" href="/ja/docs/glossary?term=SSO">SSO</Tooltip> が実現されます。この構成では、Auth0 が <Tooltip tip="シングルサインオン（SSO）: ユーザーが 1 つのアプリケーションにログインすると、そのユーザーは他のアプリケーションにも自動的にログインされるサービスです。" cta="用語集を表示" href="/ja/docs/glossary?term=identity+provider">IDプロバイダー</Tooltip> となり、これらのユーザーにシングルサインオン (SSO) を提供します。
+
+では、契約社員やパートナー、あるいは顧客に Office 365 環境 (たとえば SharePoint) へのアクセスを許可したい場合はどうでしょうか。この場合、既定の方法は最適ではありません。というのも、これらのユーザーを AD 環境内に作成する必要があるためです。代わりに、[Auth0 Rules](/ja/docs/customize/rules) を使用して Azure AD ユーザーをカスタムプロビジョニングする必要があります。
+
+カスタムプロビジョニングを使うと、Auth0 で利用可能な任意の接続からユーザーがログインしたタイミングで、Azure AD (ひいては Office 365) にユーザーを作成できます。 (この場合、DirSync では対応できない種類の接続については、Rule が DirSync の役割を引き継ぎます。) この構成により、Office 365 環境に対して、Facebook、LinkedIn、Google Workspace などさまざまなログインオプションを提供できます。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+カスタムプロビジョニングを設定する前に、以下を完了する必要があります。
+
+* [Office 365 を設定する](https://marketplace.auth0.com/integrations/office-365-sso): <Tooltip tip="カスタムドメイン: 固有の、いわゆるバニティ名を持つサードパーティのドメイン。" cta="用語集を表示" href="/ja/docs/glossary?term=custom+domain">カスタムドメイン</Tooltip> を登録し、Auth0 で Office 365 をサードパーティ アプリケーションとして設定します。
+
+<div id="configure-azure-ad">
+  ## Azure AD を設定する
+</div>
+
+カスタムプロビジョニングでは、Azure AD Graph API を使用して Azure AD に新しいユーザーをプロビジョニングします。Azure AD Graph API にアクセスするには、Office 365 サブスクリプションにリンクされている Azure AD Directory 内にアプリケーションを作成する必要があります。
+
+1. [Azure Portal](https://portal.azure.com) にログインします。
+2. [左側のナビゲーションで Azure Active Directory](https://portal.azure.com/#blade/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/Overview) を選択します。
+3. 表示された新しいメニューで **App registrations** を選択します。
+4. **New application registration** をクリックします。
+5. フォームに入力します。
+
+   1. アプリケーションの名前 (`Auth0 Provisioning` など) を入力します。
+   2. **Application type** として **Web app / API** を選択します。
+   3. サインオン URL を入力します。有効な URL であればどれでもかまいません。これは実際には使用されません。
+6. 新しく作成したアプリケーションが **App registrations** の一覧に表示されるので、それを選択します。
+7. **Settings** ブレード (Microsoft ではこれらのセクションを「blades」と呼びます) で、**Keys** を選択します。
+8. **Description** (`Auth0 Provision` など) を入力し、新しいキーの **Duration** を選択します。永続的でないキーを発行する場合は、有効期限を控えておき、期限切れになる前に新しいキーへ置き換えられるようリマインダーを設定してください。
+9. キーを保存してから、**App Key** をコピーします。このキーが表示されるのは 1 回だけで、Auth0 の Rule で必要になります。
+10. **Required permissions** を選択し、新しいブレードで **Add** をクリックします。
+11. **Microsoft Graph** API を選択し、**Application Permissions** の下で `Read and write directory data` をチェックします。
+12. **Required permissions** に戻り、**Grant Permissions** ボタンをクリックしてから、要求された権限を付与するため **Yes** をクリックします。
+
+<div id="create-the-azure-ad-provisioning-rule">
+  ## Azure AD プロビジョニング Rule を作成する
+</div>
+
+次の Rule は、プロビジョニングの流れを示しています。
+
+1. ユーザーが AD 接続から来ている場合は、プロビジョニング処理をスキップします (これは DirSync によって処理されるためです) 。
+2. ユーザーがすでに Azure AD にプロビジョニングされている場合は、そのままログイントランザクションを続行します。
+3. Azure AD のクライアントIDとキーを使用して、Graph API 用のアクセストークンを取得します。
+4. Azure AD にユーザーを作成します。
+5. ユーザーにライセンスを割り当てます。
+6. ログイントランザクションを続行します。
+
+username は `createAzureADUser` 関数で生成され、既定では `auth0-c3fb6eec-3afd-4d52-8e0a-d9f357dd19ab@fabrikamcorp.be` 形式の username が作成されます。これは任意の値に変更できますが、すべてのユーザーで一意になるようにしてください。
+
+構成オブジェクトで `AUTH0_OFFICE365_CLIENT_ID`、`AAD_CUSTOM_DOMAIN`、`AAD_DOMAIN`、`AAD_APPLICATION_ID`、`AAD_APPLICATION_API_KEY` に正しい値を設定し、それらの値を Rule コードで使えるようにしてください。詳細については、[Rules の構成を保存する](/ja/docs/customize/rules/configuration) を参照してください。
+
+コードを見ると、ユーザーがプロビジョニングされた後、Rule は約 15 秒待機することもわかります。これは、プロビジョニングされたユーザーが Office 365 で使用可能になるまでに数秒かかるためです。
+
+```javascript lines expandable
+function (user, context, callback) {
+  // 使用するNode.jsパッケージを読み込みます。
+  // 利用可能なパッケージの完全なリストはこちらのウェブサイトをご確認ください:
+  // https://auth0-extensions.github.io/canirequire/
+  var rp = require('request-promise');
+  var uuidv4 = require('uuid');
+
+  // Active Directory接続の名前（使用する場合）
+  var AUTH0_AD_CONNECTION = 'Travel0AD';
+  // Office 365 SSO統合のclient_id
+  // SSO統合の編集画面のURLから取得できます。
+  // URLの形式は以下のとおりです:
+  // https://manage.auth0.com/#/externalapps/{the_client_id}/settings
+  var AUTH0_OFFICE365_CLIENT_ID = configuration.AUTH0_OFFICE365_CLIENT_ID;
+  // 会社のメインドメイン。
+  var YOUR_COMPANY_DOMAIN = 'mycompanyurl.com';
+  // Azure ADのドメイン。
+  var AAD_DOMAIN = configuration.AAD_DOMAIN;
+  // Azure ADアプリ作成時に生成されたアプリケーションID。
+  var AAD_APPLICATION_ID = configuration.AAD_APPLICATION_ID;
+  // Azure ADアプリ用に生成されたAPIキー。
+  var AAD_APPLICATION_API_KEY = configuration.AAD_APPLICATION_API_KEY;
+  // Microsoft製品にアクセスするユーザーの所在地。
+  var AAD_USAGE_LOCATION = 'US';
+  // Azure ADはユーザーを即座に認識しないため、数秒の待機が必要です
+  var AAD_USER_CREATE_DELAY = 15000;
+  // 新規ユーザーに付与するライセンスを表すキー。
+  // 既存のライセンス一覧は以下のURLを参照してください:
+  // https://gist.github.com/Lillecarl/3c4727e6dcd1334467e0
+  var OFFICE365_KEY = 'O365_BUSINESS';
+
+  // このRuleはOffice 365 SSO統合に対してのみ実行します。
+  if (context.clientID !== AUTH0_OFFICE365_CLIENT_ID) {
+    return callback(null, user, context);
+  }
+
+  // ADユーザーのカスタムプロビジョニングをスキップします。
+  if (context.connection === AUTH0_AD_CONNECTION) {
+    return callback(null, user, context);
+  }
+
+  // ユーザーがすでにMicrosoft ADにプロビジョニングされている場合、
+  // このRuleの残りの処理をスキップします
+  user.app_metadata = user.app_metadata || {};
+  if (user.app_metadata.office365Provisioned) {
+    return connectWithUser();
+  }
+
+  // 新規ユーザーのプロビジョニング中に各ステップで使用するグローバル変数。
+  var token;
+  var userPrincipalName;
+  var mailNickname = user.email.split('@')[0];
+  var uuid = uuidv4.v4();
+  var immutableId = new Buffer(uuid).toString('base64');
+  var userId;
+
+  // Microsoft ADの新規ユーザーをプロビジョニングするための全ステップ。
+  // 各関数の定義は以下に記載しています。
+  getAzureADToken()
+    .then(createAzureADUser)
+    .then(getAvailableLicenses)
+    .then(assignOffice365License)
+    .then(saveUserMetadata)
+    .then(waitCreateDelay)
+    .then(connectWithUser)
+    .catch(callback);
+
+  // Windows Graph APIと通信するためのアクセストークンをリクエストします。
+  function getAzureADToken() {
+    var options = {
+      method: 'POST',
+      url: 'https://login.windows.net/' + AAD_DOMAIN + '/oauth2/token?api-version=1.5',
+      headers: {
+        'Content-type': 'application/json',
+        },
+      json: true,
+      form: {
+        client_id: AAD_APPLICATION_ID,
+        client_secret: AAD_APPLICATION_API_KEY,
+        grant_type: 'client_credentials',
+        resource: 'https://graph.windows.net'
+      },
+    };
+
+    return rp(options);
+  }
+
+  // 上記でリクエストしたアクセストークンを取得し、
+  // Microsoft ADの新規ユーザーをプロビジョニングするリクエストを組み立てます。
+  function createAzureADUser(response) {
+    token = response.access_token;
+    userPrincipalName = 'auth0-' + uuid + '@' + YOUR_COMPANY_DOMAIN;
+
+    var options = {
+      url: 'https://graph.windows.net/' + AAD_DOMAIN + '/users?api-version=1.6',
+      headers: {
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      json: true,
+      body: {
+        accountEnabled: true,
+        displayName: user.nickname,
+        mailNickname: mailNickname,
+        userPrincipalName: userPrincipalName,
+        passwordProfile: {
+          password: immutableId,
+          forceChangePasswordNextLogin: false
+        },
+        immutableId: immutableId,
+        usageLocation: AAD_USAGE_LOCATION
+      },
+    };
+
+    return rp(options);
+  }
+
+  // ユーザーのプロビジョニング後、利用可能なMicrosoft製品ライセンスの
+  // 一覧を取得するリクエストを発行します。
+  function getAvailableLicenses(response) {
+    userId = response.objectId;
+    var options = {
+      url: 'https://graph.windows.net/' + AAD_DOMAIN + '/subscribedSkus?api-version=1.6',
+      json: true,
+      headers: {
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    };
+    return rp(options);
+  }
+
+  // ライセンス一覧を反復処理して、新規ユーザーに付与するライセンス
+  //（この場合はOffice 365）のid（skuId）を取得します。
+  // さらに、Graph APIに新たなリクエストを発行してユーザーとライセンスを
+  // 紐付けます。
+  function assignOffice365License(response) {
+    var office365License;
+
+    for (var i = 0; i < response.value.length; i++) {
+      if (response.value[i].skuPartNumber === OFFICE365_KEY) {
+        office365License = response.value[i].skuId;
+        break;
+      }
+    }
+
+    var options = {
+      url: ' https://graph.windows.net/' + AAD_DOMAIN + '/users/' + userId + '/assignLicense?api-version=1.6',
+      headers: {
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      json: true,
+      body: {
+        'addLicenses': [
+          {
+            'disabledPlans': [],
+            'skuId': office365License
+          }
+        ],
+        'removeLicenses': []
+      }
+    };
+    return rp(options);
+  }
+
+  // ユーザーのプロビジョニングとライセンスの付与が完了したら、
+  // このGoogle WorkspaceユーザーがすでにプロビジョニングされたことをAuth0に記録します。
+  // また、今後のログイン時に適切にリダイレクトできるよう、
+  // ユーザーのプリンシパルusernameとimmutableIdも記録します。
+  function saveUserMetadata() {
+    user.app_metadata = user.app_metadata || {};
+
+    user.app_metadata.office365Provisioned = true;
+    user.app_metadata.office365UPN = userPrincipalName;
+    user.app_metadata.office365ImmutableId = immutableId;
+
+    return auth0.users.updateAppMetadata(user.user_id, user.app_metadata);
+  }
+
+  // 前述のとおり、Windows Graph APIは新規ユーザーのプロビジョニング完了に
+  // 約10秒かかります（即座にOKを返す場合でも同様です）
+  function waitCreateDelay() {
+    return new Promise(function (resolve) {
+      setTimeout(function() {
+        resolve();
+      }, AAD_USER_CREATE_DELAY);
+    });
+  }
+
+  // プリンシパルusernameとimmutableIdをユーザーオブジェクトに追加し、
+  // Ruleを終了します。
+  function connectWithUser() {
+    user.upn = user.app_metadata.office365UPN;
+    user.inmutableid = user.app_metadata.office365ImmutableId;
+      return callback(null, user, context);
+  }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このコードは新しいユーザーのプロビジョニング手順を示していますが、既存ユーザーのメタデータを同期するように変更することもできます。
+</Callout>
+
+<div id="user-experience">
+  ## ユーザーエクスペリエンス
+</div>
+
+外部ユーザーを認証させる最も簡単な方法は、IDプロバイダー主導型ログインを使用することです。
+
+ユーザーを次の URL にリダイレクトする必要があります (例: `https://office.travel0.com` のような &quot;スマートリンク&quot; を使用) 。
+
+export const codeExample = `https://{yourDomain}/login?client=AUTH0_OFFICE365_CLIENT_ID&protocol=wsfed&state=&redirect_uri=&`;
+
+<AuthCodeBlock children={codeExample} language="http" />
+
+これにより、まず Auth0 のログインページが表示され、その後 Office 365 にリダイレクトされます。Office 365 のログインページはこれらの外部ユーザーに対して Home Realm Discover をサポートしていないため、認証方法はこれだけであることを外部ユーザーに説明しておくことが重要です。つまり、ユーザーがリンクを開こうとした場合も、開こうとしたリンクにアクセスする前に、まず スマートリンク にアクセスする必要があります。
+
+この例では、Travel0 は Auth0 で Office 365 のサードパーティアプリケーション向けに、いくつかのソーシャル接続と 1 つのデータベース接続を有効にしています。
+
+<div id="deep-linking">
+  ## ディープリンク
+</div>
+
+実装によっては、ディープリンク (たとえば SharePoint Online へのリンク) が必要になることがあります。この場合は、Office 365 のログインページを起点とするスマートリンクを作成する必要があります。
+
+```http wrap lines
+https://login.microsoftonline.com/login.srf?wa=wsignin1.0&whr={yourCustomDomain}&wreply={deepLink}
+```
+
+最初のパラメーター `{yourCustomDomain}` には、<Tooltip tip="ユーザーが1 つのアプリケーションにログインすると、他のアプリケーションにも再度認証情報を入力することなく自動的にログインできるようにするサービス。" cta="用語集を見る" href="/ja/docs/glossary?term=Single+Sign-on+%28SSO%29">シングルサインオン (SSO) </Tooltip> 用に Azure AD で設定したドメイン (例: `travel0.com`) を指定します。これを `whr` として指定すると、Azure AD はログインページを表示するのではなく、Auth0 にリダイレクトすべきだと判断します。
+
+`DEEP_LINK` パラメーターには、Office 365 内のエンコード済み URL (たとえば、SharePoint Online や Exchange のページ) を指定します。
+
+URL の例:
+
+```http wrap lines
+https://login.microsoftonline.com/login.srf?wa=wsignin1.0&whr=travel0.com&wreply=https%3A%2F%2Ftravel0%2Esharepoint%2Ecom
+```

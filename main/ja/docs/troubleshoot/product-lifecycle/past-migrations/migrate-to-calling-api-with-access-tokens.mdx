@@ -1,0 +1,241 @@
+---
+description: Management API の認証情報として IDトークン を使用することの非推奨化と、アクセストークンを使用するように設定を移行する方法について説明します。
+title: アクセストークンを使用する Management API エンドポイントへの移行
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+<Tooltip tip="IDトークン: リソースへのアクセスではなく、クライアント自体を対象とした認証情報です。" cta="用語集を表示" href="/ja/docs/glossary?term=ID+tokens">IDトークン</Tooltip>を使用して<Tooltip tip="IDトークン: リソースへのアクセスではなく、クライアント自体を対象とした認証情報です。" cta="用語集を表示" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip>エンドポイントを呼び出す方法は、非推奨となります。代わりに <Tooltip tip="Management API: お客様が管理タスクを実行できるようにするプロダクトです。" cta="用語集を表示" href="/ja/docs/glossary?term=access+tokens">アクセストークン</Tooltip> を使用する必要があります。この移行の猶予期間は **2018 年 3 月 31 日** に開始されました。
+
+アクセストークンへの移行が完了したら、Dashboard で **Allow ID Tokens for Management API v2 Authentication** トグルをオフにしてください。
+
+次のいずれかのエンドポイントの呼び出しに IDトークンを使用している場合、この移行の対象となります。これらのエンドポイントでは、通常のアクセストークンを使用できるようになりました。エンドポイントの動作にそれ以外の変更はありません。リクエストおよびレスポンスのスキーマは変わらないため、認可に使用するトークンを更新するだけで済みます。
+
+<div id="endpoints-affected">
+  ## 影響を受けるエンドポイント
+</div>
+
+| エンドポイント                                                   | ユースケース                        |
+| --------------------------------------------------------- | ----------------------------- |
+| GET /api/v2/users/{id}                                    | ユーザー情報を取得する                   |
+| GET /api/v2/users/{id}/enrollments                        | ユーザーの Guardian MFA 登録をすべて取得する |
+| PATCH /api/v2/users/{id}                                  | ユーザー情報を更新する                   |
+| DELETE /api/v2/users/{id}/multifactor/{provider}          | ユーザーの MFA プロバイダー設定を削除する       |
+| POST /api/v2/device-credentials                           | デバイスの公開鍵を作成する                 |
+| DELETE /api/v2/device-credentials/{id}                    | デバイス認証情報を削除する                 |
+| POST/api/v2/users/{id}/identities                         | 各種 IDプロバイダーのユーザーアカウントをリンクする   |
+| DELETE /api/v2/users/{id}/identities/{provider}/{user_id} | ユーザーアカウントのリンクを解除する            |
+
+<div id="actions">
+  ## Actions
+</div>
+
+<div id="scope-changes">
+  ### スコープの変更
+</div>
+
+Management API で実行できる操作は、アクセストークンに含まれるスコープによって異なります。この移行により、ログイン中のユーザーのデータのみを更新できる制限付きアクセストークン、または任意のユーザーのデータを更新できるアクセストークンを取得できます。次のマトリクスでは、ケース別およびエンドポイント別に、トークンに必要なスコープを確認できます。
+
+たとえば、トークンにスコープ `read:users` が含まれている場合は、`GET /api/v2/users/{id}` エンドポイントを使用して任意のユーザーのデータを取得できます。一方、トークンにスコープ `read:current_user` が含まれている場合は、現在ログインしているユーザー (そのトークンの発行対象であるユーザー) の情報のみを取得できます。
+
+| エンドポイント                                                   | 現在のユーザー用のスコープ                            | 任意のユーザー用のスコープ               |
+| --------------------------------------------------------- | ---------------------------------------- | --------------------------- |
+| GET /api/v2/users/{id}                                    | `read:current_user`                      | `read:users`                |
+| GET /api/v2/users/{id}/enrollments                        | `read:current_user`                      | `read:users`                |
+| POST/api/v2/users/{id}/identities                         | `update:current_user_identities`         | `update:users`              |
+| DELETE /api/v2/users/{id}/identities/{provider}/{user_id} | `update:current_user_identities`         | `update:users`              |
+| PATCH /api/v2/users/{id}                                  | `update:current_user_metadata`           | `update:users`              |
+| PATCH /api/v2/users/{id}                                  | `create:current_user_metadata`           | `update:users`              |
+| DELETE /api/v2/users/{id}/multifactor/{provider}          | `delete:current_user_metadata`           | `update:users`              |
+| POST /api/v2/device-credentials                           | `create:current_user_device_credentials` | `create:device_credentials` |
+| DELETE /api/v2/device-credentials/{id}                    | `delete:current_user_device_credentials` | `delete:device_credentials` |
+
+<div id="get-access-tokens">
+  ### アクセストークンを取得する
+</div>
+
+Auth0 では、前述のエンドポイントのトークン取得方法が変更されました。ユーザーを認証してトークンを取得する方法は、使用する技術と、認証に使用する <Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/ja/docs/glossary?term=OAuth+2.0">OAuth 2.0</Tooltip> フローに応じていくつかあります。
+
+* **ブラウザーで実行される SPA**: 認可エンドポイントを使用します。
+* **サーバー上で実行される Web アプリ、モバイルアプリ、サーバープロセス、または信頼性の高いアプリ**: <Tooltip tip="トークンエンドポイント: 認可サーバー上で、プログラムからトークンを要求するために使用されるエンドポイント。" cta="用語集を見る" href="/ja/docs/glossary?term=Token+endpoint">トークンエンドポイント</Tooltip> を使用します。
+* **クロス認証**: リクエストが異なるドメインから送信される場合は、埋め込み型の Lock または auth0.js を使用してユーザーを認証します。
+
+<div id="authorization-endpoint">
+  #### 認可エンドポイント
+</div>
+
+このセクションでは、認可エンドポイントでトークンを取得する方法の違いを、例を使って説明します。どのエンドポイントを移行する場合でも、必要な変更は同じであり、異なるのはリクエストで指定するスコープだけであることに注意してください。
+
+以下の例では、ログイン中のユーザーの完全なユーザープロファイル情報を取得するために、`GET User by ID` エンドポイントを使用します。そのため、まず Implicit グラントを使用してユーザーを認証し、トークンを取得します。以下は、IDトークンを取得してからそれを使ってエンドポイントを呼び出す、従来の方法の実装例です。
+
+export const codeExample1 = `https://{yourDomain}/authorize?
+      scope=openid
+      &response_type=id_token
+      &client_id={yourClientId}
+      &redirect_uri=https://{yourApp}/callback
+      &nonce={nonce}
+      &state={opaqueValue}`;
+
+<AuthCodeBlock children={codeExample1} language="http" />
+
+以下の例では、アクセストークンを取得する新しいアプローチを確認できます。
+
+export const codeExample2 = `https://{yourDomain}/authorize?
+      audience=https://{yourDomain}/api/v2/
+      &scope=read:current_user
+      &response_type=token%20id_token
+      &client_id={yourClientId}
+      &redirect_uri=https://{yourApp}/callback
+      &nonce={nonce}
+      &state={opaqueValue}`;
+
+<AuthCodeBlock children={codeExample2} language="http" />
+
+Management API にアクセスできるアクセストークンを取得するには、次のように設定します。
+
+* `audience` を `https://{yourDomain}/api/v2/` に設定します
+* スコープ `${scope}` を要求します
+* Auth0 が IDトークン とアクセストークンの両方を送信するように、`response_type` を `id_token token` に設定します
+
+受け取ったアクセストークンをデコードして内容を確認すると、次のようになります。
+
+export const codeExample3 = `{
+      "iss": "https://{yourDomain}/",
+      "sub": "auth0|5a620d29a840170a9ef43672",
+      "aud": "https://{yourDomain}/api/v2/",
+      "iat": 1521031317,
+      "exp": 1521038517,
+      "azp": "{yourClientId}",
+      "scope": "\${scope}"
+    }`;
+
+<AuthCodeBlock children={codeExample3} language="json" />
+
+`aud` にはテナントの API URI、`scope` には `${scope}`、`sub` にはログイン中のユーザーのユーザー ID が設定されていることに注意してください。
+
+アクセストークンを取得したら、それを使ってエンドポイントを呼び出せます。この部分は変わらず、リクエストで変わるのは `Bearer` トークンとして使用する値だけです。レスポンスも変わりません。
+
+<div id="token-endpoint">
+  #### トークンエンドポイント
+</div>
+
+このセクションでは、トークンエンドポイントを使ってトークンを取得する方法の違いを、例を用いて説明します。ただし、どのエンドポイントを移行する場合でも変更内容は同じで、異なるのはリクエストで指定するスコープだけです。
+
+以下の例では、ログイン中のユーザーの完全なユーザープロファイル情報を取得するために、`GET User by ID` エンドポイントを使用します。まず、Password Exchange grant を使用してユーザーを認証し、その後トークンを取得します。以下は、IDトークンを取得し (その後それを使ってエンドポイントを呼び出す) 、従来の方法を実装した例です。
+
+export const codeExample4 = `POST https://{yourDomain}/oauth/token
+    Content-Type: application/x-www-form-urlencoded
+    {
+      "grant_type": "password",
+      "username": "{yourUsername}",
+      "password": "{yourPassword}",
+      "scope": "openid",
+      "client_id": "{yourClientId}",
+      "client_secret": "{yourClientSecret}",
+    }`;
+
+<AuthCodeBlock children={codeExample4} language="json" />
+
+以下の例では、アクセストークンも取得できる新しい方法を確認できます。
+
+export const codeExample5 = `POST https://{yourDomain}/oauth/token
+    Content-Type: application/x-www-form-urlencoded
+    {
+      "grant_type": "password",
+      "username": "{yourUsername}",
+      "password": "{yourPassword}",
+      "audience": "https://{yourDomain}/api/v2/",
+      "scope": "read:current_user",
+      "client_id": "{yourClientId}",
+      "client_secret": "{yourClientSecret}",
+    }`;
+
+<AuthCodeBlock children={codeExample5} language="json" />
+
+Management API にアクセスできるアクセストークンを取得するには、次のようにします。
+
+* `aud` を `https://{yourDomain}/api/v2/` に設定します
+* `read:current_user` スコープを要求します
+
+アクセストークンを取得したら、それを使ってエンドポイントを呼び出せます。この部分は同じで、リクエストで変わるのは `Bearer` トークンとして使用する値だけです。レスポンスも同じです。
+
+<div id="embedded-lock-or-auth0js">
+  #### 埋め込み型 Lock または auth0.js
+</div>
+
+アプリケーションに Lock または auth0.js v9 を埋め込んでいる場合は、クロスオリジン認証を使用しています。これは、異なるドメインから送信されるリクエストでユーザーを認証するために使用されます。
+
+auth0.js を使用して Management API にアクセスし、ユーザーを管理している場合は、スクリプトを更新する必要があります。
+
+以下の例は、従来の方法を示しています。
+
+export const codeExample6 = `// IDトークンを取得
+    var webAuth = new auth0.WebAuth({
+      clientID: '{yourClientId}',
+      domain: '{yourDomain}',
+      redirectUri: 'https://{yourApp}/callback',
+      scope: 'openid',
+      responseType: 'id_token'
+    });
+    // 新しいインスタンスを作成
+    var auth0Manage = new auth0.Management({
+      domain: '{yourDomain}',
+      token: '{yourIdToken}'
+    });`;
+
+<AuthCodeBlock children={codeExample6} language="javascript" />
+
+この例では、新しい方法を確認できます。
+
+export const codeExample7 = `// アクセストークンを取得
+    var webAuth = new auth0.WebAuth({
+      clientID: '{yourClientId}',
+      domain: '{yourDomain}',
+      redirectUri: 'https://{yourApp}/callback',
+      audience: 'https://{yourDomain}/api/v2/',
+      scope: 'read:current_user',
+      responseType: 'token id_token'
+    });
+    // 新しいインスタンスを作成
+    var auth0Manage = new auth0.Management({
+      domain: '{yourDomain}',
+      token: '{yourMgmtApiAccessToken}'
+    });`;
+
+<AuthCodeBlock children={codeExample7} language="javascript" />
+
+* レスポンスで IDトークン とアクセストークンの両方を要求します
+
+  `responseType: 'token id_token'`
+* トークンの<Tooltip tip="Audience: 発行されたトークンの対象者を一意に識別する識別子です。トークン内では aud という名前で、その値には IDトークンの場合はアプリケーション（クライアントID）の ID、アクセストークンの場合は API（API 識別子）の ID が含まれます。" cta="用語集を表示" href="/ja/docs/glossary?term=audience">オーディエンス</Tooltip>として Management API を設定します
+
+  `audience: 'https://YOUR_DOMAIN/api/v2/'`
+* 必要な権限を要求します
+
+  `scope: 'read:current_user'`
+* アクセストークンを使用して Management API に対して認証します
+
+<div id="account-linking-changes">
+  ### Account Linking の変更
+</div>
+
+この機能の変更点は次のとおりです。
+
+* `Authorization` ヘッダーでは IDトークンを使用できなくなりました
+* `Authorization` ヘッダーで、`update:users` 権限が付与されたアクセストークンを使用する場合は、リクエスト本文でセカンダリアカウントの `user_id` または IDトークンのいずれかを送信できます
+* `Authorization` ヘッダーで、`update:current_user_metadata` 権限が付与されたアクセストークンを使用する場合は、リクエスト本文でセカンダリアカウントの IDトークンのみを送信できます。次の条件を満たしている必要があります。
+
+  * IDトークンは `RS256` で署名されている必要があります (この値は **Dashboard &gt; Applications &gt; Application Settings &gt; Advanced Settings &gt; OAuth** で設定できます)
+  * IDトークンのクレーム `aud` はアプリケーションを識別している必要があり、アクセストークンの `azp` クレームと同じ値である必要があります
+
+<div id="restrictions">
+  ## 制限事項
+</div>
+
+Management API へのアクセスに使用するアクセストークンでは、`aud` クレームに設定できる値は 1 つのみです。トークンに複数の値が含まれている場合、Management API へのリクエストはエラーになります。
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [アカウントリンク用アクセストークンへの移行](/ja/docs/troubleshoot/product-lifecycle/past-migrations/link-user-accounts-with-access-tokens-migration)

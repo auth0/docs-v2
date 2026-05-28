@@ -1,0 +1,113 @@
+---
+description: Décrit comment utiliser les informations de l’Authorization Extension dans les Rules.
+title: Utiliser les Rules avec l’Authorization Extension
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 offre deux façons de mettre en œuvre le contrôle d’accès basé sur les rôles (RBAC), que vous pouvez utiliser à la place du système interne de contrôle d’accès de votre API ou en combinaison avec celui-ci :
+
+  * [Authorization Core](/fr-CA/docs/manage-users/access-control/rbac)
+  * [Authorization Extension](/fr-CA/docs/customize/extensions/authorization-extension)
+
+  Les fonctionnalités d’Authorization Core correspondent à celles de l’Authorization Extension, tout en améliorant les performances et l’évolutivité, et en offrant un système RBAC plus flexible que l’Authorization Extension.
+
+  À l’heure actuelle, les deux offrent les fonctionnalités clés du RBAC et vous permettent de restreindre les scopes personnalisés définis pour une API à ceux qui ont été attribués à l’utilisateur comme autorisations.
+</Callout>
+
+Vous pouvez utiliser les Rules Auth0 avec l’Authorization Extension pour, par exemple :
+
+* Ajouter des claims personnalisés au jeton émis.
+* Déterminer l’appartenance de l’utilisateur à des groupes, ainsi que ses rôles et ses autorisations.
+* Stocker les renseignements sur les groupes, rôles et autorisations de l’utilisateur dans `app_metadata`.
+* Ajouter les groupes, rôles et autorisations de l’utilisateur au jeton renvoyé (qui peut être demandé au moyen du scope `openid groups permissions roles`).
+
+Comme la logique ci-dessus fait partie d’une Rule, elle n’est exécutée que dans le contexte d’une ouverture de session. Si des utilisateurs sont ajoutés à un groupe ou retirés d’un groupe, ce changement ne sera pris en compte dans Auth0 qu’à la prochaine ouverture de session de l’utilisateur.
+
+Pour en savoir plus, consultez [Auth0 Rules](/fr-CA/docs/customize/rules).
+
+<div id="add-custom-claims-to-the-issued-token">
+  ## Ajouter des claims personnalisés au jeton émis
+</div>
+
+Pour ajouter des claims personnalisés à vos jetons, créez une Rule supplémentaire qui permet à l’extension Authorization de le faire. Les claims personnalisés peuvent être associés à un espace de noms ou non.
+
+Pour en savoir plus, consultez [Créer des claims personnalisés.](/fr-CA/docs/secure/tokens/json-web-tokens/create-custom-claims)
+
+Vous devriez limiter le nombre de claims que vous ajoutez au jeton.
+
+```javascript lines
+function (user, context, callback) {
+  var namespace = 'http://yourdomain/claims/'; // Vous pouvez définir votre propre espace de noms, mais n'utilisez pas un domaine Auth0
+
+  // Ajoutez les jetons avec espace de noms. Supprimez ceux qui ne sont pas nécessaires pour votre scénario
+  context.idToken[namespace + "permissions"] = user.permissions;
+  context.idToken[namespace + "groups"] = user.groups;
+  context.idToken[namespace + "roles"] = user.roles;
+  
+  callback(null, user, context);
+}
+```
+
+Cette Rule doit s’exécuter **après** la Rule Authorization Extension. Pour vous en assurer, placez-la sous la Rule Authorization Extension.
+
+Lorsque vous appelez le point de terminaison `/authorize` ou configurez Lock, vous devez préciser les informations voulues dans le `scope` en indiquant `groups`, `permissions` et/ou `roles`.
+
+<div id="control-app-access">
+  ## Contrôler l’accès à l’application
+</div>
+
+Vous pouvez aussi écrire des Rules qui s’exécutent après la Rule Authorization Extension pour, par exemple, contrôler l’accès à votre application. Une façon de procéder consiste à préciser, dans les métadonnées de l’application, les rôles requis pour chaque application.
+
+Pour en savoir plus, consultez [Gérer les métadonnées avec Rules](/fr-CA/docs/manage-users/user-accounts/metadata/manage-metadata-rules).
+
+<div id="set-app-metadata-required-roles">
+  ### Définir les rôles requis dans les métadonnées de l’application
+</div>
+
+Vous pouvez définir les métadonnées de l’application avec des rôles, c’est-à-dire des groupes d’autorisations que vous rassemblez pour créer un ensemble précis de fonctionnalités. Vous pouvez voir cette étape comme une façon d’« étiqueter » l’application afin que les Rules que vous configurez sachent sur quelle application agir.
+
+1. ⁠⁠⁠⁠Pour définir le champ `context.clientMetadata` avec `required_roles`, sélectionnez l’application sur laquelle vous voulez travailler dans [Auth0 Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications).
+   Vous accéderez ainsi aux **Settings** de l’application. Faites défiler la page jusqu’en bas, puis sélectionnez **Show Advanced Settings**.
+2. Sous **Application Metadata**, ajoutez un élément en définissant **Key** sur `required_roles` et, dans le champ **Value**, indiquez vos rôles en les séparant par des virgules. Sélectionnez **+ Add** pour ajouter le champ.
+3. Une fois terminé, sélectionnez **Save Changes**. Désormais, lorsque vous vous connecterez à partir de cette application, `context.clientMetadata` contiendra `required_roles` avec la chaîne de rôles que vous avez saisie.
+
+<div id="create-rule-enforcing-app-roles">
+  ### Créer une Rule qui impose les rôles de l’application
+</div>
+
+Maintenant que chaque application a un rôle qui lui est associé, vous pouvez créer une Rule qui s’exécute en tenant compte de cette information sur l’application.
+
+1. Avant de créer cette Rule, activez **Roles** dans **Token Contents** et publiez la Rule Authorization Extension.
+2. Ajoutez cette Rule et assurez-vous qu’elle figure après la Rule générée « auth0-authorization-extension ».
+3. Après avoir défini `required_roles`, créez une nouvelle [Rule](https://manage.auth0.com/#/rules) avec le corps suivant :
+
+   ```javascript lines
+   function (user, context, callback) {
+     context.clientMetadata = context.clientMetadata || {};
+     if (context.clientMetadata.required_roles && context.clientMetadata.required_roles.length){
+       if (user.roles) {
+         var _ = require('lodash');
+         var roles = context.clientMetadata.required_roles.split(',');
+         var matchingRoles =_.filter(user.roles, function(roleName) {
+           return _.includes(roles, roleName);
+         });
+
+         if (matchingRoles && matchingRoles.length) {
+           return callback(null, user, context);
+         }
+       }
+
+       return callback(new UnauthorizedError('You do not have the required role to access ' + context.clientName));
+     }
+
+    callback(null, user, context);
+   }
+   ```
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Importer et exporter les données de l’Authorization Extension](/fr-CA/docs/customize/extensions/authorization-extension/import-and-export-authorization-extension-data)
+* [Activer l’accès à l’API de l’Authorization Extension](/fr-CA/docs/customize/extensions/authorization-extension/enable-api-access-to-authorization-extension)
+* [Résoudre les problèmes de l’Authorization Extension](/fr-CA/docs/troubleshoot/authentication-issues/troubleshoot-authorization-extension)

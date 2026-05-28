@@ -1,0 +1,822 @@
+---
+description: ユーザーのログイン用カスタムデータベーススクリプトテンプレートについて説明します。
+title: ログインスクリプトテンプレート
+---
+
+ログインスクリプトは、ユーザーが認証を求められるたびに実行される関数を実装します。この関数には `login` という名前を付けることを推奨します。
+
+このスクリプトは、レガシー認証と[自動移行](/ja/docs/manage-users/user-migration/configure-automatic-migration-from-your-database)の両方で必要です。接続で自動移行が設定されている場合、ユーザーが初めて正常にログインした後に移行プロセスが開始されます。Auth0 では、重複するユーザーが作成されるのを防ぐため、返されるユーザープロファイルに永続的な `user_id` を設定することを推奨しています。
+
+<div id="login-function">
+  ## login 関数
+</div>
+
+`login` 関数では、次の処理を行う必要があります。
+
+* 指定されたユーザー認証情報を外部データベースの API に送信する。
+* 認証に成功した場合は、ユーザーのプロファイルデータを返す。
+* 認証に失敗した場合は、エラーを返す。
+
+<div id="definition">
+  ### 定義
+</div>
+
+`login` 関数は 3 つのパラメーターを受け取り、`callback` 関数を返します。
+
+```js lines
+login(userNameOrEmail, password, callback): function
+```
+
+| パラメーター            | 型        | 説明                                    |
+| ----------------- | -------- | ------------------------------------- |
+| `userNameOrEmail` | String   | ユーザーの username またはメールアドレス。            |
+| `password`        | String   | 平文のユーザー パスワード。                  |
+| `callback`        | Function | パイプラインを通じてエラーまたはプロファイルデータを渡すために使用します。 |
+
+### 例
+
+これは、`login` 関数の実装方法を示す擬似 JavaScript の例です。言語固有の例については、[言語固有のスクリプト例](#language-specific-script-examples)を参照してください。
+
+```javascript lines expandable
+function login(userNameOrEmail, password, callback) {
+  // 外部データベースAPIに認証情報を送信する
+  let hashedPassword = hash(password);
+
+  let options = {
+    url: "https://example.com/api/authenticate",
+    body: {
+      email: userNameOrEmail,
+      password: hashedPassword
+    }
+  };
+
+  send(options, (err, profileData) => {
+    // 認証に失敗した場合はコールバックでエラーを返す
+    if (err) {
+      return callback(new WrongUsernameOrPasswordError(userNameOrEmail, "My custom error message."));
+    } else {
+      // 認証に成功した場合はコールバックでプロファイルデータを返す
+      let profile = {
+        username: profileData.username,
+        email: profileData.emailAddress,
+        user_id: profileData.userId
+      };
+
+      return callback(null, profile);
+    }
+  });
+}
+```
+
+<div id="encryption">
+  ### 暗号化
+</div>
+
+<Warning>
+  パスワード認証情報を、暗号化されていない状態でログに記録、保存、または転送しないでください。
+</Warning>
+
+データ漏えいの可能性を防ぐため、`bcrypt` などの暗号学的ハッシュライブラリを使用して `password` の値を暗号化してください。
+
+#### 例
+
+```js lines
+bcrypt.hash(password, 10, function (err, hash) {
+    if (err) {
+        return callback(err);
+    } else {
+        // ハッシュ化されたパスワードを返す
+    }
+});
+```
+
+<div id="callback-function">
+  ## コールバック関数
+</div>
+
+`callback` 関数は、ユーザープロファイルのデータまたはエラーのデータをパイプラインを通じて渡すために使用されます。
+
+<div id="definition">
+  ### 定義
+</div>
+
+`callback` 関数は、最大2つのパラメーターを受け取り、関数を返します。
+
+```js lines
+callback(error[, profile]): function
+```
+
+| パラメーター    | 型      | 必須 | 説明                     |
+| --------- | ------ | -- | ---------------------- |
+| `error`   | Object | 必須 | エラー データが含まれます。         |
+| `profile` | Object | 任意 | ユーザーのプロフィール データが含まれます。 |
+
+<div id="return-the-user-profile">
+  ### ユーザープロファイルを返す
+</div>
+
+<Warning>
+  ユーザーのログインスクリプトが返すプロファイルデータは、Get User スクリプトが返すプロファイルデータと整合している必要があります。
+</Warning>
+
+ユーザーの認証が成功した場合は、そのプロファイルデータを[正規化された形式](/ja/docs/manage-users/user-accounts/user-profiles/normalized-user-profile-schema)で `profile` オブジェクトに含めて返す必要があります。標準フィールドに加えて、`user_metadata`、`app_metadata`、`mfa_factors` フィールドを含めることもできます。
+
+#### 例
+
+```js lines
+return callback(null, {
+    username: "username",
+    user_id: "my-custom-db|username@domain.com",
+    email: "username@domain.com",
+    email_verified: false,
+    user_metadata: {
+        language: "en"
+    },
+    app_metadata: {
+        plan: "full"
+    },
+    mfa_factors: [
+      {
+        phone: {
+          value: "+15551234567"
+        }
+      },
+    ]
+});
+```
+
+<div id="return-an-error">
+  ### エラーを返す
+</div>
+
+エラーが発生した場合、`error` パラメーターには原因に関する適切な情報を含める必要があります。
+
+<div id="wrongusernameorpassworderror-type-object">
+  #### WrongUsernameOrPasswordError 型のオブジェクト
+</div>
+
+`WrongUsernameOrPasswordError` カスタムエラー型オブジェクトを使用すると、[テナントログ](/ja/docs/deploy-monitor/logs)に表示するデータを渡すことができます。
+
+<div id="constructor">
+  ##### コンストラクタ
+</div>
+
+`WrongUsernameOrPasswordError` のコンストラクタは、最大 2 つのパラメーターを受け取ります。
+
+```js wrap lines
+new WrongUsernameOrPasswordError(userNameOrEmail[, message]): WrongUsernameOrPasswordError
+```
+
+| パラメーター            | 型      | 必須 | 説明                                             |
+| ----------------- | ------ | -- | ---------------------------------------------- |
+| `userNameOrEmail` | String | 必須 | ユーザーの username またはメールアドレス、もしくは `null` 値が含まれます。 |
+| `message`         | String | 任意 | エラーに関する情報が含まれます。                               |
+
+<div id="return-error-with-username-or-email">
+  #### username またはメールアドレス付きでエラーを返す
+</div>
+
+`userNameOrEmail` フィールドに値を指定してエラーを返すと、Auth0 は `fp` のテナントログイベントを記録します。
+
+<div id="example">
+  ##### 例
+</div>
+
+```js wrap lines
+return callback(new WrongUsernameOrPasswordError(userNameOrEmail, "My custom error message"));
+```
+
+| テナントログイベントフィールド | 値                         |
+| --------------- | ------------------------- |
+| **code**        | `fp`                      |
+| **イベント**        | ログイン失敗 (パスワード誤り)          |
+| **説明**          | `My custom error message` |
+
+<div id="return-error-without-username-or-email">
+  #### username またはメールアドレスなしでエラーを返す
+</div>
+
+`userNameOrEmail` フィールドの値を `null` にしてエラーを返すと、Auth0 は `fu` のテナントログイベントを記録します。
+
+<div id="example">
+  ##### 例
+</div>
+
+```js wrap lines
+return callback(new WrongUsernameOrPasswordError(null, "My custom error message"));
+```
+
+| テナントログイベントフィールド | 値                          |
+| --------------- | -------------------------- |
+| **Code**        | `fu`                       |
+| **イベント**        | ログイン失敗 (無効なメールアドレス/username)  |
+| **説明**          | `My custom error message`  |
+
+<div id="sync-user-profile-attributes-at-each-login">
+  ## ログインのたびにユーザープロファイル属性を同期する
+</div>
+
+ログインのたびに、Auth0 が外部データベースから返された値で `name`、`nickname`、`given_name`、`family_name`、および/または `picture` フィールドを更新するには、**Sync user profile attributes at each login** 設定を有効にします。
+
+この設定を有効にしない場合、ユーザーが初回ログイン時に外部データベースから返された値は、その後のログインでも保持され、外部データベース内で変更されていても反映されません。
+
+<div id="language-specific-script-examples">
+  ## 言語別のスクリプト例
+</div>
+
+Auth0 では、以下の言語／技術で使用できるサンプルスクリプトを提供しています。
+
+* [JavaScript](#javascript)
+* [ASP.NET Membership Provider (MVC3 - Universal Providers)](#asp-net-membership-provider-mvc3-universal-providers-)
+* [ASP.NET Membership Provider (MVC4 - Simple Membership)](#asp-net-membership-provider-mvc4-simple-membership-)
+* [MongoDB](#mongodb)
+* [MySQL](#mysql)
+* [PostgreSQL](#postgresql)
+* [SQL Server](#sql-server)
+* [Windows Azure SQL Database](#windows-azure-sql-database)
+* [Axios](#axios)
+* [Stormpath](#stormpath)
+
+<div id="javascript">
+  ### JavaScript
+</div>
+
+```javascript lines expandable
+function login(email, password, callback) {
+  // このスクリプトは、データベースに保存された認証情報を使ってユーザーを認証します。
+  // ユーザーがログインを試みたとき、またはサインアップ直後（ユーザーが正常に
+  // サインアップされたことを確認するため）に実行されます。
+  //
+  // このスクリプトが返すすべての内容はユーザープロファイルの一部として設定され、
+  // テナントの管理者全員に表示されます。パスワード、キー、シークレットなどの
+  // 値を持つ属性の追加は避けてください。
+  //
+  // この関数の `password` パラメーターは平文です。データベースに保存されている
+  // 値と照合できるよう、ハッシュ化/ソルト化する必要があります。例:
+  //
+  //     var bcrypt = require('bcrypt@0.8.5');
+  //     bcrypt.compare(password, dbPasswordHash, function(err, res)) { ... }
+  //
+  // このスクリプトの終了パターンは3通りあります:
+  // 1. ユーザーの認証情報が有効な場合。返されるユーザープロファイルは以下の
+  // 形式である必要があります: https://auth0.com/docs/users/normalized/auth0/normalized-user-profile-schema
+  //     var profile = {
+  //       user_id: ..., // user_id は必須
+  //       email: ...,
+  //       [...]
+  //     };
+  //     callback(null, profile);
+  // 2. ユーザーの認証情報が無効な場合
+  //     callback(new WrongUsernameOrPasswordError(email, "my error message"));
+  // 3. データベースへの接続中にエラーが発生した場合
+  //     callback(new Error("my error message"));
+  //
+  // 参照可能な Node.js モジュールの一覧はこちら:
+  //
+  //    https://tehsis.github.io/webtaskio-canirequire/
+  const msg = 'Please implement the Login script for this database connection ' +
+    'at https://manage.auth0.com/#/connections/database';
+  return callback(new Error(msg));
+}
+```
+
+<div id="aspnet-membership-provider-mvc3-universal-providers">
+  ### ASP.NET Membership Provider (MVC3 - Universal Providers)
+</div>
+
+```javascript lines expandable
+function login(email, password, callback) {
+  const crypto = require('crypto');
+  const sqlserver = require('tedious@11.0.3');
+  const Connection = sqlserver.Connection;
+  const Request = sqlserver.Request;
+  const TYPES = sqlserver.TYPES;
+  const connection = new Connection({
+    userName: 'the username',
+    password: 'the password',
+    server: 'the server',
+    options: {
+      database: 'the db name',
+      encrypt: true // for Windows Azure
+    }
+  });
+  /**
+   * hashPassword
+   *
+   * This function creates a hashed version of the password to store in the database.
+   *
+   * @password  {[string]}      the password entered by the user
+   * @return    {[string]}      the hashed password
+   */
+  function hashPassword(password, salt) {
+    // the default implementation uses HMACSHA256 and since Key length is 64
+    // and default salt is 16 bytes, Membership will fill the buffer repeating the salt
+    const key = Buffer.concat([salt, salt, salt, salt]);
+    const hmac = crypto.createHmac('sha256', key);
+    hmac.update(Buffer.from(password, 'ucs2'));
+    return hmac.digest('base64');
+  }
+  connection.on('debug', function(text) {
+    // if you have connection issues, uncomment this to get more detailed info
+    //console.log(text);
+  }).on('errorMessage', function(text) {
+    // this will show any errors when connecting to the SQL database or with the SQL statements
+    console.log(JSON.stringify(text));
+  });
+  connection.on('connect', function(err) {
+    if (err) return callback(err);
+    getMembershipUser(email, function(err, user) {
+      if (err || !user || !user.profile || !user.password) return callback(err || new WrongUsernameOrPasswordError(email));
+      const salt = Buffer.from(user.password.salt, 'base64');
+      if (hashPassword(password, salt).toString('base64') !== user.password.password) {
+        return callback(new WrongUsernameOrPasswordError(email));
+      }
+      callback(null, user.profile);
+    });
+  });
+
+  // Membership Provider implementation used on Microsoft.AspNet.Providers NuGet
+  /**
+   * getMembershipUser
+   *
+   * この関数は username またはメールアドレスを受け取り、ユーザーのメンバーシッププロバイダー情報、
+   * パスワードハッシュおよびソルトを返します
+   *
+   * @usernameOrEmail  {[string]}       username またはメールアドレス。OR 条件で両方に対して
+   *                                    クエリを実行します
+   *
+   * @callback         {[Function]}     第1引数はエラー（発生した場合）、
+   *                                    第2引数はユーザーオブジェクト
+   */
+  function getMembershipUser(usernameOrEmail, done) {
+    var user = null;
+    const query =
+      'SELECT Memberships.UserId, Email, Users.UserName, Password ' +
+      'FROM Memberships INNER JOIN Users ' +
+      'ON Users.UserId = Memberships.UserId ' +
+      'WHERE Memberships.Email = @Username OR Users.UserName = @Username';
+    const getMembershipQuery = new Request(query, function(err, rowCount) {
+      if (err || rowCount < 1) return done(err);
+      done(err, user);
+    });
+    getMembershipQuery.addParameter('Username', TYPES.VarChar, usernameOrEmail);
+    getMembershipQuery.on('row', function(fields) {
+      user = {
+        profile: {
+          user_id: fields.UserId.value,
+          nickname: fields.UserName.value,
+          email: fields.Email.value,
+        },
+        password: {
+          password: fields.Password.value,
+          salt: fields.PasswordSalt.value
+        }
+      };
+    });
+    connection.execSql(getMembershipQuery);
+  }
+}
+```
+
+<div id="aspnet-membership-provider-mvc4-simple-membership">
+  ### ASP.NET Membership Provider (MVC4 - Simple Membership)
+</div>
+
+```javascript lines expandable
+function login(email, password, callback) {
+  const crypto = require('crypto');
+  const sqlserver = require('tedious@11.0.3');
+  const Connection = sqlserver.Connection;
+  const Request = sqlserver.Request;
+  const TYPES = sqlserver.TYPES;
+  const connection = new Connection({
+    userName: 'the username',
+    password: 'the password',
+    server: 'the server',
+    options: {
+      database: 'the db name',
+      encrypt: true // for Windows Azure
+    }
+  });
+  function fixedTimeComparison(a, b) {
+    var mismatch = (a.length === b.length ? 0 : 1);
+    if (mismatch) {
+      b = a;
+    }
+    for (var i = 0, il = a.length; i < il; ++i) {
+      const ac = a.charCodeAt(i);
+      const bc = b.charCodeAt(i);
+      mismatch += (ac === bc ? 0 : 1);
+    }
+    return (mismatch === 0);
+  }
+
+  /**
+   * validatePassword
+   *
+   * この関数はユーザーが入力したパスワードと、データベースから取得した元のパスワード
+   * ハッシュおよびソルトを受け取り、HMAC SHA256 ハッシュを実行します。
+   *
+   * @password      {[string]}      ユーザーが入力したパスワード
+   * @originalHash  {[string]}      データベースから取得した元のパスワードハッシュ
+   *                                （ソルトを含む）
+   * @return        {[bool]}        パスワードが有効な場合は true
+   */
+  function validatePassword(password, originalHash, callback) {
+    const iterations = 1000;
+    const hashBytes = Buffer.from(originalHash, 'base64');
+    const salt = hashBytes.slice(1, 17);
+    const hash = hashBytes.slice(17, 49);
+    crypto.pbkdf2(password, salt, iterations, hash.length, 'sha1', function(err, hashed) {
+      if (err) return callback(err);
+      const hashedBase64 = Buffer.from(hashed, 'binary').toString('base64');
+      const isValid = fixedTimeComparison(hash.toString('base64'), hashedBase64);
+      return callback(null, isValid);
+    });
+  }
+
+  connection.on('debug', function(text) {
+    // if you have connection issues, uncomment this to get more detailed info
+    //console.log(text);
+  }).on('errorMessage', function(text) {
+    // this will show any errors when connecting to the SQL database or with the SQL statements
+    console.log(JSON.stringify(text));
+  });
+  connection.on('connect', function(err) {
+    if (err) return callback(err);
+    getMembershipUser(email, function(err, user) {
+      if (err || !user || !user.profile) return callback(err || new WrongUsernameOrPasswordError(email));
+      validatePassword(password, user.password, function(err, isValid) {
+        if (err || !isValid) return callback(err || new WrongUsernameOrPasswordError(email));
+        callback(null, user.profile);
+      });
+    });
+  });
+
+  // Membership Provider implementation used on Microsoft.AspNet.Providers NuGet
+  /**
+   * getMembershipUser
+   *
+   * This function gets a username or email and returns a user info, password hashes and salt
+   *
+   * @usernameOrEamil   {[string]}    the username or email, the method will do a query
+   *                                  on both with an OR
+   * @callback          {[Function]}  first argument will be the Error if any, and second
+   *                                  argument will be a user object
+   */
+  function getMembershipUser(usernameOrEmail, done) {
+    var user = null;
+    const query =
+      'SELECT webpages_Membership.UserId, UserName, UserProfile.UserName, Password from webpages_Membership ' +
+      'INNER JOIN UserProfile ON UserProfile.UserId = webpages_Membership.UserId ' +
+      'WHERE UserProfile.UserName = @Username';
+    const getMembershipQuery = new Request(query, function(err, rowCount) {
+      if (err || rowCount < 1) return done(err);
+      done(err, user);
+    });
+    getMembershipQuery.addParameter('Username', TYPES.VarChar, usernameOrEmail);
+    getMembershipQuery.on('row', function(fields) {
+      user = {
+        profile: {
+          user_id: fields.UserId.value,
+          nickname: fields.UserName.value,
+          email: fields.UserName.value,
+        },
+        password: fields.Password.value
+      };
+    });
+    connection.execSql(getMembershipQuery);
+  }
+}
+```
+
+<div id="mongodb">
+  ### MongoDB
+</div>
+
+```javascript lines
+function login(email, password, callback) {
+  const bcrypt = require('bcrypt');
+  const MongoClient = require('mongodb@3.1.4').MongoClient;
+  const client = new MongoClient('mongodb://user:pass@mymongoserver.com');
+  client.connect(function (err) {
+    if (err) return callback(err);
+    const db = client.db('db-name');
+    const users = db.collection('users');
+    users.findOne({ email: email }, function (err, user) {
+      if (err || !user) {
+        client.close();
+        return callback(err || new WrongUsernameOrPasswordError(email));
+      }
+      bcrypt.compare(password, user.password, function (err, isValid) {
+        client.close();
+        if (err || !isValid) return callback(err || new WrongUsernameOrPasswordError(email));
+        return callback(null, {
+            user_id: user._id.toString(),
+            nickname: user.nickname,
+            email: user.email
+          });
+      });
+    });
+  });
+}
+```
+
+<div id="mysql">
+  ### MySQL
+</div>
+
+```javascript lines
+function login(email, password, callback) {
+  const mysql = require('mysql');
+  const bcrypt = require('bcrypt');
+  const connection = mysql({
+    host: 'localhost',
+    user: 'me',
+    password: 'secret',
+    database: 'mydb'
+  });
+  connection.connect();
+  const query = 'SELECT id, nickname, email, password FROM users WHERE email = ?';
+  connection.query(query, [ email ], function(err, results) {
+    if (err) return callback(err);
+    if (results.length === 0) return callback(new WrongUsernameOrPasswordError(email));
+    const user = results[0];
+    bcrypt.compare(password, user.password, function(err, isValid) {
+      if (err || !isValid) return callback(err || new WrongUsernameOrPasswordError(email));
+      callback(null, {
+        user_id: user.id.toString(),
+        nickname: user.nickname,
+        email: user.email
+      });
+    });
+  });
+}
+```
+
+<div id="postgresql">
+  ### PostgreSQL
+</div>
+
+```javascript lines expandable
+function login(email, password, callback) {
+  //この例では "pg" ライブラリを使用しています
+  //詳細はこちら: https://github.com/brianc/node-postgres
+  const bcrypt = require('bcrypt');
+  const postgres = require('pg');
+  const conString = 'postgres://user:pass@localhost/mydb';
+  postgres.connect(conString, function (err, client, done) {
+    if (err) return callback(err);
+    const query = 'SELECT id, nickname, email, password FROM users WHERE email = $1';
+    client.query(query, [email], function (err, result) {
+      // 注意: データベースへの接続を閉じるために
+      // 必ずここで `done()` を呼び出してください
+      done();
+      if (err || result.rows.length === 0) return callback(err || new WrongUsernameOrPasswordError(email));
+      const user = result.rows[0];
+      bcrypt.compare(password, user.password, function (err, isValid) {
+        if (err || !isValid) return callback(err || new WrongUsernameOrPasswordError(email));
+        return callback(null, {
+          user_id: user.id,
+          nickname: user.nickname,
+          email: user.email
+        });
+      });
+    });
+  });
+}
+```
+
+<div id="sql-server">
+  ### SQL Server
+</div>
+
+```javascript lines expandable
+function login(email, password, callback) {
+  //この例では "tedious" ライブラリを使用しています
+  //詳細はこちら: http://pekim.github.io/tedious/index.html
+  const bcrypt = require('bcrypt');
+  const sqlserver = require('tedious@11.0.3');
+  const Connection = sqlserver.Connection;
+  const Request = sqlserver.Request;
+  const TYPES = sqlserver.TYPES;
+  const connection = new Connection({
+    userName:  'test',
+    password:  'test',
+    server:    'localhost',
+    options:  {
+      database: 'mydb',
+      rowCollectionOnRequestCompletion: true
+    }
+  });
+  const query = 'SELECT Id, Nickname, Email, Password FROM dbo.Users WHERE Email = @Email';
+  connection.on('debug', function (text) {
+    console.log(text);
+  }).on('errorMessage', function (text) {
+    console.log(JSON.stringify(text, null, 2));
+  }).on('infoMessage', function (text) {
+    console.log(JSON.stringify(text, null, 2));
+  });
+  connection.on('connect', function (err) {
+    if (err) return callback(err);
+    const request = new Request(query, function (err, rowCount, rows) {
+      if (err || rowCount < 1) return callback(err || new WrongUsernameOrPasswordError(email));
+      bcrypt.compare(password, rows[0][3].value, function (err, isValid) {
+        if (err || !isValid) return callback(err || new WrongUsernameOrPasswordError(email));
+        callback(null, {
+          user_id: rows[0][0].value,
+          nickname: rows[0][1].value,
+          email: rows[0][2].value
+        });
+      });
+    });
+    request.addParameter('Email', TYPES.VarChar, email);
+    connection.execSql(request);
+  });
+}
+```
+
+<div id="windows-azure-sql-database">
+  ### Windows Azure SQL Database
+</div>
+
+```javascript lines expandable
+function login(email, password, callback) {
+  //この例では "tedious" ライブラリを使用しています
+  //詳細はこちら: http://pekim.github.io/tedious/index.html
+  var Connection = require('tedious@11.0.3').Connection;
+  var Request = require('tedious@11.0.3').Request;
+  var TYPES = require('tedious@11.0.3').TYPES;
+  var bcrypt = require('bcrypt');
+  var connection = new Connection({
+    userName: 'your-user@your-server-id.database.windows.net',
+    password: 'the-password',
+    server: 'your-server-id.database.windows.net',
+    options: {
+      database: 'mydb',
+      encrypt: true,
+      rowCollectionOnRequestCompletion: true
+    }
+  });
+  var query = "SELECT Id, Email, Password " +
+    "FROM dbo.Users WHERE Email = @Email";
+  connection.on('debug', function (text) {
+    // デバッグメッセージを有効にするには、次の行のコメントを解除してください
+    // console.log(text);
+  }).on('errorMessage', function (text) {
+    console.log(JSON.stringify(text, null, 2));
+    return callback(text);
+  }).on('infoMessage', function (text) {
+    // 情報メッセージを有効にするには、次の行のコメントを解除してください
+    // console.log(JSON.stringify(text, null, 2));
+  });
+  connection.on('connect', function (err) {
+    if (err) { return callback(err); }
+    var request = new Request(query, function (err, rowCount, rows) {
+      if (err) {
+        callback(new Error(err));
+      } else if (rowCount < 1) {
+        callback(new WrongUsernameOrPasswordError(email));
+      } else {
+        bcrypt.compare(password, rows[0][2].value, function (err, isValid) {
+          if (err) { callback(new Error(err)); }
+          else if (!isValid) { callback(new WrongUsernameOrPasswordError(email)); }
+          else {
+            callback(null, {
+              user_id: rows[0][0].value,
+              email: rows[0][1].value
+            });
+          }
+        });
+      }
+    });
+    request.addParameter('Email', TYPES.VarChar, email);
+    connection.execSql(request);
+  });
+}
+```
+
+<div id="axios">
+  ### Axios
+</div>
+
+```js lines expandable
+async function loginAsync(email, password, callback) {
+  //axiosの新バージョンが利用可能になったら更新してください (https://auth0-extensions.github.io/canirequire/#axios)
+  const axios = require("axios@0.22.0");
+
+  let response;
+
+  try {
+    response = await axios.post(
+      //SDLC環境を適切にサポートするため、APIのURLを接続設定に保存してください
+      configuration.baseAPIUrl + "/login",
+      //ユーザー資格情報をリクエストボディとして渡す
+      {
+        email: email,
+        password: password,
+      },
+      {
+        timeout: 10000, //リクエストがタイムアウトした場合にスクリプトが必要なコールバックを実行できるよう、呼び出しを正常に終了させる
+        headers: {
+          //接続設定に保存されたapiKeyでAPIコールを保護する。
+          //手軽な方法だが、M2Mトークンの使用がより安全。
+          // シークレットはクライアントとAPIの間で共有すべきではないため。
+          "x-api-key": configuration.apiKey,
+        },
+      }
+    );
+  } catch (e) {
+    if (e.response.status === 404) {
+      //メールアドレス/username/パスワードが無効な場合にAPIが404を返すことを想定
+      return callback(
+        new WrongUsernameOrPasswordError(email, "Invalid credentials provided.")
+      );
+    }
+    //その他のエラーに対するコールバック
+    return callback(new Error(e.message));
+  }
+
+  try {
+    let user = response.data;
+
+    //テナントで複数のカスタムDB接続を使用する場合は、
+    //user_idに接続固有のキーをプレフィックスとして付加してください（例: "connName|" + user.user_id）
+    //これにより、すべてのDB接続でユーザーIDの一意性が保証されます
+    return callback(null, {
+      user_id: user.user_id,
+      email: user.email,
+    });
+  } catch (e) {
+    return callback(new Error(e.message));
+  }
+}
+```
+
+<div id="stormpath">
+  ### Stormpath
+</div>
+
+```javascript lines expandable
+function login(username, password, callback) {
+  // {yourStormpathClientId} をあなたの Stormpath ID に置き換えてください
+  var url = 'https://api.stormpath.com/v1/applications/{yourStormpathClientId}/loginAttempts';
+  // Stormpath API のクライアントIDとシークレットを追加してください
+  var apiCredentials = {
+    user : '{yourStormpathApiId}',
+    password: '{yourStormpathApiSecret}'
+  };
+  // Stormpath ではユーザー資格情報を base64 エンコードされたメッセージとして渡す必要があります
+  var credentials = Buffer.from(username + ':' + password).toString('base64');
+  // ユーザーを認証するために POST リクエストを送信します
+  request({
+    url: url,
+    method: 'POST',
+    auth: apiCredentials,
+    json: {
+      type: 'basic',
+      // base64 エンコードされた資格情報を渡します
+      value: credentials
+    }
+  }, function (error, response, body) {
+    // レスポンスが成功した場合は続行します
+    if (response.statusCode !== 200) return callback();
+    // 成功レスポンスにはユーザー情報を取得するための URL が含まれます
+    var accountUrl = body.account.href;
+    // ユーザー情報を取得するために2回目のリクエストを送信します
+    request({
+      url: accountUrl,
+      auth: apiCredentials,
+      json: true
+    }, function (errorUserInfo, responseUserInfo, bodyUserInfo) {
+      // 成功レスポンスが返ってきた場合は処理を行います
+      if (responseUserInfo.statusCode !== 200) return callback();
+      // ユーザー識別子を取得するために Stormpath API の URL 部分を除去します
+      var id = bodyUserInfo.href.replace('https://api.stormpath.com/v1/accounts/', '');
+      // 最後に、Auth0 に保存するデータを設定してユーザーを移行します
+      return callback(null, {
+        user_id : id,
+        username: bodyUserInfo.username,
+        email: bodyUserInfo.email,
+        // Stormpath で有効なユーザーであれば既にメールアドレスを確認済みと見なし、
+        // email_verified を true に設定します
+        // このフィールドが設定されていない場合、ユーザーはアカウントの確認を求める
+        // メールを受け取ります。ユースケースに応じて処理方法を決定してください
+        email_verified: true
+        // Stormpath から引き継ぎたい追加フィールドをここに追加してください
+      });
+    });
+  });
+}
+```
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [パスワード変更用スクリプトテンプレート](/ja/docs/authenticate/database-connections/custom-db/templates/change-password)
+* [作成用スクリプトテンプレート](/ja/docs/authenticate/database-connections/custom-db/templates/create)
+* [削除用スクリプトテンプレート](/ja/docs/authenticate/database-connections/custom-db/templates/delete)
+* [ユーザー取得用スクリプトテンプレート](/ja/docs/authenticate/database-connections/custom-db/templates/get-user)
+* [検証用スクリプトテンプレート](/ja/docs/authenticate/database-connections/custom-db/templates/verify)
+* [メールアドレス変更用スクリプトテンプレート](/ja/docs/authenticate/database-connections/custom-db/templates/change-email)

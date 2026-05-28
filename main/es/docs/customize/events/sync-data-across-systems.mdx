@@ -1,0 +1,218 @@
+---
+description: Mantenga sincronizada una base de datos externa o un almacén de datos con los cambios de identidad en Auth0 mediante Event Streams.
+title: Sincronizar datos entre sistemas
+---
+
+Con Event Streams, puede mantener una copia de sus datos de identidad de Auth0 en un sistema externo, como una base de datos relacional, un almacén de datos o un índice de búsqueda. Cuando se crea, actualiza o elimina un perfil de usuario en Auth0, se envía un evento al destino del flujo para que su sistema externo pueda aplicar el mismo cambio.
+
+<div id="why-synchronize-identity-data">
+  ## Por qué sincronizar los datos de identidad
+</div>
+
+Mantener una copia local de los datos de identidad es útil cuando necesitas:
+
+* Ejecutar consultas de análisis, informes o cumplimiento normativo sin llamar a la Management API.
+* Ofrecer experiencias de búsqueda que requieran búsquedas de baja latencia en atributos de usuario.
+* Alimentar canalizaciones de datos que combinen registros de identidad con otros datos empresariales.
+* Mantener una copia de seguridad del estado del perfil del usuario para la recuperación ante desastres.
+
+<div id="how-it-works">
+  ## Cómo funciona
+</div>
+
+1. Auth0 publica un evento cada vez que se modifica el perfil de un usuario.
+2. Tu Event Stream entrega ese evento a un destino (webhook, AWS EventBridge o Auth0 Action).
+3. Tu manejador inspecciona el tipo de evento y aplica la operación de escritura correspondiente en el sistema externo.
+
+Los siguientes tipos de evento son relevantes para la sincronización de datos:
+
+| Tipo de evento | Cuándo se activa                             |
+| -------------- | -------------------------------------------- |
+| `user.created` | Se crea un nuevo perfil de usuario en Auth0. |
+| `user.updated` | Se modifica un perfil de usuario existente.  |
+| `user.deleted` | Se elimina un perfil de usuario de Auth0.    |
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+Antes de comenzar, asegúrese de contar con lo siguiente:
+
+* Un inquilino de Auth0 con Events habilitado. Para obtener más información sobre la disponibilidad según el plan, consulte [Create an Event Stream](/es/docs/customize/events/create-an-event-stream).
+* Un Event Stream activo suscrito a `user.created`, `user.updated` y `user.deleted`. Para obtener más información, consulte [Create an Event Stream](/es/docs/customize/events/create-an-event-stream).
+* Un almacén de datos externo (por ejemplo, PostgreSQL, MySQL o un almacén de datos) en el que pueda escribir desde su controlador.
+
+<div id="implement-data-synchronization">
+  ## Implementar la sincronización de datos
+</div>
+
+Las secciones siguientes muestran cómo gestionar cada tipo de evento. Las funciones controladoras son las mismas independientemente del destino de Event Stream. La sección [Enrutar eventos por tipo](#route-events-by-type) muestra cómo despachar eventos tanto a destinos de webhook como de Auth0 Action.
+
+<div id="handle-usercreated">
+  ### Gestionar `user.created`
+</div>
+
+Cuando Auth0 publique un evento `user.created`, inserta una nueva fila en tu base de datos.
+
+```javascript wrap lines
+async function handleUserCreated(user, time) {
+    const { user_id, email, name, nickname, created_at, updated_at } = user;
+
+    const query = `
+        INSERT INTO users (user_id, email, name, nickname, created_at, updated_at, last_event_processed)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `;
+    const values = [user_id, email, name, nickname, created_at, updated_at, time];
+
+    await pool.query(query, values);
+}
+```
+
+<div id="handle-userupdated">
+  ### Gestiona `user.updated`
+</div>
+
+Cuando Auth0 publique un evento `user.updated`, actualiza la fila correspondiente. Compara la marca de tiempo del evento con la columna `last_event_processed` para evitar sobrescribir datos con información obsoleta.
+
+```javascript wrap lines
+async function handleUserUpdated(user, time) {
+    const { user_id, email, name, nickname, updated_at } = user;
+
+    const query = `
+        UPDATE users
+        SET email = $1, name = $2, nickname = $3, updated_at = $4, last_event_processed = $5
+        WHERE user_id = $6 AND last_event_processed < $5
+    `;
+    const values = [email, name, nickname, updated_at, time, user_id];
+
+    await pool.query(query, values);
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Los eventos pueden llegar desordenados. Compara siempre las marcas de tiempo antes de aplicar actualizaciones para evitar que datos obsoletos sobrescriban registros más recientes. Para obtener más información, consulta [Prácticas recomendadas para eventos](/es/docs/customize/events/events-best-practices).
+</Callout>
+
+<div id="handle-userdeleted">
+  ### Procesar `user.deleted`
+</div>
+
+Cuando Auth0 publique un evento `user.deleted`, elimine la fila correspondiente o aplíquele un borrado lógico.
+
+```javascript wrap lines
+async function handleUserDeleted(user) {
+    const { user_id } = user;
+
+    const query = `DELETE FROM users WHERE user_id = $1`;
+
+    await pool.query(query, [user_id]);
+}
+```
+
+<div id="route-events-by-type">
+  ### Enrutar eventos por tipo
+</div>
+
+Usa un router de nivel superior para enviar cada evento al controlador correcto. Los ejemplos a continuación muestran cómo enrutar eventos para destinos de webhook y de Auth0 Action.
+
+<Tabs>
+  <Tab title="Webhook">
+    ```javascript wrap lines
+    app.post("/webhook", async (req, res) => {
+        const { type, time, data } = req.body;
+        const user = data.object;
+
+        try {
+            switch (type) {
+                case "user.created":
+                    await handleUserCreated(user, time);
+                    break;
+                case "user.updated":
+                    await handleUserUpdated(user, time);
+                    break;
+                case "user.deleted":
+                    await handleUserDeleted(user);
+                    break;
+                default:
+                    console.log(`Unhandled event type: ${type}`);
+            }
+
+            res.sendStatus(204);
+        } catch (err) {
+            console.error("Error processing event:", err);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    });
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      Devuelve una respuesta HTTP `2XX` lo antes posible. Si tu controlador necesita realizar operaciones lentas, coloca el evento en una cola interna y procésalo de forma asíncrona. Para obtener más información, consulta [Prácticas recomendadas para eventos](/es/docs/customize/events/events-best-practices).
+    </Callout>
+  </Tab>
+
+  <Tab title="Auth0 Action">
+    ```javascript wrap lines
+    exports.onExecuteEventStream = async (event, api) => {
+        const eventType = event.message.type;
+        const user = event.message.data.object;
+        const time = event.message.time;
+
+        switch (eventType) {
+            case "user.created":
+                await handleUserCreated(user, time);
+                break;
+            case "user.updated":
+                await handleUserUpdated(user, time);
+                break;
+            case "user.deleted":
+                await handleUserDeleted(user);
+                break;
+            default:
+                console.log(`Unhandled event type: ${eventType}`);
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<div id="guard-against-duplicates-and-ordering-issues">
+  ## Evite los duplicados y los problemas de orden
+</div>
+
+Event Streams ofrece una entrega de al menos una vez, lo que significa que su manejador puede recibir el mismo evento más de una vez. Para gestionarlo de forma segura:
+
+* **Realice un seguimiento de los ID de los eventos.** Almacene el `id` de cada evento procesado y omita cualquier evento que ya haya gestionado.
+* **Compare las marcas de tiempo.** La carga útil de cada evento incluye los campos `created_at` y `updated_at` en `data.object`. Use estos campos para determinar si un evento entrante es más reciente que el que su sistema ya registró.
+* **Use escrituras idempotentes.** Estructure las operaciones de su base de datos de modo que aplicar el mismo evento dos veces produzca el mismo resultado. Por ejemplo, use `INSERT ... ON CONFLICT DO UPDATE` en PostgreSQL.
+
+```sql wrap lines
+INSERT INTO users (user_id, email, name, nickname, created_at, updated_at, last_event_processed)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (user_id) DO UPDATE
+SET email = EXCLUDED.email,
+    name = EXCLUDED.name,
+    nickname = EXCLUDED.nickname,
+    updated_at = EXCLUDED.updated_at,
+    last_event_processed = EXCLUDED.last_event_processed
+WHERE users.last_event_processed < EXCLUDED.last_event_processed;
+```
+
+<div id="verify-synchronization">
+  ## Verifique la sincronización
+</div>
+
+Después de desplegar su manejador, cree un usuario de prueba en Auth0 y confirme lo siguiente:
+
+1. Aparece una nueva fila en su base de datos externa con los datos de perfil correctos.
+2. Actualice el nombre o el correo electrónico del usuario en Auth0. Confirme que la fila de la base de datos refleje el cambio.
+3. Elimine al usuario de Auth0. Confirme que la fila se elimine (o se marque como eliminada) en su base de datos.
+
+Para obtener más información sobre cómo probar Event Streams, lea [Pruebas de eventos, observabilidad y recuperación ante errores](/es/docs/customize/events/event-testing-observability-and-failure-recovery).
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [Tipos de eventos](/es/docs/customize/events/event-types)
+* [Crear un Event Stream](/es/docs/customize/events/create-an-event-stream)
+* [Prácticas recomendadas sobre eventos](/es/docs/customize/events/events-best-practices)

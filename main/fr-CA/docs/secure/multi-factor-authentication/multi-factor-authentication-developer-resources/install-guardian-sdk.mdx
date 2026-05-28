@@ -1,0 +1,236 @@
+---
+description: Décrit comment installer, configurer les options et utiliser les SDK Guardian.
+title: Installer le SDK Guardian
+---
+
+Le SDK Guardian fournit un client sans interface utilisateur graphique pour Guardian.
+
+`npm install auth0-guardian-js`
+
+<div id="source-files">
+  ## Fichiers source
+</div>
+
+* [Version complète du SDK](https://cdn.auth0.com/js/guardian-js/1.3/guardian-js.js)
+* [Version minifiée du SDK](https://cdn.auth0.com/js/guardian-js/1.3/guardian-js.min.js)
+* [API Guardian complète](https://github.com/auth0/auth0-guardian.js#full-api)
+
+<div id="configure-guardian">
+  ## Configurer Guardian
+</div>
+
+```javascript lines
+var auth0GuardianJS = require('auth0-guardian-js')({
+	// Pour les locataires US : https://{name}.guardian.auth0.com
+ 	// Pour les locataires AU : https://{name}.guardian.au.auth0.com
+ 	// Pour les locataires EU : https://{name}.guardian.eu.auth0.com
+  // Pour les locataires JP : https://{name}.guardian.jp.auth0.com
+	serviceUrl: "https://{{ userData.tenant }}.guardian.auth0.com",
+	requestToken: "{{ requestToken }}", // ou ticket: "{{ ticket }}" - voir ci-dessous
+
+	issuer: {
+		// Le nom de l'émetteur à afficher dans les applications de génération d'OTP
+		label: "{{ userData.tenantFriendlyName }}",
+		name: "{{ userData.tenant }}",
+	},
+
+	// Le libellé du compte à afficher dans les applications de génération d'OTP
+	accountLabel: "{{ userData.friendlyUserId }}",
+
+	// Facultatif, à des fins de débogage uniquement,
+	// ID permettant d'associer un groupe de requêtes
+	// comme appartenant à la même « transaction » (au sens large)
+	globalTrackingId: "{{ globalTrackingId }}"
+});
+```
+
+L’utilisation de `requestToken` ou de `ticket` dépend de la méthode d’authentification. `ticket` correspond à un [ticket d’inscription](/fr-CA/docs/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/create-custom-enrollment-tickets) généré précédemment.
+
+<div id="use-a-custom-domain">
+  ### Utiliser un domaine personnalisé
+</div>
+
+Si un <Tooltip tip="Domaine personnalisé : domaine tiers avec un nom spécialisé ou personnalisé." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=custom+domain">domaine personnalisé</Tooltip> est configuré pour votre locataire Auth0, vous devrez mettre à jour la propriété `serviceUrl` afin qu’elle pointe vers le point de terminaison Guardian :
+
+```javascript lines
+var auth0GuardianJS = require('auth0-guardian-js')({
+    // Pour les domaines personnalisés
+    serviceUrl: "https://{yourCustomDomain}/guardian/",
+    ...
+});
+```
+
+<div id="enroll-devices">
+  ## Inscrire des appareils
+</div>
+
+L’inscription des appareils comprend les étapes suivantes :
+
+1. Démarrer la transaction.
+2. (facultatif) Vérifier si l’utilisateur est déjà inscrit. Vous ne pouvez pas effectuer l’inscription deux fois.
+3. Envoyer les informations nécessaires à l’inscription.
+4. Confirmer l’inscription.
+5. Afficher le code de récupération.
+
+Certaines étapes peuvent être omises selon la méthode. Nous fournissons la même interface pour toutes les méthodes afin que vous puissiez écrire un code uniforme. Certaines méthodes complètent l’authentification, tandis que d’autres nécessitent une étape d’authentification supplémentaire. Vous pouvez le déterminer en écoutant l’événement `enrollment-complete`.
+
+```javascript lines expandable
+function enroll(transaction, method) {
+	if (transaction.isEnrolled()) {
+		console.log('You are already enrolled');
+		return;
+	}
+
+	var enrollData = {};
+
+	if (method === 'sms') {
+		enrollData.phoneNumber = prompt('Phone number'); // Collecter le numéro de téléphone
+	}
+
+	return transaction.enroll(method, enrollData, function (err, otpEnrollment) {
+		if (err) {
+			console.error(err);
+			return;
+		}
+
+		var uri = otpEnrollment.getUri();
+		if (uri) {
+			showQR(uri);
+		}
+
+		var confirmData = {};
+		if (method === 'otp' || method === 'sms') {
+			confirmData.otpCode = prompt('Otp code'); // Collect verification otp
+		}
+
+		otpEnrollment.confirm(confirmData);
+	});
+}
+
+auth0GuardianJS.start(function(err, transaction) {
+	if (err) {
+		console.error(err);
+		return;
+	}
+
+	transaction.on('error', function(error) {
+		console.error(error);
+	});
+
+	transaction.on('timeout', function() {
+		console.log('Timeout');
+	});
+
+	transaction.on('enrollment-complete', function(payload) {
+		if (payload.recoveryCode) {
+			alert('Recovery code is ' + payload.recoveryCode);
+		}
+
+		if (payload.authRequired) {
+			showAuthenticationFor(transaction, payload.enrollment);
+			return;
+		}
+	});
+
+	transaction.on('auth-response', function(payload) {
+		if (payload.recoveryCode) {
+			alert('The new recovery code is ' + payload.recoveryCode);
+		}
+
+		if (!payload.accepted) {
+			alert('Authentication has been rejected');
+			return;
+		}
+
+		auth0GuardianJS.formPostHelper('{{ postActionURL }}', { signature: payload.signature });
+	});
+
+	var availableEnrollmentMethods = transaction.getAvailableEnrollmentMethods();
+
+	method = prompt('What method do you want to use, select one of '
+		+ availableEnrollmentMethods.join(', '));
+
+	enroll(transaction, method) // For sms
+});
+```
+
+<div id="authenticate">
+  ## S’authentifier
+</div>
+
+Pour vous authentifier avec une méthode, vous devez suivre les étapes suivantes :
+
+1. Démarrez la transaction.
+2. (facultatif) Vérifiez si l’utilisateur est déjà inscrit. Vous devez être inscrit pour vous authentifier.
+3. Demandez l’authentification (la notification push ou le SMS). Cette requête est sans effet pour OTP.
+4. Vérifiez l’OTP (`.verify` est sans effet pour la notification push).
+
+Certaines étapes peuvent être omises selon la méthode; nous fournissons la même interface pour toutes les méthodes afin que vous puissiez écrire un code uniforme. Une fois le facteur vérifié ou la notification push acceptée, vous recevrez un événement `auth-response` avec le payload à envoyer au serveur. Vous pouvez utiliser `auth0GuardianJS.formPostHelper('{{ postActionURL }}', payload)` pour renvoyer le message au serveur.
+
+Vous pourriez aussi recevoir `auth-rejected` si la notification push a été reçue.
+
+```javascript lines expandable
+function authenticate(method) {
+	auth0GuardianJS.start(function (err, transaction) {
+		if (err) {
+			console.error(err);
+			return;
+		}
+
+		if (!transaction.isEnrolled()) {
+			console.log('You are not enrolled');
+			return;
+		}
+
+		transaction.on('error', function(error) {
+			console.error(error);
+		});
+
+		transaction.on('timeout', function() {
+			console.log('Timeout');
+		});
+
+		transaction.on('auth-response', function(payload) {
+			if (payload.recoveryCode) {
+				alert('The new recovery code is ' + payload.recoveryCode);
+			}
+
+			if (!payload.accepted) {
+				alert('Authentication has been rejected');
+				return;
+			}
+
+			auth0GuardianJS.formPostHelper('{{ postActionURL }}', { signature: payload.signature });
+		});
+
+		var enrollment = transaction.getEnrollments()[0];
+
+		if (enrollment.getAvailableAuthenticatorTypes().length === 0) {
+			alert('Somethings went wrong, seems that there is no authenticators');
+			return;
+		}
+
+		transaction.requestAuth(enrollment, { method: method } function(err, auth) {
+			if (err) {
+				console.error(err);
+				return;
+			}
+
+			var data = {};
+			if (method === 'sms' || method === 'otp') {
+				data.otpCode = prompt('Otp code');
+			} else if (method === 'recovery-code') {
+				data.recoveryCode = prompt('Recovery code');
+			}
+
+			return auth.verify(data);
+		});
+	});
+}
+```
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Référence des codes d&#39;erreur de Guardian](/fr-CA/docs/secure/multi-factor-authentication/multi-factor-authentication-developer-resources/guardian-error-code-reference)

@@ -1,0 +1,206 @@
+---
+description: カスタムデータベース Action スクリプトの実行に関するベストプラクティスについて説明します。
+title: カスタムデータベース Action スクリプト実行のベストプラクティス
+---
+
+カスタムデータベース接続では、Action スクリプトを設定できます。これには、Auth0 がレガシー ID ストアと連携するために使用するカスタムコードが含まれます。Action スクリプトは、あらかじめ定義された一連のパラメーターを受け取る、名前付きの JavaScript 関数です。
+
+<div id="webtask-containers">
+  ## Webtask コンテナー
+</div>
+
+Action スクリプトは、実行時間の上限が約 20 秒の個別の Webtask コンテナー内で実行されます。関数の実行が完了すると、コンテナーは再利用されます。
+
+コンテナーが再利用されると、Action スクリプトで保留中の処理は終了します。その結果、エラーが返される可能性があり、`global` オブジェクトがリセットされる場合もあります。`global` オブジェクトの詳細については、[Custom Database Action Script Environment Best Practices](/ja/docs/authenticate/database-connections/custom-db/custom-database-connections-scripts/environment) を参照してください。
+
+<div id="asynchronous-features">
+  ## 非同期機能
+</div>
+
+[Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) オブジェクトや [async 関数](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function) など、JavaScript の非同期機能は Action スクリプトでサポートされています。
+
+非同期機能を使用すると、Action スクリプト内でノンブロッキング処理を実行できますが、これらの処理が Webtask コンテナーの実行制限を超えないようにしてください。Webtask コンテナーが再利用されると、保留中の処理はすべて終了されるため、予期しない動作やエラーが発生する可能性があります。
+
+Action スクリプト内で外部サービスまたは API を呼び出す場合は、妥当な時間でタイムアウトするように関数を設定し、外部サービスまたは API に到達できない場合は [エラーを返す](#error-handling) ようにしてください。
+
+<div id="examples">
+  ### 例
+</div>
+
+Auth0 では、Action スクリプト内で [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise) オブジェクトや [async 関数](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function) を使用できます。
+
+<div id="promise-object">
+  #### Promise オブジェクト
+</div>
+
+この例では、組み込みの JavaScript の `fetch` メソッドを使用しています。このメソッドはネットワークからリソースを取得し、[Promise チェーン](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises#chaining)を使って記述された Promise オブジェクトを返します。
+
+```javascript lines expandable
+function login(userNameOrEmail, password, callback) {
+	const hashedPassword = hash(password);
+	const apiEndpoint = 'https://example.com/api/authenticate';
+	const options = {
+		method: 'POST',
+		body: {
+			email: userNameOrEmail,
+			password: hashedPassword
+		}
+	};
+
+	fetch(apiEndpoint, options) 
+		.then((response) => {
+			if (!response.ok) {
+				return callback(new Error(`HTTP error! Status: ${response.status}`));
+			}
+
+			return response.json();
+		})
+		.then((response) => {
+			if (response.err) {
+				return callback(new Error(`Error authenticating user: ${err}`));
+			}
+
+			let profile = {
+				email: response.profileData.email,
+				username: response.profileData.username
+			};
+
+			return callback(null, profile);
+		})
+		.catch((err) => {
+			return callback(new Error(`An error occurred: ${err}`));
+		});
+  }
+```
+
+<div id="async-function">
+  #### 非同期関数
+</div>
+
+この例では、ネットワークからリソースを取得して Promise オブジェクトを返す、JavaScript 組み込みの `fetch` メソッドを使用しています。コードは[非同期関数](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function)を使って記述されています。
+
+```js lines expandable
+async function login(userNameOrEmail, password, callback) {
+	const hashedPassword = hash(password);
+	const apiEndpoint = 'https://example.com/api/authenticate';
+	const options = {
+		method: 'POST',
+		body: {
+			email: userNameOrEmail,
+			password: hashedPassword
+		}
+	};
+
+	const response = await fetch(apiEndpoint, options);
+
+	if (!response.ok) {
+		return callback(new Error(`HTTP error! Status: ${response.status}`));
+	}
+
+	const result = response.json();
+
+	if (result.err) {
+		return callback(new Error(`Error authenticating user: ${err}`));
+	}
+
+	let profile = {
+		email: response.profileData.email,
+		username: response.profileData.username
+	};
+
+	return callback(null, profile);
+}
+```
+
+<div id="callback-function">
+  ## コールバック関数
+</div>
+
+`callback` 関数は、Action スクリプトの処理が完了したことを示すもので、必ず1回だけ呼び出す必要があります。Action スクリプトは、`callback` 関数を呼び出した直後に終了する必要があり、可能であれば `return` 文を明示的に使用してください。
+
+<Warning>
+  `callback` 関数が複数回呼び出されると、予期しない結果やエラーが発生する可能性があります。
+
+  `callback` 関数がまったく呼び出されない場合、Action スクリプトの実行は停止したままとなり、Webtask コンテナーがリサイクルされたときにエラーが返されます。
+</Warning>
+
+<div id="asynchronous-processing">
+  ### 非同期処理
+</div>
+
+Action スクリプトで非同期処理を使用する場合は、すべての非同期処理が完了した後で `callback` 関数を呼び出す必要があります。
+
+<div id="parameters">
+  ### パラメーター
+</div>
+
+`callback` 関数が引数なしで呼び出された場合は、`null` が渡されたものとして実行されます。
+
+<div id="size">
+  ## サイズ
+</div>
+
+どのAction スクリプトでも、実装の合計サイズは 100kB を超えてはなりません。このサイズ制限には、インポートした `npm` モジュールは含まれません。`npm` モジュールの詳細については、[Custom Database Action Script Environment Best Practices](/ja/docs/authenticate/database-connections/custom-db/custom-database-connections-scripts/environment) を参照してください。
+
+スクリプトのサイズが大きいほど、Webtask プラットフォームで使用されるパッケージ化および転送の処理により、待機時間が長くなります。サイズはシステムのパフォーマンスに影響します。
+
+<div id="anonymous-functions">
+  ## 匿名関数
+</div>
+
+Action スクリプトは匿名関数として実装することもできますが、その方法は推奨されません。匿名関数を使用すると、Action スクリプトのデバッグや、例外エラーの発生時に生成されるコールスタックの解釈が難しくなります。匿名関数の詳細については、[MDN Web Docs の IIFE](https://developer.mozilla.org/en-US/docs/Glossary/IIFE) を参照してください。
+
+<div id="error-handling">
+  ## エラー処理
+</div>
+
+エラーの内容を説明するメッセージを含む `Error` オブジェクトを `callback` 関数に渡します。
+
+```js lines
+return callback(new Error('My custom error message'));
+```
+
+<div id="security">
+  ## セキュリティ
+</div>
+
+<div id="database-interface-vs-api">
+  ### データベースインターフェースと API
+</div>
+
+Auth0 とレガシー ID ストア間のすべての通信を必ず保護してください。レガシー ID ストアに API がまだ実装されていない場合は、実装することを強く推奨します。
+
+レガシー ID ストアで API を利用できる場合は、Auth0 で [API を登録](/ja/docs/get-started/auth0-overview/set-up-apis)し、[Action を作成](/ja/docs/manage-users/access-control/sample-use-cases-actions-with-authorization#deny-access-to-anyone-calling-an-api)して、エンドユーザーからのアクセスを制限できます。
+
+レガシー ID ストアで API を利用できず、実装も現実的でない場合でも、データベースと直接通信できます。Auth0 からの受信トラフィックを許可するため、必ず [Auth0 の IP アドレスをファイアウォールの許可リストに追加](/ja/docs/secure/security-guidance/data-security/allowlist)してください。
+
+<div id="identity-provider-tokens">
+  ## IDプロバイダーのトークン
+</div>
+
+`user` オブジェクトが `access_token` プロパティと `refresh_token` プロパティを返す場合、Auth0 ではそれらを他のユーザー情報とは異なる方法で処理します。Auth0 はこれらを `user` オブジェクトの `identities` プロパティに保存します。
+
+```json lines
+{
+	"email": "you@example.com",
+	"updated_at": "2019-03-15T15:56:44.577Z",
+	"user_id": "auth0|some_unique_id",
+	"nickname": "a_nick_name",
+	"identities": [ 
+		{
+			"user_id": "some_unique_id",
+			"access_token": "e1b5.................92ba",
+			"refresh_token": "a90c.................620b",
+			"provider": "auth0", 
+			"connection": "custom_db_name",
+			"isSocial": false 
+		}
+  ], 
+  "created_at": "2019-03-15T15:56:44.577Z",
+  "last_ip": "192.168.1.1",
+  "last_login": "2019-03-15T15:56:44.576Z",
+  "logins_count": 3
+}
+```
+
+これらのプロパティのいずれかを Auth0 の <Tooltip tip="顧客が管理タスクを実行できるようにする製品。" cta="用語集を見る" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip> で取得するには、[アクセストークンをリクエストする](/ja/docs/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-production)際に `read:user_idp_tokens` スコープを含めてください。

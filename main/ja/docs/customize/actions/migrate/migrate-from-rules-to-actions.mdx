@@ -1,0 +1,556 @@
+---
+description: 既存の Auth0 Rules コードを Auth0 Actions コードに移行する方法を説明します。
+title: Rules から Actions への移行
+---
+
+既存の Rules を Actions に移行する際は、新しい Action を Login Flow の Post-Login (`post-login`) Trigger に関連付けてください。以下の手順に従い、Actions を元の Rules と同じ順序に保てば、動作は同一になります。
+
+<div id="plan-your-migration">
+  ## 移行を計画する
+</div>
+
+Post-Login Actions は既存の Rules の後に実行されるため、Dashboard で Rules を 1 つずつ変換することも、<Tooltip tip="Management API: 顧客が管理タスクを実行するための製品です。" cta="用語集を見る" href="/ja/docs/glossary?term=Management+API">Management API</Tooltip> を使用してまとめて変換することもできます。
+
+コードを変換したら、Action を有効化し、Rule を無効化する必要があります。Action の有効化と Rule の無効化はすばやく連続して行えますが、順序によっては、短時間だけ両方が実行されたり、どちらも実行されなかったりする可能性があります。
+
+そのため、パイプラインは段階的に移行することをおすすめします。Rules コードの一部を Action コードに変換し、ステージング環境でテストしてから、1 つずつ本番環境に反映してください。有効な Rules はデプロイ済みの Actions より先に実行されるため、Rules パイプラインの末尾からさかのぼって作業すれば、Actions で別のロジックを構築してテストしている間も、一部のロジックを Rules に残しておけます。
+
+<Card title="移行を計画する際のヒント">
+  * Actions と Rules は 1:1 の対応にしておくと、機能をブロック単位でオン/オフしてテストできます。
+  * コストの高い処理や一度限りの処理が重複しないように、ユーザーメタデータのフラグを使用してください。
+  * Rules パイプラインの末尾からさかのぼって作業してください。有効な Rules はデプロイ済みの Actions より先に実行されるため、Actions で別のロジックを構築してテストしている間も、一部のロジックを Rules に残しておけます。
+  * 変更は、影響とトラフィックが最も少ない時間帯に実施してください。
+  * 切り替えによって無効なログインや保護の欠落が発生するおそれがある場合は、一時的に[ログインページをカスタマイズする](/ja/docs/customize)ことでログインを停止することを検討してください。
+  * [Auth0 Deploy CLI](/ja/docs/deploy-monitor/deploy-cli-tool) を使用して、移行全体を一括または段階的にスクリプト化、テストし、すばやく実装することを検討してください。
+</Card>
+
+<div id="understand-limitations">
+  ## 制限事項を理解する
+</div>
+
+Actions は Rules でできることの大部分に対応できますが、移行を開始する前にいくつかの制限事項を理解しておく必要があります。 (なお、移行中は Rules と Actions を両方同時に実行できます。)
+
+* Actions では、Rules のように [Management API のアクセストークン](/ja/docs/customize/rules/use-management-api) やグローバルな `auth0` オブジェクトは提供されません。Management API 呼び出しを引き続き行う方法については、[Convert Code](#convert-code) セクションを参照してください。
+
+制限事項の一覧については、[Actions Limitations](/ja/docs/customize/actions/limitations) を参照してください。
+
+<div id="convert-code">
+  ## コードを変換する
+</div>
+
+Rule を Action に変換するには、Rule 固有のコードを Actions のコードに置き換える必要があります。このセクションでは、動作中の Rule を同等の Action に変換するために必要な作業を説明します。
+
+<Card title="コード変換時のヒント">
+  * 一般に、Rules の `user` オブジェクトと `context` オブジェクトの読み取り専用プロパティは、Actions では `event` オブジェクトで確認します。ログインの失敗やユーザーメタデータの更新など、Actions がシステムに及ぼす副作用は、`api` オブジェクトの関数で扱います。
+  * コードの作成には、Auth0 Dashboard の Actions Code Editor を使用してください。エラーのハイライト表示や自動補完候補の提示に役立ちます。
+  * 本番環境に移行する前に、[新しい Actions](/ja/docs/customize/actions/test-actions) を [ステージング環境またはテスト環境](/ja/docs/get-started/auth0-overview/create-tenants/set-up-multiple-environments) で十分にテストしてください。
+</Card>
+
+<div id="copy-rule-code-to-a-new-action">
+  ### Rule コードを新しい Action にコピーする
+</div>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Rule コードは新しい Action にコピーし、Auth0 Dashboard の Actions Code Editor を使用することをお勧めします。これにより、コードに残っている問題を特定しやすくなります。
+</Callout>
+
+1. 本番テナントにログインし、変換する Rule のコードをコピーします。
+2. 非本番テナントに切り替え、[Auth0 Dashboard &gt; Actions &gt; Library](https://manage.auth0.com/#/select-tenant?path=/actions/library) に移動します。
+3. **Build Custom** を選択し、次の操作を行います。
+
+   * 変換する Rule と同じ名前を Action の **名前** に入力します。
+   * **Trigger** で **Login / Post Login** を選択します。
+   * **Runtime** で **Node 16** を選択します。
+   * **Create** を選択します。
+4. Actions Code Editor のコードブロックで、エクスポートされた `onExecutePostLogin` 関数の下に、変換する Rule のコードを貼り付けます。
+5. コードを関数内に移しながら、この記事の残りの部分で説明する変更を加えます。
+
+<div id="change-the-function-declaration">
+  ### 関数宣言を変更する
+</div>
+
+Rules では `user`、`context`、`callback` をパラメーターに取る通常の関数宣言を使用しますが、Actions では特定の名前でエクスポートする関数を使用します。次のように変更してください。現時点では、表示されるエラーは無視してかまいません。
+
+**変更前**
+
+```js lines
+async function myRulesFunction(user, context, callback) {
+    // ... 追加のコード
+}
+```
+
+**変更後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	// ... 追加のコード
+};
+```
+
+<div id="change-how-user-data-is-accessed">
+  ### ユーザーデータへのアクセス方法を変更する
+</div>
+
+Rules では、ログインするユーザーに関するデータは [`user` オブジェクト](/ja/docs/customize/rules/user-object-in-rules) に格納されます。Actions では、このデータは [`event` オブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object) の `user` プロパティにあります。既存のプロパティの大半には、この新しい場所からアクセスできます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `event` オブジェクトのプロパティに格納または変更されたデータには、他の Actions からアクセスできません。
+</Callout>
+
+**変更前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	const userEmail = user.email;
+	const userId = user.user_id;
+
+	// このプロパティはRulesではundefinedになる可能性があります。
+	const userAppMetadata = user.app_metadata || {};
+
+	// ... 追加のコード
+}
+```
+
+**変更後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	const userEmail = event.user.email;
+	const userId = event.user.user_id;
+
+	// このプロパティはActionsでundefinedになることはありません。
+	const userAppMetadata = event.user.app_metadata;
+
+	// ... 追加のコード
+};
+```
+
+<div id="change-how-context-data-is-accessed">
+  ### コンテキストデータへのアクセス方法を変更する
+</div>
+
+Rules では、現在のログインセッションに関するデータは [`context` オブジェクト](/ja/docs/customize/rules/context-object) に格納されています。Actions では、このデータは再構成され、[`event` オブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object) に移されています。移行されたプロパティの多くはそのままですが、わかりやすさを高めるために一部は統合されています。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `event` オブジェクトのプロパティに格納または変更されたデータには、他の Actions からアクセスできません。Rule で `context.idToken` や `context.multifactor` などのプロパティにデータを設定してコア機能をトリガーしている場合は、該当するユースケースを扱う以下のセクションのいずれかを参照してください。
+</Callout>
+
+**変更前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	const clientId = context.clientID;
+	const clientMetadata = context.clientMetadata || {};
+
+	const connectionId = context.connectionID;
+	const connectionMetadata = context.connectionMetadata || {};
+
+	const protocol = context.protocol;
+
+	const tenant = context.tenant;
+
+	// ... 追加のコード
+}
+```
+
+**変換後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	const clientId = event.client.client_id;
+	const clientMetadata = event.client.metadata;
+
+	const connectionId = event.connection.id;
+	const connectionMetadata = event.connection.metadata;
+
+	const protocol = event.transaction.protocol;
+
+	const tenant = event.tenant.id;
+
+	// ... 追加のコード
+};
+```
+
+<div id="convert-dependencies">
+  ### 依存関係を変換する
+</div>
+
+Rules では、依存関係を `require` 文内にバージョン番号を含める形で指定します。Actions では、より標準的な CommonJS 構文を使用し、バージョンはコードエディターの外で指定する必要があります。
+
+Rules では、特定のパッケージの特定バージョンのみが許可されており、新しいパッケージやバージョンを追加するには Auth0 へのリクエストが必要です。Actions では、`npm` レジストリで利用可能な任意のパッケージを `require` できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `npm` モジュールが最新バージョンでない場合は、今がアップデートのよい機会です。
+</Callout>
+
+1. Rule コード内の `require` 文を探します。
+2. バージョン番号を削除し、番号は控えておきます。
+3. [Write Your First Action](/ja/docs/customize/actions/write-your-first-action) の「Add a Dependency」セクションの手順に従って依存関係を追加します (依存関係が [core NodeJS module](https://github.com/nodejs/node/tree/main/lib) でない場合) 。依存関係が core NodeJS module の場合は、追加する必要はありません。
+4. 見つかった `require` 文を `function` 宣言の外に移動します。
+
+**変換前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	const dependency = require("dependency@1.2.3");
+
+	// ... 追加のコード
+}
+```
+
+**変換後**
+
+```javascript lines
+const dependency = require("dependency"); // v1.2.3
+exports.onExecutePostLogin = async (event, api) => {
+	// ... 追加のコード
+};
+```
+
+<div id="convert-callbacks">
+  ### コールバックを変換する
+</div>
+
+Rule での処理が完了したら、`callback()` 関数を呼び出し、ログインに失敗した場合はエラーを渡す必要があります。一方、Actions では成功時は `return` でき、ログインに失敗した場合はメッセージを指定して `api` メソッドを呼び出せます。Rule 内の `callback()` はすべて削除するか、失敗時は `api.access.deny()` に置き換える必要があります。Rules と Actions のどちらでも、特定の条件で処理を停止する必要がある場合は、`return` 文を使用します。
+
+**変更前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	const userAppMetadata = user.app_metadata || {};
+	if (userAppMetadata.condition === "success") {
+		// このRuleは成功しました。次のRuleに進みます。
+		return callback(null, user, context);
+	}
+
+	if (userAppMetadata.condition === "failure") {
+		// このRuleは失敗しました。エラーレスポンスでログインを停止します。
+		return callback(new Error("Failure message"));
+	}
+
+	// ... 追加のコード
+}
+```
+
+**変更後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	if (event.user.app_metadata.condition === "success") {
+		// このActionは成功しました。次のActionに進みます。
+		return;
+	}
+
+	if (event.user.app_metadata.condition === "failure") {
+		// このActionは失敗しました。エラーレスポンスでログインを停止します。
+		return api.access.deny("Failure message");
+	}
+
+	// ... 追加のコード
+};
+```
+
+<div id="change-handling-of-secrets">
+  ### シークレットの扱いを変更する
+</div>
+
+Rules では、設定値をグローバルに設定するため、すべての Rules からすべてのシークレット値にアクセスできます。 (詳しくは、[Store Rule Configurations](/ja/docs/customize/rules/configuration) を参照してください。) Actions では、Action ごとに設定値を指定します。Action のシークレット値には、その Action のコンテキスト外からアクセスできません。
+
+Rules から Actions にシークレットを移行するには:
+
+1. 作業中の Action に必要な値を保存します。
+2. Action 内からアクセスする必要がある値ごとに Secret を追加します。方法については、[Write Your First Action](/ja/docs/customize/actions/write-your-first-action) の **Add a Secret** セクションを参照してください。
+3. コードを変換します。
+
+**Before**
+
+```javascript lines
+function myRulesFunction (user, context, callback) {
+  const { CLIENT_ID, CLIENT_SECRET } = configuration;
+
+  // ... 追加のコード
+}
+```
+
+**変換後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  const { CLIENT_ID, CLIENT_SECRET } = event.secrets;
+
+  // ... 追加のコード
+}
+```
+
+Rules と同様に、Auth0 は保存されているすべてのシークレット値を暗号化します。
+
+<div id="convert-custom-claims-in-tokens">
+  ### トークンのカスタムクレームを変換する
+</div>
+
+Rules と Actions はどちらも、ID トークンと <Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を見る" href="/ja/docs/glossary?term=access+tokens">アクセストークン</Tooltip> にカスタムクレームを追加できます。Rules では、これは `context` オブジェクトのプロパティとして扱いますが、Actions では [`api` オブジェクト](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object) のメソッドを使用します。
+
+**変更前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	const userAppMetadata = user.app_metadata || {};
+	const namespace = "https://namespace/";
+
+	context.idToken[`${namespace}/emp_id`] = userAppMetadata.emp_id;
+	context.accessToken[`${namespace}/emp_id`] = userAppMetadata.emp_id;
+
+	// ... 追加のコード
+}
+```
+
+**変換後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	const namespace = "https://namespace/";
+
+	api.idToken.setCustomClaim(
+		`${namespace}/emp_id`, 
+		event.user.app_metadata.emp_id
+	); 		   
+
+	api.accessToken.setCustomClaim(
+		`${namespace}/emp_id`, 
+		event.user.app_metadata.emp_id
+	);
+
+	// ... 追加コード
+};
+```
+
+<div id="convert-multi-factor-triggering">
+  ### 多要素認証のトリガーを変換する
+</div>
+
+Rules では、[`context` オブジェクト](/ja/docs/customize/rules/context-object) の `multifactor` プロパティを変更することで、<Tooltip tip="多要素認証（MFA）: username とパスワードに加え、SMS で送信される code などの別の要素を使用するユーザー認証プロセス。" cta="用語集を表示" href="/ja/docs/glossary?term=multi-factor+authentication">多要素認証</Tooltip> をトリガーできます。Actions では、これは [`api` オブジェクトのメソッド](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object) を使用して行います。
+
+**変換前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	if (user.app_metadata.needs_mfa === true) {
+		context.multifactor = { 
+			provider: "any", 
+			allowRememberBrowser: false,
+		};
+	}
+
+	// ... 追加のコード
+}
+```
+
+**変換後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	if (event.user.app_metadata.needs_mfa === true) {
+		api.multifactor.enable("any", { allowRememberBrowser: false });
+	}
+
+	// ... 追加のコード
+};
+```
+
+<div id="convert-user-metadata-updates">
+  ### ユーザーメタデータの更新を変換する
+</div>
+
+Rules で `user_metadata` プロパティと `app_metadata` プロパティを更新するには Management API を呼び出す必要があり、その結果、[rate limit](/ja/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/management-api-endpoint-rate-limits) エラーが発生することがあります。一方、Actions では、複数のユーザーメタデータの変更を指定しても、Management API の呼び出しを 1 回にまとめることができます。
+
+**変更前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	user.app_metadata = user.app_metadata || {}; 
+	user.app_metadata.roles = user.app_metadata.roles || [];
+	user.app_metadata.roles.push("administrator"); 
+
+	auth0.users
+		.updateAppMetadata(user.user_id, user.app_metadata) 
+		.then(() => callback(null, user, context))
+		.catch((err) => callback(err));
+
+	// ... 追加のコード
+}
+```
+
+後続のRulesでもユーザーメタデータを更新する必要がある場合は、Management APIを別途呼び出さなければならず、[レート制限](/ja/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/management-api-endpoint-rate-limits)に達しやすくなります。
+
+**変換後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+	const userRolesUpdated = event.user.app_metadata.roles || [];
+	userRolesUpdated.push("administrator"); 
+
+	// ここでは2つの異なるメソッドを使用していることに注意してください。 
+	api.user.setAppMetadata("roles", userRolesUpdated);
+	api.user.setUserMetadata("hasRoles", true);
+
+	// ... 追加のコード
+};
+```
+
+後続のActionsでユーザー メタデータを更新する必要がある場合は、`api.user.setUserMetadata` または `api.user.setAppMetadata` を呼び出す必要があります。Actions では、1 つ以上の Action にまたがってこれらの関数が複数回呼び出されても、フローの完了時に実行される Management API 呼び出しは 1 回だけです。
+
+<div id="convert-other-management-api-calls">
+  ### 他の Management API 呼び出しを変換する
+</div>
+
+一般に、Rules や Actions のようなトラフィックの多いクリティカルパスから Management API を呼び出すことは推奨していません。拡張ポイントからの呼び出しを含め、すべての Auth0 API へのリクエストには[レート制限](/ja/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy)が適用されるため、すべてのログイン時に API を呼び出すと、トラフィックが集中する時間帯にログイン失敗が発生しやすくなります。
+
+ただし、呼び出しが必要であり、レート制限に達しないよう適切に構成されている場合は、Actions 内から Management API を呼び出すことも可能です。この記事前半の「Understand limitations」セクションで説明したとおり、Actions には Management API 用のアクセストークンは提供されないため、Action を有効化する前にアクセストークンを取得する必要があります。
+
+1. [Machine-to-Machine アプリケーションを登録し、Management API へのアクセスを許可します](/ja/docs/get-started/auth0-overview/create-applications/machine-to-machine-apps)。
+2. **クライアントID** と **クライアントシークレット** を Action に保存します。
+3. [Management API 用のアクセストークンを取得します](/ja/docs/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-production)。
+4. Management API を呼び出します。
+
+   <Warning>
+     Actions では実行をまたいでデータを保持できないため、アクセストークンを一定時間キャッシュすることはできません。また、Management API を呼び出すたびに Authentication API の呼び出しも必要になるため、Management API の呼び出しは非常にコストの高い処理です。
+   </Warning>
+
+**変換前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+	const ManagementClient = require("auth0@2.9.1").ManagementClient; 
+	const managementClientInstance = new ManagementClient({
+		// これらは組み込みのRulesグローバル変数から取得されます
+		token: auth0.accessToken, 
+		domain: auth0.domain,
+	}); 
+
+	managementClientInstance.users.assignRoles(
+		{ id: user.user_id }, 
+		{ roles: ["ROLE_ID_TO_ADD"] }, 
+		(error, user) => {
+			if (error) {
+				return callback(error);
+			}
+
+			// ... 追加のコード
+		}
+	);
+}
+```
+
+**変更後**
+
+```javascript lines
+const auth0Sdk = require("auth0");
+exports.onExecutePostLogin = async (event, api) => {
+	const ManagementClient = auth0Sdk.ManagementClient;
+
+	// これにより Authentication API が呼び出されます
+	const managementClientInstance = new ManagementClient({
+		// これらはマシン間アプリケーションから取得します
+		domain: event.secrets.M2M_DOMAIN,
+		clientId: event.secrets.M2M_CLIENT_ID,
+		clientSecret: event.secrets.M2M_CLIENT_SECRET,
+		scope: "update:users"
+	});
+
+	managementClientInstance.users.assignRoles(
+		{ id: event.user.user_id }, 
+		{ roles: ["ROLE_ID_TO_ADD"]}, 
+		(error, user) => {
+			if (error) {
+				return api.access.deny(error.message);
+			}
+
+			// ... 追加のコード
+		}
+	);
+};
+```
+
+<div id="convert-redirects">
+  ### リダイレクトを変換する
+</div>
+
+Rules では、ログイン中のユーザーを外部ページにリダイレクトし、その応答を待つことができます。この場合、リダイレクト前のすべての Rules が 2 回実行されます。1 回はリダイレクト前、もう 1 回は応答時です。通常、リダイレクトと応答のロジックは同じ Rule に含まれます。
+
+Actions では、リダイレクトが発生すると Action パイプラインは一時停止し、ユーザーが戻ると処理が再開されます。また、リダイレクトをトリガーするエクスポート関数は、リダイレクトのコールバックとは分かれています。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Actions でリダイレクトを正しく処理する方法のすべてをこのガイドで扱うことはできません。詳しくは、[Redirect with Actions](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/redirect-with-actions) を参照してください。
+</Callout>
+
+**変更前**
+
+```javascript lines
+function myRulesFunction(user, context, callback) {
+    if (context.protocol === "redirect-callback") {
+        // ユーザーは /continue エンドポイントにリダイレクトされた
+        user.app_metadata.wasRedirected = true;
+        return callback(null, user, context);
+    } else if (
+        context.protocol === "oauth2-password" ||
+        context.protocol === "oauth2-refresh-token" ||
+        context.protocol === "oauth2-resource-owner"
+    ) {
+        // ユーザーはリダイレクトできない
+        return callback(null, user, context);
+    }
+    // ユーザーは直接ログインしている
+    if (!user.app_metadata.wasRedirected) {
+        context.redirect = {
+            url: "https://example.com",
+        };
+        callback(null, user, context);
+    }
+}
+```
+
+**変換後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+    api.accessToken.setClaim("https://dev.TLD/wasRedirected", true)
+```
+
+<div id="convert-current-sso-clients-references">
+  ### 現在の SSO クライアント参照を変換する
+</div>
+
+Rules の `context.sso` オブジェクトは、現在のセッションと、そのセッションを使用しているクライアントに関する詳細を提供します。詳細については、[Context Object Properties in Rules](/ja/docs/customize/rules/context-object) の `context.sso` の項目を参照してください。同様の情報は、Actions の `event.session` オブジェクトでも利用できます。
+
+**Before**
+
+```javascript lines
+function (user, context, callback) {
+
+  const clients = context.sso?.current_clients ?? []; 
+
+  if (clients.length > 0) { 
+	context.idToken.clients = clients.join(" "); 
+  }
+
+  return callback(null, user, context);
+}
+```
+
+**移行後**
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  const clients = event?.session?.clients ?? []; 
+
+  if (clients.length > 0) { 
+    api.idToken.setCustomClaim('clients', clients.map(c=> c?.client_id).join(" ")); 
+  }
+};
+```
+
+<div id="complete-the-migration">
+  ## 移行を完了する
+</div>
+
+新しいActionsコードの作成とテストが完了したら、Actionを有効化し、Ruleを無効化する必要があります。この2つの作業は続けてすばやく実行できますが、順序によっては、短時間だけ両方が実行されることも、どちらも実行されないこともあります。有効なRulesはデプロイ済みのActionsより先に実行されるため、Rulesパイプラインの末尾からさかのぼって進めれば、Actionsでほかのロジックを構築してテストしている間も、一部のロジックをRulesに残しておけます。

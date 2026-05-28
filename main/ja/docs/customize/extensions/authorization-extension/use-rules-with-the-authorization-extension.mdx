@@ -1,0 +1,113 @@
+---
+description: Authorization Extension の情報を Rules で使用する方法について説明します。
+title: Rules で Authorization Extension を使用する
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 では、ロールベースのアクセス制御 (RBAC) を実装する方法が 2 つ用意されており、API 独自の内部アクセス制御システムの代わりに、またはそれと組み合わせて使用できます。
+
+  * [Authorization Core](/ja/docs/manage-users/access-control/rbac)
+  * [Authorization Extension](/ja/docs/customize/extensions/authorization-extension)
+
+  Authorization Core の機能セットは Authorization Extension の機能に対応しており、パフォーマンスとスケーラビリティを向上させるほか、Authorization Extension よりも柔軟な RBAC システムを提供します。
+
+  現在は、どちらも RBAC の主要な機能を実装しており、API に対して定義されたカスタムスコープを、権限としてユーザーに割り当てられたもののみに制限できます。
+</Callout>
+
+Auth0 Rules を Authorization Extension と組み合わせて使用すると、次のようなことができます。
+
+* 発行されたトークンにカスタムクレームを追加する。
+* ユーザーが所属するグループ、ロール、権限を特定する。
+* ユーザーのグループ、ロール、権限に関する情報を `app_metadata` の一部として保存する。
+* ユーザーのグループ、ロール、権限を返されるトークンに追加する (これは `openid groups permissions roles` スコープでリクエストできます) 。
+
+上記のロジックは ルール の一部であるため、ログイン時にのみ実行されます。ユーザーがグループに追加されたり、グループから削除されたりした場合、この変更が Auth0 に反映されるのは、ユーザーが次回ログインした後です。
+
+詳しくは、[Auth0 Rules](/ja/docs/customize/rules) を参照してください。
+
+<div id="add-custom-claims-to-the-issued-token">
+  ## 発行されたトークンにカスタムクレームを追加する
+</div>
+
+トークンにカスタムクレームを追加するには、Authorization Extension で追加できるようにするルールを別途作成します。カスタムクレームには、名前空間付きのものと名前空間なしのものがあります。
+
+詳細については、[カスタムクレームを作成する](/ja/docs/secure/tokens/json-web-tokens/create-custom-claims) を参照してください。
+
+トークンに追加するクレームの数は必要最小限に抑える必要があります。
+
+```javascript lines
+function (user, context, callback) {
+  var namespace = 'http://yourdomain/claims/'; // 独自の名前空間を設定できますが、Auth0ドメインは使用しないでください
+
+  // 名前空間付きトークンを追加します。シナリオに不要なものは削除してください
+  context.idToken[namespace + "permissions"] = user.permissions;
+  context.idToken[namespace + "groups"] = user.groups;
+  context.idToken[namespace + "roles"] = user.roles;
+  
+  callback(null, user, context);
+}
+```
+
+このルールは、Authorization Extension ルールの**後に**実行する必要があります。確実にこの順序で実行されるよう、Authorization Extension ルールの下に配置してください。
+
+`/authorize` エンドポイントを呼び出す場合や Lock を設定する場合は、`groups`、`permissions`、および/または `roles` を指定して、必要な情報を `scope` に含める必要があります。
+
+<div id="control-app-access">
+  ## アプリへのアクセスを制御する
+</div>
+
+Authorization Extension ルールの後に実行されるルールを記述して、アプリケーションへのアクセスを制御することもできます。その方法の 1 つは、アプリケーション メタデータを使用して、各アプリケーションに必要なロールを指定することです。
+
+詳細については、[Rules を使用したメタデータの管理](/ja/docs/manage-users/user-accounts/metadata/manage-metadata-rules)を参照してください。
+
+<div id="set-app-metadata-required-roles">
+  ### アプリのメタデータに必要なロールを設定する
+</div>
+
+アプリのメタデータにロールを設定できます。ロールは、特定の機能セットを実現するために複数の権限をまとめたものです。この手順は、設定したルールがどのアプリに適用されるかを判断できるように、アプリに「タグ付け」するものと考えることができます。
+
+1. ⁠⁠⁠⁠`required_roles` を含む `context.clientMetadata` フィールドを設定するには、[Auth0 Dashboard &gt; Applications &gt; Applications](https://manage.auth0.com/#/applications) で対象のアプリケーションを選択します。
+   アプリケーションの **Settings** が開いたら、下にスクロールしてページ下部の **Show Advanced Settings** を選択します。
+2. **Application Metadata** で項目を追加し、**Key** に `required_roles` を設定して、**Value** フィールドにロールをカンマ区切りで入力します。**+ Add** を選択してフィールドを追加します。
+3. 完了したら、**Save Changes** を選択します。これで、このアプリケーションからログインすると、`context.clientMetadata` に、入力したロール値の文字列を持つ `required_roles` が含まれるようになります。
+
+<div id="create-rule-enforcing-app-roles">
+  ### アプリのロールを適用する Rules を作成する
+</div>
+
+これで各アプリにロールが関連付けられたので、このアプリ情報をコンテキスト内で参照して実行される Rules を作成できます。
+
+1. この Rules を作成する前に、**Token Contents** で **Roles** を有効にし、Authorization Extension の Rules を公開します。
+2. この Rules を追加し、自動生成された &quot;auth0-authorization-extension&quot; ルール の後に配置されていることを確認します。
+3. `required_roles` を設定したら、次の内容で新しい [ルール](https://manage.auth0.com/#/rules) を作成します。
+
+   ```javascript lines
+   function (user, context, callback) {
+     context.clientMetadata = context.clientMetadata || {};
+     if (context.clientMetadata.required_roles && context.clientMetadata.required_roles.length){
+       if (user.roles) {
+         var _ = require('lodash');
+         var roles = context.clientMetadata.required_roles.split(',');
+         var matchingRoles =_.filter(user.roles, function(roleName) {
+           return _.includes(roles, roleName);
+         });
+
+         if (matchingRoles && matchingRoles.length) {
+           return callback(null, user, context);
+         }
+       }
+
+       return callback(new UnauthorizedError('You do not have the required role to access ' + context.clientName));
+     }
+
+    callback(null, user, context);
+   }
+   ```
+
+<div id="learn-more">
+  ## 詳しく見る
+</div>
+
+* [Authorization Extension のデータをインポートおよびエクスポートする](/ja/docs/customize/extensions/authorization-extension/import-and-export-authorization-extension-data)
+* [Authorization Extension への API アクセスを有効にする](/ja/docs/customize/extensions/authorization-extension/enable-api-access-to-authorization-extension)
+* [Authorization Extension のトラブルシューティング](/ja/docs/troubleshoot/authentication-issues/troubleshoot-authorization-extension)

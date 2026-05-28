@@ -1,0 +1,216 @@
+---
+description: Aprende a mantener la sesión iniciada de los usuarios en tu aplicación mediante la autenticación silenciosa.
+title: Configurar la autenticación silenciosa
+---
+
+import {AuthCodeBlock} from "/snippets/es/AuthCodeBlock.jsx";
+
+El [protocolo OpenID Connect](/es/docs/authenticate/protocols/openid-connect-protocol) admite un parámetro `prompt=none` en la solicitud de autenticación que permite a las aplicaciones indicar que el <Tooltip tip="Servidor de autorización: servidor centralizado que contribuye a definir los límites del acceso de un usuario. Por ejemplo, su servidor de autorización puede controlar los datos, las tareas y las funciones disponibles para un usuario." cta="Ver glosario" href="/es/docs/glossary?term=authorization+server">servidor de autorización</Tooltip> no debe mostrar ninguna interacción con el usuario (como autenticación, consentimiento o <Tooltip tip="Servidor de autorización: servidor centralizado que contribuye a definir los límites del acceso de un usuario. Por ejemplo, su servidor de autorización puede controlar los datos, las tareas y las funciones disponibles para un usuario." cta="Ver glosario" href="/es/docs/glossary?term=MFA">MFA</Tooltip>). Auth0 devolverá a la aplicación la respuesta solicitada o devolverá un error si el usuario todavía no está autenticado o si se requiere algún tipo de consentimiento o pantalla antes de continuar.
+
+El uso del [Flujo implícito](/es/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post) en las SPA plantea desafíos de seguridad que requieren estrategias de mitigación explícitas. Puede usar el [Flujo de código de autorización con PKCE](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) junto con la autenticación silenciosa para renovar las sesiones en las SPA.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Los avances recientes en los controles de privacidad de los usuarios en los navegadores afectan negativamente a la experiencia de usuario al impedir el acceso a cookies de terceros; por lo tanto, los flujos basados en navegador deben usar la [rotación de tokens de actualización](/es/docs/secure/tokens/refresh-tokens/refresh-token-rotation), que proporciona un método seguro para usar tokens de actualización en las SPA y, al mismo tiempo, ofrecer a los usuarios finales acceso continuo a los recursos sin la interrupción de la UX causada por tecnologías de privacidad del navegador como ITP.
+</Callout>
+
+<div id="initiate-silent-authentication-requests">
+  ## Inicie solicitudes de autenticación silenciosa
+</div>
+
+Para iniciar una solicitud de autenticación silenciosa, agregue el parámetro `prompt=none` al redirigir a un usuario al [`endpoint` `/authorize` de la API de autenticación de Auth0](https://auth0.com/docs/api/authentication#authorize-application). (Los parámetros concretos de la solicitud de autenticación variarán según las necesidades específicas de su aplicación).
+
+Por ejemplo:
+
+export const codeExample = `GET https://{yourDomain}/authorize
+    ?response_type=id_token token&
+    client_id=...&
+    redirect_uri=...&
+    state=...&
+    scope=openid...&
+    nonce=...&
+    audience=...&
+    response_mode=...&
+    prompt=none`;
+
+<AuthCodeBlock children={codeExample} language="json" />
+
+El parámetro `prompt=none` hace que Auth0 envie inmediatamente un resultado al `redirect_uri` especificado (URL de callback), mediante el `response_mode` especificado, con una de estas dos respuestas posibles: éxito o error.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Cualquier [rules](/es/docs/customize/rules) aplicable se ejecutará como parte del proceso de autenticación silenciosa.
+</Callout>
+
+<div id="response-modes">
+  ### Modos de respuesta
+</div>
+
+El parámetro `response_mode` determina cómo Auth0 envía la respuesta de autorización a tu aplicación. Para la autenticación silenciosa, puedes usar:
+
+| Modo          | Método de entrega                      | Caso de uso                                                      |
+| ------------- | -------------------------------------- | ---------------------------------------------------------------- |
+| `query`       | Cadena de consulta (`?code=...`)       | Flujo de código de autorización con manejo del lado del servidor |
+| `fragment`    | Fragmento de URL (`#access_token=...`) | Flujo implícito (heredado)                                       |
+| `web_message` | API `postMessage()`                    | **Recomendado para SPA**: no requiere navegación de página       |
+
+Al usar `web_message`, Auth0 renderiza una página HTML dentro de un iframe oculto que usa la [API de mensajería web de HTML5](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) para comunicar el resultado a tu aplicación. Esto permite la autenticación silenciosa sin redirecciones de página visibles ni pérdida de estado.
+
+<Note>
+  Para usar `response_mode=web_message`, debes agregar la URL de tu aplicación al campo **Allowed Web Origins** en la [configuración de la aplicación](https://manage.auth0.com/#/applications). Para obtener más detalles sobre todos los modos de respuesta, consulta [OAuth 2.0 Authorization Framework](/es/docs/authenticate/protocols/oauth#authorization-endpoint).
+</Note>
+
+<div id="successful-authentication-responses">
+  ### Respuestas de autenticación correctas
+</div>
+
+Si el usuario ya había iniciado sesión en Auth0 y no se requieren otras pantallas interactivas, Auth0 responderá exactamente igual que si el usuario se hubiera autenticado manualmente a través de la página de inicio de sesión. El formato de la respuesta depende del `response_mode` utilizado:
+
+<Tabs>
+  <Tab title="web_message">
+    Al usar `response_mode=web_message` con Flujo de código de autorización con PKCE (`response_type=code`), Auth0 devuelve una página HTML que envía el código de autorización a su aplicación:
+
+    ```html
+    <script>
+      window.parent.postMessage({
+        type: 'authorization_response',
+        response: {
+          code: 'SplX...GT',
+          state: 'your_state_value'
+        }
+      }, 'https://yourApp.com');
+    </script>
+    ```
+
+    Su aplicación (o SDK) escucha este mensaje y canjea el code por tokens. Si el usuario no tiene una sesión válida, Auth0 envía un error en su lugar:
+
+    ```html
+    <script>
+      window.parent.postMessage({
+        type: 'authorization_response',
+        response: {
+          error: 'login_required',
+          error_description: 'Login required',
+          state: 'your_state_value'
+        }
+      }, 'https://yourApp.com');
+    </script>
+    ```
+  </Tab>
+
+  <Tab title="fragment">
+    Al usar `response_mode=fragment` (valor predeterminado para Flujo implícito con `response_type=id_token token`), Auth0 redirige con los tokens en el fragmento de la URL:
+
+    ```text
+    GET https://yourApp.com/callback
+        #id_token=eyJhbG...&
+        access_token=eyJhbG...&
+        state=your_state_value&
+        expires_in=86400
+    ```
+  </Tab>
+
+  <Tab title="query">
+    Al usar `response_mode=query` (valor predeterminado para Authorization Code Flow con `response_type=code`), Auth0 redirige con el code en la cadena de consulta:
+
+    ```text
+    GET https://yourApp.com/callback
+        ?code=SplX...GT&
+        state=your_state_value
+    ```
+  </Tab>
+</Tabs>
+
+Estas respuestas tienen un formato idéntico al de un inicio de sesión realizado directamente sin el parámetro `prompt=none`. La única diferencia es que, con `prompt=none`, la respuesta es inmediata y no requiere ninguna interacción del usuario.
+
+<div id="error-responses">
+  ### Respuestas de error
+</div>
+
+Si el usuario no había iniciado sesión mediante <Tooltip tip="Inicio de sesión único (SSO): servicio que, después de que un usuario inicia sesión en una aplicación, inicia automáticamente la sesión de ese usuario en otras aplicaciones." cta="Ver glosario" href="/es/docs/glossary?term=Single+Sign-on">inicio de sesión único</Tooltip> (SSO) o su sesión de SSO había caducado, Auth0 devuelve un error con el mismo `response_mode`. Para los modos basados en redirecciones (`fragment` o `query`):
+
+```text
+GET https://your_callback_url/
+    #error=ERROR_CODE&
+    error_description=ERROR_DESCRIPTION&
+    state=...
+```
+
+Para el modo `web_message`, el error se envía mediante `postMessage()`, como se muestra en el ejemplo anterior.
+
+Los posibles valores de `ERROR_CODE` están definidos en la [especificación de OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html#AuthError):
+
+| Respuesta              | Descripción                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `login_required`       | El usuario no había iniciado sesión en Auth0, por lo que no es posible realizar la autenticación silenciosa. Este error puede producirse según cómo estén configurados los ajustes de **Administración de sesiones de inicio de sesión** a nivel del inquilino; en concreto, puede producirse una vez transcurrido el período establecido en la opción **Solicitar inicio de sesión después de**. Consulta [Configurar ajustes de duración de la sesión](/es/docs/manage-users/sessions/configure-session-lifetime-settings) para obtener más información. |
+| `consent_required`     | El usuario había iniciado sesión en Auth0, pero debe otorgar su consentimiento para autorizar la aplicación.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `interaction_required` | El usuario había iniciado sesión en Auth0 y ha autorizado la aplicación, pero debe ser redirigido a otro lugar antes de que se pueda completar la autenticación; por ejemplo, al usar una [regla de redirección](/es/docs/customize/rules/redirect-users).                                                                                                                                                                                                                                                                                                 |
+
+Si se devuelve cualquiera de estos errores, se debe redirigir al usuario a la página de inicio de sesión de Auth0 sin el parámetro `prompt=none` para que se autentique.
+
+<div id="renew-expired-tokens">
+  ## Renovar tokens vencidos
+</div>
+
+Puede realizar una solicitud de autenticación silenciosa para obtener tokens nuevos, siempre que el usuario siga teniendo una sesión válida en Auth0. El [método `checkSession` de auth0.js](/es/docs/libraries/auth0js) usa una solicitud silenciosa de tokens en combinación con `response_mode=web_message` para las SPA, de modo que la solicitud se realice en un iframe oculto. En las SPA, Auth0.js procesa el resultado (ya sea el token o el code de error) y pasa la información mediante una función callback proporcionada por la aplicación. Esto evita cualquier interrupción en la experiencia de usuario (sin actualizar la página ni perder el estado).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Consulte [Renovar tokens al usar Safari](/es/docs/troubleshoot/authentication-issues/renew-tokens-when-using-safari) para conocer otras limitaciones importantes y soluciones alternativas relacionadas con el navegador Safari.
+</Callout>
+
+<div id="access-token-expiration">
+  ### Expiración del Token de acceso
+</div>
+
+Los <Tooltip tip="Token de acceso: credencial de autorización, en forma de cadena opaca o JWT, utilizada para acceder a una API." cta="Ver glosario" href="/es/docs/glossary?term=Access+Tokens">Tokens de acceso</Tooltip> son opacos para las aplicaciones. Esto significa que las aplicaciones no pueden inspeccionar el contenido de los Tokens de acceso para determinar su fecha de expiración.
+
+Hay dos opciones para determinar cuándo expira un Token de acceso:
+
+* Leer el parámetro de respuesta `expires_in` que devuelve Auth0.
+* Ignorar por completo las fechas de expiración. En su lugar, renueve el Token de acceso si su API rechaza una solicitud de la aplicación (por ejemplo, con un 401).
+
+En el caso del [Flujo implícito](/es/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post), Auth0 devuelve el parámetro `expires_in` como parámetro hash después de una autenticación correcta. En el [Flujo de código de autorización con PKCE](/es/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce), se devuelve al servidor backend al realizar el intercambio del código de autorización.
+
+El parámetro `expires_in` indica durante cuántos segundos será válido el Token de acceso y puede usarse para anticipar su expiración.
+
+<div id="error-response">
+  ### Respuesta de error
+</div>
+
+Puede recibir la respuesta de error `timeout`, que indica que se agotó el tiempo de espera durante la ejecución de la comunicación `web_message`. Este error suele estar asociado con el uso de la autenticación entre orígenes como mecanismo de respaldo. Para resolverlo, asegúrese de agregar todas las URL desde las que desea realizar la autenticación silenciosa en el campo **Allowed Web Origins** de su aplicación mediante el <Tooltip tip="Auth0 Dashboard: el principal producto de Auth0 para configurar sus servicios." cta="Ver glosario" href="/es/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip>.
+
+<div id="poll-with-checksession">
+  ## Sondeo con `checkSession()`
+</div>
+
+En algunos escenarios con varias aplicaciones, en los que se desea el cierre de sesión único (cuando un usuario cierra sesión en una aplicación, también debe cerrarla en las demás), una aplicación puede configurarse para consultar periódicamente a Auth0 mediante `checkSession()` y verificar si existe una sesión. Si la sesión no existe, puede cerrar la sesión del usuario en la aplicación. Este mismo método de sondeo también puede usarse para implementar autenticación silenciosa en un escenario de inicio de sesión único (SSO).
+
+El intervalo de sondeo entre llamadas a `checkSession()` debe ser de al menos 15 minutos para evitar posibles problemas futuros con la limitación de frecuencia de esta llamada.
+
+<div id="silent-authentication-with-multi-factor-authentication">
+  ## Autenticación silenciosa con MFA
+</div>
+
+En algunos escenarios, es posible que quiera evitar solicitar al usuario la [autenticación multifactor (MFA)](/es/docs/secure/multi-factor-authentication) cada vez que inicie sesión desde el mismo navegador. Para ello, configure una regla para que la MFA se produzca solo una vez por sesión. Esto resulta útil al realizar autenticación silenciosa (`prompt=none`) para renovar tokens de acceso de corta duración en una SPA durante la sesión de un usuario, sin tener que depender de configurar `allowRememberBrowser` en `true`.
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  const authMethods = event.authentication?.methods || []
+
+  const completedMfa = !!authMethods.find((method) => method.name === 'mfa')
+
+  if (!completedMfa) {
+    api.multifactor.enable('any', { allowRememberBrowser: true })
+  }
+};
+```
+
+Para obtener más información, consulta [Cambiar la frecuencia de las solicitudes de autenticación](/es/docs/secure/multi-factor-authentication/customize-mfa).
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [Rotación de tokens de actualización](/es/docs/secure/tokens/refresh-tokens/refresh-token-rotation)
+* [Configurar la rotación de tokens de actualización](/es/docs/secure/tokens/refresh-tokens/configure-refresh-token-rotation)
+* [Solucionar errores de token no válido](/es/docs/troubleshoot/basic-issues/invalid-token-errors)
+* [Comprobar las llamadas a la API](/es/docs/troubleshoot/authentication-issues/check-api-calls)
+* [Solucionar problemas de MFA](/es/docs/troubleshoot/authentication-issues/troubleshoot-mfa-issues)

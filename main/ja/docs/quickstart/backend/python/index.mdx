@@ -1,0 +1,575 @@
+---
+title: 'Flask API'
+description: 'このガイドでは、Flask を使用して構築した新規または既存の Python API に Auth0 を統合する方法を説明します。'
+---
+
+<Note>
+  **前提条件:** 開始する前に、以下がインストールされていることを確認してください。
+
+  * **Python 3.9** 以降
+  * **pip** または Poetry パッケージマネージャー
+  * **[jq](https://jqlang.org/)** - Auth0 CLI のセットアップに必要
+  * 任意のコードエディター
+
+  **Flask のバージョン互換性:** このクイックスタートでは、ネイティブの async サポートを利用するために **Flask 3.0** 以降が必要です。
+</Note>
+
+<div id="get-started">
+  ## はじめに
+</div>
+
+このガイドでは、[Flask](https://flask.palletsprojects.com/) で構築した新規または既存の Python API に Auth0 を統合する方法を説明します。
+
+<Steps>
+  <Step title="新しい Flask プロジェクトを作成する" stepNumber={1}>
+    Flask API 用の新しいディレクトリを作成します。
+
+    ```bash
+    mkdir flask-auth0-api
+    cd flask-auth0-api
+    ```
+
+    仮想環境を作成して、有効化します。
+
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # Windowsの場合: venv\Scripts\activate
+    ```
+  </Step>
+
+  <Step title="依存関係をインストール" stepNumber={2}>
+    次の依存関係を含む `requirements.txt` ファイルを作成します。
+
+    ```txt requirements.txt
+    flask>=3.0
+    auth0-api-python
+    python-dotenv
+    ```
+
+    依存関係をインストールします:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+
+  <Step title="Auth0 API をセットアップする" stepNumber={3}>
+    次に、Auth0 テナントで新しい API を作成し、アプリケーションを設定する必要があります。
+
+    これには、CLI コマンドを実行して自動的に行う方法と、Dashboard から手動で行う方法があります。
+
+    <Tabs>
+      <Tab title="ダッシュボード">
+        1. [Auth0 Dashboard](https://manage.auth0.com/) → **Applications** → **APIs** に移動します
+        2. **Create API** をクリックします
+        3. API の詳細を入力します。
+           * **Name**: `My Flask API`
+           * **Identifier**: `https://my-flask-api` (これがオーディエンスになります)
+           * **Signing Algorithm**: **RS256**
+        4. **Create** をクリックします
+        5. Auth0 Dashboard から **ドメイン** をコピーします (場所: **Applications** → **Applications** → **[Your App]** → **Settings**)
+        6. 作成した **Identifier** をコピーします (これがオーディエンスです)
+
+        <Info>
+          **ドメイン** には `https://` を含めないでください。ドメイン名のみを使用します (例: `your-tenant.auth0.com`) 。
+
+          **対象者** (API Identifier) は API の一意の識別子であり、有効な URI であれば任意の値を指定できます。
+        </Info>
+      </Tab>
+
+      <Tab title="CLI">
+        Auth0 API を作成して `.env` ファイルを生成するには、プロジェクトのルートディレクトリで次のシェルコマンドを実行します。
+
+        <CodeGroup>
+          ```shellscript Mac
+          AUTH0_API_NAME="My Flask API" && AUTH0_API_IDENTIFIER="https://my-flask-api" && brew tap auth0/auth0-cli && brew install auth0 && auth0 login --no-input && auth0 apis create --name "${AUTH0_API_NAME}" --identifier "${AUTH0_API_IDENTIFIER}" --signing-alg RS256 --json > auth0-api-details.json && DOMAIN=$(auth0 tenants list --json | jq -r '.[] | select(.active == true) | .name') && AUDIENCE=$(jq -r '.identifier' auth0-api-details.json) && echo "AUTH0_DOMAIN=${DOMAIN}" > .env && echo "AUTH0_AUDIENCE=${AUDIENCE}" >> .env && rm auth0-api-details.json && echo ".env file created with your Auth0 API details:" && cat .env
+          ```
+
+          ```shellscript Windows
+          $ApiName = "My Flask API"; $ApiIdentifier = "https://my-flask-api"; winget install Auth0.CLI; auth0 login --no-input; auth0 apis create -n "$ApiName" -i "$ApiIdentifier" --signing-alg RS256 --json | Set-Content -Path auth0-api-details.json; $Domain = (auth0 tenants list --json | ConvertFrom-Json | Where-Object { $_.active -eq $true }).name; $Audience = (Get-Content -Raw auth0-api-details.json | ConvertFrom-Json).identifier; Set-Content -Path .env -Value "AUTH0_DOMAIN=$Domain"; Add-Content -Path .env -Value "AUTH0_AUDIENCE=$Audience"; Remove-Item auth0-api-details.json; Write-Output ".env file created with your Auth0 API details:"; Get-Content .env
+          ```
+        </CodeGroup>
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="API の権限を定義する" stepNumber={4}>
+    特定のリソースへのアクセスを制御するため、API の権限 (スコープ) を設定します。
+
+    1. [Auth0 Dashboard](https://manage.auth0.com/) で、**Applications** → **APIs** に移動します
+    2. API (`My Flask API`) を選択します
+    3. **Permissions** タブを開きます
+    4. **Add Permission** をクリックします
+    5. 次の権限を追加します。
+       * **Permission (Scope)**: `read:messages`
+       * **Description**: `Read messages`
+    6. **Add** をクリックします
+
+    <Info>
+      権限は、その API に対して実行できる操作を定義します。`write:messages`、`delete:messages` など、複数の権限を追加できます。このクイックスタートの `/api/private-scoped` エンドポイントには、`read:messages` 権限が必要です。
+    </Info>
+  </Step>
+
+  <Step title="Auth0 のクライアントを設定する" stepNumber={5}>
+    <Note>
+      手順 3 で **CLI** の方法を使用した場合、`.env` ファイルは自動的に作成されています。以下の `app.py` ファイルの作成に進んでください。
+    </Note>
+
+    **Dashboard** の方法を使用した場合は、Auth0 の設定を保存するため、プロジェクトのルートに `.env` ファイルを作成します。
+
+    ```bash .env
+    AUTH0_DOMAIN=your-tenant.us.auth0.com
+    AUTH0_AUDIENCE=https://my-flask-api
+    ```
+
+    <Warning>
+      `your-tenant.us.auth0.com` は実際の Auth0 ドメインに置き換え、`API_IDENTIFIER` はダッシュボード上の API 識別子に合わせて更新してください。
+    </Warning>
+
+    `app.py` ファイルを作成し、Auth0 API クライアントを設定します。
+
+    ```python app.py
+    import os
+    import asyncio
+    from flask import Flask, request, jsonify, g
+    from functools import wraps
+    from dotenv import load_dotenv
+    from auth0_api_python import ApiClient, ApiClientOptions
+    from auth0_api_python.errors import BaseAuthError
+
+    # 環境変数を読み込む
+    load_dotenv()
+
+    app = Flask(__name__)
+
+    # Auth0 APIクライアントを初期化する（シングルトン - 一度だけ作成）
+    api_client = ApiClient(ApiClientOptions(
+        domain=os.getenv("AUTH0_DOMAIN"),
+        audience=os.getenv("AUTH0_AUDIENCE")
+    ))
+    ```
+  </Step>
+
+  <Step title="保護されたルートを作成する" stepNumber={5}>
+    ルートを保護するデコレーターを追加し、パブリックエンドポイントとプライベートエンドポイントを作成します。
+
+    ```python app.py
+    # 認証デコレーター
+    def require_auth(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            auth_header = request.headers.get("Authorization", "")
+            
+            if not auth_header.startswith("Bearer "):
+                return jsonify({"error": "Missing or invalid authorization header"}), 401
+            
+            token = auth_header.split(" ")[1]
+            
+            try:
+                claims = asyncio.run(api_client.verify_access_token(token))
+                g.user_claims = claims
+                return f(*args, **kwargs)
+            except BaseAuthError as e:
+                return (
+                    jsonify({"error": str(e)}),
+                    e.get_status_code(),
+                    e.get_headers()
+                )
+        
+        return decorated_function
+
+
+    # パブリックエンドポイント - 認証不要
+    @app.route("/api/public", methods=["GET"])
+    def public():
+        return jsonify({"message": "This endpoint is public"})
+
+
+    # 保護されたエンドポイント - 認証が必要
+    @app.route("/api/private", methods=["GET"])
+    @require_auth
+    def private():
+        return jsonify({
+            "message": "This endpoint requires authentication",
+            "user": g.user_claims.get("sub")
+        })
+
+
+    # 権限検証付きの保護されたエンドポイント
+    @app.route("/api/private-scoped", methods=["GET"])
+    @require_auth
+    def private_scoped():
+        scopes = g.user_claims.get("scope", "").split()
+        
+        if "read:messages" not in scopes:
+            return jsonify({"error": "Insufficient permissions"}), 403
+        
+        return jsonify({
+            "message": "Private scoped endpoint - read:messages permission granted",
+            "user": g.user_claims.get("sub")
+        })
+
+
+    if __name__ == "__main__":
+        app.run(debug=True, port=5000)
+    ```
+  </Step>
+
+  <Step title="API を起動する" stepNumber={6}>
+    Flask アプリケーションを起動します。
+
+    ```bash
+    python app.py
+    ```
+
+    API は `http://localhost:5000` で起動しています。
+  </Step>
+</Steps>
+
+<Check>
+  **チェックポイント**
+
+  これで、Auth0 で保護された完全に機能する Flask API が localhost 上で動作しており、次の 3 つのエンドポイントを利用できるはずです。
+
+  * `/api/public` - 認証なしでアクセス可能
+  * `/api/private` - 有効な Auth0 アクセストークンが必要
+  * `/api/private-scoped` - 認証と `read:messages` 権限が必要
+</Check>
+
+<div id="test-your-api">
+  ## APIをテストする
+</div>
+
+保護されたエンドポイントをテストするには、アクセストークンが必要です。
+
+<div id="get-a-test-token">
+  ### テスト用トークンを取得する
+</div>
+
+1. [Auth0 Dashboard](https://manage.auth0.com/) を開きます
+2. **Applications → APIs** に移動します
+3. 対象の API を選択します
+4. **Test** タブを開きます
+5. アクセストークンをコピーします
+
+<div id="make-a-request">
+  ### リクエストを送信する
+</div>
+
+公開エンドポイントをテストします (トークンは不要です) ：
+
+```bash
+curl http://localhost:5000/api/public
+```
+
+保護されたエンドポイントをテストします (トークンが必要) :
+
+```bash
+curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  http://localhost:5000/api/private
+```
+
+`YOUR_ACCESS_TOKEN` を、Auth0 Dashboard からコピーしたトークンに置き換えます。
+
+<div id="advanced-usage">
+  ## 高度な使い方
+</div>
+
+<Accordion title="カスタムクレームの検証">
+  アクセストークンに特定のクレームが含まれていることを必須にします。
+
+  ```python
+  try:
+      claims = await api_client.verify_access_token(
+          access_token=token,
+          required_claims=["email_verified", "org_id"]
+      )
+  except BaseAuthError as e:
+      return jsonify({"error": "Missing required claims"}), 401
+  ```
+</Accordion>
+
+<Accordion title="DPoP 認証">
+  セキュリティをさらに強化するには、DPoP (Demonstrating Proof-of-Possession) を有効にします。DPoP は、アクセストークンを暗号鍵に結び付けることで OAuth 2.0 を強化します。
+
+  ```python
+  import asyncio
+
+
+  # DPoP を有効にして API クライアントを設定（Allowed モード）
+  api_client = ApiClient(ApiClientOptions(
+      domain=os.getenv("AUTH0_DOMAIN"),
+      audience=os.getenv("AUTH0_AUDIENCE"),
+      dpop_enabled=True,   # デフォルト - DPoP サポートを有効化
+      dpop_required=False  # デフォルト - Bearer と DPoP の両方のトークンを許可
+  ))
+
+  # Required モードの場合（DPoP のみ、Bearer トークンは拒否）
+  # dpop_required=True
+
+  # DPoP 対応のデコレーター
+  def require_auth_dpop(f):
+      @wraps(f)
+      def decorated_function(*args, **kwargs):
+          headers = {
+              "authorization": request.headers.get("Authorization", ""),
+              "dpop": request.headers.get("DPoP", "")  # DPoP 証明ヘッダー
+          }
+          
+          try:
+              # verify_request() は Bearer または DPoP スキームを自動検出
+              claims = asyncio.run(api_client.verify_request(
+                  headers=headers,
+                  http_method=request.method,
+                  http_url=request.url
+              ))
+              g.user_claims = claims
+              return f(*args, **kwargs)
+          except BaseAuthError as e:
+              return jsonify({"error": str(e)}), e.get_status_code(), e.get_headers()
+      
+      return decorated_function
+
+  @app.route("/api/dpop-protected")
+  @require_auth_dpop
+  def dpop_protected():
+      return jsonify({
+          "message": "Successfully authenticated with DPoP or Bearer",
+          "user": g.user_claims.get("sub")
+      })
+  ```
+
+  <Info>
+    `verify_request()` メソッドは、リクエストで Bearer 認証と DPoP 認証のどちらが使われているかを自動的に判別します。DPoP が使用されている場合は、RFC 9449 に従ってアクセストークンと DPoP 証明の両方を検証します。
+  </Info>
+</Accordion>
+
+<Accordion title="スコープベースの認可">
+  特定のスコープを確認するデコレーターを作成します。
+
+  ```python
+  def require_scope(required_scope):
+      def decorator(f):
+          @wraps(f)
+          async def wrapper(*args, **kwargs):
+              if not hasattr(g, "user_claims"):
+                  return jsonify({"error": "Unauthorized"}), 401
+              
+              scopes = g.user_claims.get("scope", "").split()
+              
+              if required_scope not in scopes:
+                  return jsonify({"error": "Insufficient permissions"}), 403
+              
+              return await f(*args, **kwargs)
+          return wrapper
+      return decorator
+
+
+  @app.route("/api/admin")
+  @require_auth
+  @require_scope("admin:write")
+  async def admin_endpoint():
+      return jsonify({"message": "Admin access granted"})
+  ```
+</Accordion>
+
+<Accordion title="エラー処理のベストプラクティス">
+  特定のエラー型を使って、包括的なエラー処理を実装します。
+
+  ```python
+  from auth0_api_python.errors import (
+      BaseAuthError,
+      VerifyAccessTokenError,
+      GetTokenByExchangeProfileError,
+      ApiError
+  )
+
+  @app.errorhandler(BaseAuthError)
+  def handle_auth_error(error):
+      """Handle all Auth0 authentication errors"""
+      return jsonify({
+          "error": error.get_error_code(),
+          "error_description": str(error)
+      }), error.get_status_code(), error.get_headers()
+
+
+  @app.errorhandler(VerifyAccessTokenError)
+  def handle_token_verification_error(error):
+      """Handle token verification failures specifically"""
+      app.logger.warning(f"Token verification failed: {str(error)}")
+      return jsonify({
+          "error": "invalid_token",
+          "error_description": str(error)
+      }), 401, error.get_headers()
+
+
+  @app.errorhandler(ApiError)
+  def handle_api_error(error):
+      """Handle Auth0 API errors (network, rate limits, etc.)"""
+      app.logger.error(f"Auth0 API error: {error.code} - {error.message}")
+      return jsonify({
+          "error": error.code,
+          "error_description": error.message
+      }), error.status_code or 500
+
+
+  @app.errorhandler(Exception)
+  def handle_generic_error(error):
+      """Catch-all for unexpected errors"""
+      app.logger.error(f"Unexpected error: {str(error)}", exc_info=True)
+      return jsonify({"error": "Internal server error"}), 500
+  ```
+
+  <Info>
+    すべての認証エラーは `BaseAuthError` を継承しており、`BaseAuthError` は `get_status_code()`、`get_headers()`、`get_error_code()` などのメソッドを提供します。これにより、WWW-Authenticate ヘッダーを含む適切な HTTP レスポンスを返せます。
+  </Info>
+</Accordion>
+
+<Accordion title="Before-Request ミドルウェアの使用">
+  ほとんどのエンドポイントで認証が必要なアプリケーションでは、Flask の `before_request` を使用してトークンをグローバルに検証します。
+
+  ```python
+  from flask import g
+
+  PUBLIC_ROUTES = ["/api/public", "/health"]
+
+  @app.before_request
+  async def verify_token():
+      # 公開ルートでは認証をスキップ
+      if request.path in PUBLIC_ROUTES:
+          return
+      
+      auth_header = request.headers.get("Authorization", "")
+      
+      if not auth_header.startswith("Bearer "):
+          return jsonify({"error": "Missing authorization"}), 401
+      
+      token = auth_header.split(" ")[1]
+      
+      try:
+          claims = await api_client.verify_access_token(token)
+          g.user_claims = claims
+      except BaseAuthError as e:
+          return jsonify({"error": str(e)}), e.get_status_code(), e.get_headers()
+
+
+  @app.route("/api/protected-data")
+  async def protected_data():
+      # クレームは g.user_claims から自動的に利用可能
+      return jsonify({"user_id": g.user_claims["sub"]})
+  ```
+</Accordion>
+
+<div id="common-issues">
+  ## よくある問題
+</div>
+
+<AccordionGroup>
+  <Accordion title="401 Unauthorized - 無効なオーディエンス">
+    **症状**: 有効に見えるトークンでも 401 エラーが発生する
+
+    **原因**: トークン内のオーディエンスが、API クライアントに設定されたオーディエンスと一致していない
+
+    **解決策**:
+
+    1. `.env` ファイル内の `AUTH0_AUDIENCE` が Auth0 API Identifier と完全に一致していることを確認します
+    2. オーディエンスでは大文字と小文字が区別されます
+    3. オーディエンスが URL または URN 形式であることを確認します (例: `my-api` ではなく `https://my-api`) 
+  </Accordion>
+
+  <Accordion title="401 Unauthorized - 無効な issuer">
+    **症状**: issuer の不一致により、トークンの検証に失敗する
+
+    **原因**: ドメイン設定がトークンの issuer と一致していない
+
+    **解決策**:
+
+    1. `AUTH0_DOMAIN` が正しいことを確認します (例: `tenant.us.auth0.com`) 
+    2. ドメインに `https://` を含めないでください
+    3. 末尾のスラッシュを含めないでください
+  </Accordion>
+
+  <Accordion title="設定値が見つからない">
+    **症状**: `None` の値や環境変数に関するエラーが発生する
+
+    **原因**: 環境変数が読み込まれていないか、`.env` ファイルが見つからない
+
+    **解決策**:
+
+    1. プロジェクトのルートに `.env` ファイルが存在することを確認します
+    2. `os.getenv()` を呼び出す前に `load_dotenv()` が実行されていることを確認します
+    3. 変数名が完全に一致していることを確認します (大文字と小文字は区別されます) 
+  </Accordion>
+
+  <Accordion title="Flask の非同期サポートエラー">
+    **症状**: `RuntimeError: This event loop is already running` または同様の非同期エラーが発生する
+
+    **原因**: Flask 3.0+ を使用せずに非同期ルートを使っているか、同期処理と非同期処理を誤って混在させている
+
+    **解決策**:
+
+    1. Flask 3.0 以降にアップグレードします: `pip install --upgrade flask`
+    2. `api_client` を使用するすべてのルートハンドラーが `async def` として宣言されていることを確認します
+    3. ルートハンドラー内で `asyncio.run()` を使用しないでください
+  </Accordion>
+
+  <Accordion title="トークンの有効期限切れエラー">
+    **症状**: `VerifyAccessTokenError: Token is expired`
+
+    **原因**: アクセストークンの有効期限が切れている
+
+    **解決策**:
+
+    1. Auth0 Dashboard の Test タブから新しいトークンをリクエストします
+    2. クライアントアプリケーションにトークンの更新処理を実装します
+    3. Dashboard のトークンは通常 24 時間有効です
+  </Accordion>
+
+  <Accordion title="Authorization ヘッダーがない">
+    **症状**: `Missing or invalid authorization header` エラー
+
+    **原因**: リクエストに `Authorization` ヘッダーが含まれていないか、形式が正しくない
+
+    **解決策**:
+
+    1. ヘッダー名が `Authorization` (A は大文字) であることを確認します
+    2. 次の形式を使用します: `Authorization: Bearer YOUR_TOKEN`
+    3. トークンを引用符で囲まないでください
+  </Accordion>
+</AccordionGroup>
+
+<div id="additional-resources">
+  ## 追加リソース
+</div>
+
+<CardGroup cols={3}>
+  <Card title="SDK ドキュメント" icon="github" href="https://github.com/auth0/auth0-api-python">
+    SDK の完全なドキュメントと API リファレンス
+  </Card>
+
+  <Card title="Flask ドキュメント" icon="code" href="https://flask.palletsprojects.com/">
+    Flask フレームワークの公式ドキュメント
+  </Card>
+
+  <Card title="Auth0 Dashboard" icon="gauge" href="https://manage.auth0.com/">
+    Auth0 のテナントと API を管理
+  </Card>
+
+  <Card title="API 認証ガイド" icon="shield" href="https://auth0.com/docs/secure/tokens/access-tokens">
+    アクセストークンと API セキュリティについて確認
+  </Card>
+
+  <Card title="DPoP ドキュメント" icon="lock" href="https://auth0.com/docs/secure/sender-constraining/demonstrating-proof-of-possession-dpop">
+    proof-of-possession セキュリティについて確認
+  </Card>
+
+  <Card title="コミュニティフォーラム" icon="comments" href="https://community.auth0.com/">
+    Auth0 コミュニティからサポートを受ける
+  </Card>
+</CardGroup>
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+Flask を使用した完全に動作するサンプルについては、[Auth0 Python API samples repository](https://github.com/auth0-samples/auth0-python-api-samples)を参照してください。

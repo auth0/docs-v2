@@ -1,0 +1,361 @@
+---
+mode: wide
+sidebarTitle: Facebook Login en iOS
+title: Añade el Facebook Login nativo de Facebook a tu aplicación iOS
+---
+
+<div id="before-you-start">
+  ## Antes de comenzar
+</div>
+
+Completa estos requisitos previos antes de seguir este inicio rápido:
+
+1. **Configura el SDK de Facebook Login** - Instala y configura el [Facebook Login SDK for iOS](https://developers.facebook.com/docs/facebook-login/). Crea una aplicación de Facebook en [developers.facebook.com](https://developers.facebook.com). Cuando termines, tu aplicación debería tener Facebook Login funcionando.
+2. **Configura Auth0 para Facebook Native** - Configura tu aplicación de Auth0 para usar el inicio de sesión nativo de Facebook. Consulta [Agregar Facebook Login a aplicaciones nativas](/es/docs/authenticate/identity-providers/social-identity-providers/facebook-native).
+
+<div id="get-started">
+  ## Primeros pasos
+</div>
+
+<Steps>
+  <Step title="Configurar los permisos de Facebook Login" stepNumber={1}>
+    Actualiza el botón de Facebook Login en tu `ViewController` para solicitar los permisos correctos.
+
+    Tu aplicación ya admite Facebook Login, pero para obtener un perfil de usuario más completo debes solicitar los permisos `public_profile` y `email`. También agregarás una llamada de retorno del delegado para iniciar el flujo de autenticación de Auth0.
+
+    ```swift ViewController.swift lines
+    import FacebookLogin
+    import UIKit
+
+    class ViewController: UIViewController {
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+
+            let fbLoginButton = FBLoginButton()
+            // Solicitar permisos de email y public_profile
+            fbLoginButton.permissions = ["email", "public_profile"]
+            fbLoginButton.delegate = self
+            view.addSubview(fbLoginButton)
+        }
+
+        private func performLogin(accessToken: AccessToken) {
+            // Los pasos 2–4 completarán este campo
+        }
+    }
+
+    extension ViewController: LoginButtonDelegate {
+        func loginButton(_ loginButton: FBLoginButton, didCompleteWith result: LoginManagerLoginResult?, error: (any Error)?) {
+            if let error = error {
+                // Gestionar error de inicio de sesión de Facebook
+                print(error)
+                return
+            }
+            if let result = result, let token = result.token {
+                performLogin(accessToken: token)
+            }
+        }
+
+        func loginButtonDidLogOut(_ loginButton: FBLoginButton) {
+            // Gestionar cierre de sesión
+        }
+
+        func loginButtonWillLogin(_ loginButton: FBLoginButton) -> Bool {
+            return true
+        }
+    }
+    ```
+
+    <Info>
+      El permiso `email` es opcional; el usuario debe dar su consentimiento para compartirlo. El correo electrónico que devuelve Facebook se **marcará como no verificado** en el perfil del usuario de Auth0.
+    </Info>
+  </Step>
+
+  <Step title="Instala y configura el SDK de Auth0" stepNumber={2}>
+    Agrega el SDK Auth0.swift a tu proyecto y configura las credenciales de tu aplicación.
+
+    **Agrega Auth0.swift con Swift Package Manager:**
+
+    1. En Xcode, ve a **File** → **Add Package Dependencies...**
+    2. Ingresa la URL del paquete: `https://github.com/auth0/Auth0.swift`
+    3. Selecciona la versión más reciente y haz clic en **Add Package**
+
+    **Agrega tus credenciales de Auth0 a `Auth0.plist`:**
+
+    Ve a la sección **Applications** del [Auth0 Dashboard](https://manage.auth0.com/) y selecciona la aplicación en la que habilitaste Facebook Native Sign In. Copia los valores de **dominio** e **ID de cliente**.
+
+    Crea un nuevo archivo de lista de propiedades llamado `Auth0.plist` en tu proyecto y agrega lo siguiente:
+
+    ```xml Auth0.plist lines
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>ClientId</key>
+        <string>YOUR_AUTH0_CLIENT_ID</string>
+        <key>Domain</key>
+        <string>{yourDomain}</string>
+    </dict>
+    </plist>
+    ```
+
+    Arrastra `Auth0.plist` a Xcode y asegúrate de que **Add to target** esté marcado para el destino de tu aplicación.
+
+    <Tip>
+      El SDK de Auth0.swift lee automáticamente las credenciales de `Auth0.plist`, por lo que no se requiere código de inicialización adicional.
+    </Tip>
+  </Step>
+
+  <Step title="Obtener el token de acceso de la sesión de Facebook" stepNumber={3}>
+    Después de que Facebook Login se complete correctamente, obtén un **token de acceso de sesión** de la API de Facebook. Auth0 requiere este token para verificar la identidad del usuario en el backend.
+
+    Haz una solicitud GET al endpoint `/oauth/access_token` de Facebook mediante la clase `GraphRequest`:
+
+    ```swift ViewController.swift lines
+    import FacebookCore
+
+    private func fetchSessionToken(accessToken: AccessToken, completion: @escaping (String?, Error?) -> Void) {
+        let request = GraphRequest(graphPath: "oauth/access_token")
+        request.parameters["grant_type"] = "fb_attenuate_token"
+        request.parameters["client_id"] = facebookAppId()
+        request.parameters["fb_exchange_token"] = accessToken.tokenString
+        request.start { _, response, error in
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+            if let responseDict = response as? [String: Any],
+               let token = responseDict["access_token"] as? String {
+                completion(token, nil)
+            }
+        }
+    }
+
+    private func facebookAppId() -> String? {
+        return Bundle.main.infoDictionary?["FacebookAppID"] as? String
+    }
+    ```
+
+    <Info>
+      Los parámetros de consulta obligatorios son:
+
+      * `grant_type`: `fb_attenuate_token`
+      * `fb_exchange_token`: la cadena del token del `AccessToken` de Facebook
+      * `client_id`: el ID de tu aplicación de Facebook (ya está en tu `Info.plist` de la configuración del SDK de Facebook)
+    </Info>
+  </Step>
+
+  <Step title="Obtener el perfil de usuario de Facebook" stepNumber={4}>
+    Obtén el perfil del usuario desde Facebook. Auth0 usa estos datos para crear o actualizar el perfil del usuario en Auth0.
+
+    ```swift ViewController.swift lines
+    import FacebookCore
+
+    private func fetchUserProfile(completion: @escaping ([String: Any]?, Error?) -> Void) {
+        let request = GraphRequest(graphPath: "me")
+        request.parameters["fields"] = "first_name,last_name,email"
+        request.start { _, result, error in
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+            if let rawResponse = result as? [String: Any] {
+                completion(rawResponse, nil)
+            }
+        }
+    }
+    ```
+
+    <Tip>
+      El parámetro `fields` se corresponde directamente con los permisos de Facebook que solicitaste. Solicitar `first_name`, `last_name` y `email` es suficiente para que Auth0 cree un perfil de usuario completo.
+    </Tip>
+  </Step>
+
+  <Step title="Canjear tokens por credenciales de Auth0" stepNumber={5}>
+    Usa el token de sesión y el perfil del usuario de los pasos anteriores para autenticarte con Auth0 y obtener tokens de Auth0.
+
+    Llama a `login(facebookSessionAccessToken:profile:audience:scope:)` en el cliente de autenticación de Auth0:
+
+    ```swift ViewController.swift lines
+    import Auth0
+
+    private func exchangeToken(sessionToken: String, userProfile: [String: Any], completion: @escaping (Credentials?, Error?) -> Void) {
+        Auth0.authentication()
+            .login(
+                facebookSessionAccessToken: sessionToken,
+                profile: userProfile,
+                audience: nil,
+                scope: "openid profile email offline_access"
+            )
+            .start { result in
+                switch result {
+                case .success(let credentials):
+                    completion(credentials, nil)
+                case .failure(let error):
+                    completion(nil, error)
+                }
+            }
+    }
+    ```
+
+    <Info>
+      Internamente, Auth0.swift usa el tipo de token `http://auth0.com/oauth/token-type/facebook-info-session-access-token` para dirigir la solicitud a la conexión nativa de Facebook.
+    </Info>
+  </Step>
+
+  <Step title="Ponerlo todo junto" stepNumber={6}>
+    Complete el método `performLogin` para encadenar los tres pasos: obtener el token de sesión → obtener el perfil de usuario → intercambiarlo por tokens de Auth0.
+
+    ```swift ViewController.swift lines
+    private func performLogin(accessToken: AccessToken) {
+        fetchSessionToken(accessToken: accessToken) { [weak self] token, error in
+            guard let self = self else { return }
+            if let error = error {
+                print("Session token error:", error)
+                return
+            }
+            guard let token = token else { return }
+
+            self.fetchUserProfile { userProfile, error in
+                if let error = error {
+                    print("Profile fetch error:", error)
+                    return
+                }
+                guard let userProfile = userProfile else { return }
+
+                self.exchangeToken(sessionToken: token, userProfile: userProfile) { credentials, error in
+                    if let error = error {
+                        print("Token exchange error:", error)
+                        return
+                    }
+                    if let credentials = credentials {
+                        // ¡Autenticado! Guardar credenciales y actualizar la interfaz
+                        print("Access token:", credentials.accessToken)
+                    }
+                }
+            }
+        }
+    }
+    ```
+
+    <Tip>
+      Mantén las constantes (permisos de Facebook y alcances de Auth0) en la parte superior de la clase para evitar cadenas mágicas. Considera usar `async/await` para simplificar las devoluciones de llamada anidadas si trabajas con iOS 15 o versiones posteriores.
+    </Tip>
+  </Step>
+</Steps>
+
+<Check>
+  **Verificación**
+
+  Ahora deberías poder autenticarte de forma nativa con Facebook. Si la aplicación de Facebook está instalada en el dispositivo, la autenticación se realiza directamente a través de la aplicación, sin necesidad de usar un navegador.
+</Check>
+
+***
+
+<div id="troubleshooting-advanced">
+  ## Solución de problemas y temas avanzados
+</div>
+
+<Accordion title="Problemas comunes y soluciones">
+  ### El intercambio de tokens falla con un error de autenticación
+
+  **Soluciones:**
+
+  1. Verifica que tu aplicación de Auth0 tenga habilitado **Facebook Native Sign In** en el Dashboard
+  2. Comprueba que `FacebookAppID` en `Info.plist` coincida con el ID de la aplicación en la consola de desarrolladores de Facebook
+  3. Asegúrate de que el archivo `Auth0.plist` esté agregado al target correcto en Xcode
+  4. Confirma que el token de acceso de Facebook no haya expirado antes de llamar a `performLogin`
+
+  ### La solicitud del token de sesión devuelve un error
+
+  **Solución:**
+
+  * Verifica que `FacebookAppID` esté configurado correctamente en `Info.plist`
+  * Asegúrate de que `fb_exchange_token` sea la cadena sin procesar del token (`accessToken.tokenString`)
+  * Comprueba que tu aplicación de Facebook no esté en modo de desarrollo si estás haciendo pruebas con usuarios que no son administradores
+
+  ### `AuthenticationError`: &quot;Connection not found&quot;
+
+  **Solución:**
+
+  1. Ve a Auth0 Dashboard → **Authentication** → **Social**
+  2. Verifica que **Sign in with Facebook** esté habilitado
+  3. Confirma que **Facebook Native Social Login** esté activado en la configuración de la conexión
+  4. Comprueba que la aplicación de Auth0 esté asociada con la conexión de Facebook
+
+  ### Faltan campos en el perfil del usuario
+
+  * Confirma que `"email"` y `"public_profile"` estén en el array `fbLoginButton.permissions`
+  * Es posible que el usuario haya rechazado el permiso `email`; maneja correctamente el caso de un correo electrónico nulo
+  * Verifica que los mismos campos estén en la llamada `request.parameters["fields"]` de `fetchUserProfile`
+
+  ### No se encontró `Auth0.plist`
+
+  * Asegúrate de que el nombre del archivo sea exactamente `Auth0.plist` (distingue entre mayúsculas y minúsculas)
+  * En Xcode, comprueba el **Target Membership** del archivo: debe estar incluido en el target de tu aplicación
+</Accordion>
+
+<Accordion title="Consideraciones para producción">
+  ### Prácticas recomendadas de seguridad
+
+  * **Almacenamiento seguro de tokens**: Usa `CredentialsManager` de Auth0.swift para almacenar los tokens de forma segura en el llavero de iOS
+  * **Tokens de actualización**: Solicita el scope `offline_access` y usa `CredentialsManager` para renovar silenciosamente los tokens expirados
+  * **Protección biométrica**: Habilita la autenticación biométrica en `CredentialsManager` para proteger las credenciales almacenadas
+
+  ### Configuración de la aplicación de Facebook
+
+  * Cambia tu aplicación de Facebook de **Development Mode** a **Live** antes de publicarla en la App Store
+  * Asegúrate de que el Bundle ID de tu aplicación esté registrado en la consola de desarrolladores de Facebook
+  * Revisa los requisitos de la [Data Policy](https://developers.facebook.com/policy/) de Facebook para las aplicaciones que usan el Login SDK
+
+  ### Envío a la App Store
+
+  * Incluye Facebook Login en la política de privacidad de tu aplicación y en la etiqueta de privacidad de la App Store
+  * Gestiona los casos en los que el usuario deniegue el permiso `email`; tu aplicación debe funcionar sin él
+  * Haz pruebas en un dispositivo real antes de enviar la app; el SDK de Facebook se comporta de manera diferente en los simuladores
+</Accordion>
+
+<Accordion title="Alternativa con Async/Await">
+  Si tu app es compatible con iOS 15+, puedes usar async/await para escribir código más limpio y sin anidamiento:
+
+  ```swift ViewController.swift expandable lines
+  @MainActor
+  private func performLogin(accessToken: AccessToken) async {
+      do {
+          let sessionToken = try await fetchSessionTokenAsync(accessToken: accessToken)
+          let userProfile = try await fetchUserProfileAsync()
+          let credentials = try await exchangeTokenAsync(sessionToken: sessionToken, userProfile: userProfile)
+          // ¡Autenticado! Almacena las credenciales y actualiza la UI
+          print("Access token:", credentials.accessToken)
+      } catch {
+          print("Authentication failed:", error)
+      }
+  }
+  ```
+
+  Envuelve cada método basado en callbacks en un `withCheckedThrowingContinuation` para adaptarlo a async/await.
+</Accordion>
+
+***
+
+<div id="next-steps">
+  ## Próximos pasos
+</div>
+
+<CardGroup cols={2}>
+  <Card title="Configurar otros proveedores de identidad" icon="key" href="/es/docs/authenticate/identity-providers" iconType="solid">
+    Añada Google, Apple y otros proveedores de inicio de sesión social
+  </Card>
+
+  <Card title="Protección contra ataques" icon="shield" href="/es/docs/secure/attack-protection" iconType="solid">
+    Protéjase frente a ataques de fuerza bruta y de bots
+  </Card>
+
+  <Card title="Actions" icon="bolt" href="/es/docs/customize/actions/actions-overview" iconType="solid">
+    Personalice los flujos de autenticación con código sin servidor
+  </Card>
+
+  <Card title="Referencia del SDK de iOS" icon="apple" href="/es/docs/libraries/auth0-swift" iconType="solid">
+    Consulte la documentación completa del SDK Auth0.swift
+  </Card>
+</CardGroup>

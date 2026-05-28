@@ -1,0 +1,299 @@
+---
+description: Describe cómo instalar, configurar y usar las opciones del SDK de Auth0 Guardian para Android.
+title: SDK de Guardian para Android
+---
+
+El [SDK de Guardian para Android](https://github.com/auth0/Guardian.Android) te ayuda a crear aplicaciones Android con la funcionalidad de Guardian, lo que proporciona acceso seguro a la <Tooltip tip="Autenticación multifactor (MFA): proceso de autenticación de usuarios que utiliza un factor adicional al nombre de usuario y la contraseña, como un código por SMS." cta="Ver glosario" href="/es/docs/glossary?term=multi-factor+authentication">autenticación multifactor</Tooltip> (MFA) mediante notificaciones push. Con este kit de herramientas, puedes crear tu propia versión personalizada de la aplicación Guardian que se adapte a la imagen y estilo de tu organización. Para obtener más información, consulta [Configurar notificaciones push para MFA](/es/docs/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa#configure-push-notifications-for-apple-using-apn-).
+
+Para usar el SDK de Guardian para Android, se requiere el nivel 15 o superior de la API de Android.
+
+<div id="install-guardian-android-sdk">
+  ## Instala el SDK de Guardian para Android
+</div>
+
+Guardian está disponible tanto en [Maven Central](http://search.maven.org/) como en [JCenter](https://bintray.com/auth0/android/guardian).
+
+1. Para usar Guardian, agrega estas líneas al archivo de dependencias `build.gradle`:
+   `implementation 'com.auth0.android:guardian:0.4.0'`
+   Puedes consultar la versión más reciente en la pestaña [Releases](https://github.com/auth0/GuardianSDK.Android/releases) del repositorio, en [Maven](http://search.maven.org/#search%7Cgav%7C1%7Cg%3A%22com.auth0.android%22%20AND%20a%3A%22guardian%22) o en [JCenter](https://bintray.com/auth0/android/guardian).
+2. Después de agregar la dependencia de Gradle, asegúrate de sincronizar tu proyecto con el archivo de Gradle.
+
+<div id="enable-guardian-push-notifications">
+  ### Habilita las notificaciones push de Guardian
+</div>
+
+1. Ve a [Dashboard &gt; Seguridad &gt; Autenticación multifactor &gt; Push con Auth0 Guardian.](https://manage.auth0.com/#/security/mfa/guardian)
+2. Activa el interruptor de la parte superior para habilitarlas.
+
+<Frame>![Auth0 Dashboard > Seguridad > Autenticación multifactor > Guardian > Personalizado > Amazon SNS](/docs/images/cdy7uua7fh8z/6PKSyH99GJ2CalJoG38sfZ/fbe7229dcc6f7d303a582520001b3dc1/Amazon_SNS.png)</Frame>
+
+3. [Configura las notificaciones push](/es/docs/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa#configure-push-notifications-for-android-using-fcm).
+
+<div id="use-sdk">
+  ## Uso del SDK
+</div>
+
+Guardian es el núcleo del SDK. Tendrás que crear una instancia de esta clase para la URL de tu inquilino.
+
+```java lines
+Uri url = Uri.parse("https://<tenant>.<region>.auth0.com");
+
+Guardian guardian = new Guardian.Builder()
+    .url(url)
+    .build();
+```
+
+o
+
+```java lines
+String domain = "<tenant>.<region>.auth0.com";
+
+Guardian guardian = new Guardian.Builder()
+    .domain(domain)
+    .build();
+```
+
+<div id="enroll">
+  ### Inscripción
+</div>
+
+El vínculo entre el segundo factor (una instancia de tu aplicación en un dispositivo) y una cuenta de Auth0 se denomina **inscripción**.
+
+Puedes crear una inscripción con la función `Guardian.enroll`, pero primero tendrás que generar un nuevo par de claves RSA para ella. La clave privada se usará para firmar las solicitudes de autorización o rechazo de un inicio de sesión. La clave pública se enviará durante el proceso de inscripción para que el servidor pueda verificar más adelante la firma de la solicitud.
+
+```java lines
+KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+keyPairGenerator.initialize(2048); // DEBES usar claves de al menos 2048 bits
+KeyPair keyPair = keyPairGenerator.generateKeyPair();
+```
+
+A continuación, obtén la información de inscripción escaneando el código QR de Guardian y úsala para completar la inscripción de la cuenta:
+
+```java lines
+Uri enrollmentUriFromQr = ...; // la URI obtenida del código QR de Guardian
+
+CurrentDevice device = new CurrentDevice(context, "fcmToken", "deviceName");
+
+Enrollment enrollment = guardian
+    .enroll(enrollmentUriFromQr, device, keyPair)
+    .execute();
+```
+
+Como alternativa, puedes ejecutar la solicitud en un hilo de segundo plano:
+
+```java lines
+guardian
+    .enroll(enrollmentUriFromQr, device, keyPair)
+    .start(new Callback<Enrollment> {
+        @Override
+        void onSuccess(Enrollment enrollment) {
+            // tenemos los datos de inscripción
+        }
+
+        @Override
+        void onFailure(Throwable exception) {
+            // algo falló
+        }
+    });
+```
+
+Debe proporcionar los siguientes datos:
+
+| Variable     | Descripción                                                                                                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deviceName` | Nombre de la inscripción que se muestra al usuario cuando se solicita el segundo factor.                                                                                                                            |
+| `fcmToken`   | Token del servicio de notificaciones push Firebase Cloud Messaging (FCM). Consulte [Sample Register](https://firebase.google.com/docs/cloud-messaging/android/client#sample-register) para obtener más información. |
+
+<div id="unenroll">
+  ### Eliminar la inscripción
+</div>
+
+Para deshabilitar MFA, puede eliminar la inscripción:
+
+```java lines
+guardian
+    .delete(enrollment)
+    .execute(); // o start(new Callback<> ...)
+```
+
+<div id="allow-login-requests">
+  ### Permitir solicitudes de inicio de sesión
+</div>
+
+Una vez que hayas completado la inscripción, recibirás una notificación push de FCM cada vez que el usuario necesite autenticación multifactor.
+
+Guardian proporciona un método para analizar el `Map<String, String>` de datos del [RemoteMessage](https://firebase.google.com/docs/reference/android/com/google/firebase/messaging/RemoteMessage) recibido de FCM y devolver una instancia de `Notification` lista para usar.
+
+```javascript lines
+// en el listener de FCM recibes un RemoteMessage
+@Override
+public void onMessageReceived(RemoteMessage message) {
+    Notification notification = Guardian.parseNotification(message.getData());
+    if (notification != null) {
+        // recibiste una notificación de Guardian, procésala
+        handleGuardianNotification(notification);
+        return;
+    }
+
+    /* maneja otras notificaciones push que puedas estar usando ... */
+}
+```
+
+Una vez que tenga la instancia de la notificación, puede usar el método `allow` para aprobar la solicitud de autenticación. También necesitará la inscripción que obtuvo anteriormente. Si hay varias inscripciones, asegúrese de usar la que tenga el mismo `id` que la notificación (la propiedad `enrollmentId`).
+
+```java lines
+guardian
+    .allow(notification, enrollment)
+    .execute(); // o start(new Callback<> ...)
+```
+
+<div id="reject-login-requests">
+  ### Rechazar solicitudes de inicio de sesión
+</div>
+
+Para denegar una solicitud de autenticación, use `reject`. También puede agregar un motivo opcional para el rechazo, que estará disponible en los registros de Guardian.
+
+```java lines
+guardian
+    .reject(notification, enrollment) // o reject(notification, enrollment, reason)
+    .execute(); // o start(new Callback<> ...)
+```
+
+<div id="set-up-mobile-only-otp-enrollment">
+  ### Configurar la inscripción de OTP solo en dispositivos móviles
+</div>
+
+Puede habilitar las contraseñas de un solo uso (OTP) como factor de MFA desde el <Tooltip tip="Auth0 Dashboard: el producto principal de Auth0 para configurar sus servicios." cta="Ver glosario" href="/es/docs/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip> o la <Tooltip tip="Management API: un producto que permite a los clientes realizar tareas administrativas." cta="Ver glosario" href="/es/docs/glossary?term=Management+API">Management API</Tooltip>. Esta opción no requiere un código QR y permite que los usuarios se inscriban manualmente.
+
+Para invitar a un usuario a inscribirse, vaya a [Auth0 Dashboard &gt; User Management &gt; Users](https://manage.auth0.com/#/users) y seleccione un usuario. Luego, acceda a la pestaña Details y use la sección Multi-Factor Authentication para enviar una invitación para inscribirse.
+
+<div id="connect-a-resource">
+  #### Conecte un recurso
+</div>
+
+Puede conectar un recurso mediante el Auth0 Dashboard o el SDK de Guardian.
+
+<div id="use-auth0-dashboard">
+  ##### Usa Auth0 Dashboard
+</div>
+
+1. Accede a la pantalla de inicio de sesión de Auth0 y copia el código proporcionado o una clave similar codificada en base32 obtenida de otra fuente.
+
+   <Frame>![Un ejemplo de pantalla de inicio de sesión que muestra un código de un solo uso](/docs/images/cdy7uua7fh8z/1yoqiIuERVTwCU8yfx6IM8/047513dfe1d40a22ce811b131d5ea289/OTP_Challenge_2_-_English.png)</Frame>
+2. Después de obtener tu código, agrégalo al SDK de Guardian:
+
+**Java**
+
+`public String copiedCode = "{copiedCode}";`
+
+**Kotlin**
+
+`val copiedCode: String = "{copiedCode}"`
+
+<div id="use-guardian-sdk">
+  ##### Usa el SDK de Guardian
+</div>
+
+Primero, añade la clase `LoginCodeGenerator` a tu proyecto. Luego, usa `getCode (String copiedCode) to` para generar un código de un solo uso en tu aplicación.
+
+**Java**
+
+```java lines expandable
+public class LoginCodeGenerator {
+
+   private static final int TOTP_LENGTH = 6;
+
+   private static final int TOTP_DURATION = 30;
+
+   private static final String TOTP_ALGORITHM = "SHA1";
+
+   public String getCode(String copedCode) {
+
+       byte[] key = new byte[0];
+
+       try {
+
+           key = Base32.decode(copedCode);
+
+       } catch (Base32.DecodingException ex) {
+
+//            manejar excepción
+
+       }
+
+       TOTP totp = new TOTP(TOTP_ALGORITHM, key, TOTP_LENGTH, TOTP_DURATION);
+
+       return totp.generate();
+
+   }
+
+}
+```
+
+**Kotlin**
+
+```kotlin lines expandable
+class LoginCodeGenerator {
+
+   fun getCode(copiedCode: String): String {
+
+       var key: ByteArray? = ByteArray(0)
+
+       try {
+
+           key = Base32.decode(copiedCode)
+
+       } catch (ex: Base32.DecodingException) {
+
+//            manejar excepción
+
+       }
+
+       val totp = TOTP(TOTP_ALGORITHM, key, TOTP_LENGTH, TOTP_DURATION)
+
+       return totp.generate()
+
+   }
+
+   companion object {
+
+       private const val TOTP_LENGTH = 6
+
+       private const val TOTP_DURATION = 30
+
+       private const val TOTP_ALGORITHM = "SHA1"
+
+   }
+
+}
+```
+
+<div id="enter-one-time-code">
+  #### Introducir el código de un solo uso
+</div>
+
+Introduce el OTP generado por `getCode()` en la pantalla de inicio de sesión de Auth0.
+
+<Frame>![Ejemplo de pantalla de inicio de sesión que muestra un código de un solo uso](/docs/images/cdy7uua7fh8z/1yoqiIuERVTwCU8yfx6IM8/047513dfe1d40a22ce811b131d5ea289/OTP_Challenge_2_-_English.png)</Frame>
+
+Después de seleccionar Continuar, se mostrará un mensaje indicando que tu aplicación se ha agregado como factor de autenticación para tu usuario.
+
+<div id="log-in-with-your-app">
+  #### Inicie sesión con su aplicación
+</div>
+
+Después de inscribir el factor, el usuario puede iniciar sesión con su aplicación. Primero, elija la aplicación Guardian como método de autenticación.
+
+<Frame>![La pantalla de selección del método de autenticación](/docs/images/cdy7uua7fh8z/1k7IsU9kfP5mrXU2jfGHuT/d61e0dcd09b633dbeb2cb54e1fd49018/2025-01-27_14-47-32.png)</Frame>
+
+Para generar el código de un solo uso, llame a `getCode(copedCode: String)` con el código que copió de la pantalla de inicio de sesión de Auth0.
+
+Luego, introduzca el código de un solo uso en la pantalla de inicio de sesión para verificar su identidad.
+
+<Frame>![La pantalla Verifique su identidad que solicita al usuario un código de un solo uso](/docs/images/cdy7uua7fh8z/S6uTieLjtuNUrQRMh8uch/21f1671d21ae9f61b63154ffaa21b5a2/OTP_Challenge_-_English.png)</Frame>
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [Configura las notificaciones push para MFA](/es/docs/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa)

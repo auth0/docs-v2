@@ -1,0 +1,361 @@
+---
+mode: wide
+sidebarTitle: iOS Facebook ログイン
+title: iOS アプリにネイティブ Facebook ログインを追加する
+---
+
+<div id="before-you-start">
+  ## 始める前に
+</div>
+
+このクイックスタートを進める前に、以下の前提条件を満たしてください。
+
+1. **Facebook Login SDK をセットアップする** - [Facebook Login SDK for iOS](https://developers.facebook.com/docs/facebook-login/) をインストールして設定します。[developers.facebook.com](https://developers.facebook.com) で Facebook アプリを作成します。この時点で、アプリで Facebook Login が動作している必要があります。
+2. **Auth0 で Facebook Native を設定する** - Facebook Native Sign In を使用するように Auth0 アプリケーションを設定します。詳細は、[ネイティブアプリに Facebook Login を追加する](/ja/docs/authenticate/identity-providers/social-identity-providers/facebook-native) を参照してください。
+
+<div id="get-started">
+  ## はじめに
+</div>
+
+<Steps>
+  <Step title="Facebook Login のアクセス許可を設定する" stepNumber={1}>
+    `ViewController` の Facebookログインボタンを更新して、正しい権限をリクエストするようにします。
+
+    アプリはすでに Facebook Login をサポートしていますが、充実したユーザープロフィールを取得するには、`public_profile` と `email` の権限をリクエストする必要があります。また、Auth0 の認証フローを開始するためのデリゲートコールバックも追加します。
+
+    ```swift ViewController.swift lines
+    import FacebookLogin
+    import UIKit
+
+    class ViewController: UIViewController {
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+
+            let fbLoginButton = FBLoginButton()
+            // メールアドレスとpublic_profileのパーミッションをリクエスト
+            fbLoginButton.permissions = ["email", "public_profile"]
+            fbLoginButton.delegate = self
+            view.addSubview(fbLoginButton)
+        }
+
+        private func performLogin(accessToken: AccessToken) {
+            // ステップ2〜4で実装する
+        }
+    }
+
+    extension ViewController: LoginButtonDelegate {
+        func loginButton(_ loginButton: FBLoginButton, didCompleteWith result: LoginManagerLoginResult?, error: (any Error)?) {
+            if let error = error {
+                // Facebookログインエラーを処理する
+                print(error)
+                return
+            }
+            if let result = result, let token = result.token {
+                performLogin(accessToken: token)
+            }
+        }
+
+        func loginButtonDidLogOut(_ loginButton: FBLoginButton) {
+            // ログアウト処理
+        }
+
+        func loginButtonWillLogin(_ loginButton: FBLoginButton) -> Bool {
+            return true
+        }
+    }
+    ```
+
+    <Info>
+      `email` 権限は任意であり、共有にはユーザーの同意が必要です。Facebook から返されるメールアドレスは、Auth0 のユーザープロフィールでは **未検証** として扱われます。
+    </Info>
+  </Step>
+
+  <Step title="Auth0 SDK をインストールして設定する" stepNumber={2}>
+    Auth0.swift SDK をプロジェクトに追加し、アプリケーションの認証情報を設定します。
+
+    **Swift Package Manager で Auth0.swift を追加する:**
+
+    1. Xcode で、**File** → **Add Package Dependencies...** を選択します
+    2. パッケージ URL `https://github.com/auth0/Auth0.swift` を入力します
+    3. 最新バージョンを選択し、**Add Package** をクリックします
+
+    **Auth0 の認証情報を `Auth0.plist` に追加する:**
+
+    [Auth0 Dashboard](https://manage.auth0.com/) の **Applications** セクションに移動し、Facebook Native Sign In を有効にしたアプリケーションを選択します。**ドメイン** と **クライアントID** の値をコピーします。
+
+    プロジェクトに `Auth0.plist` という名前の新しいプロパティリストファイルを作成し、次の内容を追加します。
+
+    ```xml Auth0.plist lines
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>ClientId</key>
+        <string>YOUR_AUTH0_CLIENT_ID</string>
+        <key>Domain</key>
+        <string>{yourDomain}</string>
+    </dict>
+    </plist>
+    ```
+
+    `Auth0.plist` を Xcode にドラッグし、アプリのターゲットで **Add to target** にチェックが入っていることを確認します。
+
+    <Tip>
+      Auth0.swift SDK は `Auth0.plist` から認証情報を自動的に読み取るため、追加の初期化コードは不要です。
+    </Tip>
+  </Step>
+
+  <Step title="Facebookセッションのアクセストークンを取得する" stepNumber={3}>
+    Facebook Login が成功したら、Facebook API から**セッションアクセストークン**を取得します。Auth0 では、このトークンを使用してバックエンドでユーザーの本人確認を行う必要があります。
+
+    `GraphRequest` クラスを使用して、Facebook の `/oauth/access_token` エンドポイントに GET リクエストを送信します。
+
+    ```swift ViewController.swift lines
+    import FacebookCore
+
+    private func fetchSessionToken(accessToken: AccessToken, completion: @escaping (String?, Error?) -> Void) {
+        let request = GraphRequest(graphPath: "oauth/access_token")
+        request.parameters["grant_type"] = "fb_attenuate_token"
+        request.parameters["client_id"] = facebookAppId()
+        request.parameters["fb_exchange_token"] = accessToken.tokenString
+        request.start { _, response, error in
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+            if let responseDict = response as? [String: Any],
+               let token = responseDict["access_token"] as? String {
+                completion(token, nil)
+            }
+        }
+    }
+
+    private func facebookAppId() -> String? {
+        return Bundle.main.infoDictionary?["FacebookAppID"] as? String
+    }
+    ```
+
+    <Info>
+      必須のクエリパラメーターは次のとおりです。
+
+      * `grant_type`: `fb_attenuate_token`
+      * `fb_exchange_token`: Facebook の `AccessToken` に含まれるトークン文字列
+      * `client_id`: Facebook アプリ ID (Facebook SDK のセットアップ時に、すでに `Info.plist` に含まれています)
+    </Info>
+  </Step>
+
+  <Step title="Facebookユーザープロフィールを取得する" stepNumber={4}>
+    Facebookからユーザープロファイルを取得します。Auth0 はこのデータを使用して、Auth0 上のユーザープロファイルを作成または更新します。
+
+    ```swift ViewController.swift lines
+    import FacebookCore
+
+    private func fetchUserProfile(completion: @escaping ([String: Any]?, Error?) -> Void) {
+        let request = GraphRequest(graphPath: "me")
+        request.parameters["fields"] = "first_name,last_name,email"
+        request.start { _, result, error in
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+            if let rawResponse = result as? [String: Any] {
+                completion(rawResponse, nil)
+            }
+        }
+    }
+    ```
+
+    <Tip>
+      `fields` パラメーターは、リクエストした Facebook の権限に直接対応しています。Auth0 が完全なユーザープロフィールを作成するには、`first_name`、`last_name`、`email` をリクエストすれば十分です。
+    </Tip>
+  </Step>
+
+  <Step title="トークンをAuth0の認証情報に交換する" stepNumber={5}>
+    前の手順で取得したセッショントークンとユーザープロフィールを使用して Auth0 で認証を行い、Auth0 トークンを取得します。
+
+    Auth0 の認証クライアントで `login(facebookSessionAccessToken:profile:audience:scope:)` を呼び出します。
+
+    ```swift ViewController.swift lines
+    import Auth0
+
+    private func exchangeToken(sessionToken: String, userProfile: [String: Any], completion: @escaping (Credentials?, Error?) -> Void) {
+        Auth0.authentication()
+            .login(
+                facebookSessionAccessToken: sessionToken,
+                profile: userProfile,
+                audience: nil,
+                scope: "openid profile email offline_access"
+            )
+            .start { result in
+                switch result {
+                case .success(let credentials):
+                    completion(credentials, nil)
+                case .failure(let error):
+                    completion(nil, error)
+                }
+            }
+    }
+    ```
+
+    <Info>
+      内部的には、Auth0.swift はトークンタイプ `http://auth0.com/oauth/token-type/facebook-info-session-access-token` を使用して、リクエストを Facebook のネイティブ接続に振り分けます。
+    </Info>
+  </Step>
+
+  <Step title="全体をまとめる" stepNumber={6}>
+    `performLogin` メソッドを完成させて、次の 3 つの手順を連続して実行できるようにします: セッショントークンの取得 → ユーザープロファイルの取得 → Auth0 トークンへの交換。
+
+    ```swift ViewController.swift lines
+    private func performLogin(accessToken: AccessToken) {
+        fetchSessionToken(accessToken: accessToken) { [weak self] token, error in
+            guard let self = self else { return }
+            if let error = error {
+                print("Session token error:", error)
+                return
+            }
+            guard let token = token else { return }
+
+            self.fetchUserProfile { userProfile, error in
+                if let error = error {
+                    print("Profile fetch error:", error)
+                    return
+                }
+                guard let userProfile = userProfile else { return }
+
+                self.exchangeToken(sessionToken: token, userProfile: userProfile) { credentials, error in
+                    if let error = error {
+                        print("Token exchange error:", error)
+                        return
+                    }
+                    if let credentials = credentials {
+                        // 認証済み！credentialsを保存してUIを更新
+                        print("Access token:", credentials.accessToken)
+                    }
+                }
+            }
+        }
+    }
+    ```
+
+    <Tip>
+      マジック文字列を避けるため、定数 (Facebook の権限、Auth0 のスコープ) はクラスの先頭にまとめておいてください。iOS 15 以降を対象とする場合は、`async/await` を使用してネストしたコールバックをフラットにすることも検討してください。
+    </Tip>
+  </Step>
+</Steps>
+
+<Check>
+  **チェックポイント**
+
+  これで、Facebook でネイティブ認証できるようになっているはずです。デバイスに Facebook アプリがインストールされている場合、認証はブラウザーを介さず、アプリ内で直接行われます。
+</Check>
+
+***
+
+<div id="troubleshooting-advanced">
+  ## トラブルシューティングと高度な内容
+</div>
+
+<Accordion title="よくある問題と解決策">
+  ### 認証エラーによりトークン交換に失敗する
+
+  **解決策:**
+
+  1. Auth0アプリケーションで **Facebook Native Sign In** が Dashboard 上で有効になっていることを確認します
+  2. `Info.plist` の `FacebookAppID` が Facebook Developer Console の App ID と一致していることを確認します
+  3. `Auth0.plist` ファイルが Xcode の正しいターゲットに追加されていることを確認します
+  4. `performLogin` を呼び出す前に、Facebook のアクセストークンの有効期限が切れていないことを確認します
+
+  ### セッショントークンのリクエストでエラーが返る
+
+  **修正:**
+
+  * `Info.plist` で `FacebookAppID` が正しく設定されていることを確認します
+  * `fb_exchange_token` が生のトークン文字列 (`accessToken.tokenString`) であることを確認します
+  * 管理者以外のユーザーでテストする場合は、Facebook アプリが Development Mode になっていないことを確認します
+
+  ### `AuthenticationError`: &quot;Connection not found&quot;
+
+  **修正:**
+
+  1. Auth0 Dashboard → **Authentication** → **Social** に移動します
+  2. **Sign in with Facebook** が有効になっていることを確認します
+  3. 接続設定で **Facebook Native Social Login** がオンになっていることを確認します
+  4. Auth0 アプリケーションが Facebook 接続に関連付けられていることを確認します
+
+  ### ユーザープロフィールのフィールドが不足している
+
+  * `fbLoginButton.permissions` 配列に `"email"` と `"public_profile"` が含まれていることを確認します
+  * ユーザーが `email` 権限を拒否した可能性があります — メールアドレスが nil の場合も適切に処理してください
+  * `fetchUserProfile` 内の `request.parameters["fields"]` 呼び出しにも同じフィールドが含まれていることを確認します
+
+  ### `Auth0.plist` が見つからない
+
+  * ファイル名が正確に `Auth0.plist` であることを確認します (大文字と小文字は区別されます)
+  * Xcode でファイルの **Target Membership** を確認します — アプリターゲットに含まれている必要があります
+</Accordion>
+
+<Accordion title="本番運用時の考慮事項">
+  ### セキュリティのベストプラクティス
+
+  * **トークンの安全な保存**: Auth0.swift の `CredentialsManager` を使用して、iOS Keychain にトークンを安全に保存します
+  * **リフレッシュトークン**: `offline_access` スコープを要求し、`CredentialsManager` を使用して期限切れのトークンをサイレントに更新します
+  * **生体認証による保護**: 保存された認証情報を保護するために、`CredentialsManager` で生体認証を有効にします
+
+  ### Facebook アプリの設定
+
+  * App Store に公開する前に、Facebook アプリを **Development Mode** から **Live** に切り替えます
+  * アプリの Bundle ID が Facebook Developer Console に登録されていることを確認します
+  * Login SDK を使用するアプリに適用される Facebook の [Data Policy](https://developers.facebook.com/policy/) の要件を確認します
+
+  ### App Store への申請
+
+  * アプリのプライバシーポリシーと App Store のプライバシーラベルに Facebook Login を含めます
+  * ユーザーが `email` 権限を拒否した場合に対応できるようにします — アプリはこの権限がなくても動作する必要があります
+  * 申請前に実機でテストします。Facebook SDK はシミュレーターでは挙動が異なります
+</Accordion>
+
+<Accordion title="Async/Await の代替">
+  iOS 15 以降を対象にする場合は、async/await を使用して、より簡潔でネストのないコードを記述できます。
+
+  ```swift ViewController.swift expandable lines
+  @MainActor
+  private func performLogin(accessToken: AccessToken) async {
+      do {
+          let sessionToken = try await fetchSessionTokenAsync(accessToken: accessToken)
+          let userProfile = try await fetchUserProfileAsync()
+          let credentials = try await exchangeTokenAsync(sessionToken: sessionToken, userProfile: userProfile)
+          // 認証完了！認証情報を保存して UI を更新します
+          print("Access token:", credentials.accessToken)
+      } catch {
+          print("Authentication failed:", error)
+      }
+  }
+  ```
+
+  async/await への橋渡しとして、各コールバックベースのメソッドを `withCheckedThrowingContinuation` でラップします。
+</Accordion>
+
+***
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+<CardGroup cols={2}>
+  <Card title="他のIDプロバイダーを設定" icon="key" href="/ja/docs/authenticate/identity-providers" iconType="solid">
+    Google、Apple などのソーシャルログインプロバイダーを追加
+  </Card>
+
+  <Card title="Attack Protection" icon="shield" href="/ja/docs/secure/attack-protection" iconType="solid">
+    ブルートフォース攻撃やボット攻撃を防止
+  </Card>
+
+  <Card title="Actions" icon="bolt" href="/ja/docs/customize/actions/actions-overview" iconType="solid">
+    サーバーレスコードで認証フローをカスタマイズ
+  </Card>
+
+  <Card title="iOS SDK リファレンス" icon="apple" href="/ja/docs/libraries/auth0-swift" iconType="solid">
+    Auth0.swift SDK のドキュメントを詳しく見る
+  </Card>
+</CardGroup>

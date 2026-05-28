@@ -1,0 +1,532 @@
+---
+title: ASP.NET OWIN アプリケーションにログイン機能を追加する
+description: このガイドでは、Microsoft.Owin.Security.OpenIdConnect NuGet パッケージを使用して、新規または既存の ASP.NET OWIN アプリケーションに Auth0 を統合する方法を説明します。
+sidebarTitle: ASP.NET OWIN
+---
+
+Auth0 を使用すると、ASP.NET OWIN アプリケーションに数分で認証を追加できます。このガイドでは、クラシック ASP.NET OWIN アプリケーションにログイン、ログアウト、ユーザープロフィールの表示を追加する方法を説明します。
+
+このガイドを完了すると、アプリケーションで次のことができるようになります。
+
+* ユーザーがサインインすると Auth0 Universal Login にリダイレクトする
+* コールバックを処理し、セッションを Cookie に保存する
+* 認証済みユーザーの名前、メールアドレス、ユーザープロファイル画像を表示する
+* アプリと Auth0 の両方からユーザーをサインアウトする
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このガイドは、OWIN を使用する **クラシック ASP.NET (.NET Framework)&#x20;**&#x20;アプリケーションを対象としています。アプリケーションがすでに **ASP.NET Core** で実行されている場合は、代わりに [`Auth0.AspNetCore.Authentication`](https://auth0.com/docs/quickstart/webapp/aspnet-core) SDK を使用してください。
+</Callout>
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+開始する前に、次のものを用意してください。
+
+* Auth0 アカウント - [無料でサインアップ](https://auth0.com/signup)
+* OWIN が有効な、.NET Framework を対象とする既存の ASP.NET MVC アプリケーション、または Visual Studio の **ASP.NET Web Application (.NET Framework) → MVC** テンプレートから作成した新規アプリケーション
+* [Visual Studio 2019 以降](https://visualstudio.microsoft.com/) (または .NET Framework MVC プロジェクトをサポートする任意の IDE)
+
+<div id="steps">
+  ## 手順
+</div>
+
+<Steps>
+  <Step title="Auth0 アプリケーションを設定する">
+    Auth0を使用するすべてのアプリケーションは、Auth0 Dashboardに登録する必要があります。Auth0が発行する**クライアントID**と**ドメイン**を使用して、アプリはAuth0と通信します。
+
+    Auth0アプリケーションの作成と設定は、Auth0 CLIを使って自動的に行うか、Dashboardから手動で行うことができます。
+
+    <Tabs>
+      <Tab title="CLI">
+        プロジェクトのルートディレクトリで次のコマンドを実行します。これにより Auth0 アプリケーションが作成され、認証情報が設定済みの、すぐに貼り付け可能な `Web.config` スニペットが出力されます。
+
+        <Tabs>
+          <Tab title="Mac/Linux">
+            ```bash
+            brew tap auth0/auth0-cli && brew install auth0 && auth0 login --no-input && \
+            AUTH0_RESULT=$(auth0 apps create \
+              --name "My OWIN App" \
+              --type regular \
+              --auth-method post \
+              --callbacks http://localhost:3000/callback \
+              --logout-urls http://localhost:3000/ \
+              --web-origins http://localhost:3000 \
+              --reveal-secrets \
+              --json \
+              --metadata created_by="quickstart-docs-cli") && \
+            CLIENT_ID=$(echo $AUTH0_RESULT | jq -r '.client_id') && \
+            DOMAIN=$(echo $AUTH0_RESULT | jq -r '.domain') && \
+            echo "Add the following to your Web.config <appSettings> section:" && \
+            echo "<add key=\"auth0:Domain\" value=\"$DOMAIN\" />" && \
+            echo "<add key=\"auth0:ClientId\" value=\"$CLIENT_ID\" />"
+            ```
+          </Tab>
+
+          <Tab title="Windows (PowerShell)">
+            ```powershell
+            $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/auth0/auth0-cli/releases/latest"
+            $latestVersion = $latestRelease.tag_name
+            $version = $latestVersion -replace "^v"
+            Invoke-WebRequest -Uri "https://github.com/auth0/auth0-cli/releases/download/${latestVersion}/auth0-cli_${version}_Windows_x86_64.zip" -OutFile ".\auth0.zip"
+            Expand-Archive ".\auth0.zip" .\
+            [System.Environment]::SetEnvironmentVariable('PATH', $Env:PATH + ";${pwd}")
+            auth0 login --no-input
+            $AppDetails = auth0 apps create `
+              --name "My OWIN App" `
+              --type regular `
+              --auth-method post `
+              --callbacks http://localhost:3000/callback `
+              --logout-urls http://localhost:3000/ `
+              --web-origins http://localhost:3000 `
+              --reveal-secrets `
+              --json `
+              --metadata created_by="quickstart-docs-cli" | ConvertFrom-Json
+            Write-Output "Add the following to your Web.config <appSettings> section:"
+            Write-Output "<add key=`"auth0:Domain`" value=`"$($AppDetails.domain)`" />"
+            Write-Output "<add key=`"auth0:ClientId`" value=`"$($AppDetails.client_id)`" />"
+            ```
+          </Tab>
+        </Tabs>
+
+        出力された 2 行の `<add>` を、`Web.config` の `<appSettings>` セクションにコピーします。
+
+        ```xml Web.config
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <appSettings>
+            <!-- ここに出力を貼り付けます -->
+          </appSettings>
+        </configuration>
+        ```
+      </Tab>
+
+      <Tab title="Dashboard">
+        1. [Auth0 Dashboard → Applications](https://manage.auth0.com/#/applications) に移動します。
+        2. **Create Application** をクリックします。
+        3. アプリケーションの名前を入力します (例: `My OWIN App`) 。
+        4. アプリケーションタイプとして **Regular Web Application** を選択し、**Create** をクリックします。
+        5. **Settings** タブに移動し、次の URL を設定します。
+
+        | 設定                        | 値                                |
+        | ------------------------- | -------------------------------- |
+        | **Allowed Callback URLs** | `http://localhost:3000/callback` |
+        | **Allowed Logout URLs**   | `http://localhost:3000/`         |
+        | **Allowed Web Origins**   | `http://localhost:3000`          |
+
+        6. **Save Changes** をクリックします。
+        7. **Basic Information** セクションから **ドメイン** と **クライアントID** をコピーし、`Web.config` に追加します。
+
+        ```xml Web.config
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <appSettings>
+            <add key="auth0:Domain" value="{yourDomain}" />
+            <add key="auth0:ClientId" value="{yourClientId}" />
+          </appSettings>
+        </configuration>
+        ```
+      </Tab>
+    </Tabs>
+
+    <Info>
+      アプリを別のポートで実行している場合は、上記の各 URL の `3000` を実際のポート番号に置き換えてください。
+    </Info>
+  </Step>
+
+  <Step title="NuGet パッケージをインストールする">
+    必要な 2 つの OWIN ミドルウェア パッケージをプロジェクトに追加します。
+
+    | パッケージ                                   | 用途                                         |
+    | --------------------------------------- | ------------------------------------------ |
+    | `Microsoft.Owin.Security.OpenIdConnect` | Auth0 での OpenID Connect (OIDC) 認証フローを処理します |
+    | `Microsoft.Owin.Security.Cookies`       | ログイン後、ブラウザーの Cookie にユーザー セッションを保持します      |
+
+    <Tabs>
+      <Tab title="パッケージ マネージャー コンソール">
+        Visual Studio で **Package Manager Console** (`Tools → NuGet Package Manager → Package Manager Console`) を開き、次を実行します。
+
+        ```powershell
+        Install-Package Microsoft.Owin.Security.OpenIdConnect
+        Install-Package Microsoft.Owin.Security.Cookies
+        ```
+      </Tab>
+
+      <Tab title="dotnet CLI">
+        プロジェクト ディレクトリから、次を実行します。
+
+        ```bash
+        dotnet add package Microsoft.Owin.Security.OpenIdConnect
+        dotnet add package Microsoft.Owin.Security.Cookies
+        ```
+      </Tab>
+    </Tabs>
+
+    <Info>
+      OWIN の Cookie ミドルウェアを `System.Web` の Cookie と併用すると、問題が発生することがあります。Cookie が二重に設定される問題が発生した場合は、[System.Web cookie integration issues](https://github.com/aspnet/AspNetKatana/wiki/System.Web-response-cookie-integration-issues) のガイダンスを参照してください。
+    </Info>
+  </Step>
+
+  <Step title="OWIN ミドルウェアを設定する">
+    OWIN ミドルウェアは、スタートアップ クラスで登録します。プロジェクトにすでに OWIN スタートアップ クラス (通常は `App_Start/Startup.Auth.cs`) がある場合は、その `ConfigureAuth` メソッドを更新してください。ない場合は、ここでファイルを作成します。
+
+    **Cookie ミドルウェア** と **OpenID Connect ミドルウェア** の両方が必要であり、必ず次の順序で登録する必要があります。
+
+    1. Cookie ミドルウェア - 認証済みユーザー セッションを保存します
+    2. OpenID Connect ミドルウェア - Auth0 のログイン フローとログアウト フローを処理します
+
+    ```csharp App_Start/Startup.Auth.cs
+    using System;
+    using System.Configuration;
+    using System.Threading.Tasks;
+    using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+    using Microsoft.Owin;
+    using Microsoft.Owin.Security;
+    using Microsoft.Owin.Security.Cookies;
+    using Microsoft.Owin.Security.OpenIdConnect;
+    using Owin;
+
+    public partial class Startup
+    {
+        public void ConfigureAuth(IAppBuilder app)
+        {
+            var domain = ConfigurationManager.AppSettings["auth0:Domain"];
+            var clientId = ConfigurationManager.AppSettings["auth0:ClientId"];
+
+            // Cookieミドルウェアを最初に登録する必要があります
+            app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType);
+
+            app.UseCookieAuthentication(new CookieAuthenticationOptions
+            {
+                AuthenticationType = CookieAuthenticationDefaults.AuthenticationType
+            });
+
+            app.UseOpenIdConnectAuthentication(new OpenIdConnectAuthenticationOptions
+            {
+                AuthenticationType = "Auth0",
+                Authority = $"https://{domain}",
+                ClientId = clientId,
+                ResponseType = OpenIdConnectResponseType.CodeIdToken,
+                Scope = "openid profile email",
+                TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+                {
+                    NameClaimType = "name"
+                },
+                Notifications = new OpenIdConnectAuthenticationNotifications
+                {
+                    RedirectToIdentityProvider = notification =>
+                    {
+                        if (notification.ProtocolMessage.RequestType == OpenIdConnectRequestType.Logout)
+                        {
+                            // Auth0のログアウトURLを構築してリダイレクトする
+                            var logoutUri = $"https://{domain}/v2/logout?client_id={clientId}";
+                            notification.Response.Redirect(logoutUri);
+                            notification.HandleResponse();
+                        }
+
+                        return Task.FromResult(0);
+                    }
+                }
+            });
+        }
+    }
+    ```
+
+    `ConfigureAuth` が `Startup.cs` の `Configuration` メソッド内で呼び出されるようにしてください。
+
+    ```csharp Startup.cs
+    using Microsoft.Owin;
+    using Owin;
+
+    [assembly: OwinStartup(typeof(Startup))]
+
+    public partial class Startup
+    {
+        public void Configuration(IAppBuilder app)
+        {
+            ConfigureAuth(app);
+        }
+    }
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      `AuthenticationType` は `"Auth0"` に設定されています。この文字列は、次の手順でログインの Challenge をトリガーする際に使用します。`RedirectToIdentityProvider` 通知はログアウト リクエストを横取りし、適切な Auth0 のログアウト URL を構築します。
+    </Callout>
+  </Step>
+
+  <Step title="ログイン、ログアウト、ユーザープロファイル用のアクションを追加">
+    `Login`、`Logout`、`UserProfile` の 3 つのアクションを含む `Controllers/AccountController.cs` を作成します。
+
+    ```csharp Controllers/AccountController.cs
+    using Microsoft.AspNetCore.Authentication;
+    using Microsoft.AspNetCore.Authentication.Cookies;
+    using Auth0.AspNetCore.Authentication;
+
+    public class AccountController : Controller
+    {
+      public ActionResult Login(string returnUrl = "/")
+      {
+        HttpContext.GetOwinContext().Authentication.Challenge(
+          new AuthenticationProperties
+          {
+              RedirectUri = returnUrl ?? Url.Action("Index", "Home")
+          },
+          "Auth0"
+        );
+      }
+
+      [Authorize]
+      public ActionResult UserProfile()
+      {
+          var claimsIdentity = User.Identity as ClaimsIdentity;
+          return View(new UserProfileViewModel()
+          {
+              Name = claimsIdentity?
+                .FindFirst(c => c.Type == claimsIdentity.NameClaimType)?.Value,
+              EmailAddress = claimsIdentity?
+                .FindFirst(c => c.Type == ClaimTypes.Email)?.Value,
+              ProfileImage = claimsIdentity?
+                .FindFirst(c => c.Type == "picture")?.Value
+          });
+      }
+
+      [Authorize]
+      public void Logout()
+      {
+        HttpContext.GetOwinContext().Authentication.SignOut(CookieAuthenticationDefaults.AuthenticationType);
+        HttpContext.GetOwinContext().Authentication.SignOut("Auth0");
+      }
+    }
+    ```
+
+    **各アクションの動作:**
+
+    * **`Login`** - `"Auth0"` スキームで `Challenge` を呼び出します。OIDC ミドルウェアがこれを受け取り、ユーザーを Auth0 Universal Login にリダイレクトします。サインインに成功すると、ユーザーは `returnUrl` にリダイレクトされます。
+    * **`UserProfile`** - `ClaimsIdentity` から認証済みユーザーのクレームを読み取り、`UserProfileViewModel` を通じてビューに渡します。`[Authorize]` 属性により、未認証のユーザーはまずログイン画面にリダイレクトされます。
+    * **`Logout`** - `SignOut` を 2 回呼び出します。1 回はローカルの Cookie セッションをクリアするため、もう 1 回はユーザーを Auth0 からサインアウトさせるためです (これにより、アクティブな SSO セッションも終了します) 。
+
+    ユーザープロファイルデータを保持するために、`Models/UserProfileViewModel.cs` を作成します:
+
+    ```csharp Models/UserProfileViewModel.cs
+    public class UserProfileViewModel
+    {
+        public string Name { get; set; }
+        public string EmailAddress { get; set; }
+        public string ProfileImage { get; set; }
+    }
+    ```
+
+    <Note>
+      ##### チェックポイント
+
+      アプリケーションを実行し、`/Account/Login` にアクセスします。Auth0 の Universal Login ページにリダイレクトされるはずです。サインイン後は、アプリケーションのホームページにリダイレクトされるはずです。Redirect URI エラーが表示される場合は、Auth0 のアプリケーション設定にあるコールバック URL が、アプリケーションの実行 URL と完全に一致していることを確認してください。
+    </Note>
+  </Step>
+
+  <Step title="ユーザープロファイル画面を追加する">
+    サインイン中のユーザー情報を表示するために、`Views/Account/UserProfile.cshtml` を作成します。
+
+    ```cshtml Views/Account/UserProfile.cshtml
+    @model UserProfileViewModel
+    @{
+        ViewBag.Title = "User Profile";
+    }
+
+    <h2>User Profile</h2>
+
+    <div>
+        <img src='@Model.ProfileImage'
+             alt="Profile picture"
+             style="max-width:120px; border-radius:60px;" />
+    </div>
+
+    <ul>
+        <li><strong>Name:</strong> @Model.Name</li>
+        <li><strong>Email:</strong> @Model.EmailAddress</li>
+    </ul>
+    ```
+
+    このビューは、Auth0 が IDトークンを返す際に OIDC ミドルウェアが抽出したクレームを基に設定された `UserProfileViewModel` を受け取ります。
+
+    <Note>
+      ##### チェックポイント
+
+      ログイン後、`/Account/UserProfile` に移動してください。名前、メールアドレス、プロフィール画像が表示されるはずです。名前またはメールアドレスが空の場合は、`OpenIdConnectAuthenticationOptions` の `Scope` に `"openid profile email"` が含まれていることを確認してください。
+    </Note>
+  </Step>
+
+  <Step title="レイアウトにログインとログアウトのリンクを追加する">
+    ユーザーの認証状態に応じてログインリンクとログアウトリンクが表示されるよう、`Views/Shared/_Layout.cshtml` を更新します。
+
+    ```cshtml Views/Shared/_Layout.cshtml
+    @if (User.Identity.IsAuthenticated)
+    {
+        <a href="@Url.Action("UserProfile", "Account")">@User.Identity.Name</a>
+        <a href="@Url.Action("Logout", "Account")">Log out</a>
+    }
+    else
+    {
+        <a href="@Url.Action("Login", "Account")">Log in</a>
+    }
+    ```
+
+    レイアウト内でナビゲーションリンクを表示する`<nav>`要素内の適切な場所に、これを追加します。
+
+    <Note>
+      ##### チェックポイント
+
+      アプリケーションを実行します。ナビゲーションに**Log in**リンクが表示されるはずです。サインイン後は、そのリンクが自分の名前 (ユーザープロファイルへのリンク) に変わり、**Log out**リンクも表示されます。**Log out**をクリックすると、サインアウトしてホームページに戻るはずです。
+    </Note>
+  </Step>
+</Steps>
+
+<Check>
+  これで、ASP.NET OWIN アプリケーションで動作する Auth0 統合の設定が完了しました。ユーザーは Auth0 Universal Login でログインし、ユーザープロファイルを表示して、ログアウトできます。
+</Check>
+
+<div id="common-issues">
+  ## よくある問題
+</div>
+
+<AccordionGroup>
+  <Accordion title="ログイン後のリダイレクト URI の不一致">
+    **問題:** ユーザーのサインイン後に、Auth0 で &quot;redirect&#95;uri mismatch&quot; または &quot;callback URL mismatch&quot; エラーが表示されます。
+
+    **解決策:** アプリから Auth0 に送信するリダイレクト URI は、Auth0 アプリケーション設定の **Allowed Callback URLs** のいずれか 1 つと完全に一致している必要があります。プロトコル (`http` と `https`) 、ポート番号、パス、末尾のスラッシュに違いがないか確認してください。
+  </Accordion>
+
+  <Accordion title="ログインループ — アプリが Auth0 にリダイレクトされ続ける">
+    **問題:** サインインに成功した後、認証済みページが表示されず、アプリがすぐに Auth0 にリダイレクトされます。
+
+    **解決策:** ミドルウェアが正しい順序で登録され、OWIN パイプラインが初期化されていることを確認してください。
+
+    * Cookie ミドルウェアは、`ConfigureAuth` で OpenID Connect ミドルウェアより**前に**登録する必要があります。
+    * `app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType)` は、`ConfigureAuth` 内の最初の呼び出しである必要があります。
+    * OWIN パイプラインが正しく初期化されるように、`[assembly: OwinStartup(typeof(Startup))]` 属性が必要です。
+
+    ```csharp App_Start/Startup.Auth.cs
+    app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType); // 最初である必要があります
+
+    app.UseCookieAuthentication(...);          // OIDC より前に Cookie ミドルウェア
+    app.UseOpenIdConnectAuthentication(...);   // Cookie の後に OIDC ミドルウェア
+    ```
+  </Accordion>
+
+  <Accordion title="ログアウト後にユーザーがリダイレクトされない">
+    **問題:** **ログアウト**をクリックするとユーザーは Auth0 からサインアウトされますが、アプリケーションには戻りません。
+
+    **解決策:** `RedirectToIdentityProvider` 通知内で、Auth0 のログアウト URL に `returnTo` クエリパラメーターを追加してください。戻り先 URL も、Auth0 アプリケーション設定の **Allowed Logout URLs** に登録されている必要があります。
+
+    ```csharp App_Start/Startup.Auth.cs
+    var logoutUri = $"https://{domain}/v2/logout?client_id={clientId}&returnTo={Uri.EscapeDataString("http://localhost:3000/")}";
+    ```
+  </Accordion>
+
+  <Accordion title="プロフィール画像またはメールアドレスが空">
+    **問題:** ログイン後、`Model.ProfileImage` または `Model.EmailAddress` が null になります。
+
+    **解決策:** `OpenIdConnectAuthenticationOptions` の `Scope` に `"openid profile email"` が含まれていることを確認してください。`profile` スコープでは名前と画像が、`email` スコープではメールアドレスが提供されます。
+
+    ```csharp App_Start/Startup.Auth.cs
+    app.UseOpenIdConnectAuthentication(new OpenIdConnectAuthenticationOptions
+    {
+        Scope = "openid profile email",  // 3 つのスコープすべてが必要です
+        ...
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="起動時にドメインまたはクライアントIDの値が null になる">
+    **問題:** アプリケーションの起動時に null 参照例外または構成例外がスローされます。
+
+    **解決策:** `Web.config` の `<appSettings>` に `auth0:Domain` と `auth0:ClientId` の両方が存在すること、および適切な `Web.config` 変換が読み込まれる正しいビルド構成 (Debug/Release) で実行していることを確認してください。
+
+    ```xml Web.config
+    <configuration>
+      <appSettings>
+        <add key="auth0:Domain" value="{yourDomain}" />     <!-- 空にしてはいけません -->
+        <add key="auth0:ClientId" value="{yourClientId}" /> <!-- 空にしてはいけません -->
+      </appSettings>
+    </configuration>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<div id="advanced-usage">
+  ## 高度な使い方
+</div>
+
+<Accordion title="ログインパラメーターのカスタマイズ">
+  `Startup.Auth.cs` の `RedirectToIdentityProvider` 通知を変更すると、Auth0 のログインページにカスタムパラメーターを渡せます。
+
+  ```csharp App_Start/Startup.Auth.cs
+  RedirectToIdentityProvider = notification =>
+  {
+      if (notification.ProtocolMessage.RequestType == OpenIdConnectRequestType.Authentication)
+      {
+          // ログインではなくサインアップ画面を表示する
+          notification.ProtocolMessage.SetParameter("screen_hint", "signup");
+
+          // 特定の UI ロケールを設定する
+          notification.ProtocolMessage.SetParameter("ui_locales", "es");
+      }
+
+      return Task.FromResult(0);
+  }
+  ```
+</Accordion>
+
+<Accordion title="ユーザーに代わって API を呼び出す">
+  アクセストークンを使用して API を呼び出すには、OIDC リダイレクト時に `audience` と必要な API スコープを要求します。
+
+  ```csharp App_Start/Startup.Auth.cs
+  RedirectToIdentityProvider = notification =>
+  {
+      if (notification.ProtocolMessage.RequestType == OpenIdConnectRequestType.Authentication)
+      {
+          notification.ProtocolMessage.SetParameter("audience", "https://your-api.example.com");
+          notification.ProtocolMessage.Scope += " read:data";
+      }
+
+      return Task.FromResult(0);
+  }
+  ```
+
+  次に、認証済みユーザーのクレームからアクセストークンを取得します。
+
+  ```csharp Controllers/ApiController.cs
+  [Authorize]
+  public async Task<ActionResult> CallApi()
+  {
+      var claimsIdentity = User.Identity as ClaimsIdentity;
+      var accessToken = claimsIdentity?.FindFirst("access_token")?.Value;
+
+      var client = new HttpClient();
+      client.DefaultRequestHeaders.Authorization =
+          new AuthenticationHeaderValue("Bearer", accessToken);
+
+      var response = await client.GetAsync("https://your-api.example.com/data");
+      // レスポンスを処理する...
+  }
+  ```
+</Accordion>
+
+***
+
+<div id="additional-resources">
+  ## 追加リソース
+</div>
+
+<CardGroup cols={2}>
+  <Card title="サンプルアプリケーション" icon="github" href="https://github.com/auth0-samples/auth0-aspnet-owin-mvc-samples/tree/master/Quickstart/Sample">
+    このクイックスタートの完全な動作サンプル
+  </Card>
+
+  <Card title="Katana / OWIN ドキュメント" icon="book" href="https://learn.microsoft.com/en-us/aspnet/aspnet/overview/owin-and-katana/">
+    Microsoft 公式の OWIN/Katana リファレンス
+  </Card>
+
+  <Card title="コミュニティフォーラム" icon="comments" href="https://community.auth0.com/">
+    Auth0 コミュニティでサポートを受ける
+  </Card>
+</CardGroup>

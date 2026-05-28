@@ -1,0 +1,270 @@
+---
+title: "Ruby on Rails: ログイン"
+---
+
+import {AuthCodeBlock} from "/snippets/ja/AuthCodeBlock.jsx";
+
+<div id="by-david-patrick">
+  ##### David Patrick による
+</div>
+
+このチュートリアルでは、Ruby on Rails アプリケーションにユーザーログイン機能を追加する方法を説明します。アカウント用に設定されたサンプルを使ってこのクイックスタートを進められるよう、事前にログインしておくことをお勧めします。
+
+{/* <Card title="GitHubで見る" href="https://github.com/auth0-samples/auth0-rubyonrails-sample/tree/master/sample" icon="github">
+  システム要件: Ruby 2.5.0+ | Rails 6.0+、Rails 5.0+、または Rails 4.2+
+  </Card> */}
+
+<Info>
+  **認証は初めてですか？** [Auth0 の仕組み](/ja/docs/get-started/auth0-overview)、[Regular Web Applications との統合方法](/ja/docs/get-started/architecture-scenarios/sso-for-regular-web-apps)、および使用される[プロトコル](/ja/docs/get-started/authentication-and-authorization-flow)を確認してください。
+</Info>
+
+<div id="configure-auth0">
+  ## Auth0 の設定
+</div>
+
+<div id="get-your-application-keys">
+  ### アプリケーションのキーを取得する
+</div>
+
+Auth0 にサインアップすると、新しいアプリケーションが自動的に作成されます。すでに別のアプリケーションを新規作成している場合もあります。Auth0 と通信するには、そのアプリケーションに関するいくつかの情報が必要です。これらの情報は、Auth0 Dashboard の [Application Settings](https://manage.auth0.com/#/applications) セクションで確認できます。
+
+<Frame>![App Dashboard](https://cdn2.auth0.com/docs/1.14550.0/media/articles/dashboard/client_settings.png)</Frame>
+
+次の情報が必要です。
+
+* **ドメイン**
+* **クライアントID**
+* **クライアントシークレット**
+
+<Info>
+  このページ上部からサンプルをダウンロードした場合、これらの情報はあらかじめ入力されています。
+</Info>
+
+<div id="configure-callback-urls">
+  ### コールバック URL を設定する
+</div>
+
+コールバック URL とは、ユーザーの認証が完了した後に Auth0 がユーザーをリダイレクトする、アプリケーション内の URL です。アプリのコールバック URL は、[Application Settings](https://manage.auth0.com/#/applications) の **Allowed Callback URLs** フィールドに追加する必要があります。このフィールドが設定されていない場合、ユーザーはアプリケーションにログインできず、エラーが発生します。
+
+<Info>
+  このページ上部からダウンロードしたサンプルプロジェクトに沿って作業している場合は、**Allowed Callback URLs** フィールドに追加するコールバック URL は `http://localhost:3000/auth/auth0/callback` です。
+</Info>
+
+<div id="configure-logout-urls">
+  ### ログアウト URL を設定する
+</div>
+
+ログアウト URL は、ユーザーが認可サーバーからログアウトした後に Auth0 が戻る先として使用する、アプリケーション内の URL です。これは `returnTo` クエリパラメーターで指定します。アプリのログアウト URL は、[Application Settings](https://manage.auth0.com/#/applications) の **Allowed Logout URLs** フィールドに追加する必要があります。このフィールドが設定されていない場合、ユーザーはアプリケーションからログアウトできず、エラーが発生します。
+
+<Info>
+  このページの上部からダウンロードしたサンプルプロジェクトを使用している場合、**Allowed Logout URLs** フィールドに追加する必要があるログアウト URL は `http://localhost:3000` です。
+</Info>
+
+<div id="install-the-auth0-sdk">
+  ## Auth0 SDK をインストールする
+</div>
+
+<div id="install-dependencies">
+  ### 依存関係をインストールする
+</div>
+
+このチュートリアルでは、認証フローの処理に、カスタムの[OmniAuth strategy](https://github.com/intridea/omniauth#omniauth-standardized-multi-provider-authentication)である`omniauth-auth0`を使用します。次の依存関係を`Gemfile`に追加します。
+
+```bash lines
+gem 'omniauth-auth0', '~> 3.0'
+gem 'omniauth-rails_csrf_protection', '~> 1.0' # 認証リクエストの偽造を防ぐ
+```
+
+gem を追加したら、`bundle install` を実行して gem をインストールします。
+
+<div id="initialize-auth0-configuration">
+  ### Auth0 の設定を初期化する
+</div>
+
+Auth0 の設定ファイル `./config/auth0.yml` を作成します
+
+export const codeExample = `# ./config/auth0.yml
+development:
+  auth0_domain: {yourDomain}
+  auth0_client_id: {yourClientId}
+  auth0_client_secret: <YOUR AUTH0 CLIENT SECRET>`;
+
+<AuthCodeBlock children={codeExample} language="yml" />
+
+次の初期化ファイル `./config/initializers/auth0.rb` を作成し、**OmniAuth** ミドルウェアを[設定](https://github.com/auth0/omniauth-auth0/blob/master/EXAMPLES.md#send-additional-authentication-parameters)します。
+
+```rb lines
+# ./config/initializers/auth0.rb
+AUTH0_CONFIG = Rails.application.config_for(:auth0)
+
+Rails.application.config.middleware.use OmniAuth::Builder do
+  provider(
+    :auth0,
+    AUTH0_CONFIG['auth0_client_id'],
+    AUTH0_CONFIG['auth0_client_secret'],
+    AUTH0_CONFIG['auth0_domain'],
+    callback_path: '/auth/auth0/callback',
+    authorize_params: {
+      scope: 'openid profile'
+    }
+  )
+end
+```
+
+<div id="add-an-auth0-controller">
+  ### Auth0 コントローラーを追加する
+</div>
+
+認証コールバックを処理する Auth0 コントローラーを作成します。`rails generate controller auth0 callback failure logout --skip-assets --skip-helper --skip-routes --skip-template-engine` コマンドを実行します。
+
+`callback` メソッド内で、`request.env['omniauth.auth']` として返されるユーザー情報のハッシュを現在のセッションに割り当てます。
+
+```rb lines
+# ./app/controllers/auth0_controller.rb
+class Auth0Controller < ApplicationController
+  def callback
+    # OmniAuth は Auth0 および IdP から返された情報を request.env['omniauth.auth'] に格納します。
+    # このコードでは、id_token から提供された raw_info を取得してセッションに割り当てます。
+    # 'omniauth.auth' の内容の詳細については https://github.com/auth0/omniauth-auth0/blob/master/EXAMPLES.md#example-of-the-resulting-authentication-hash を参照してください。
+    auth_info = request.env['omniauth.auth']
+    session[:userinfo] = auth_info['extra']['raw_info']
+
+    # 認証成功後にリダイレクトする URL を指定します
+    redirect_to '/dashboard'
+  end
+
+  def failure
+    # 認証失敗を処理します -- 失敗ページを表示します（リダイレクトで処理することもできます）
+    @error_msg = request.params['message']
+  end
+
+  def logout
+    # この処理は後のステップで実装します
+  end
+end
+```
+
+次のルートを `./config/routes.rb` ファイルに追加します。
+
+```rb lines
+# ./config/routes.rb
+Rails.application.routes.draw do
+  # ..
+  get '/auth/auth0/callback' => 'auth0#callback'
+  get '/auth/failure' => 'auth0#failure'
+  get '/auth/logout' => 'auth0#logout'
+end
+```
+
+<div id="add-login-to-your-application">
+  ## アプリケーションにログイン機能を追加する
+</div>
+
+ユーザーは `/auth/auth0` エンドポイントにアクセスすることで、アプリケーションにログインできるようになります。
+
+<Warning>
+  [認証リクエストの偽造を防止する](https://github.com/cookpad/omniauth-rails_csrf_protection)には、`link_to` または `button_to` ヘルパーメソッドを `:post` メソッドとともに使用します
+</Warning>
+
+```erb lines
+<!-- アプリケーションの任意の場所にログインボタンを配置してください -->
+  <%= button_to 'Login', '/auth/auth0', method: :post, data: { turbo: false } %>
+```
+
+<div id="add-logout-to-your-application">
+  ## アプリケーションにログアウト機能を追加する
+</div>
+
+Rails アプリケーションにログインできるようになったので、次は[ログアウトする方法](https://auth0.com/docs/logout/guides/logout-auth0)が必要です。先ほど作成した Auth0Controller を再度開き、追加しておいた logout メソッドを完成させます。
+
+セッションをクリアしてから、ユーザーを Auth0 のログアウトエンドポイントにリダイレクトする必要があります。
+
+セッション内に保存されているすべてのオブジェクトをクリアするには、`auth0_controller/logout` メソッド内で `reset_session` メソッドを呼び出します。[reset&#95;session の詳細についてはこちら](http://api.rubyonrails.org/classes/ActionController/Base.html#M000668)。次のコードを `./app/controllers/auth0_controller.rb` に追加します。
+
+```rb lines
+# ./app/controllers/auth0_controller.rb
+class Auth0Controller < ApplicationController
+  # ..
+  # ..以下のコードを挿入してください
+  def logout
+    reset_session
+    redirect_to logout_url, allow_other_host: true
+  end
+
+  private
+
+  def logout_url
+    request_params = {
+      returnTo: root_url,
+      client_id: AUTH0_CONFIG['auth0_client_id']
+    }
+
+    URI::HTTPS.build(host: AUTH0_CONFIG['auth0_domain'], path: '/v2/logout', query: request_params.to_query).to_s
+  end
+end
+```
+
+<Info>
+  最終的なリダイレクト先 URL (`returnTo` の値) は、`Allowed Logout URLs` のリストに含まれている必要があります。詳しくは、[ログアウトのドキュメント](/ja/docs/authenticate/login/logout/redirect-users-after-logout)を参照してください。
+</Info>
+
+これで、ユーザーは `/auth/logout` エンドポイントにアクセスしてアプリケーションからログアウトできるようになります。
+
+```erb lines
+<!-- アプリケーションの任意の場所にログアウトボタンを配置してください -->
+  <%= button_to 'Logout', 'auth/logout', method: :get, data: { turbo: false } %>
+```
+
+<div id="show-user-profile-information">
+  ## ユーザープロファイル情報を表示する
+</div>
+
+ユーザーのプロファイルを表示するには、アプリケーションに保護されたルートを用意する必要があります。ルートへのアクセスを制御するには、コントローラーの `concern` を使用できます。次のファイル `./app/controllers/concerns/secured.rb` を作成します
+
+```rb lines
+# ./app/controllers/concerns/secured.rb
+module Secured
+  extend ActiveSupport::Concern
+
+  included do
+    before_action :logged_in_using_omniauth?
+  end
+
+  def logged_in_using_omniauth?
+    redirect_to '/' unless session[:userinfo].present?
+  end
+end
+```
+
+保護されたコントローラー concern を作成したら、ログイン済みのユーザーが必要な任意のコントローラーにそれを含めます。その後、セッション `session[:userinfo]` からユーザー情報にアクセスできます。
+
+```rb lines
+# ./app/controllers/dashboard_controller.rb
+class DashboardController < ApplicationController
+  include Secured
+
+  def show
+    # session[:userinfo] は Auth0Controller#callback で事前に保存されている
+    @user = session[:userinfo]
+  end
+end
+```
+
+セッションからユーザーを読み込んだので、その情報をフロントエンドに表示できます。
+
+```erb lines
+<!-- ./app/views/dashboard/show.html.erb -->
+<div>
+  <p>Normalized User Profile:<%= JSON.pretty_generate(@user[:info])%></p>
+  <p>Full User Profile:<%= JSON.pretty_generate(@user[:extra][:raw_info])%></p>
+</div>
+```
+
+<Note>
+  ##### 次にできること
+
+  | [他のIDプロバイダーを設定する](/ja/docs/authenticate/identity-providers)                                                | [多要素認証を有効にする](/ja/docs/secure/multi-factor-authentication) |
+  | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+  | [攻撃対策について学ぶ](/ja/docs/secure/attack-protection)                                                            | [Rulesについて学ぶ](/ja/docs/customize/rules)                    |
+  | [GitHubで編集する](https://github.com/auth0/docs/edit/master/articles/quickstart/native/flutter/01-login.md) |                                                         |
+</Note>

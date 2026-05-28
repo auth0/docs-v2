@@ -1,0 +1,838 @@
+---
+description: Découvrez comment lier des comptes utilisateur provenant de différents fournisseurs d’identité afin que vos utilisateurs puissent s’authentifier avec n’importe lequel de leurs comptes et être reconnus par votre application.
+title: Lier des comptes utilisateur
+---
+
+import {AuthCodeBlock} from "/snippets/fr-CA/AuthCodeBlock.jsx";
+import {AuthCodeGroup} from "/snippets/fr-CA/AuthCodeGroup.jsx";
+
+<Card title="La disponibilité varie selon le forfait Auth0">
+  La disponibilité de cette fonctionnalité dépend à la fois de votre implémentation de connexion et de votre forfait Auth0 ou de votre entente personnalisée. Pour en savoir plus, consultez [Tarification](https://auth0.com/pricing).
+</Card>
+
+Vous pouvez lier des comptes d’utilisateur de différentes façons :
+
+* Action avec une application externe de liaison de comptes
+* Auth0 <Tooltip tip="Management API : un produit qui permet aux clients d’effectuer des tâches administratives." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=Management+API">Management API</Tooltip>
+* bibliothèque Auth0.js
+
+<div id="action-with-external-linking-application">
+  ## Action avec une application externe de liaison de comptes
+</div>
+
+Vous pouvez utiliser une Action avec une application externe de liaison de comptes pour lier des comptes d’utilisateur à l’aide de la Management API.
+
+<Warning>
+  **Auth0 ne bascule pas automatiquement vers le bon** **utilisateur** **principal** après la liaison de comptes; ce changement doit donc être effectué dans le code des Actions une fois la liaison de comptes réussie.
+
+  **Chaque liaison manuelle de comptes doit inviter l’utilisateur à saisir ses identifiants**. Votre locataire doit exiger l’authentification des deux comptes avant la liaison afin d’éviter que des acteurs malveillants accèdent à des comptes d’utilisateur légitimes.
+</Warning>
+
+Les étapes suivantes illustrent un exemple d’implémentation :
+
+1. L’Action identifie les comptes d’utilisateur potentiels à lier (s’ils existent).
+
+2. L’Action redirige l’utilisateur vers une application externe de liaison de comptes avec un payload de jeton contenant les identités utilisateur candidates :
+
+   ```json lines
+   {
+     "current_identity": {
+       "user_id": event.user.user_id,
+       "provider": event.connection.strategy,
+       "connection": event.connection.name
+     },
+     "candidate_identities": [
+       {
+         "user_id": USER_ID_1,
+         "provider": PROVIDER_1,
+         "connection": CONNECTION_1
+       },
+       {
+         "user_id": USER_ID_2,
+         "provider": PROVIDER_2,
+         "connection": CONNECTION_2
+       },
+       ...
+     ]
+   }
+   ```
+
+3. L’application externe de liaison de comptes invite l’utilisateur à s’authentifier à l’aide des identifiants du compte qu’il souhaite lier.
+
+4. L’application externe de liaison de comptes redirige l’utilisateur vers l’Action avec un payload de jeton contenant les identités utilisateur principale et secondaire :
+
+   ```json lines
+   {
+     "primary_identity": {
+       "user_id": PRIMARY_USER_ID,
+       "provider": PRIMARY_PROVIDER_STRATEGY,
+       "connection": PRIMARY_CONNECTION_NAME,
+     },
+     "secondary_identity": {
+       "user_id": SECONDARY_USER_ID,
+       "provider": SECONDARY_PROVIDER_STRATEGY,
+       "connection": SECONDARY_CONNECTION_NAME,
+     }
+   }
+   ```
+
+5. L’Action valide l’authenticité et le contenu du jeton.
+
+6. L’Action appelle la Management API pour lier les comptes en fonction des résultats de l’application externe de liaison de comptes.
+
+7. L’Action bascule vers l’utilisateur principal s’il ne correspond pas à `event.user.user_id`.
+
+<div id="example-account-linking-action">
+  ### Exemple : Action de liaison de comptes
+</div>
+
+```javascript lines expandable
+const { ManagementClient, AuthenticationClient } = require('auth0');
+
+/**
+ * Action de liaison de comptes Auth0 - Version de production
+ *
+ * Dépendance requise : auth0@5.3.1
+ *
+ * Cette Action détecte les utilisateurs ayant des comptes en double (même courriel vérifié)
+ * et les redirige vers un service externe pour gérer la liaison de comptes.
+ */
+
+const ACCOUNT_LINKING_TIMESTAMP_KEY = 'account_linking_timestamp';
+const TTL_LEEWAY_FACTOR = 0.2;
+const PROPERTIES_TO_COMPLETE = ['given_name', 'family_name', 'name'];
+
+/**
+ * Obtenir le jeton d'accès à la Management API avec mise en cache
+ */
+const getManagementAccessToken = async (event, api) => {
+  const cacheKey = `mgmt-api-token-${event.secrets.MANAGEMENT_API_CLIENT_ID}`;
+  const cached = api.cache.get(cacheKey);
+
+  if (cached && cached.value) {
+    return cached.value;
+  }
+
+  const auth = new AuthenticationClient({
+    domain: event.secrets.MANAGEMENT_API_DOMAIN,
+    clientId: event.secrets.MANAGEMENT_API_CLIENT_ID,
+    clientSecret: event.secrets.MANAGEMENT_API_CLIENT_SECRET
+  });
+
+  const response = await auth.oauth.clientCredentialsGrant({
+    audience: `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/`
+  });
+
+  
+  const accessToken = response.access_token || response.data?.access_token;
+  const expiresIn = response.expires_in || response.data?.expires_in;
+
+  if (accessToken && typeof accessToken === 'string') {
+    api.cache.set(cacheKey, accessToken, {
+      ttl: expiresIn - expiresIn * TTL_LEEWAY_FACTOR
+    });
+  }
+
+  return accessToken;
+};
+
+/**
+ * Obtenir les utilisateurs ayant la même adresse de courriel vérifiée
+ */
+const getUsersWithSameEmail = async (event, api) => {
+  const accessToken = await getManagementAccessToken(event, api);
+  const management = new ManagementClient({
+    domain: event.secrets.MANAGEMENT_API_DOMAIN,
+    token: accessToken
+  });
+
+  
+  const users = await management.users.listUsersByEmail({
+    email: event.user.email
+  });
+
+  return users;
+};
+
+/**
+ * Filtrer et mapper les identités candidates avec courriel vérifié
+ */
+const getCandidateIdentitiesWithVerifiedEmail = (event, candidateUsers) => {
+  return candidateUsers
+    .filter((user) => user.user_id !== event.user.user_id && user.email_verified === true)
+    .filter((user) => user.identities && user.identities.length > 0)
+    .map((user) => ({
+      user_id: user.user_id,
+      provider: user.identities[0].provider,
+      connection: user.identities[0].connection
+    }));
+};
+
+/**
+ * Lier les comptes à l'aide de la Management API
+ * Lie l'identité secondaire À l'identité principale
+ */
+const linkAccounts = async (event, primaryIdentity, secondaryIdentity) => {
+  const accessToken = await getManagementAccessToken(event, { cache: { get: () => null, set: () => {} } });
+
+  // Extraire la partie de l'identifiant après le | pour l'API
+  const idParts = secondaryIdentity.user_id.split('|');
+  const userId = idParts.length > 1 ? idParts[1] : secondaryIdentity.user_id;
+
+  const url = `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/users/${encodeURIComponent(primaryIdentity.user_id)}/identities`;
+
+  const body = {
+    provider: secondaryIdentity.provider,
+    user_id: userId
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Link API error: ${response.status} - ${errorText}`);
+  }
+
+  return await response.json();
+};
+
+/**
+ * Compléter les propriétés de profil manquantes à partir des identités liées
+ */
+const completeProperties = (event, api) => {
+  for (const property of PROPERTIES_TO_COMPLETE) {
+    if (!event.user[property]) {
+      for (const identity of event.user.identities) {
+        if (identity.profileData && identity.profileData[property]) {
+          api.idToken.setCustomClaim(property, identity.profileData[property]);
+          break;
+        }
+      }
+    }
+  }
+};
+
+/**
+ * onExecutePostLogin - Détecter les comptes en double et rediriger vers le service de liaison
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Valider la configuration
+  if (
+    !event.secrets.MANAGEMENT_API_DOMAIN ||
+    !event.secrets.MANAGEMENT_API_CLIENT_ID ||
+    !event.secrets.MANAGEMENT_API_CLIENT_SECRET ||
+    !event.secrets.SESSION_TOKEN_SHARED_SECRET ||
+    !event.secrets.ACCOUNT_LINKING_SERVICE_URL
+  ) {
+    console.log('Configuration requise manquante - liaison de comptes ignorée');
+    return;
+  }
+
+// Nous ne traiterons pas les utilisateurs pour la liaison de comptes tant qu'ils n'ont pas vérifié leur adresse de courriel.
+  // Nous pourrions envisager de rejeter les connexions ici ou de rediriger les utilisateurs vers un outil externe pour
+  // rappeler à l'utilisateur de confirmer son adresse de courriel avant de continuer.
+  //
+  // Dans cet exemple, nous ne traiterons simplement pas les utilisateurs à moins que leur courriel ne soit vérifié.
+  if (!event.user.email_verified) {
+    return;
+  }
+
+  // Ignorer si déjà traité
+  if (event.user.app_metadata && event.user.app_metadata[ACCOUNT_LINKING_TIMESTAMP_KEY]) {
+    completeProperties(event, api);
+    return;
+  }
+
+  try {
+    // Trouver les utilisateurs ayant le même courriel
+    const candidateUsers = await getUsersWithSameEmail(event, api);
+
+    if (!Array.isArray(candidateUsers) || candidateUsers.length === 0) {
+      return;
+    }
+
+    // Filtrer pour les courriels vérifiés
+    const candidateIdentities = getCandidateIdentitiesWithVerifiedEmail(event, candidateUsers);
+
+    if (candidateIdentities.length === 0) {
+      return;
+    }
+
+    // Créer le jeton de session
+    const sessionToken = api.redirect.encodeToken({
+      payload: {
+        current_identity: {
+          user_id: event.user.user_id,
+          provider: event.connection.strategy,
+          connection: event.connection.name
+        },
+        candidate_identities: candidateIdentities,
+        email: event.user.email,
+        continue_url: `https://${event.request.hostname}/continue`
+      },
+      secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+      expiresInSeconds: 120
+    });
+
+    // Rediriger vers le service de liaison
+    api.redirect.sendUserTo(event.secrets.ACCOUNT_LINKING_SERVICE_URL, {
+      query: {
+        session_token: sessionToken
+      }
+    });
+
+  } catch (err) {
+    console.error('Erreur de liaison de comptes :', err.message);
+    // Ne pas bloquer la connexion en cas d'erreur
+  }
+};
+
+/**
+ * onContinuePostLogin - Traiter la décision de liaison de l'utilisateur
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  try {
+    // Valider le jeton de réponse
+    const { primary_identity: primaryIdentity, secondary_identity: secondaryIdentity } = api.redirect.validateToken({
+      secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+      tokenParameterName: 'session_token'
+    });
+
+    if (!primaryIdentity || !secondaryIdentity) {
+      // L'utilisateur a annulé - continuer sans liaison
+      return;
+    }
+
+    const currentUserId = event.user.user_id;
+
+    // CRITIQUE : Basculer vers l'utilisateur principal AVANT la liaison
+    // Cela évite l'erreur « Unable to construct login user »
+    if (primaryIdentity.user_id !== currentUserId) {
+      api.authentication.setPrimaryUser(primaryIdentity.user_id);
+    }
+
+    // Lier le compte secondaire
+    const linkedIdentities = await linkAccounts(event, primaryIdentity, secondaryIdentity);
+
+    if (linkedIdentities && linkedIdentities.length > 0) {
+      // Marquer comme traité
+      api.user.setAppMetadata(ACCOUNT_LINKING_TIMESTAMP_KEY, Date.now());
+      completeProperties(event, api);
+    } else {
+      api.access.deny('Échec de la liaison de comptes');
+    }
+  } catch (err) {
+    console.error('Erreur onContinuePostLogin :', err.message);
+    api.access.deny('Erreur de liaison de comptes : ' + err.message);
+  }
+};
+```
+
+<div id="management-api">
+  ## Management API
+</div>
+
+Vous pouvez utiliser le point de terminaison [Lier un compte utilisateur](https://auth0.com/docs/api/v2#!/Users/post_identities) de la Management API de deux façons :
+
+* Liaison de comptes côté client initiée par l’utilisateur à l’aide de <Tooltip tip="Jeton d’accès : information d’autorisation, sous la forme d’une chaîne opaque ou d’un JWT, utilisée pour accéder à une API." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=access+tokens">jetons d’accès</Tooltip> avec le scope `update:current_user_identities`.
+* Liaison de comptes côté serveur à l’aide de jetons d’accès avec le scope `update:users`.
+
+<div id="user-initiated-client-side-account-linking">
+  ### Liaison de comptes côté client initiée par l’utilisateur
+</div>
+
+Pour effectuer une liaison de comptes côté client initiée par l’utilisateur, vous avez besoin d’un jeton d’accès contenant les éléments suivants dans le payload :
+
+* `update:current_user_identites` scope
+* le `user_id` du compte principal dans l’URL
+* <Tooltip tip="ID Token : justificatif destiné à l’application cliente elle-même, et non à l’accès à une ressource." cta="Voir le glossaire" href="/fr-CA/docs/glossary?term=ID+token">jeton d’identité</Tooltip> du compte secondaire, signé avec RS256 et comprenant une revendication `aud` qui identifie l’application correspondant à la valeur de la revendication `azp` du jeton d’accès demandeur.
+
+Un jeton d’accès qui contient le scope `update:current_user_identities` ne peut être utilisé que pour mettre à jour les renseignements de l’utilisateur actuellement connecté. Cette méthode convient donc aux scénarios où l’utilisateur initie le processus de liaison.
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+    --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+    --header 'content-type: application/json' \
+    --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+  request.AddHeader("content-type", "application/json");
+  request.AddParameter("application/json", "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+
+  	payload := strings.NewReader("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+  	req.Header.Add("content-type", "application/json")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+    .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+    .header("content-type", "application/json")
+    .body("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+    headers: {
+      authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+      'content-type': 'application/json'
+    },
+    data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+      "content-type: application/json"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+  headers = {
+      'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+      'content-type': "application/json"
+      }
+
+  conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Post.new(url)
+  request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+  request["content-type"] = 'application/json'
+  request.body = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="server-side-account-linking">
+  ### Liaison de comptes côté serveur
+</div>
+
+Pour effectuer une liaison de comptes côté serveur, vous avez besoin d’un jeton d’accès qui contient les éléments suivants dans le payload :
+
+* scope `update:users`
+* `user_id` du compte principal dans l’URL
+* `user_id` du compte secondaire
+* jeton d’identité du compte secondaire, signé avec RS256, qui inclut une revendication `aud` identifiant l’application correspondant à la valeur de la revendication `azp` du jeton d’accès utilisé pour la requête.
+
+Les jetons d’accès qui contiennent le scope `update:users` peuvent servir à mettre à jour les informations de n’importe quel utilisateur. Par conséquent, cette méthode est destinée uniquement au code côté serveur.
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+    --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+    --header 'content-type: application/json' \
+    --data '{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+  request.AddHeader("content-type", "application/json");
+  request.AddParameter("application/json", "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+
+  	payload := strings.NewReader("{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+  	req.Header.Add("content-type", "application/json")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+    .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+    .header("content-type", "application/json")
+    .body("{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+    headers: {
+      authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+      'content-type': 'application/json'
+    },
+    data: {provider: 'SECONDARY_ACCOUNT_PROVIDER', user_id: 'SECONDARY_ACCOUNT_USER_ID'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+      "content-type: application/json"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}"
+
+  headers = {
+      'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+      'content-type': "application/json"
+      }
+
+  conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Post.new(url)
+  request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+  request["content-type"] = 'application/json'
+  request.body = "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+Le `user_id` et le `provider` du compte secondaire peuvent être déduits à partir de son identifiant unique. Par exemple, pour l’identifiant `google-oauth2|108091299999329986433` :
+
+* `provider` est `google-oauth2`
+* `user_id` est `108091299999329986433`
+
+Vous pouvez aussi envoyer le jeton d’identité du compte secondaire au lieu du `provider` et du `user_id` :
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+    --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+    --header 'content-type: application/json' \
+    --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+  request.AddHeader("content-type", "application/json");
+  request.AddParameter("application/json", "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+
+  	payload := strings.NewReader("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+  	req.Header.Add("content-type", "application/json")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+    .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+    .header("content-type", "application/json")
+    .body("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+    headers: {
+      authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+      'content-type': 'application/json'
+    },
+    data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+      "content-type: application/json"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+  headers = {
+      'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+      'content-type': "application/json"
+      }
+
+  conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  request = Net::HTTP::Post.new(url)
+  request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+  request["content-type"] = 'application/json'
+  request.body = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="auth0js-library">
+  ## Bibliothèque Auth0.js
+</div>
+
+Vous pouvez utiliser la bibliothèque Auth0.js pour effectuer une liaison de comptes côté client. Consultez [Référence Auth0.js v9 &gt; Gestion des utilisateurs](/fr-CA/docs/libraries/auth0js#user-management) pour en savoir plus.
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Liaison de comptes d’utilisateur : implémentation côté serveur](/fr-CA/docs/manage-users/user-accounts/user-account-linking/suggested-account-linking-server-side-implementation)
+* [Liaison de comptes initiée par l’utilisateur : implémentation côté client](/fr-CA/docs/manage-users/user-accounts/user-account-linking/user-initiated-account-linking-client-side-implementation)
+* [Dissocier des comptes d’utilisateur](/fr-CA/docs/manage-users/user-accounts/user-account-linking/unlink-user-accounts)

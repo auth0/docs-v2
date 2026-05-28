@@ -1,0 +1,787 @@
+---
+description: 実装に役立つコードサンプルとともに、Custom Token Exchange の使用例について説明します。
+title: 使用例
+---
+
+import { ReleaseStageNotice } from "/snippets/ja/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Custom Token Exchange (CTE)" stage="ea" plans="B2C Professional, B2B Professional, and Enterprise" terms="true" />
+
+技術的な制約やユーザーエクスペリエンス上の理由により、エンドユーザーをリダイレクトする通常のフェデレーテッドログイン戦略を適用できない高度な統合シナリオでは、Custom Token Exchange を使用できます。これらのユースケース向けに提供されているコードは完全な実装ではなく、ユースケースに対応するためにコードで実装できる論理的な手順を示すことのみを目的としています。より詳細なコード例については、[code samples](#code-samples) を参照してください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 では、可能な限り標準のフェデレーテッドログインをそのまま使用することを推奨しています。Custom Token Exchange ではトランザクションのユーザーを設定できるため、柔軟性が高まる一方で、トランザクションを安全に検証して処理する追加の責任も伴います。
+</Callout>
+
+<div id="use-cases">
+  ## ユースケース
+</div>
+
+このセクションでは、想定されるシナリオの実装に役立つ推奨事項と、具体的なコードサンプルを交えたユースケース例を紹介します。ユースケースの説明には、架空のレンタカーサービス会社である GearUp を使用します。
+
+<div id="use-case-seamless-migration-into-auth0">
+  ### ユースケース: Auth0 へのシームレスな移行
+</div>
+
+GearUp は何百万人ものユーザーに利用されているモバイルアプリを提供しており、アイデンティティ基盤のモダナイゼーションのために Auth0 への移行を決定しました。ただし、レガシー IdP (IdP) からの移行時にユーザーへ再認証を強制すると、ユーザー体験に余計な負担が生じるため、それは避けたいと考えています。
+
+この課題を解決し、あわせてリスクを抑えるために、GearUp は段階的に移行を進めています。各ユーザーについて、レガシー IdP のリフレッシュトークンを、Auth0 のアクセストークン、リフレッシュトークン、および <Tooltip tip="IDトークン: リソースへのアクセスではなく、クライアント自身のための認証情報です。" cta="用語集を見る" href="/ja/docs/glossary?term=ID+token">IDトークン</Tooltip> のセットへ交換したいと考えています。これにより、アプリはこのユーザーに対して Auth0 を IdP としてシームレスに使い始められるようになり、同時に Auth0 が発行したトークンを使って GearUp API を利用できるようになります。すべてのユーザーでこの交換が完了すれば、アプリの移行は完全に終了し、古い IdP は切り離せます。しかも、その過程でエンドユーザーや GearUp のビジネスに影響を与えることはありません。
+
+<Frame>![](/docs/images/cdy7uua7fh8z/2Ke6p3yZl06KT4HHqtaVu9/5d9c5feb98d614d6d793fb01ccc03e92/Screenshot_2025-02-03_at_5.00.32_PM.png)</Frame>
+
+前提条件として、GearUp は Auth0 テナントに [ユーザーの一括インポート](/ja/docs/manage-users/user-migration/bulk-user-imports) を実施済みであり、モバイルアプリは移行対象の各ユーザーについて有効な従来のリフレッシュトークンを保持しています。
+
+1. モバイルアプリは Auth0 に対し、従来のリフレッシュトークンをサブジェクトトークンとして設定して交換を行うリクエストを送信します。
+2. 対応する Custom Token Exchange プロファイル Action が実行されます。この Action は、レガシー IdP に対してリフレッシュトークンを検証し、ユーザープロファイルから外部ユーザー ID を取得します。その後、必要な認可ポリシーを適用し、最後にユーザーを設定します。
+3. Auth0 は、Auth0 のアクセストークン、IDトークン、リフレッシュトークンを返します。
+4. これでモバイルアプリは、ユーザーに再認証を求めることなく、Auth0 トークンを使って Customer API を利用できるようになります。
+
+次のコードサンプルは、これを Custom Token Exchange Action で実装する方法を示しています。このケースでは、ユーザープロファイルはすでに Auth0 のデータベース接続にインポートされています。
+
+* ユーザーは作成しません。
+* ユーザープロファイルは更新しません。
+
+外部 IdP のユーザー ID を使用して、対応する接続内のユーザーを設定します。
+
+```javascript lines expandable
+/**
+* カスタムトークン交換リクエストの実行時に呼び出されるハンドラー
+* @param {Event} event - 受信したトークン交換リクエストの詳細。
+* @param {CustomTokenExchangeAPI} api - トークン交換プロセスを定義するメソッドとユーティリティ。
+*/
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+ // 1. subject_token で受け取った refresh_token を使用して外部 IdP から
+ // UserProfile を取得し、検証する
+ const { isValid, user } = await getUserProfile(
+   event.transaction.subject_token,
+   event.secrets.CLIENT_SECRET,
+ );
+
+ if (!isValid) {
+   // subject token を無効としてマークし、トランザクションを失敗させる。
+   api.access.rejectInvalidSubjectToken("Invalid subject_token");
+ } else {
+   // 2. リクエストが有効かどうかを判断するために、必要に応じて認可ポリシーを適用する。
+   // 拒否する場合は api.access.deny() を使用してトランザクションを却下する。
+
+   // 3. プロファイルが取得できたら、対象の接続にユーザーを設定する
+   api.authentication.setUserByConnection(
+     connectionName,
+     {
+       // ユーザーの作成も更新も行わないため、接続内の user_id のみが必要
+       user_id: user.sub,
+     },
+     {
+       creationBehavior: "none",
+       updateBehavior: "none",
+     },
+   );
+ }
+};
+
+/**
+* リフレッシュトークンを交換し、レガシー IdP からユーザープロファイルを取得する
+* @param {string} refreshToken
+* @param {string} clientSecret
+* @returns {Promise<{ isValid: boolean, user?: object }>} リフレッシュトークンの交換が成功した場合、ユーザープロファイルを返す
+*/
+async function getUserProfile(refreshToken, clientSecret) {
+ // ここにコードを追加してください。詳細な例はコードサンプルを参照してください。
+}
+```
+
+<div id="use-case-re-use-an-external-authentication-provider">
+  ### ユースケース: 外部認証プロバイダーを再利用する
+</div>
+
+別のユースケースとして、GearUp が大手旅行プロバイダーである Air0 と提携し、Air0 のシングルページアプリケーション内で車両レンタルサービスを直接提供するケースがあります。GearUp は、自社 API の利用を抽象化した JavaScript ライブラリを提供しています。これにより、車両レンタルサービスを提供している Air0 の Web サイトから、GearUp の API を簡単に利用できます。
+
+この場合も、GearUp への再認証を避けることで、エンドユーザーに意識させない形で実現する必要があります。この問題を解決するために、GearUp の JavaScript ライブラリは、外部の Air0 IDトークンを入力としてトークン交換を実行できます。これにより、対応する GearUp ユーザーのメールアドレスに基づいて生成され、そのユーザーに関連付けられた Auth0 アクセストークンが得られます。GearUp のライブラリがアクセストークンを取得すると、GearUp の API を使用して、Air0 の Web サイト内で車両レンタルサービスを直接提供できるようになります。
+
+<Frame>![](/docs/images/cdy7uua7fh8z/34AVzwyYARK6fn2IEnLsQn/409082d736d8495b637626406977fb1f/Screenshot_2025-02-03_at_5.08.47_PM.png)</Frame>
+
+前提条件として、GearUp は Air0 IdP をフェデレーションされたエンタープライズ接続またはソーシャル接続として設定済みであるため、ユーザーはフェデレーションログイン、または次のように Custom Token Exchange を介して認証できます。
+
+1. シングルページアプリは、ユーザーの認証後に外部 IdP から IDトークンを取得します。
+2. 次に、その IDトークンをサブジェクトトークンとして設定し、交換をリクエストします。
+3. 対応する Custom Token Exchange プロファイル Action が実行されます。この Action は IDトークンを検証し、トークンからユーザー ID とその他のプロファイル属性を取得します。続いて必要な認可ポリシーを適用し、最後にユーザーを設定します。
+4. Auth0 は Auth0 アクセストークン、IDトークン、リフレッシュトークンを返します。
+5. これで、SPA で実行されている JavaScript コードは、ユーザーが再認証しなくても、Auth0 トークンを使用して Customer API を利用できます。
+
+次のコードは、これを Custom Token Exchange Action で実装する方法の例です。このケースでは:
+
+* 外部 IdP のユーザー ID を使用して、対応する接続内のユーザーを設定します。
+* ユーザーがまだ存在しない場合は作成します。
+* ユーザーがすでに存在する場合は、フェデレーションログイン経由でより完全な属性セットが取得できても、ユーザープロファイルを置き換えません。
+* ユーザーの作成時にメールアドレスの検証は行いません。
+
+```javascript lines expandable
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * カスタムトークン交換リクエストの実行時に呼び出されるハンドラー
+ * @param {Event} event - 受信したトークン交換リクエストの詳細。
+ * @param {CustomTokenExchangeAPI} api - トークン交換プロセスを定義するメソッドとユーティリティ。
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. subject_token で受信した id_token を検証する
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // subject_token を無効としてマークし、トランザクションを失敗させる。
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. リクエストの有効性を判断するために、必要に応じて認可ポリシーを適用する。
+    // 拒否する場合は api.access.deny() を使用してトランザクションを却下する。
+
+    // 3. 対象の接続にユーザーを設定する。
+    // ユーザー作成時にメールアドレスを検証しない
+    // この例では subject_token (id_token) に標準的な OIDC クレームが含まれていることを前提とする。他のカスタムマッピングも利用可能。
+    api.authentication.setUserByConnection(
+      'Enterprise-OIDC',
+      {
+          user_id: formattedUserId,
+          email: subject_token.email,
+          email_verified: subject_token.email_verified,
+          phone_number: subject_token.phone_number,
+          phone_verified: subject_token.phone_number_verified,
+          username: subject_token.preferred_username,
+          name: subject_token.name,
+          given_name: subject_token.given_name,
+          family_name: subject_token.family_name,
+          nickname: subject_token.nickname,
+          verify_email: false
+      },
+      {
+          creationBehavior: 'create_if_not_exists',
+          updateBehavior: 'none'
+      }
+    );
+  }
+
+  /**
+   * サブジェクトトークンを検証する
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} トークンのペイロード
+   */
+  async function validateToken(subjectToken) {
+    // ここにコードを追加する。詳細な例はコードサンプルを参照。
+  }
+};
+```
+
+[コードサンプル](#code-samples)で、<Tooltip tip="JSON Web Token（JWT）: 2者間でクレームを安全に表現するために使用される標準的なIDトークン形式（アクセストークン形式として使用されることもあります）。" cta="用語集を表示" href="/ja/docs/glossary?term=JWTs">JWT</Tooltip>を安全に検証する方法の、より詳しい例を確認できます。
+
+<div id="use-case-get-auth0-tokens-for-another-audience">
+  ### ユースケース: 別のオーディエンス向けの Auth0 トークンを取得する
+</div>
+
+GearUp は、API リクエストを処理するために、内部マイクロサービス間の呼び出しの認可方法を改善したいと考えています。各サービスがアクセスできるリソースを一元的に制御するポリシーを導入したいと考えています。これも Token Exchange を使用して実現できます。
+
+API リクエストが最初にサービス A に到達すると、サービス A は受け取ったアクセストークンを、サービス B を新しいオーディエンスとして利用できる新しいトークンに交換します。トークン交換を管理する認可ポリシーで許可されていれば、サービス A は新しいトークンを受け取り、サービス B を利用できるようになります。新しいトークンでもユーザー ID は変わらないため、プロセス全体を通じて適切なユーザーコンテキストが維持されます。
+
+<Frame>![](/docs/images/cdy7uua7fh8z/5Zw7yaJGct9eHAl4rdf72D/42274a5896851a16bea402ac52037f52/Screenshot_2025-02-03_at_5.17.14_PM.png)</Frame>
+
+GearUp アプリケーションは、最初にユーザーに代わって API A を利用するためのアクセストークンを取得しています。
+
+1. アプリは、最初のアクセストークンを付けて API A にリクエストを送信します。
+2. API A のバックエンドサービスはアクセストークンを検証し、それをサービス B を利用するための新しいアクセストークンの サブジェクトトークン として設定して交換をリクエストします。
+3. 対応する Custom Token Exchange プロファイル Action が実行されます。これによりアクセストークンが検証され、トークンから Auth0 ユーザー ID が取得されます。その後、必要な認可ポリシーが適用され、最後にユーザーが設定されます。
+4. Auth0 は、API B のオーディエンスを利用するための Auth0 アクセストークンを返します。
+5. API A のバックエンドサービスは、新しいアクセストークンを使用して API B を呼び出します。このトークンは引き続き同じユーザーに関連付けられています。
+
+次のコードは、Custom Token Exchange Action でこれを実装する方法を示しています。この場合:
+
+* ユーザーの設定には Auth0 ユーザー ID を使用するため、どの接続のスコープにもこれを設定する必要はありません。
+* ユーザーを作成または更新する必要はありません。
+
+このユースケースの詳しいコードサンプルについては、[非対称鍵で署名された JWT を検証する](#validate-jwts-signed-with-asymmetric-keys) を参照してください。
+
+```javascript lines expandable
+const jwksUri = "https://example.com/.well-known/jwks.json";
+
+/**
+ * カスタムトークン交換リクエストの実行時に呼び出されるハンドラー
+ * @param {Event} event - 受信したトークン交換リクエストの詳細。
+ * @param {CustomTokenExchangeAPI} api - トークン交換プロセスを定義するメソッドとユーティリティ。
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // 1. subject_token で受信した access_token を検証する
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  if (!isValid) {
+    // subject token を無効としてマークし、トランザクションを失敗させる。
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // 2. リクエストが有効かどうかを判断するために、必要に応じて認可ポリシーを適用する。
+    // 該当する場合は api.access.deny() を使用してトランザクションを拒否する。
+
+    // 3. ユーザーを設定する
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * サブジェクトトークンを検証する
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} トークンのペイロード
+   */
+  async function validateToken(subjectToken) {
+    // ここにコードを追加する。詳細な例はコードサンプルを参照。
+  }
+};
+```
+
+JWT を安全に検証する方法の詳細な例については、[コードサンプル](#code-samples)を参照してください。
+
+<div id="use-case-perform-mfa-during-custom-token-exchange">
+  ### ユースケース: Custom Token Exchange 中に MFA を実行する
+</div>
+
+[ユースケース: 外部認証プロバイダーを再利用する](#use-case%3A-re-use-an-external-authentication-provider) を踏まえ、GearUp は、外部認証プロバイダーのトークンが使用された際にユーザー本人の存在を確認したいと考えています。これは、トークンの盗難や、外部認証プロバイダーが MFA をサポートしていない場合などのセキュリティリスクを軽減するために必要です。GearUp には、これを実現するための選択肢が 2 つあります。組織全体に MFA ポリシーを適用するか、Post Login Action を使用して MFA をプログラムでトリガーする方法です。
+
+次の例では、PostLogin Action を使用して、Custom Token Exchange トランザクション中に MFA 認証をトリガーします。埋め込み API で MFA grant を使用する方法の詳細については、Custom Token Exchange も同じモデルに従うため、MFA を使用した ROPG の利用に関する[ドキュメント](/ja/docs/secure/multi-factor-authentication/authenticate-using-ropg-flow-with-mfa)を参照してください。
+
+まず、`api.multifactor.enable()` を使用して MFA チャレンジをトリガーする Action を定義します。この関数については、[Post Login API documentation](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object) で説明しています。
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.multifactor.enable('any');
+};
+
+We can now send a token exchange request:
+
+curl --location 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+--data-urlencode 'audience=https://api.gearup.com' \
+--data-urlencode 'scopes=openid offline_access gearup-scope1 gearup-scope2' \
+--data-urlencode 'subject_token_type=urn:gearup:external-idp' \
+--data-urlencode 'subject_token=t8e7S2D9trQm73e .... iqBR3GjxDtbDVjpfQU' \
+--data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+--data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+```
+
+この結果、MFAトークンを含む `mfa_required` エラーが返されます。
+
+```json lines
+403 Forbidden
+{
+  "error": "mfa_required",
+  "error_description": "Multifactor authentication required",
+  "mfa_token": "<YOUR_MFA_TOKEN>"
+}
+```
+
+返された `mfa_token` を使用して、アプリケーションは MFA API を呼び出し、認証要素へのチャレンジとその検証を行えます。
+
+まず、認証要素の一覧を取得します。
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/mfa/authenticators' \
+--header 'Authorization: Bearer <YOUR_MFA_TOKEN>' \
+
+
+[
+    {
+        "id": "sms|dev_1MHoE3huPRB5dcDJ",
+        "authenticator_type": "oob",
+        "active": true,
+        "oob_channel": "sms",
+        "name": "XXXXXXXX6220"
+    },
+    {
+        "id": "email|dev_QLGL8cGsvFFnOloK",
+        "authenticator_type": "oob",
+        "active": true,
+        "oob_channel": "email",
+        "name": "dloz********@gmai*****"
+    }
+]
+```
+
+次に、authenticator ID を使用してチャレンジを開始します。
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/mfa/challenge' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+--data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+--data-urlencode 'mfa_token=<YOUR_MFA_TOKEN>' \
+--data-urlencode 'authenticator_id=sms|dev_1MHoE3huPRB5dcDJ' \
+--data-urlencode 'challenge_type=oob'
+```
+
+チャレンジにより、次のレスポンスが返されます。
+
+```json lines
+{
+  "challenge_type": "oob",
+  "oob_code": "<YOUR_OOB_CODE>",
+  "binding_method": "prompt"
+}
+```
+
+`mfa_token` と `oob_code` (返された場合) を使用して、トークンエンドポイントで検証を完了し、トークンを受け取ります。
+
+```bash lines
+curl --location 'https://{yourDomain}.auth0.com/oauth/token' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--data-urlencode 'grant_type=http://auth0.com/oauth/grant-type/mfa-oob' \
+--data-urlencode 'mfa_token=<YOUR_MFA_TOKEN>' \
+--data-urlencode 'oob_code=<YOUR_OOB_CODE>' \
+--data-urlencode 'binding_code=<YOUR_USER_CODE>'
+```
+
+レガシーIdPで不透明なリフレッシュトークンを検証する方法の詳細な例については、[コードサンプル](#code-samples)を参照してください。
+
+<div id="use-case-support-agent-acting-on-behalf-of-an-end-user">
+  ### ユースケース: エンドユーザーに代わって操作するサポート担当者
+</div>
+
+GearUp のサポート担当者は、エンドユーザーに代わって GearUp のバックエンド API 経由でエンドユーザーのデータにアクセスし、操作を実行する必要があります。サポートツールはまず担当者を認証し、その後 Custom Token Exchange を使用して、担当者をアクターとして追跡しながらエンドユーザーを表すアクセストークンを取得します。
+
+<Frame>![](/docs/images/custom-token-exchange/Support-agent-acting-on-behalf-of-an-end-user.png)</Frame>
+
+このケースでは、担当者の Auth0 IDトークンがリクエストの `actor_token` として送信され、エンドユーザーを識別する署名付き JWT が `subject_token` として送信されます。`actor_token_type` が `urn:ietf:params:oauth:token-type:id_token` に設定されている場合、Auth0 はトークン (署名、有効期限、発行者) を自動的に検証し、担当者のプロファイルを `event.transaction.actor_token_user` に格納します。これにより、actor token 用のカスタム検証コードが不要になります。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `actor_token` として Auth0 IDトークンを使用することは必須ではありません。`actor_token_type` がカスタム値の場合、Action はサブジェクトトークン と同様に、カスタムコードで actor token を検証する必要があります。`event.transaction.actor_token_user` の自動設定は、Auth0 IDトークンにのみ適用されます。
+</Callout>
+
+1. サポートツールは Auth0 で担当者を認証し、担当者の IDトークンを取得します。
+2. サポートツールは、[Custom Token Exchange リクエスト](/ja/docs/get-started/authentication-and-authorization-flow/token-exchange-flow/call-your-api-using-the-custom-token-exchange-flow)を使用して Auth0 の `/oauth/token` を呼び出し、`subject_token` としてエンドユーザーの識別子を含む署名付き JWT と、`actor_token` として担当者の IDトークンを含めます。
+3. [Custom Token Exchange Action](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger) が サブジェクトトークン を検証し、アクターにエンドユーザーに代わって操作する権限があることを確認したうえで、`api.authentication.setActor()` を呼び出します。
+4. Auth0 は、サポート担当者を識別する `act` クレームを含むトークンを発行します。
+5. サポート担当者はエンドユーザーに代わって API を利用します。API は `act` クレームを確認して、書き込み操作の制限や監査目的でのアクティビティの記録など、委任アクセスに固有の認可ポリシーを適用できます。
+
+Custom Token Exchange Action では、カスタムプロパティやネストの深さを含め、actor オブジェクトに何を含めるかを決定できます。制約については、[Custom Token Exchange API Object のドキュメント](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger/custom-token-exchange-api-object)を参照してください。
+
+```javascript lines expandable
+const jwksUri = "https://gearup.com/.well-known/jwks.json";
+
+/**
+ * カスタムトークン交換リクエストの実行時に呼び出されるハンドラー
+ * @param {Event} event - 受信したトークン交換リクエストの詳細。
+ * @param {CustomTokenExchangeAPI} api - トークン交換プロセスを定義するメソッドとユーティリティ。
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. subject_token で受信したエンドユーザートークンを検証する
+  const { isValid, payload } = await validateToken(event.transaction.subject_token);
+
+  if (!isValid) {
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // 2. アクターを認可する — エージェントがこのエンドユーザーの代理として操作する権限を持つか確認する
+  const actorUser = event.transaction.actor_token_user;
+  if (!actorUser) {
+    api.access.deny("invalid_request", "Actor token is required for this profile");
+    return;
+  }
+
+  const isAuthorized = await checkDelegationPolicy(actorUser.user_id, payload.sub);
+  if (!isAuthorized) {
+    api.access.deny("unauthorized_actor", "Agent is not authorized to act on behalf of this user");
+    return;
+  }
+
+  // 3. 発行されるトークンに act クレームを含めるためにアクターを設定する
+  api.authentication.setActor({
+    sub: actorUser.user_id,
+    sub_profile: "human",
+    role: "support"
+  });
+
+  // 4. トランザクションのユーザーを設定する（操作対象のエンドユーザー）
+  api.authentication.setUserById(payload.sub);
+
+  async function validateToken(subjectToken) {
+    // ここにコードを追加してください。詳細な例はコードサンプルを参照してください。
+  }
+
+  async function checkDelegationPolicy(agentId, userId) {
+    // ここに委任ポリシーのチェックを実装してください。
+    // 例: エージェントがサポートチームに所属しており、
+    // このユーザーのリージョンに割り当てられているかを確認します。
+    return true;
+  }
+};
+```
+
+発行されるアクセストークンには、`act` クレームが含まれます。
+
+```json lines
+{
+  "sub": "auth0|end_user_id",
+  "aud": "https://api.gearup.com",
+  "act": {
+    "sub": "auth0|support_agent_id",
+    "sub_profile": "human",
+    "role": "support"
+  }
+}
+```
+
+<div id="important-considerations-for-delegated-authorization">
+  ### 委任認可に関する重要な考慮事項
+</div>
+
+Custom Token Exchange で委任認可を実装する場合は、次のガイドラインに従ってください。
+
+* **特定のユーザーアカウントにアクセスする権限がアクターにあることを検証する認可ロジックを、Custom Token Exchange Action 内に実装してください**。たとえば、委任アクセスを実行できるのは特定のアクターのみとする認可判断を実装したり、不正なユーザーアクセスを防ぐために、対象ユーザーに有効なサポートチケットがあることを確認したりできます。
+
+* **要求されたスコープを検証してください**。委任認可に必要な最小限のスコープだけが発行されるようにするためです。機微な操作については、委任認可のコンテキストでは決して実行できないようにしたい場合もあります。
+
+* **API でアクセストークンの `act` クレームに含まれる委任コンテキストを利用するようにしてください**。委任されたアクターが実行した操作の監査ログを API に保持し、ユーザーに代わってどのアクターが操作を実行したのかを明確に監査できるようにする必要があります。
+
+* **監査目的では**、Auth0 テナントログ内のアクター詳細を利用できます。成功した Custom Token Exchange トランザクション (`secte` ログイベント) には、`sub` とネストされた `actor` 情報を含む `actor` プロパティが含まれます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 は、エンドユーザーに代わって委任認可トークンが発行されても、そのエンドユーザーには通知しません。委任アクセスの実行前にユーザーへの通知や明示的な同意が必要なユースケースでは、トークン交換を実行する前にエンドユーザーのデバイスへ同意リクエストを送信できる [Client Initiated Backchannel Authentication (CIBA)](/ja/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-ciba-flow) の使用を検討してください。より簡易な通知要件であれば、Custom Token Exchange Action、Post-Login Action、またはダウンストリームサービス内に通知ロジックを実装できます。
+</Callout>
+
+<div id="code-samples">
+  ## コードサンプル
+</div>
+
+以下のコードサンプルでは、受信したサブジェクトトークンを安全かつ高性能に検証する際の、一般的なシナリオにおけるベストプラクティスを示します。
+
+可能であれば、常に非対称アルゴリズムと鍵を使用してください。これにより、Auth0 とシークレットを共有する必要がありません。また、適用可能な公開鍵を公開する JWKS URI エンドポイントを提供する場合など、鍵のローテーションも簡素化されます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  サブジェクトトークンが、強力なアルゴリズムと十分なエントロピーを持つ鍵またはシークレットで保護されていることを確実にする責任は、お客様にあります。
+</Callout>
+
+<div id="validate-jwts-signed-with-asymmetric-keys">
+  ### 非対称鍵で署名されたJWTを検証する
+</div>
+
+次の推奨事項に従ってください。
+
+* トランザクションごとに署名鍵を取得しなくて済むよう、Actions の [`api.cache ()`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/custom-token-exchange-trigger/custom-token-exchange-api-object) メソッドを使用します。
+* [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt) のベストプラクティスに従います
+* RS*、PS*、ES*、または Ed25519 アルゴリズムを使用します
+* none アルゴリズムは使用または受け入れないでください
+* 2048 ビット以上の RSA を使用します。
+
+```javascript lines expandable
+const { jwtVerify, importJWK } = require("jose");
+
+const jwksUri = "https://example.com/.well-known/jwks.json";
+const fetchTimeout = 5000; // 5 seconds
+
+const validIssuer = "urn:my-issuer"; // Replace with your issuer
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+  );
+
+  // Apply your authorization policy as required to determine if the request is valid.
+  // Use api.access.deny() to reject the transaction in those cases.
+
+  if (!isValid) {
+    // Mark the subject token as invalid and fail the transaction.
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // Set the user in the current request as authenticated, using the user ID from the subject token.
+    api.authentication.setUserById(payload.sub);
+  }
+
+  /**
+   * Validate the サブジェクトトークン
+   * @param {string} subjectToken
+   * @returns {Promise<{ isValid: boolean, payload?: object }>} Payload of the token
+   */
+  async function validateToken(subjectToken) {
+    try {
+      const { payload, protectedHeader } = await jwtVerify(
+        subjectToken,
+        async (header) => await getPublicKey(header.kid),
+        {
+          issuer: validIssuer,
+        },
+      );
+
+      // Perform additional validation on the token payload as required
+
+      return { isValid: true, payload };
+    } catch (/** @type {any} */ error) {
+      if (error.message === "Error fetching JWKS") {
+        throw new Error("Internal error - retry later");
+      } else {
+        console.log("Token validation failed:", error.message);
+        return { isValid: false };
+      }
+    }
+  }
+
+  /**
+   * 鍵検証に使用する公開鍵を取得します。Actions キャッシュに存在する場合はそこから読み込み、
+   * 存在しない場合は JWKS エンドポイントから取得してキャッシュに保存します。
+   * @param {string} kid - 検証に使用する鍵の kid（Key ID）
+   * @returns {Promise<Object>}
+   */
+  async function getPublicKey(kid) {
+    const cachedKey = api.cache.get(kid);
+    let keyData;
+
+    if (!cachedKey) {
+      console.log(`Key ${kid} not found in cache`);
+      keyData = await fetchKeyFromJWKS(kid);
+      // Cache the stringified version
+      api.cache.set(kid, JSON.stringify(keyData), { ttl: 600000 });
+    } else {
+      // Parse the raw JWK object from cache
+      keyData = JSON.parse(cachedKey.value);
+    }
+
+    //Convert the raw JWK object to a KeyLike object
+    return await importJWK(keyData, keyData.alg);
+  }
+
+  /**
+   * Fetch public signing key from the provided JWKS endpoint, to use for token verification
+   * @param {string} kid - kid (Key ID) of the key to be used for verification
+   * @returns {Promise<object>}
+   */
+  async function fetchKeyFromJWKS(kid) {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), fetchTimeout);
+
+    /** @type {any} */
+    const response = await fetch(jwksUri);
+
+    if (!response.ok) {
+      console.log(`Error fetching JWKS. Response status: ${response.status}`);
+      throw new Error("Error fetching JWKS");
+    }
+    const jwks = await response.json();
+    const key = jwks.keys.find((key) => key.kid === kid);
+    if (!key) {
+      throw new Error("Key not found in JWKS");
+    }
+    return key;
+  }
+};
+```
+
+<div id="validate-jwts-signed-with-symmetric-keys">
+  ### 対称鍵で署名された JWT を検証する
+</div>
+
+次の推奨事項に従ってください。
+
+* 対称シークレットを安全に保存するには、[Actions Secrets](/ja/docs/customize/actions/write-your-first-action#add-a-secret) を使用します。
+* [RFC8725](https://www.rfc-editor.org/rfc/rfc8725.txt) のベストプラクティスに従います。
+* HS256 などの安全なアルゴリズムを、エントロピーの高いランダムなシークレット (例: 少なくとも 256 ビット長) と併せて使用します。
+
+```javascript lines expandable
+const { jwtVerify } = require("jose");
+
+const validIssuer = "urn:my-issuer"; // 発行者を実際の値に置き換えてください
+
+/**
+ * カスタムトークン交換リクエストの実行時に呼び出されるハンドラー
+ * @param {Event} event - 受信したトークン交換リクエストの詳細。
+ * @param {CustomTokenExchangeAPI} api - トークン交換プロセスを定義するメソッドとユーティリティ。
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  // Actions Secrets から共有対称鍵を初期化する
+  const encoder = new TextEncoder();
+  const symmetricKey = encoder.encode(event.secrets.SHARED_SECRET);
+
+  const { isValid, payload } = await validateToken(
+    event.transaction.subject_token,
+    symmetricKey,
+  );
+
+  // リクエストの有効性を判断するために、必要に応じて認可ポリシーを適用してください。
+  // 拒否する場合は api.access.deny() を使用してトランザクションを拒否してください。
+
+  if (!isValid) {
+    // サブジェクトトークンを無効としてマークし、トランザクションを失敗させる。
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+  } else {
+    // サブジェクトトークンのユーザー ID を使用して、現在のリクエストのユーザーを認証済みとして設定する。
+    api.authentication.setUserById(payload.sub);
+  }
+};
+
+/**
+ * サブジェクトトークンを検証する
+ * @param {string} subjectToken
+ * @param {Uint8Array} symmetricKey
+ * @returns {Promise<{ isValid: boolean, payload?: object }>} トークンのペイロード
+ */
+async function validateToken(subjectToken, symmetricKey) {
+  try {
+    // トークンが共有対称鍵で正しく署名されていることを検証する
+    // 'exp' 属性が含まれている場合は、有効期限切れでないことも確認する。
+    const { payload, protectedHeader } = await jwtVerify(
+      subjectToken,
+      symmetricKey,
+      {
+        issuer: validIssuer,
+      },
+    );
+
+    return { isValid: true, payload };
+  } catch (/** @type {any} */ error) {
+    console.log("Token validation failed:", error.message);
+    return { isValid: false };
+  }
+}
+```
+
+<div id="validate-opaque-token-with-an-external-service">
+  ### 外部サービスで不透明トークンを検証する
+</div>
+
+外部 IdP の<Tooltip tip="クライアントシークレット: クライアント（アプリケーション）が認可サーバーに対して認証を行うために使用するシークレットです。クライアントと認可サーバーだけが知るべきものであり、推測されないよう十分なランダム性が必要です。" cta="用語集を見る" href="/ja/docs/glossary?term=client+secret">クライアントシークレット</Tooltip>を安全に保存するには、[Action Secrets](/ja/docs/customize/actions/write-your-first-action#add-a-secret) を使用します。
+
+```javascript lines expandable
+const tokenEndpoint = "EXTERNAL_TOKEN_ ENDPOINT";
+const userInfoEndpoint = "EXTERNAL_USER_INFO_ENDPOINT";
+const clientId = "EXTERNAL_CLIENT_ID";
+const connectionName = "YOUR_CONNECTION_NAME";
+const fetchTimeout = 5000; // 5秒
+
+/**
+ * カスタムトークン交換リクエストの実行時に呼び出されるハンドラー
+ * @param {Event} event - 受信したトークン交換リクエストの詳細。
+ * @param {CustomTokenExchangeAPI} api - トークン交換プロセスを定義するメソッドとユーティリティ。
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const { isValid, user } = await getUserProfile(
+    event.transaction.subject_token,
+    event.secrets.CLIENT_SECRET,
+  );
+
+  if (!isValid) {
+    // サブジェクトトークンを無効としてマークし、トランザクションを失敗させる。
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // 必要に応じて認可ポリシーを適用し、リクエストの有効性を確認する。
+  // 無効な場合は api.access.deny() を使用してトランザクションを拒否する。
+
+  // プロファイルを取得したら、対象の接続にユーザーを設定する
+  api.authentication.setUserByConnection(
+    connectionName,
+    {
+      // ユーザーの作成も更新も行わないため、
+      // 接続内の user_id のみが必要
+      user_id: user.sub,
+    },
+    {
+      creationBehavior: "none",
+      updateBehavior: "none",
+    },
+  );
+};
+
+/**
+ * リフレッシュトークンを交換し、レガシー IdP からユーザープロファイルを取得する
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, user?: object }>} リフレッシュトークンの交換が成功した場合、ユーザープロファイルを返す
+ */
+async function getUserProfile(refreshToken, clientSecret) {
+  const { isValid, accessToken } = await refreshAccessToken(
+    refreshToken,
+    clientSecret,
+  );
+  if (!isValid) {
+    return { isValid: false };
+  }
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  const response = await fetch(userInfoEndpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    console.log(`Failed to fetch user info. Status: ${response.status}`);
+    throw new Error("Error fetching user info");
+  }
+
+  const userProfile = await response.json();
+
+  return { isValid: true, user: userProfile };
+}
+
+/**
+ * レガシー IdP に対してリフレッシュトークンを検証し、アクセストークンを取得する
+ * @param {string} refreshToken
+ * @param {string} clientSecret
+ * @returns {Promise<{ isValid: boolean, accessToken?: string }>} リフレッシュトークンの交換が成功した場合、アクセストークンを返す
+ */
+async function refreshAccessToken(refreshToken, clientSecret) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), fetchTimeout);
+
+  /** @type {any} */
+  let response;
+
+  try {
+    response = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+  } catch (error) {
+    console.error("Error refreshing token");
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json();
+    console.error("Error refreshing token:", errorBody.error);
+
+    // リフレッシュトークンが無効であることを示すエラー（例: invalid_grant エラー）を受信した場合は、
+    // Suspicious IP Throttling を有効化してリフレッシュトークンへのブルートフォース攻撃を防ぐため、
+    // api.access.rejectInvalidSubjectToken を使用して明示的に無効なトークンを示す必要がある。
+    // IdP へのリクエストで汎用的なエラーが発生した場合は、
+    // 一時的な障害を示すためにエラーをスローする。
+    if (errorBody.error === "invalid_grant") {
+      return { isValid: false };
+    } else {
+      throw new Error("Error refreshing token");
+    }
+  }
+
+  // レスポンスを解析する。形式: { access_token: "...", expires_in: ..., }
+  const data = await response.json();
+  console.log("Successfully exchanged refresh token");
+  return { isValid: true, accessToken: data.access_token };
+}
+```

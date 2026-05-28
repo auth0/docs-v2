@@ -1,0 +1,201 @@
+---
+description: Aprenda cómo una API puede comprobar si un usuario ha iniciado sesión con autenticación multifactor examinando su token de acceso.
+title: Configurar la autenticación escalonada para las API
+---
+
+Con la autenticación escalonada, las aplicaciones que permiten el acceso a distintos tipos de recursos pueden exigir que los usuarios se autentiquen con un mecanismo más robusto para acceder a información confidencial o realizar determinadas transacciones.
+
+Por ejemplo, un usuario de una aplicación bancaria solo puede transferir dinero entre cuentas después de haber confirmado su identidad mediante <Tooltip tip="Autenticación multifactor (MFA): proceso de autenticación del usuario que utiliza un factor adicional al username y la contraseña, como un code enviado por SMS." cta="Ver glosario" href="/es/docs/glossary?term=multi-factor+authentication">autenticación multifactor</Tooltip> (MFA).
+
+Cuando tu <Tooltip tip="Audiencia: identificador único de la audiencia de un token emitido. Denominado aud en un token, su valor contiene el ID de una aplicación (ID de cliente) para un ID Token o de una API (identificador de API) para un Token de acceso." cta="Ver glosario" href="/es/docs/glossary?term=audience">audiencia</Tooltip> es una API, puedes implementar autenticación escalonada con Auth0 mediante scopes, <Tooltip tip="Token de acceso: credencial de autorización, en forma de una cadena opaca o un JWT, que se utiliza para acceder a una API." cta="Ver glosario" href="/es/docs/glossary?term=access+tokens">tokens de acceso</Tooltip> y [Actions](/es/docs/customize/actions). Cuando una aplicación quiere acceder a los recursos protegidos de una API, debe proporcionar un token de acceso. Los recursos a los que puede acceder dependen de los permisos incluidos en el token de acceso. Estos permisos se definen como [alcances](/es/docs/get-started/apis/scopes/api-scopes).
+
+<div id="validate-access-tokens-for-mfa">
+  ## Validar los tokens de acceso para MFA
+</div>
+
+Además de comprobar el scope, la API debe [validar el token de acceso](/es/docs/secure/tokens/access-tokens/validate-access-tokens) para:
+
+* Verificar la firma del token, que se usa para comprobar que el remitente del token es quien dice ser y para garantizar que el mensaje no se haya modificado durante la transmisión.
+* Validar los claims estándar:
+
+| Claim | Descripción                     |
+| ----- | ------------------------------- |
+| `exp` | Vencimiento del token           |
+| `iss` | Emisor del token                |
+| `aud` | Destinatario previsto del token |
+
+<div id="scenario-bank-transactions-with-push-notifications">
+  ## Escenario: Transacciones bancarias con notificaciones push
+</div>
+
+En el siguiente escenario, una aplicación autentica a un usuario con username y contraseña, y luego solicita el saldo de una cuenta. Antes de obtener la información del saldo de la cuenta, el usuario debe autenticarse con el factor push de Guardian.
+
+La API bancaria puede aceptar dos niveles diferentes de autorización: consultar el saldo de la cuenta (scope `view:balance`) o transferir fondos (scope `transfer:funds`). Cuando la aplicación solicita a la API que obtenga el saldo del usuario, el token de acceso debe contener el scope `view:balance`. Para transferir dinero a otra cuenta, el token de acceso debe contener el scope `transfer:funds`.
+
+<div id="workflow">
+  ### Flujo de trabajo
+</div>
+
+1. El usuario inicia sesión en la aplicación mediante autenticación con username y contraseña. El inicio de sesión estándar permite a este usuario interactuar con la API y consultar su saldo. Esto significa que el token de acceso que recibe la aplicación después de que el usuario se autentica contiene el scope `view:balance`.
+2. La aplicación envía una solicitud a la API para recuperar el saldo, usando el token de acceso como credenciales.
+3. La API valida el token y envía la información del saldo a la aplicación para que el usuario pueda verla.
+4. El usuario quiere transferir fondos de una cuenta a otra, lo que se considera una transacción de alto valor que requiere el scope `transfer:funds`. La aplicación envía una solicitud a la API usando el mismo token de acceso.
+5. La API valida el token y deniega el acceso porque al token le falta el scope `transfer:funds` requerido.
+6. La aplicación redirige a Auth0, donde se usa una Action para exigir que el usuario se autentique con MFA, ya que se solicitó un scope de alto valor. Una vez que el usuario se autentica correctamente con MFA, se genera un nuevo token de acceso que incluye el scope correcto y se envía a la aplicación como parte de la respuesta.
+7. La aplicación envía otra solicitud de transferencia de fondos usando el nuevo token de acceso, que esta vez sí incluye el scope `transfer:funds`.
+8. La API valida el token, lo descarta y continúa con la operación.
+
+<div id="prerequisites">
+  ### Requisitos previos
+</div>
+
+Para este escenario, debe configurar los siguientes elementos en el Dashboard:
+
+* [Registrar una aplicación web de página única](/es/docs/get-started/auth0-overview/create-applications/single-page-web-apps).
+* [Crear una conexión de base de datos](https://manage.auth0.com/#/connections/database).
+* [Registrar la API](/es/docs/get-started/auth0-overview/set-up-apis). Cree dos alcances: `view:balance` y `transfer:funds`.
+* [Habilitar MFA](/es/docs/secure/multi-factor-authentication/enable-mfa) para usar notificaciones push.
+
+<div id="create-an-action">
+  ### Crear una Action
+</div>
+
+Cree una Action que desafíe al usuario a autenticarse con MFA cuando se solicite el scope `transfer:funds`. Vaya a [Dashboard &gt; Actions &gt; Flujos](https://manage.auth0.com/#/actions/flows) y cree una Action con el siguiente contenido:
+
+```javascript
+{
+exports.onExecutePostLogin = async (event, api) => {
+  const CLIENTS_WITH_MFA = ['REPLACE_WITH_{yourClientId}'];
+  // ejecutar solo para los clientes especificados
+  if (CLIENTS_WITH_MFA.includes(event.client.client_id)) {
+    // solicitar MFA solo si se solicitó el scope transfer:funds
+    if (event.transaction.requested_scopes.indexOf('transfer:funds') > -1)
+      api.multifactor.enable('any', { allowRememberBrowser: false });
+    }
+  }
+},
+```
+
+* La variable `CLIENTS_WITH_MFA` contiene los <Tooltip tip="ID de cliente: valor de identificación asignado por Auth0 a su recurso registrado." cta="Ver glosario" href="/es/docs/glossary?term=client+IDs">ID de cliente</Tooltip> de las aplicaciones a las que quiere aplicar esta Action. Puede quitar esto (y la condición `if` que aparece a continuación) si no lo necesita.
+* La propiedad `event.transaction.requested_scopes` contiene todos los alcances solicitados en la petición de autenticación. Si incluye el valor `transfer:funds`, solicitamos MFA estableciendo la propiedad `context.multifactor` con el valor adecuado. En este caso, solicitamos MFA mediante [push](/es/docs/secure/multi-factor-authentication/multi-factor-authentication-factors/configure-push-notifications-for-mfa).
+
+<div id="configure-app">
+  ### Configurar la aplicación
+</div>
+
+Configure la aplicación para enviar la solicitud de autenticación adecuada a la API, dependiendo de si el usuario intenta realizar la transacción de alto valor de transferir fondos. Tenga en cuenta que la única diferencia entre las dos solicitudes de autenticación (con o sin MFA) es el scope.
+
+* Con MFA:
+
+  export const codeExample1 = ` https://{yourDomain}/authorize?
+  audience=https://my-banking-api&
+  scope=openid%20view:balance%20transfer:funds&
+  response_type=id_token%20token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&
+  nonce=NONCE&
+  state=OPAQUE_VALUE`;
+
+<AuthCodeBlock children={codeExample1} language="text" />
+
+* Sin MFA:
+
+  export const codeExample2 = ` https://{yourDomain}/authorize?
+  audience=https://my-banking-api&
+  scope=openid%20view:balance&
+  response_type=id_token%20token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&
+  nonce=NONCE&
+  state=OPAQUE_VALUE`;
+
+<AuthCodeBlock children={codeExample2} language="text" />
+
+| Parámetro       | Configuración                                                                                                                                                                                                                                                                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audience`      | Establézcalo en el **Identificador** de su API (encuéntrelo en [Configuración de la API](https://manage.auth0.com/#/apis/)). En este ejemplo, se establece en `https://my-banking-api`.                                                                                                                                                  |
+| `response_type` | Establézcalo en `id_token token` para obtener tanto un ID Token como un token de acceso en la respuesta.                                                                                                                                                                                                                                 |
+| `client_id`     | Establézcalo en el ID de cliente de su aplicación (encuéntrelo en [configuración de la aplicación](https://manage.auth0.com/#/applications/\{yourClientId}/settings)).                                                                                                                                                                   |
+| `redirect_uri`  | Establézcalo en una URL de su aplicación a la que Auth0 deba redirigir al usuario tras la autenticación (encuéntrela en [configuración de la aplicación](https://manage.auth0.com/#/applications/\{yourClientId}/settings)).                                                                                                             |
+| `nonce`         | Establézcalo en una cadena segura que se incluirá en la respuesta de Auth0. Esto [se usa para prevenir ataques de repetición de tokens](/es/docs/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/mitigate-replay-attacks-when-using-the-implicit-flow) y es obligatorio para `response_type=id_token token`. |
+| `state`         | Establézcalo en un valor opaco que Auth0 incluye al redirigir de vuelta a la aplicación. La aplicación debe usar este valor para prevenir ataques CSRF.                                                                                                                                                                                  |
+
+<div id="configure-api">
+  ### Configurar la API
+</div>
+
+Configure la API para validar el token recibido y comprobar los permisos concedidos.
+
+1. Configure dos endpoints para nuestra API:
+   `GET /balance`: para obtener el saldo actual
+   `POST /transfer`: para transferir fondos
+2. Use `Node.js` y varios módulos:
+
+   1. [express](https://expressjs.com/): agrega el framework web Express.
+   2. [jwks-rsa](https://github.com/auth0/node-jwks-rsa): recupera claves de firma RSA desde un endpoint de **JWKS** (conjunto de claves web JSON). Con `expressJwtSecret`, podemos generar un proveedor que entregue la clave de firma correcta a `express-jwt` según el `kid` del encabezado del JWT.
+   3. [express-jwt](https://github.com/auth0/express-jwt): permite autenticar solicitudes HTTP mediante tokens JWT en sus aplicaciones de Node.js. Proporciona varias funciones que facilitan el trabajo con JWT.
+   4. [express-jwt-authz](https://github.com/auth0/express-jwt-authz): comprueba si el token de acceso contiene un scope específico.
+3. Instale las dependencias:
+   `npm install express express-jwt jwks-rsa express-jwt-authz --save`
+4. Defina los endpoints de la API, cree una función de middleware para validar el token de acceso y proteja los endpoints con ese middleware. El código de su archivo `server.js` debería verse como en el siguiente script de ejemplo:
+
+export const codeExample3 = `   // configurar dependencias
+    const express = require('express');
+    const app = express();
+    const jwt = require('express-jwt');
+    const jwksRsa = require('jwks-rsa');
+    const jwtAuthz = require('express-jwt-authz');
+
+    // Crear middleware para verificar el JWT
+    const checkJwt = jwt({
+      // Proporcionar dinámicamente una clave de firma según el kid del encabezado y las claves de firma proporcionadas por el endpoint JWKS
+      secret: jwksRsa.expressJwtSecret({
+        cache: true,
+        rateLimit: true,
+        jwksRequestsPerMinute: 5,
+        jwksUri: \`https://{yourDomain}/.well-known/jwks.json\`
+      }),
+
+      // Validar la audiencia y el emisor
+      audience: 'https://my-banking-api', // reemplácela por la audiencia de su API, disponible en Dashboard > APIs
+      issuer: 'https://{yourDomain}/',
+      algorithms: [ 'RS256' ] // usamos RS256 para firmar nuestros tokens
+    });
+
+    // crear endpoint para consultar el saldo
+    app.get('/balance', checkJwt, jwtAuthz(['view:balance']), function (req, res) {
+      // código que recupera el saldo del usuario y lo devuelve a la aplicación que realiza la llamada
+      res.status(201).send({message: "Este es el endpoint GET /balance"});
+    });
+
+
+    // crear endpoint para transferir fondos
+    app.post('/transfer', checkJwt, jwtAuthz(['transfer:funds']), function (req, res) {
+      // código que transfiere fondos de una cuenta a otra
+      res.status(201).send({message: "Este es el endpoint POST /transfer"});
+    });
+
+    // iniciar el servidor de API en localhost:8080
+    app.listen(8080);
+    console.log('Escuchando en http://localhost:8080');
+`;
+
+<AuthCodeBlock children={codeExample3} language="javascript" />
+
+Cada vez que la API recibe una solicitud, ocurre lo siguiente:
+
+1. El endpoint invoca el middleware `checkJwt`.
+   2. `express-jwt` decodifica el token y pasa la solicitud, el encabezado y la carga útil a `jwksRsa.expressJwtSecret`.
+   3. `jwks-rsa` descarga todas las claves de firma del endpoint JWKS y comprueba si alguna de ellas coincide con el `kid` del encabezado del token de acceso. Si ninguna clave de firma coincide con el `kid` recibido, se genera un error. Si hay coincidencia, se pasa la clave de firma correcta a `express-jwt`.
+   4. `express-jwt` continúa con su propia lógica para validar la firma del token, la expiración, la audiencia y el emisor.
+   5. `jwtAuthz` comprueba si el scope que requiere el endpoint forma parte del token de acceso. Si en el token de acceso faltan los alcances especificados, la solicitud se rechaza con un mensaje de error 403.
+
+<div id="learn-more">
+  ## Más información
+</div>
+
+* [Tokens de acceso](/es/docs/secure/tokens/access-tokens)
+* [Validar tokens de acceso](/es/docs/secure/tokens/access-tokens/validate-access-tokens)
+* [Casos de uso de Actions](/es/docs/customize/actions/use-cases)
+* [Scopes de API](/es/docs/get-started/apis/scopes/api-scopes)
+* [Configurar la autenticación escalonada para aplicaciones web](/es/docs/secure/multi-factor-authentication/step-up-authentication/configure-step-up-authentication-for-web-apps)
