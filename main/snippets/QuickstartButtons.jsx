@@ -1,19 +1,8 @@
-export const QuickstartButtons = ({ githubLink, lang = "en" }) => {
-  const translations = {
-    en: {
-      viewOnGithub: "View On GitHub",
-      loginAndDownload: "Download Sample",
-    },
-    "fr-ca": {
-      viewOnGithub: "Afficher sur GitHub",
-      loginAndDownload: "Télécharger un exemple",
-    },
-    "ja-jp": {
-      viewOnGithub: "Githubで表示",
-      loginAndDownload: "サンプルをダウンロード",
-    },
+export const QuickstartButtons = ({ githubLink }) => {
+  const text = {
+    viewOnGithub: "View On GitHub",
+    loginAndDownload: "Download Sample",
   };
-  const text = translations[lang] || translations.en;
 
   // Parse GitHub URL to extract repo, branch, and path
   const parseGithubUrl = (url) => {
