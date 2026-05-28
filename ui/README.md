@@ -40,10 +40,10 @@ pnpm dev
 
 ```bash
 pnpm copy:build
-# Builds UMD bundle and copies artifacts to /main/ui/ directory
+# Bumps patch version, builds UMD bundle, and copies artifacts to /main/ui/
 ```
 
-> **Note:** The `pnpm copy:build` command runs both `pnpm build` (TypeScript compilation + Vite bundling) and copies the output to the documentation site. You don't need to run `pnpm build` separately.
+> **Note:** `pnpm copy:build` automatically bumps the patch version in `package.json`, runs the full build (TypeScript compilation + Vite bundling), and copies the output to the documentation site. You don't need to run `pnpm build` separately. Always use `pnpm copy:build` when deploying UI changes — running `pnpm build` alone will not update `main/ui/`.
 
 ## Build Process
 
@@ -51,9 +51,10 @@ pnpm copy:build
 
 The `pnpm copy:build` command handles the complete build and deployment workflow:
 
-1. **TypeScript Compilation** - `tsc -b` compiles all TypeScript files
-2. **Vite Build** - Bundles into UMD format with version-stamped filenames
-3. **Copy to Main** - Removes old build artifacts and copies new ones to `/main/ui/` directory
+1. **Version Bump** - `pnpm version patch --no-git-tag-version` increments the patch version in `package.json`
+2. **TypeScript Compilation** - `tsc -b` compiles all TypeScript files
+3. **Vite Build** - Bundles into UMD format with version-stamped filenames
+4. **Copy to Main** - Removes old build artifacts and copies new ones to `/main/ui/` directory
 
 ### Build Configuration
 
@@ -87,22 +88,21 @@ build: {
 
 ### Version Management
 
-The build automatically includes the version from `package.json` in the output filenames:
+The version in `package.json` is automatically bumped by `pnpm copy:build` and embedded in the output filenames. Mintlify uses the versioned filenames to bust its cache on each deploy.
 
 ```
-ui/package.json (version: 1.1.0)
+pnpm copy:build
     ↓
-ui/dist/auth0-docs-ui-1.1.0.umd.js
-ui/dist/auth0-docs-ui-1.1.0.css
+ui/package.json version: 1.1.0 → 1.1.1
     ↓
-main/ui/auth0-docs-ui-1.1.0.umd.js
-main/ui/auth0-docs-ui-1.1.0.css
+ui/dist/auth0-docs-ui-1.1.1.umd.js
+ui/dist/auth0-docs-ui-1.1.1.css
+    ↓
+main/ui/auth0-docs-ui-1.1.1.umd.js
+main/ui/auth0-docs-ui-1.1.1.css
 ```
 
-**To update the version:**
-1. Edit `version` in `ui/package.json`
-2. Run `pnpm copy:build`
-3. Commit both `/ui` and `/main/ui/` changes
+You don't need to manually edit the version — it's handled by the script. If you need a minor or major bump, update `package.json` manually before running `pnpm copy:build`.
 
 ### CSS Scoping Strategy
 
@@ -302,17 +302,12 @@ export const Button = () => (
 
 ### Version Bumping Strategy
 
-**When to bump version:**
-- **Major (2.0.0)** - Breaking API changes
-- **Minor (1.2.0)** - New features, new components
-- **Patch (1.1.1)** - Bug fixes, style tweaks
+`pnpm copy:build` always does a **patch** bump automatically. For larger changes:
 
-**How to bump:**
-1. Update version in `ui/package.json`
-2. Run `pnpm copy:build`
-3. Commit the version change and new build files
+- **Minor (1.2.0)** - New features, new components: edit `package.json` manually first, then run `pnpm copy:build`
+- **Major (2.0.0)** - Breaking API changes: edit `package.json` manually first, then run `pnpm copy:build`
 
-> **Note:** Old build files are automatically removed by the `copy:build` script before copying new ones.
+> **Note:** Old build files are automatically removed by the `copy:build` script before copying new ones. A PR check will fail if `ui/src/` changes are detected but `main/ui/` artifacts were not updated.
 
 ### Code Quality
 
