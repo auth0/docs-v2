@@ -88,11 +88,6 @@ Import and use these React components from `/snippets/`:
 
 - **`<AuthCodeGroup>`**: Grouped code examples with language/platform tabs
 
-- **`<AuthDocsPipeline>`**: Visual navigation breadcrumb/pipeline
-  ```mdx
-  <AuthDocsPipeline activeId="authenticate"/>
-  ```
-
 - **`<Card>`**: Navigation cards for linking to other sections
   ```mdx
   <Card title="Title" href="/docs/path">Description</Card>
