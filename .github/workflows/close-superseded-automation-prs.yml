@@ -5,20 +5,22 @@ on:
     types: [opened]
 
 permissions:
-  pull-requests: write
+  pull-requests: write # Required to close PRs
+  contents: write # Required for branch deletion
 
 jobs:
   close-superseded:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      AUTOUPDATE_LABELS_ALLOWLIST: "authn-explorer-autoupdate,events-catalog-autoupdate,management-explorer-autoupdate,myaccount-explorer-autoupdate,myorg-explorer-autoupdate"
+      AUTOUPDATE_LABELS_ALLOWLIST: "authn-explorer-autoupdate,events-catalog-autoupdate,management-explorer-autoupdate,myaccount-explorer-autoupdate,myorg-explorer-autoupdate,tenant-logs-catalog-autoupdate"
     steps:
       - name: Check preconditions
         id: check
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          CURRENT_PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           # Do not run if triggering PR is not created by the automation bot
           if [[ "$PR_AUTHOR" != "auth0-docs-automation[bot]" ]]; then
@@ -26,6 +28,10 @@ jobs:
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # Fetch labels via gh CLI to get live state (event payload labels may be stale
+          # if labels were added by another bot after the PR was opened)
+          PR_LABELS=$(gh pr view "$CURRENT_PR" --repo "$REPO" --json labels --jq '[.labels[].name]')
 
           # Do not run if triggering PR is not a `main` docs site PR (indicated by the "main-docs" label)
           if ! echo "$PR_LABELS" | jq -e 'index("main-docs")' > /dev/null; then
@@ -72,6 +78,11 @@ jobs:
             --json number \
             --jq '.[].number')
 
+          if [[ -z "$OLD_PRS" ]]; then
+            echo "No superseded PRs found. Nothing to close."
+            exit 0
+          fi
+
           for PR_NUMBER in $OLD_PRS; do
             if [[ "$PR_NUMBER" -eq "$CURRENT_PR" ]]; then
               continue
@@ -80,7 +91,7 @@ jobs:
             COMMENT="Closed by [automation](${RUN_URL}). Reason: Superseded by [#${CURRENT_PR}](https://github.com/${REPO}/pull/${CURRENT_PR})."
 
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
-            gh pr close "$PR_NUMBER" --repo "$REPO"
+            gh pr close "$PR_NUMBER" --repo "$REPO" --delete-branch
 
             echo "Closed PR #${PR_NUMBER} (superseded by #${CURRENT_PR})."
           done

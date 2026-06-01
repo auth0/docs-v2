@@ -9,7 +9,7 @@ export const Scopes = ({ scopes = [] }) => {
       </div>
       <div class="mt-4">
         <div class="space-y-4 whitespace-normal prose prose-sm prose-gray dark:prose-invert overflow-wrap-anywhere [&amp;_*]:overflow-wrap-anywhere">
-          <p class="whitespace-pre-line">
+          <p class="whitespace-pre-line text-xs">
             {
               "Scopes define permissions and access levels for API requests and authentication tokens."
             }
@@ -46,8 +46,8 @@ export const Scopes = ({ scopes = [] }) => {
                 <span
                   class="flex items-center px-2 py-0.5 rounded-md bg-gray-100/50 dark:bg-white/5 text-gray-600 dark:text-gray-200 font-medium break-all"
                   style={{
-                    lineHeight: '1rem',
-                    fontSize: '0.75rem',
+                    lineHeight: "1rem",
+                    fontSize: "0.75rem",
                     fontFamily:
                       'var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                   }}

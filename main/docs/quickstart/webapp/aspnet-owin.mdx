@@ -1,0 +1,532 @@
+---
+title: Add Login to Your ASP.NET OWIN Application
+description: This guide demonstrates how to integrate Auth0 with any new or existing ASP.NET OWIN application using the Microsoft.Owin.Security.OpenIdConnect NuGet package.
+sidebarTitle: ASP.NET OWIN
+---
+
+Auth0 allows you to add authentication to your ASP.NET OWIN application in minutes. This guide walks you through adding login, logout, and user profile display to a classic ASP.NET OWIN application.
+
+By the end of this guide, your application will:
+- Redirect users to Auth0 Universal Login when they sign in
+- Handle the callback and store the session in a cookie
+- Display the authenticated user's name, email, and profile picture
+- Sign users out of both your app and Auth0
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+This guide targets **classic ASP.NET (.NET Framework)** applications using OWIN. If your application already runs on **ASP.NET Core**, use the [`Auth0.AspNetCore.Authentication`](https://auth0.com/docs/quickstart/webapp/aspnet-core) SDK instead.
+</Callout>
+
+## Prerequisites
+
+Before you begin:
+
+- An Auth0 account - [sign up for free](https://auth0.com/signup)
+- An existing ASP.NET MVC application targeting .NET Framework with OWIN enabled, or a new one created from the **ASP.NET Web Application (.NET Framework) → MVC** template in Visual Studio
+- [Visual Studio 2019 or later](https://visualstudio.microsoft.com/) (or any IDE that supports .NET Framework MVC projects)
+
+## Steps
+
+<Steps>
+
+<Step title="Configure your Auth0 application">
+
+Every application that uses Auth0 needs to be registered in the Auth0 Dashboard. Auth0 issues a **Client ID** and **Domain** that your app uses to communicate with Auth0.
+
+You can create and configure the Auth0 application automatically using the Auth0 CLI, or manually via the Dashboard:
+
+<Tabs>
+  <Tab title="CLI">
+    Run the following command from your project's root directory. It creates an Auth0 application and outputs a ready-to-paste `Web.config` snippet with your credentials filled in:
+
+    <Tabs>
+      <Tab title="Mac/Linux">
+        ```bash
+        brew tap auth0/auth0-cli && brew install auth0 && auth0 login --no-input && \
+        AUTH0_RESULT=$(auth0 apps create \
+          --name "My OWIN App" \
+          --type regular \
+          --auth-method post \
+          --callbacks http://localhost:3000/callback \
+          --logout-urls http://localhost:3000/ \
+          --web-origins http://localhost:3000 \
+          --reveal-secrets \
+          --json \
+          --metadata created_by="quickstart-docs-cli") && \
+        CLIENT_ID=$(echo $AUTH0_RESULT | jq -r '.client_id') && \
+        DOMAIN=$(echo $AUTH0_RESULT | jq -r '.domain') && \
+        echo "Add the following to your Web.config <appSettings> section:" && \
+        echo "<add key=\"auth0:Domain\" value=\"$DOMAIN\" />" && \
+        echo "<add key=\"auth0:ClientId\" value=\"$CLIENT_ID\" />"
+        ```
+      </Tab>
+      <Tab title="Windows (PowerShell)">
+        ```powershell
+        $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/auth0/auth0-cli/releases/latest"
+        $latestVersion = $latestRelease.tag_name
+        $version = $latestVersion -replace "^v"
+        Invoke-WebRequest -Uri "https://github.com/auth0/auth0-cli/releases/download/${latestVersion}/auth0-cli_${version}_Windows_x86_64.zip" -OutFile ".\auth0.zip"
+        Expand-Archive ".\auth0.zip" .\
+        [System.Environment]::SetEnvironmentVariable('PATH', $Env:PATH + ";${pwd}")
+        auth0 login --no-input
+        $AppDetails = auth0 apps create `
+          --name "My OWIN App" `
+          --type regular `
+          --auth-method post `
+          --callbacks http://localhost:3000/callback `
+          --logout-urls http://localhost:3000/ `
+          --web-origins http://localhost:3000 `
+          --reveal-secrets `
+          --json `
+          --metadata created_by="quickstart-docs-cli" | ConvertFrom-Json
+        Write-Output "Add the following to your Web.config <appSettings> section:"
+        Write-Output "<add key=`"auth0:Domain`" value=`"$($AppDetails.domain)`" />"
+        Write-Output "<add key=`"auth0:ClientId`" value=`"$($AppDetails.client_id)`" />"
+        ```
+      </Tab>
+    </Tabs>
+
+    Copy the two `<add>` lines from the output into your `Web.config` `<appSettings>` section:
+
+    ```xml Web.config
+    <?xml version="1.0" encoding="utf-8"?>
+    <configuration>
+      <appSettings>
+        <!-- paste your output here -->
+      </appSettings>
+    </configuration>
+    ```
+  </Tab>
+
+  <Tab title="Dashboard">
+    1. Go to [Auth0 Dashboard → Applications](https://manage.auth0.com/#/applications).
+    2. Click **Create Application**.
+    3. Enter a name for your application (for example, `My OWIN App`).
+    4. Select **Regular Web Application** as the application type and click **Create**.
+    5. Go to the **Settings** tab and configure the following URLs:
+
+    | Setting | Value |
+    | --- | --- |
+    | **Allowed Callback URLs** | `http://localhost:3000/callback` |
+    | **Allowed Logout URLs** | `http://localhost:3000/` |
+    | **Allowed Web Origins** | `http://localhost:3000` |
+
+    6. Click **Save Changes**.
+    7. Copy your **Domain** and **Client ID** from the **Basic Information** section and add them to `Web.config`:
+
+    ```xml Web.config
+    <?xml version="1.0" encoding="utf-8"?>
+    <configuration>
+      <appSettings>
+        <add key="auth0:Domain" value="{yourDomain}" />
+        <add key="auth0:ClientId" value="{yourClientId}" />
+      </appSettings>
+    </configuration>
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+If you're running your app on a different port, replace `3000` with your actual port number in every URL above.
+</Info>
+
+</Step>
+
+<Step title="Install NuGet packages">
+
+Add the two required OWIN middleware packages to your project:
+
+| Package | Purpose |
+| --- | --- |
+| `Microsoft.Owin.Security.OpenIdConnect` | Handles the OpenID Connect (OIDC) authentication flow with Auth0 |
+| `Microsoft.Owin.Security.Cookies` | Persists the user session in a browser cookie after login |
+
+<Tabs>
+  <Tab title="Package Manager Console">
+    In Visual Studio, open the **Package Manager Console** (`Tools → NuGet Package Manager → Package Manager Console`) and run:
+
+    ```powershell
+    Install-Package Microsoft.Owin.Security.OpenIdConnect
+    Install-Package Microsoft.Owin.Security.Cookies
+    ```
+  </Tab>
+  <Tab title="dotnet CLI">
+    From your project directory, run:
+
+    ```bash
+    dotnet add package Microsoft.Owin.Security.OpenIdConnect
+    dotnet add package Microsoft.Owin.Security.Cookies
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+Running OWIN cookie middleware alongside `System.Web` cookies can cause issues. If you encounter double-cookie problems, see the [System.Web cookie integration issues](https://github.com/aspnet/AspNetKatana/wiki/System.Web-response-cookie-integration-issues) guidance.
+</Info>
+
+</Step>
+
+<Step title="Configure OWIN middleware">
+
+OWIN middleware is registered in a startup class. If your project already has an OWIN startup class (commonly `App_Start/Startup.Auth.cs`), update its `ConfigureAuth` method. If not, create the file now.
+
+Both **cookie middleware** and **OpenID Connect middleware** are required, and they must be registered in this exact order:
+1. Cookie middleware - stores the authenticated user session
+2. OpenID Connect middleware - handles the Auth0 login and logout flow
+
+```csharp App_Start/Startup.Auth.cs
+using System;
+using System.Configuration;
+using System.Threading.Tasks;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.Owin;
+using Microsoft.Owin.Security;
+using Microsoft.Owin.Security.Cookies;
+using Microsoft.Owin.Security.OpenIdConnect;
+using Owin;
+
+public partial class Startup
+{
+    public void ConfigureAuth(IAppBuilder app)
+    {
+        var domain = ConfigurationManager.AppSettings["auth0:Domain"];
+        var clientId = ConfigurationManager.AppSettings["auth0:ClientId"];
+
+        // Cookie middleware must be registered first
+        app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType);
+
+        app.UseCookieAuthentication(new CookieAuthenticationOptions
+        {
+            AuthenticationType = CookieAuthenticationDefaults.AuthenticationType
+        });
+
+        app.UseOpenIdConnectAuthentication(new OpenIdConnectAuthenticationOptions
+        {
+            AuthenticationType = "Auth0",
+            Authority = $"https://{domain}",
+            ClientId = clientId,
+            ResponseType = OpenIdConnectResponseType.CodeIdToken,
+            Scope = "openid profile email",
+            TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+            {
+                NameClaimType = "name"
+            },
+            Notifications = new OpenIdConnectAuthenticationNotifications
+            {
+                RedirectToIdentityProvider = notification =>
+                {
+                    if (notification.ProtocolMessage.RequestType == OpenIdConnectRequestType.Logout)
+                    {
+                        // Build the Auth0 logout URL and redirect to it
+                        var logoutUri = $"https://{domain}/v2/logout?client_id={clientId}";
+                        notification.Response.Redirect(logoutUri);
+                        notification.HandleResponse();
+                    }
+
+                    return Task.FromResult(0);
+                }
+            }
+        });
+    }
+}
+```
+
+Make sure `ConfigureAuth` is called from your `Startup.cs` `Configuration` method:
+
+```csharp Startup.cs
+using Microsoft.Owin;
+using Owin;
+
+[assembly: OwinStartup(typeof(Startup))]
+
+public partial class Startup
+{
+    public void Configuration(IAppBuilder app)
+    {
+        ConfigureAuth(app);
+    }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+`AuthenticationType` is set to `"Auth0"`. This string is used in the next step when triggering the login challenge. The `RedirectToIdentityProvider` notification intercepts logout requests and builds the correct Auth0 logout URL.
+</Callout>
+
+</Step>
+
+<Step title="Add login, logout, and profile actions">
+
+Create `Controllers/AccountController.cs` with three actions: `Login`, `Logout`, and `UserProfile`.
+
+```csharp Controllers/AccountController.cs
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Auth0.AspNetCore.Authentication;
+
+public class AccountController : Controller
+{
+  public ActionResult Login(string returnUrl = "/")
+  {
+    HttpContext.GetOwinContext().Authentication.Challenge(
+      new AuthenticationProperties
+      {
+          RedirectUri = returnUrl ?? Url.Action("Index", "Home")
+      },
+      "Auth0"
+    );
+  }
+
+  [Authorize]
+  public ActionResult UserProfile()
+  {
+      var claimsIdentity = User.Identity as ClaimsIdentity;
+      return View(new UserProfileViewModel()
+      {
+          Name = claimsIdentity?
+            .FindFirst(c => c.Type == claimsIdentity.NameClaimType)?.Value,
+          EmailAddress = claimsIdentity?
+            .FindFirst(c => c.Type == ClaimTypes.Email)?.Value,
+          ProfileImage = claimsIdentity?
+            .FindFirst(c => c.Type == "picture")?.Value
+      });
+  }
+
+  [Authorize]
+  public void Logout()
+  {
+    HttpContext.GetOwinContext().Authentication.SignOut(CookieAuthenticationDefaults.AuthenticationType);
+    HttpContext.GetOwinContext().Authentication.SignOut("Auth0");
+  }
+}
+```
+
+**How each action works:**
+
+- **`Login`** - calls `Challenge` with the `"Auth0"` scheme. The OIDC middleware intercepts this and redirects the user to Auth0 Universal Login. After a successful sign-in, the user is redirected back to `returnUrl`.
+- **`UserProfile`** - reads the authenticated user's claims from `ClaimsIdentity` and passes them to the view via `UserProfileViewModel`. The `[Authorize]` attribute ensures unauthenticated users are redirected to login first.
+- **`Logout`** - calls `SignOut` twice: once to clear the local cookie session, and once to sign the user out of Auth0 (which also ends any active SSO sessions).
+
+Create `Models/UserProfileViewModel.cs` to hold the profile data:
+
+```csharp Models/UserProfileViewModel.cs
+public class UserProfileViewModel
+{
+    public string Name { get; set; }
+    public string EmailAddress { get; set; }
+    public string ProfileImage { get; set; }
+}
+```
+
+<Note>
+##### Checkpoint
+
+Run your application and navigate to `/Account/Login`. You should be redirected to the Auth0 Universal Login page. After signing in, you should be redirected back to your application's home page. If you see a redirect URI error, verify that the callback URL in your Auth0 application settings exactly matches the URL your application is running on.
+</Note>
+
+</Step>
+
+<Step title="Add a profile view">
+
+Create `Views/Account/UserProfile.cshtml` to display the signed-in user's information:
+
+```cshtml Views/Account/UserProfile.cshtml
+@model UserProfileViewModel
+@{
+    ViewBag.Title = "User Profile";
+}
+
+<h2>User Profile</h2>
+
+<div>
+    <img src='@Model.ProfileImage'
+         alt="Profile picture"
+         style="max-width:120px; border-radius:60px;" />
+</div>
+
+<ul>
+    <li><strong>Name:</strong> @Model.Name</li>
+    <li><strong>Email:</strong> @Model.EmailAddress</li>
+</ul>
+```
+
+The view receives a `UserProfileViewModel` populated from claims extracted by the OIDC middleware when Auth0 returns the ID token.
+
+<Note>
+##### Checkpoint
+
+After logging in, navigate to `/Account/UserProfile`. You should see your name, email, and profile picture. If the name or email appears empty, verify that the `Scope` in your `OpenIdConnectAuthenticationOptions` includes `"openid profile email"`.
+</Note>
+
+</Step>
+
+<Step title="Add login and logout links to your layout">
+
+Update `Views/Shared/_Layout.cshtml` to show login and logout links based on the user's authentication state:
+
+```cshtml Views/Shared/_Layout.cshtml
+@if (User.Identity.IsAuthenticated)
+{
+    <a href="@Url.Action("UserProfile", "Account")">@User.Identity.Name</a>
+    <a href="@Url.Action("Logout", "Account")">Log out</a>
+}
+else
+{
+    <a href="@Url.Action("Login", "Account")">Log in</a>
+}
+```
+
+Add this inside the `<nav>` element wherever your navigation links appear in the layout.
+
+<Note>
+##### Checkpoint
+
+Run your application. You should see a **Log in** link in the navigation. After signing in, it should change to your name (linking to your profile) and a **Log out** link. Clicking **Log out** should sign you out and return you to the home page.
+</Note>
+
+</Step>
+
+</Steps>
+
+<Check>
+You now have a working Auth0 integration in your ASP.NET OWIN application. Users can log in through Auth0 Universal Login, view their profile, and log out.
+</Check>
+
+## Common Issues
+
+<AccordionGroup>
+<Accordion title="Redirect URI mismatch after login">
+**Problem:** Auth0 shows a "redirect_uri mismatch" or "callback URL mismatch" error after the user signs in.
+
+**Solution:** The redirect URI your app sends to Auth0 must exactly match one of the **Allowed Callback URLs** in your Auth0 application settings. Check for differences in protocol (`http` vs `https`), port number, path, and trailing slashes.
+</Accordion>
+
+<Accordion title="Login loop — app keeps redirecting back to Auth0">
+**Problem:** After signing in successfully, the app immediately redirects back to Auth0 instead of showing the authenticated page.
+
+**Solution:** Ensure middleware is registered in the correct order and the OWIN pipeline is initialized:
+
+- Cookie middleware must be registered **before** OpenID Connect middleware in `ConfigureAuth`.
+- `app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType)` must be the first call in `ConfigureAuth`.
+- The `[assembly: OwinStartup(typeof(Startup))]` attribute must be present so the OWIN pipeline is correctly initialized.
+
+```csharp App_Start/Startup.Auth.cs
+app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType); // Must be first
+
+app.UseCookieAuthentication(...);          // Cookie middleware before OIDC
+app.UseOpenIdConnectAuthentication(...);   // OIDC middleware after cookie
+```
+</Accordion>
+
+<Accordion title="User is not redirected back after logout">
+**Problem:** Clicking **Log out** signs the user out of Auth0 but doesn't return them to your application.
+
+**Solution:** Add a `returnTo` query parameter to the Auth0 logout URL in the `RedirectToIdentityProvider` notification. The return URL must also be listed in **Allowed Logout URLs** in your Auth0 application settings:
+
+```csharp App_Start/Startup.Auth.cs
+var logoutUri = $"https://{domain}/v2/logout?client_id={clientId}&returnTo={Uri.EscapeDataString("http://localhost:3000/")}";
+```
+</Accordion>
+
+<Accordion title="Profile picture or email is empty">
+**Problem:** `Model.ProfileImage` or `Model.EmailAddress` is null after login.
+
+**Solution:** Verify that `Scope` in `OpenIdConnectAuthenticationOptions` includes `"openid profile email"`. The `profile` scope provides name and picture; the `email` scope provides the email address.
+
+```csharp App_Start/Startup.Auth.cs
+app.UseOpenIdConnectAuthentication(new OpenIdConnectAuthenticationOptions
+{
+    Scope = "openid profile email",  // All three scopes required
+    ...
+});
+```
+</Accordion>
+
+<Accordion title="Domain or Client ID values are null at startup">
+**Problem:** The application throws a null reference or configuration exception when starting.
+
+**Solution:** Confirm both `auth0:Domain` and `auth0:ClientId` exist in `<appSettings>` in `Web.config`, and that you are running the correct build configuration (Debug/Release) that loads the right `Web.config` transform.
+
+```xml Web.config
+<configuration>
+  <appSettings>
+    <add key="auth0:Domain" value="{yourDomain}" />     <!-- Must not be empty -->
+    <add key="auth0:ClientId" value="{yourClientId}" /> <!-- Must not be empty -->
+  </appSettings>
+</configuration>
+```
+</Accordion>
+</AccordionGroup>
+
+
+## Advanced Usage
+
+<Accordion title="Customize Login Parameters">
+You can pass custom parameters to the Auth0 login page by modifying the `RedirectToIdentityProvider` notification in `Startup.Auth.cs`:
+
+```csharp App_Start/Startup.Auth.cs
+RedirectToIdentityProvider = notification =>
+{
+    if (notification.ProtocolMessage.RequestType == OpenIdConnectRequestType.Authentication)
+    {
+        // Show the signup screen instead of login
+        notification.ProtocolMessage.SetParameter("screen_hint", "signup");
+
+        // Set a specific UI locale
+        notification.ProtocolMessage.SetParameter("ui_locales", "es");
+    }
+
+    return Task.FromResult(0);
+}
+```
+</Accordion>
+
+<Accordion title="Call an API on Behalf of the User">
+To call an API with an access token, request an `audience` and the required API scopes during the OIDC redirect:
+
+```csharp App_Start/Startup.Auth.cs
+RedirectToIdentityProvider = notification =>
+{
+    if (notification.ProtocolMessage.RequestType == OpenIdConnectRequestType.Authentication)
+    {
+        notification.ProtocolMessage.SetParameter("audience", "https://your-api.example.com");
+        notification.ProtocolMessage.Scope += " read:data";
+    }
+
+    return Task.FromResult(0);
+}
+```
+
+Then retrieve the access token from the authenticated user's claims:
+
+```csharp Controllers/ApiController.cs
+[Authorize]
+public async Task<ActionResult> CallApi()
+{
+    var claimsIdentity = User.Identity as ClaimsIdentity;
+    var accessToken = claimsIdentity?.FindFirst("access_token")?.Value;
+
+    var client = new HttpClient();
+    client.DefaultRequestHeaders.Authorization =
+        new AuthenticationHeaderValue("Bearer", accessToken);
+
+    var response = await client.GetAsync("https://your-api.example.com/data");
+    // handle response...
+}
+```
+</Accordion>
+
+---
+
+## Additional Resources
+
+<CardGroup cols={2}>
+<Card title="Sample Application" icon="github" href="https://github.com/auth0-samples/auth0-aspnet-owin-mvc-samples/tree/master/Quickstart/Sample">
+  Complete working example of this quickstart
+</Card>
+<Card title="Katana / OWIN Documentation" icon="book" href="https://learn.microsoft.com/en-us/aspnet/aspnet/overview/owin-and-katana/">
+  Microsoft's official OWIN/Katana reference
+</Card>
+<Card title="Community Forum" icon="comments" href="https://community.auth0.com/">
+  Get help from the Auth0 community
+</Card>
+</CardGroup>
+
