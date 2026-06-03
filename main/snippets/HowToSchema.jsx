@@ -1,5 +1,3 @@
-import { useEffect, useRef } from 'react';
-
 export const HowToSchema = () => {
   const scriptRef = useRef(null);
 
