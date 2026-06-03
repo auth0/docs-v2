@@ -42,7 +42,7 @@ Both packages are installed via `pnpm` and used throughout the docs-v2 project f
    pnpm build
    ```
 
-   This runs TypeScript build, Vite build, and copies assets as needed.
+   This automatically bumps the patch version in `package.json`, runs TypeScript build, Vite build, and copies artifacts to `main/ui/universal-components/`.
 
 3. **Move to the main docs-v2 folder:**
 
@@ -84,7 +84,8 @@ node --version
 
 ## Notes
 
-- Make sure we update package.json to next version(minor/major/patch) so that our component bundle gets created with that version and mintlify automatically bursts the cache for us once its redeployed.
+- `pnpm build` automatically bumps the patch version in `package.json` so the bundle filename changes and Mintlify busts its cache on redeploy. For a minor or major bump, edit `package.json` manually before running `pnpm build`.
+- A CI check will fail PRs that change `universal-components/src/` without updated artifacts in `main/ui/universal-components/`.
 - All component previews are rendered with fixed height and scrollbars for overflow.
 - Modals/dialogs are scoped to the preview container for accurate demo experience.
 - Use the snippets (e.g., `ComponentLoader`, `SsoProviderTablePreview`) for consistent preview styling and loading states.
