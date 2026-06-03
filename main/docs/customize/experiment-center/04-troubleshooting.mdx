@@ -1,0 +1,306 @@
+---
+title: "Troubleshooting"
+description: "Common issues partners hit during Experiment Center Beta, with diagnostic steps and solutions."
+---
+
+# Troubleshooting
+
+This guide covers the most common issues you might run into during Beta. If something is not covered here, reach out in your Beta Slack channel.
+
+---
+
+## My experiment isn't getting traffic
+
+Auth events are not showing the `experiment` field, or assignments are not appearing in tenant logs.
+
+**Check 1: Is the experiment active?**
+
+Fetch the experiment and confirm `status: "active"`:
+
+```bash
+curl "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_YOUR_ID" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+If the status is `draft` or `paused`, activate or resume it:
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_YOUR_ID/status" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "active" }'
+```
+
+**Check 2: Is `is_valid` true?**
+
+Even if the experiment was activated before, the `is_valid` flag can become `false` if a referenced entity was changed (for example, if you modified the feature flag's parameters). Check the `is_valid` field on the experiment response, or run the validate endpoint:
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_YOUR_ID/validate" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+If `is_valid: false`, the `errors` array lists the specific blockers. Fix each one and try activating again.
+
+**Check 3: Is there already an active experiment on this tenant?**
+
+At Beta, only one experiment can be active per tenant at a time. If another experiment is active, the Experiment Center runs that experiment, not yours.
+
+List all active experiments:
+
+```bash
+curl "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments?status=active" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+If a different experiment is active and you want to run yours, pause or complete the other one first.
+
+**Check 4: Is your segment rule matching?**
+
+If you are using segment-based allocation, a request might be falling through to the default (fallback) variation rather than matching your targeted segment. This is correct behavior, but it can look like the experiment is not working if your test traffic does not match the segment conditions.
+
+Verify your segment rules by checking the conditions against the request properties you are generating in your test:
+
+- Are you using the right `device_type` value? Common values: `mobile`, `desktop`, `tablet`
+- Are `country` and `region` populated? These are IP-derived. If your test runs on localhost, IP geolocation may not resolve correctly.
+
+You can bypass segment evaluation for testing by forcing a variation with a query parameter override:
+
+```
+https://YOUR_TENANT.us.auth0.com/authorize
+  ?...&experiment_id=exp_YOUR_ID&variation_id=var_YOUR_TREATMENT_ID
+```
+
+---
+
+## A user is always getting the same variation
+
+This is expected behavior. The Experiment Center uses **deterministic hashing** to assign variations. Given the same subject identifier and experiment ID, the hash always returns the same bucket and therefore the same variation.
+
+The subject identifier for pre-authentication flows is a device-level identifier (a cookie or fingerprint set on the device/browser). For post-authentication flows, it is `user_id`.
+
+**Why this happens:**
+
+```
+variation = hash(subject_identifier + experiment_id) % 100
+```
+
+Same inputs always produce the same output. This is what makes the assignment consistent and repeatable: a real user sees a stable experience across multiple logins, which is required for valid experiment measurement.
+
+**When the assignment can change:**
+
+- The user switches to a different device or browser (new device identifier)
+- You create a new experiment (new experiment ID produces a different hash)
+- The user clears cookies (for cookie-based device identifiers; behavior depends on Spike 3 implementation)
+
+**If you need to test both variations:**
+
+Use query parameter overrides to force a specific variation for a specific test:
+
+```
+&experiment_id=exp_YOUR_ID&variation_id=var_CONTROL_ID
+&experiment_id=exp_YOUR_ID&variation_id=var_TREATMENT_ID
+```
+
+These overrides work for any experiment status, including `draft`.
+
+---
+
+## I don't see `event.experiment` in my tenant logs
+
+**Check 1: Is the experiment active?**
+
+The `experiment` field is only stamped on auth events when an experiment was active during the transaction. See the steps above to confirm the experiment is `active`.
+
+**Check 2: Is the auth event going through a supported trigger?**
+
+At Beta, experiment context is stamped on events from the pre-authentication flow (login and signup). Check the auth event type in your logs. Event types like `s` (successful login) and `ss` (successful signup) should be enriched. If you are looking at a different event type, it may not be enriched at Beta.
+
+**Check 3: Is your tenant log stream configured correctly?**
+
+If you are reading logs via a streaming destination (Datadog, Splunk, S3, etc.), confirm that:
+
+- Log streaming is enabled and the destination is healthy
+- You are looking at the correct log stream destination
+- You are not filtering out the event type that carries experiment metadata
+
+If you are reading directly from the Auth0 Dashboard (Monitoring → Logs), the enriched fields appear in the event's raw JSON. Click the event to expand the full JSON payload and look for the `experiment` key.
+
+**Check 4: Did the resolution fail silently?**
+
+The Experiment Center is designed to fail silently to avoid blocking authentication. If the experiment resolution fails (for example, a database timeout or a malformed segment rule), the auth event is not enriched and the auth flow continues normally. No error appears in the application; you only see a warning in tenant logs.
+
+Search your tenant logs for warnings with these codes:
+
+- `experiment_circuit_open`: the experiment resolution circuit breaker is open; the database may be temporarily unavailable
+- `experiment_not_found`: a query parameter references an experiment that does not exist
+- `experiment_orphaned_params`: `variation_id` or `segment_id` was passed without `experiment_id`
+
+If you see `experiment_circuit_open`, wait a few minutes and try again. The circuit breaker opens temporarily after repeated failures and closes automatically once the database recovers.
+
+---
+
+## The validate endpoint returned errors
+
+`POST /api/v2/experimentation/experiments/{id}/validate` returned `is_valid: false` with an `errors` array.
+
+Here are the common error codes and what to do:
+
+| Error code | Meaning | Fix |
+|---|---|---|
+| `feature_flag_not_active` | The feature flag referenced by this experiment is in `draft` or `archived` status | Activate the feature flag: `POST /feature-flags/{id}/status` with `{ "status": "active" }` |
+| `experiment_missing_control` | No allocation has `is_control: true`, or more than one does | Update your allocations so exactly one has `is_control: true` |
+| `experiment_invalid_allocation_weights` | Allocation weights do not sum to 100 (percentage strategy) | Adjust your allocation weights so they total exactly 100 |
+| `experiment_missing_default` | No allocation has `is_fallback: true` (segment strategy) | Add `is_fallback: true` to the allocation that should receive unmatched requests |
+| `variation_not_from_flag` | An allocation references a variation that does not belong to the experiment's feature flag | Check the `variation_id` values in your allocations; each must be a variation on the feature flag you specified |
+| `experiment_active_limit_exceeded` | Another experiment is already active on this tenant | Pause or complete the other experiment first |
+
+**Getting the full error list:**
+
+If the status transition endpoint returns a `400` with a composed `message`, call the validate endpoint separately to get the structured `errors` array:
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_YOUR_ID/validate" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+The validate endpoint always returns the full `errors` array. The status transition endpoint returns only a composed message string due to API error schema constraints.
+
+---
+
+## The CLI command isn't available
+
+Some Auth0 CLI commands for Experiment Center may not be available at the start of Beta. CLI parity is being developed by the SDK and CLI team.
+
+If a CLI command is not found or returns an error, fall back to the API directly using `curl`:
+
+```bash
+# List feature flags
+curl "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Create an experiment
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ ... }'
+```
+
+To get a Management API token for use with `curl`, you can use the Auth0 CLI:
+
+```bash
+auth0 api get "https://YOUR_TENANT.us.auth0.com/api/v2/" | jq -r '.access_token'
+```
+
+Or obtain a token via the OAuth2 client credentials flow using your Management API application credentials.
+
+---
+
+## My experiment won't activate
+
+`POST /api/v2/experimentation/experiments/{id}/status` with `{ "status": "active" }` returned a `400`.
+
+Work through these checks in order:
+
+**1. Run the validate endpoint first.**
+
+The status transition endpoint returns a composed message string on failure. The validate endpoint returns the full structured `errors` array:
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_YOUR_ID/validate" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+Fix every error in the list before retrying activation.
+
+**2. Check that the feature flag is active.**
+
+An experiment cannot activate unless its referenced feature flag is in `active` status:
+
+```bash
+curl "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags/flg_YOUR_FLAG_ID" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+If `status` is `draft`, activate the flag first. If `status` is `archived`, you need to create a new flag.
+
+**3. Check that you have at least two variations.**
+
+A feature flag must have at least two variations before it can be activated. Check the variation count:
+
+```bash
+curl "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags/flg_YOUR_FLAG_ID/variations" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+If you have fewer than two variations, create the missing ones before activating the flag.
+
+**4. Check that your allocations are valid.**
+
+Common allocation issues:
+- Weights do not sum to 100 (percentage strategy)
+- No allocation has `is_control: true`
+- A `variation_id` in an allocation does not belong to the referenced feature flag
+
+**5. Check that no other experiment is active.**
+
+At Beta, only one experiment can be active per tenant. List active experiments and pause or complete any that are running:
+
+```bash
+curl "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments?status=active" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+---
+
+## I get a 403 with errorCode `feature_not_entitled`
+
+Your tenant does not have the `experiment_center_beta` feature flag enabled. Contact the Auth0 Experiment Center team to confirm your tenant is enrolled in Beta and the feature flag is ON.
+
+```json
+{
+  "statusCode": 403,
+  "error": "Forbidden",
+  "message": "Experiment Center is not enabled for this tenant",
+  "errorCode": "feature_not_entitled"
+}
+```
+
+---
+
+## I modified an active experiment's allocations and got a 400
+
+You cannot modify allocations on an experiment while it is `active`. Doing so returns:
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Cannot modify allocations on an active experiment",
+  "errorCode": "experiment_requires_pause"
+}
+```
+
+To change allocations:
+
+1. Pause the experiment: `POST /experiments/{id}/status` with `{ "status": "paused" }`
+2. Update the allocations via `PATCH /experiments/{id}`
+3. Reactivate: `POST /experiments/{id}/status` with `{ "status": "active" }`
+
+Note that pausing an experiment stops new assignments. Users who were already assigned keep their variation for in-flight sessions.
+
+---
+
+## Still stuck?
+
+If none of the above resolves your issue, include the following in your Beta Slack channel message:
+
+- The `experiment_id` you are working with
+- The exact API request and response (redact tokens)
+- The tenant log event JSON (if relevant)
+- What behavior you expected vs. what you observed

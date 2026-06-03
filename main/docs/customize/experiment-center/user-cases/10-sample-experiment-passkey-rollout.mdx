@@ -1,0 +1,295 @@
+---
+title: "Sample Experiment: Passkey Rollout"
+description: "End-to-end walkthrough of a gradual passkey rollout using a percentage-allocation experiment."
+---
+
+# Sample Experiment: Gradual Passkey Rollout
+
+This guide walks through a real use case: rolling out passkey enrollment prompts to 10% of users, then scaling up based on results. This is the anchor use case for the Experiment Center.
+
+## The scenario
+
+You want to introduce passkey enrollment to your users but can't flip the feature on for everyone at once. A misconfigured rollout could confuse users or increase support load. The Experiment Center lets you start with 10% of users, observe what happens in tenant logs, and expand when you are confident.
+
+## What you will build
+
+- A feature flag with a `passkey_enabled` boolean parameter
+- Two variations: control (`false`) and treatment (`true`)
+- A percentage-allocation experiment (10% treatment, 90% control)
+- A `post_login` Action that reads `event.experimentation` and conditionally prompts passkey enrollment
+
+**Time to complete:** approximately 45 minutes.
+
+## Prerequisites
+
+- EC Beta enabled on your test tenant
+- A Management API token with all four `experimentation` scopes
+- Auth0 CLI installed and authenticated
+- A `post_login` Action you can deploy
+
+---
+
+## Step 1: Create the feature flag
+
+Create a feature flag with a boolean parameter for passkey enrollment.
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "passkey-enrollment",
+    "description": "Controls whether to prompt users to enroll a passkey after login",
+    "parameters": {
+      "passkey_enabled": {
+        "type": "boolean",
+        "value": false,
+        "description": "Whether to show the passkey enrollment prompt"
+      }
+    }
+  }'
+```
+
+Note the `feature_flag_id` in the response (e.g., `flg_4Yj9nR2mKpTw8vDsXc1hBq`).
+
+---
+
+## Step 2: Create two variations
+
+### Control variation
+
+The control variation has empty overrides. Users assigned here see no passkey prompt.
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags/flg_4Yj9nR2mKpTw8vDsXc1hBq/variations" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "control",
+    "description": "No passkey prompt (baseline)",
+    "overrides": {}
+  }'
+```
+
+Note the `variation_id` (e.g., `var_2Bx5kH8pNmVj7qCsFw3gZr`).
+
+### Treatment variation
+
+The treatment variation enables the passkey prompt.
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags/flg_4Yj9nR2mKpTw8vDsXc1hBq/variations" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "treatment-passkey",
+    "description": "Shows passkey enrollment prompt after login",
+    "overrides": {
+      "passkey_enabled": { "value": true }
+    }
+  }'
+```
+
+Note the `variation_id` (e.g., `var_7Qr1sL6kMmWy9vBjPt4hEo`).
+
+---
+
+## Step 3: Activate the feature flag
+
+A feature flag must be in `active` status before its experiments can activate.
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/feature-flags/flg_4Yj9nR2mKpTw8vDsXc1hBq/status" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "active" }'
+```
+
+---
+
+## Step 4: Create the experiment
+
+Create a percentage-allocation experiment with a 10/90 split. The `subject: "device"` setting means assignment uses a device-level identifier, giving cross-session consistency for pre-authentication flows (Decision J).
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "passkey-10pct-rollout",
+    "description": "Initial 10% rollout of passkey enrollment prompt",
+    "feature_flag_id": "flg_4Yj9nR2mKpTw8vDsXc1hBq",
+    "allocation_strategy": "percentage",
+    "assignment_config": { "subject": "device" },
+    "allocations": [
+      {
+        "variation_id": "var_2Bx5kH8pNmVj7qCsFw3gZr",
+        "weight": 90,
+        "is_control": true
+      },
+      {
+        "variation_id": "var_7Qr1sL6kMmWy9vBjPt4hEo",
+        "weight": 10,
+        "is_control": false
+      }
+    ]
+  }'
+```
+
+Note the `experiment_id` (e.g., `exp_5Dt3wP8qXnYm2kRvJu6aCf`).
+
+---
+
+## Step 5: Validate and activate the experiment
+
+**Validate first:**
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_5Dt3wP8qXnYm2kRvJu6aCf/validate" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+A valid experiment returns `{ "is_valid": true, "errors": [] }`. Fix any listed errors before proceeding.
+
+**Then activate:**
+
+```bash
+curl -X POST \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/experimentation/experiments/exp_5Dt3wP8qXnYm2kRvJu6aCf/status" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "status": "active" }'
+```
+
+The experiment is now live. Auth events will include `event.experiment` metadata on every auth transaction.
+
+---
+
+## Step 6: Write the `post_login` Action
+
+This Action reads `event.experimentation` and conditionally initiates passkey enrollment for treatment users.
+
+```javascript
+// post_login Action: passkey-enrollment-prompt
+exports.onExecutePostLogin = async (event, api) => {
+  // No active experiment: nothing to do
+  const ec = event.experimentation;
+  if (!ec) return;
+
+  const passkeyEnabled = ec.config?.passkey_enabled?.value;
+  if (passkeyEnabled !== true) return;
+
+  // Treatment: prompt the user to enroll a passkey
+  // This example redirects to a custom enrollment page.
+  // Adjust to your passkey enrollment implementation.
+  api.redirect.sendUserTo("https://your-app.example.com/enroll-passkey", {
+    query: {
+      experiment_id: ec.experiment_id,
+      variation_id: ec.variation_id,
+    },
+  });
+};
+```
+
+**What this does:**
+- Control users (`passkey_enabled: false`): Action returns immediately; standard login flow continues
+- Treatment users (`passkey_enabled: true`): Action redirects to your passkey enrollment page after login
+
+The `experiment_id` and `variation_id` passed in the query string let your enrollment page record which experiment drove the enrollment event. This helps you correlate passkey enrollments with the experiment in your analytics tool.
+
+Deploy the Action to your test tenant and set it as the `post_login` trigger.
+
+---
+
+## Step 7: Trigger test logins and observe
+
+Run test logins through your test tenant. Some logins (approximately 10%) will be redirected to your passkey enrollment page; the rest will complete normally.
+
+Open your tenant logs (Auth0 Dashboard → Monitoring → Logs). Find a successful login event (`type: "s"`) and confirm it includes the `experiment` field:
+
+```json
+{
+  "type": "s",
+  "date": "2026-06-01T15:00:00.000Z",
+  "user_id": "auth0|user_xyz",
+  "experiment": {
+    "experiment_id": "exp_5Dt3wP8qXnYm2kRvJu6aCf",
+    "variation_id": "var_7Qr1sL6kMmWy9vBjPt4hEo",
+    "is_control": false,
+    "segment_id": null,
+    "config": {
+      "passkey_enabled": { "value": true }
+    }
+  }
+}
+```
+
+---
+
+## What success looks like
+
+Run enough test logins to verify both paths work:
+
+1. Approximately 10% of login events show `variation_id: var_7Qr1sL6kMmWy9vBjPt4hEo` (treatment; passkey prompt shown)
+2. Approximately 90% show `variation_id: var_2Bx5kH8pNmVj7qCsFw3gZr` (control; standard login)
+3. The same test device consistently receives the same variation across multiple logins (deterministic assignment)
+4. Treatment logins are redirected to your enrollment page; control logins complete normally
+
+---
+
+## Ramping up: moving to a higher percentage
+
+When you are ready to expand the rollout, you have two options.
+
+**Option 1: Pause and update allocations**
+
+You cannot modify allocations on an active experiment. Pause first, update the weights, then reactivate:
+
+```bash
+# Pause
+curl -X POST \
+  ".../experiments/exp_5Dt3wP8qXnYm2kRvJu6aCf/status" \
+  -d '{ "status": "paused" }'
+
+# Update allocations (e.g., 75/25 split)
+curl -X PATCH \
+  ".../experiments/exp_5Dt3wP8qXnYm2kRvJu6aCf" \
+  -d '{
+    "allocations": [
+      { "variation_id": "var_2Bx5kH8pNmVj7qCsFw3gZr", "weight": 75, "is_control": true },
+      { "variation_id": "var_7Qr1sL6kMmWy9vBjPt4hEo", "weight": 25, "is_control": false }
+    ]
+  }'
+
+# Reactivate
+curl -X POST \
+  ".../experiments/exp_5Dt3wP8qXnYm2kRvJu6aCf/status" \
+  -d '{ "status": "active" }'
+```
+
+**Option 2: Complete and create a new experiment**
+
+Complete the current experiment, create a new one at the higher percentage. Users who were in the treatment in the first experiment may or may not land in the treatment of the new one; the new experiment has a new `experiment_id` so the hash produces a different bucket assignment.
+
+:::note
+**Beta limitation:** Only one experiment can be active per tenant at a time (Decision H). You must complete or pause the current experiment before activating a new one.
+:::
+
+---
+
+## Analyzing results
+
+Pull enriched tenant log events from your analytics tool and compare outcomes across variation groups. A typical analysis:
+
+- Count `type: "s"` (successful login) events grouped by `experiment.variation_id`
+- Count passkey enrollment completion events from your enrollment page, grouped by `variation_id` passed in the query string
+- Compute passkey enrollment rate per variation: `(enrollments / logins) * 100`
+- If the treatment shows a meaningfully higher enrollment rate without a drop in login success rate, the feature is ready to roll out more broadly
+
+The Experiment Center does not provide built-in analytics at Beta. You analyze results in your own tools (Amplitude, Statsig, Snowflake, Datadog, etc.) using the enriched tenant log data.

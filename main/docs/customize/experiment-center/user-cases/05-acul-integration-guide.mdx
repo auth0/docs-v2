@@ -1,0 +1,216 @@
+---
+title: "ACUL Integration Guide"
+description: "How to read experiment context in Auth0 Custom Universal Login (ACUL) screens and branch rendering based on variation."
+---
+
+# ACUL Integration Guide
+
+This guide covers how to access experiment context inside your custom Universal Login (ACUL) screens and use it to render different UI based on the assigned variation.
+
+## How experiment context reaches your ACUL screen
+
+When an experiment is active and a variation is assigned, the Experiment Center injects an `ExperimentContext` object into your ACUL component as a prop named `experimentation`.
+
+The injection only happens on screens where you have opted in. You opt in per screen by adding `"experimentation"` to the `context_configuration` array for that screen.
+
+**Opt in via the Management API:**
+
+```bash
+curl -X PATCH \
+  "https://YOUR_TENANT.us.auth0.com/api/v2/prompts/{prompt}/screen/{screen}/rendering" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "context_configuration": ["experimentation"]
+  }'
+```
+
+Replace `{prompt}` with the prompt name (for example, `login`) and `{screen}` with the screen name (for example, `login`).
+
+:::note
+Experiment resolution and tenant log enrichment always run, regardless of whether a screen has opted in. The opt-in only controls whether `experimentation` props are passed to your ACUL component. This is a data-minimization measure: don't opt in screens that don't need experiment context.
+:::
+
+:::note
+**Flag for engineering confirmation:** The exact ACUL prop name for experiment context is `experimentation` based on the RFD's `addExperimentCenter` enhancement. Engineering should confirm this is the correct prop name in the component interface before publishing this doc. See DRAFT-NOTES.md item 17.
+:::
+
+---
+
+## The `experimentation` prop shape
+
+When a screen has opted in and an experiment is active, your ACUL component receives an `experimentation` prop with this shape:
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // The active experiment ID
+  variation_id: string;    // The assigned variation ID
+  config: {                // Merged configuration: baseline + overrides
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // True when this is the control variation
+}
+```
+
+When no experiment is active (or when the feature is not enabled for the tenant), `experimentation` is `undefined`. Always null-check before accessing properties.
+
+### What is in `config`
+
+`config` contains the complete merged configuration for the assigned variation. The Experiment Center takes the feature flag's baseline parameters and merges the assigned variation's overrides on top. Every parameter defined on the feature flag always has a value in `config`. You never need to write fallback logic.
+
+For example, if your feature flag has a parameter `button_label` with a baseline value of `"Sign in"`, and the assigned variation overrides it to `"Continue"`, then `config.button_label.value` is `"Continue"`. For the control variation (no overrides), `config.button_label.value` is `"Sign in"`.
+
+---
+
+## Reading a parameter value
+
+Access parameter values via `config[paramName].value`:
+
+```typescript
+const label = experimentation?.config?.button_label?.value;
+```
+
+Use optional chaining (`?.`) throughout. The `experimentation` prop is `undefined` when no experiment is active.
+
+---
+
+## Using `is_control`
+
+`is_control` is `true` when the user is in the control group (they received the baseline, no overrides applied). Use it when you need to track which users saw the unmodified experience, or when you want to skip optional processing for control users.
+
+```typescript
+if (!experimentation?.is_control) {
+  // Only runs for treatment users
+  trackExperimentImpression(experimentation.experiment_id, experimentation.variation_id);
+}
+```
+
+For branching rendering, prefer checking the parameter value directly (`config.my_param.value`) rather than checking `is_control`. Parameter-based checks are more readable and work correctly even when you change which variation is the statistical control in a future experiment.
+
+---
+
+## Worked example: copy variant experiment
+
+This example shows a feature flag with two variations that changes button copy. Control uses the standard label; the treatment uses an alternative.
+
+**Feature flag parameters:**
+
+```json
+{
+  "button_label": {
+    "type": "string",
+    "value": "Sign in",
+    "description": "Label for the primary login button"
+  }
+}
+```
+
+**Control variation:** empty overrides (inherits `button_label: "Sign in"`)
+
+**Treatment variation:**
+```json
+{
+  "overrides": {
+    "button_label": { "value": "Continue to your account" }
+  }
+}
+```
+
+**ACUL component reading the parameter:**
+
+```typescript
+// LoginScreen.tsx
+export default function LoginScreen({ experimentation, ...props }) {
+  // config always has a value — no fallback needed
+  const buttonLabel = experimentation?.config?.button_label?.value ?? "Sign in";
+
+  return (
+    <div>
+      <h1>Welcome back</h1>
+      <form onSubmit={props.onSubmit}>
+        <input type="email" name="email" placeholder="Email" />
+        <input type="password" name="password" placeholder="Password" />
+        <button type="submit">{buttonLabel}</button>
+      </form>
+    </div>
+  );
+}
+```
+
+The `?? "Sign in"` fallback on the last line handles the case where no experiment is active (in which case `experimentation` is `undefined` and `config?.button_label?.value` evaluates to `undefined`). If you prefer, you can use a separate null check:
+
+```typescript
+const buttonLabel = experimentation
+  ? experimentation.config.button_label.value
+  : "Sign in"; // No active experiment; use default
+```
+
+---
+
+## Worked example: boolean feature rollout
+
+This example uses a boolean parameter to conditionally show a new UI element.
+
+```typescript
+// PostLoginScreen.tsx
+export default function PostLoginScreen({ experimentation, ...props }) {
+  const showPasskeyBanner = experimentation?.config?.show_passkey_banner?.value === true;
+
+  return (
+    <div>
+      <p>You're signed in.</p>
+      {showPasskeyBanner && (
+        <div className="banner">
+          <p>Set up a passkey for faster sign-in next time.</p>
+          <button onClick={props.onEnrollPasskey}>Set up passkey</button>
+          <button onClick={props.onDismiss}>Not now</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+The `=== true` check (rather than a truthy check) is intentional: it ensures the banner only shows when the parameter is explicitly `true`, not when `experimentation` is `undefined` or `config` is missing.
+
+---
+
+## Safe defaults and null checks
+
+`experimentation` is `undefined` in three situations:
+
+1. No experiment is currently active for the tenant
+2. The screen has not opted in via `context_configuration`
+3. The Experiment Center is not enabled on the tenant
+
+Always treat `experimentation` as potentially `undefined`. The safest pattern:
+
+```typescript
+const myParam = experimentation?.config?.my_param?.value;
+// myParam is undefined when no experiment is active
+// Use a default value: myParam ?? "your-default"
+```
+
+Never assume `experimentation` is present. Code that relies on `experimentation` being defined will throw errors when no experiment is running, which is the majority of the time.
+
+---
+
+## Beta scope
+
+:::note
+**Beta limitation:** Only one experiment can be active per tenant at a time (Decision H). Your ACUL screen will receive at most one `experimentation` context object. The API shape is designed to support multiple simultaneous experiments in later releases without breaking changes to your component code.
+:::
+
+At Beta, you manage ACUL screen opt-in via the Management API (shown above). No dashboard UI is available for this configuration step.
+
+---
+
+## Summary
+
+| Task | How |
+|---|---|
+| Opt in a screen | `PATCH /v2/prompts/{prompt}/screen/{screen}/rendering` with `context_configuration: ["experimentation"]` |
+| Access the context | `experimentation` prop on the component |
+| Read a parameter | `experimentation?.config?.my_param?.value` |
+| Check for control group | `experimentation?.is_control === true` |
+| Handle no active experiment | `experimentation` is `undefined`; always null-check |

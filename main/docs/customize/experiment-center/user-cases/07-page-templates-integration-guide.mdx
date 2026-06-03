@@ -1,0 +1,204 @@
+---
+title: "Page Templates Integration Guide"
+description: "How experiment context flows through Auth0 Universal Login page templates and partials, and how to branch template rendering based on variation."
+---
+
+# Page Templates Integration Guide
+
+This guide covers how to access experiment context in Auth0 Universal Login page templates and partials, and how to render different content based on the assigned variation.
+
+## How experiment context reaches your template
+
+When an experiment is active and a variation is assigned, the Experiment Center injects experiment context into the page template rendering context automatically. Unlike ACUL screens, page templates do not require an opt-in step: experiment context is passed to all templates unconditionally when an experiment is active.
+
+The context flows through the server-side rendering pipeline:
+
+1. The Experiment Center resolver runs during the Universal Login initializer
+2. The resolved `experimentContext` is registered as a state property on the Universal Login flow
+3. The PromptsLoader copies it into the prompt context
+4. `stateToProps` includes it in the props passed to `renderLocals`
+5. Your template receives it as a local variable
+
+:::note
+**Flag for engineering confirmation:** The exact template variable name and accessor path for experiment context in page templates needs engineering confirmation. The RFD describes the mechanism (registration in `shared_state_properties.js` and passing through `stateToProps`) but does not specify the final variable name exposed in the template rendering context. See DRAFT-NOTES.md item 18 for the open question.
+:::
+
+---
+
+## Available context fields
+
+The following fields are available in the template rendering context when an experiment is active:
+
+| Variable | Type | Description |
+|---|---|---|
+| `experiment.experiment_id` | string | The active experiment ID |
+| `experiment.variation_id` | string | The assigned variation ID |
+| `experiment.config` | object | Merged configuration: baseline parameters + variation overrides |
+| `experiment.is_control` | boolean | Whether this is the control variation |
+
+When no experiment is active, `experiment` is `null` (or not present). Always null-check before using.
+
+### `experiment.config` structure
+
+`experiment.config` is a key/value map where each key is a parameter name and each value is an object with a `value` property:
+
+```
+experiment.config.my_param.value  → the parameter's value for this variation
+```
+
+Every parameter defined on the feature flag has a value in `config`. The Experiment Center merges the baseline parameters with the variation's overrides before injection, so you never need to look up the default yourself.
+
+---
+
+## Reading a parameter in a template
+
+The example below assumes EJS templating (used in Auth0's Universal Login page templates). If Auth0 uses a different templating engine for your tenant's configuration, the syntax may differ. See DRAFT-NOTES.md item 18 for the open question on template engine syntax.
+
+**EJS syntax:**
+
+```html
+<%= experiment && experiment.config.heading_text.value %>
+```
+
+With a null check:
+
+```html
+<% if (experiment) { %>
+  <h1><%= experiment.config.heading_text.value %></h1>
+<% } else { %>
+  <h1>Create your account</h1>
+<% } %>
+```
+
+---
+
+## Partials
+
+When you use partials (sub-templates included from a main template), you pass the experiment context to the partial explicitly:
+
+```html
+<%- include('partials/signup-header', { experiment: experiment }) %>
+```
+
+In the partial, the same `experiment` variable is available:
+
+```html
+<!-- partials/signup-header.ejs -->
+<header>
+  <h1>
+    <% if (experiment && experiment.config.heading_text) { %>
+      <%= experiment.config.heading_text.value %>
+    <% } else { %>
+      Create your account
+    <% } %>
+  </h1>
+</header>
+```
+
+---
+
+## Worked example: signup headline copy variant
+
+This example shows a feature flag with a string parameter that controls the signup page headline. The control variation uses "Create your account"; the treatment uses "Join in seconds."
+
+**Feature flag parameters:**
+
+```json
+{
+  "signup_headline": {
+    "type": "string",
+    "value": "Create your account",
+    "description": "Headline text on the signup screen"
+  }
+}
+```
+
+**Control variation:** empty overrides (inherits `signup_headline: "Create your account"`)
+
+**Treatment variation:**
+```json
+{
+  "overrides": {
+    "signup_headline": { "value": "Join in seconds" }
+  }
+}
+```
+
+**Template code:**
+
+```html
+<!-- signup.ejs -->
+<div class="signup-container">
+  <h1>
+    <% if (experiment) { %>
+      <%= experiment.config.signup_headline.value %>
+    <% } else { %>
+      Create your account
+    <% } %>
+  </h1>
+
+  <form action="/usernamepassword/login" method="POST">
+    <!-- form fields -->
+  </form>
+</div>
+```
+
+Users assigned to the control variation see "Create your account." Users in the treatment see "Join in seconds." Users with no active experiment also see "Create your account" (the else branch).
+
+---
+
+## Worked example: conditional UI element
+
+This example uses a boolean parameter to show or hide an additional UI element:
+
+```html
+<!-- login.ejs -->
+<% if (experiment && experiment.config.show_social_proof.value === true) { %>
+  <div class="social-proof">
+    <p>Join 2 million people who sign in with their passkey.</p>
+  </div>
+<% } %>
+
+<form action="/usernamepassword/login" method="POST">
+  <!-- form fields -->
+</form>
+```
+
+The `=== true` comparison (rather than a truthy check) prevents the element from appearing when `experiment` is `null` or when the parameter is absent.
+
+---
+
+## Safe defaults when no experiment is active
+
+When no experiment is active, `experiment` is `null` in the template context. Structure your templates to always render correctly without experiment context:
+
+```html
+<h1>
+  <%= (experiment && experiment.config.page_title && experiment.config.page_title.value)
+      || "Default page title" %>
+</h1>
+```
+
+Or use explicit if/else blocks (more readable for complex conditions):
+
+```html
+<% if (experiment && experiment.config.page_title) { %>
+  <h1><%= experiment.config.page_title.value %></h1>
+<% } else { %>
+  <h1>Default page title</h1>
+<% } %>
+```
+
+Hardcode the fallback values in your templates. They match the control variation's baseline, so your templates behave correctly both when no experiment is running and when the control variation is assigned.
+
+---
+
+## Beta scope
+
+:::note
+**Beta limitation:** Only one experiment can be active per tenant at a time (Decision H). Your templates will see at most one `experiment` context object. The structure is designed to extend to multiple experiments in later releases without breaking existing template code.
+:::
+
+:::note
+**No dashboard UI at Beta.** You manage feature flags, variations, and experiments via the Management API or Auth0 CLI. Template deployment uses your existing Auth0 custom domain / page template deployment workflow.
+:::
