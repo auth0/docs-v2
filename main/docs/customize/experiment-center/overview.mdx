@@ -1,0 +1,291 @@
+---
+title: "Experiment Center"
+description: "Learn about Auth0 Experiment Center and how to create authentication flows A/B testing."
+sidebarTitle: Overview
+---
+
+
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="Auth0 Experiment Center"
+    stage="beta"
+    terms="true"
+    contact="Auth0 Support"
+/>
+
+Auth0 Experiment Center (EC) is a native Auth0 experimentation engine. It lets you A/B test changes to your authentication experience and see the impact in your auth event logs.
+
+With EC you define your A/B test in Auth0, traffic splits deterministically, and your existing auth events come back enriched with experiment metadata so you can analyze results in your own tools.
+
+<Warning>
+Auth0 recommends to run experiments on a development tenant, not on production end-user traffic, so you can validate that the engine works correctly and that the workflow fits your team.
+</Warning>
+
+## How it works
+
+Experiment Center lets you run controlled A/B tests on your Auth0 authentication pipeline. Instead of deploying a change to every user at once, you expose a new behavior to a controlled percentage of traffic, measure the result through enriched auth events, and promote the winner when you are ready.
+
+Two entities do most of the work:
+
+    **Feature flag**: defines what you are testing and the possible outcomes
+    **Experiment**: defines how traffic is split and when the test runs
+
+## Feature flag
+
+A feature flag is the control unit for what is being tested. It contains:
+
+- A **baseline configuration**: typed parameters and their default values
+- One or more **variations**: alternative configurations that differ from the baseline
+
+Feature flags are tenant-scoped and reusable. The same flag can be referenced by multiple experiments over time (for example, a Q1 test and a Q2 refinement on the same feature).
+
+### Feature flag lifecycle
+
+Feature flags have a stored lifecycle with three states:
+
+| Status | Meaning |
+|---|---|
+| `draft` | Created but not yet active. Cannot be referenced by an active experiment. |
+| `active` | Ready for use. Required before any experiment that references this flag can activate. |
+| `archived` | Terminal. No new experiments can reference this flag. Create a new flag if needed. |
+
+Transitions happen via `POST /api/v2/experimentation/feature-flags/{id}/status`.
+
+**Activation gate:** A feature flag cannot transition to `active` until it has at least two variations. This ensures every active flag has at minimum a control and one treatment before it goes live.
+
+```
+draft → active   (requires ≥2 variations)
+draft → archived
+active → archived (terminal; no way back)
+```
+
+:::note
+`archived → active` is not allowed. If you archive a flag and need to run another test, create a new feature flag.
+:::
+
+---
+
+## Variation
+
+A variation is one possible outcome within a feature flag. It specifies which configuration parameters differ from the baseline, and by how much.
+
+- The **control variation** is the baseline; it has empty overrides (no parameters changed from the flag's defaults).
+- **Treatment variations** each specify one or more parameter overrides.
+
+Variations do not carry an `is_control` marker. Whether a variation is the statistical control for a given experiment is set on the allocation, not the variation. The same variation can be the control in one experiment and a treatment in another.
+
+### Parameters and overrides
+
+Feature flag parameters define the configuration surface for your experiment. Each parameter has:
+
+- A name (for example, `show_passkey_prompt`)
+- A type: `string`, `boolean`, `number`, `array`, or `object`
+- A default value (the baseline)
+
+A variation's `overrides` specifies only the parameters that differ. At runtime, the Experiment Center merges the flag's baseline with the variation's overrides and delivers the full merged `config` object to ACUL, Actions, and page templates. Every parameter always has a value in `config`; you never need to write fallback logic.
+
+:::note
+At Beta, parameters use **structured mode only**. Each parameter has a named key and a typed value. Free-form or string-only parameter modes are not available yet.
+:::
+
+---
+
+## Segment
+
+A segment is a named group of authentication requests that match a set of rules. You use segments in **targeted allocation** experiments to route specific traffic cohorts to specific variations.
+
+Segments are tenant-scoped and reusable across experiments.
+
+### Segment rules
+
+A segment's `rules` is an array of rule objects. A request matches the segment if **any** rule in the array matches. A rule matches if its conditions satisfy the `match_type`:
+
+- `match_type: "all"`: all conditions must be true (AND logic)
+- `match_type: "any"`: at least one condition must be true (OR logic)
+
+Each condition compares an attribute against a value using an operator: `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`, `in`, `not_in`.
+
+### Available condition attributes (Beta)
+
+Segments at Beta can only use attributes available at `/authorize` transaction start:
+
+| Category | Attributes |
+|---|---|
+| Client | `client_id` |
+| Connection | `connection`, `connection_type` |
+| Organization | `organization_id` |
+| Domain | `domain` |
+| Device and browser | `device_type`, `browser`, `platform`, `user_agent` |
+| Geographic (IP-derived) | `country`, `region` |
+
+:::note
+At Beta, you can only create your own segments (`type: self`). Auth0-managed catalog segments are an EA feature.
+:::
+
+---
+
+## Experiment
+
+An experiment is a measurement wrapper around a feature flag. It defines:
+
+- Which feature flag is being tested
+- How traffic is allocated across variations
+- When the test is running
+
+Each experiment references exactly one feature flag.
+
+### Experiment lifecycle
+
+Experiments have five states:
+
+| Status | Meaning |
+|---|---|
+| `draft` | Created but not running. Safe to test using query parameter overrides. |
+| `active` | Running. Variant assignment and context injection are live for all auth transactions. |
+| `paused` | Temporarily suspended. No new assignments. In-flight sessions keep their assigned variation. |
+| `completed` | Concluded. No new assignments. Configuration retained for reference during manual promotion. |
+| `archived` | Soft-deleted. Hidden from default list views. Analytics data retained. |
+
+All lifecycle transitions use `POST /api/v2/experimentation/experiments/{id}/status`.
+
+:::warning
+`completed → active` is not allowed. If you need to run the same test again, create a new experiment.
+:::
+
+### The `is_valid` gate
+
+Before an experiment can activate, it must pass a readiness check. The Experiment Center stores an `is_valid` boolean on every experiment and recalculates it on every write. This gives you immediate feedback during setup.
+
+You can also check readiness explicitly at any time:
+
+```bash
+POST /api/v2/experimentation/experiments/{id}/validate
+```
+
+This returns `is_valid: true/false` and an `errors` array listing every blocker. The same check runs automatically when you attempt to activate via the status endpoint.
+
+**Validation rules checked on activation:**
+
+- Referenced feature flag is in `active` status
+- At least one allocation exists
+- All allocation `variation_id` values belong to the experiment's feature flag
+- Exactly one allocation has `is_control: true`
+- Allocation weights sum to 100 (percentage strategy)
+- Exactly one allocation has `is_fallback: true` (segment strategy)
+- No other experiment is currently active for the tenant (Beta only)
+
+### Allocation strategies
+
+An experiment uses one of two allocation strategies:
+
+**Percentage-based:** Traffic is split across variations by weight. All weights must sum to 100. A weight of 0 is valid (the variation is in the experiment definition but receives no traffic).
+
+**Segment-based (targeted):** Traffic is routed to variations based on segment membership. Segments are evaluated in priority order. The first matching segment wins. If no segment matches, the `is_fallback` allocation receives the request.
+
+:::note
+**Beta limitation:** Only one experiment can be active per tenant at a time. At Beta, there is also only one authentication flow (pre-authentication, covering login and signup). Post-Beta, multiple experiments will be supported across different authentication flows.
+:::
+
+---
+
+## Assignment
+
+An assignment is how a user gets routed to a specific variation during an auth transaction.
+
+Assignments are **not stored** in a relational table. Instead, the Experiment Center uses deterministic hashing to produce consistent assignments from the same inputs. Given the same subject identifier and experiment ID, the hash always returns the same variation. This is a permanent architectural decision that allows the system to scale with Auth0's transaction volume without database writes on the hot path.
+
+### Percentage allocation: hash-based bucketing
+
+For percentage-based experiments:
+
+```
+bucket = hash(subject_identifier + experiment_id) % 100
+variation = map bucket to variation by cumulative weight
+```
+
+The subject identifier depends on the authentication flow:
+
+- **Pre-authentication flows** (login, signup before identity is known): a device-level identifier is used. The exact mechanism (cookie, fingerprint, or hybrid) is determined by engineering.
+- **Post-authentication flows**: `user_id` is used.
+
+The result: the same person on the same device always sees the same variation for the same experiment. This is intentional and expected behavior.
+
+### Segment allocation: rule evaluation
+
+For segment-based experiments, no hash is computed. The request's properties are evaluated against segment rules in priority order. Same request properties always match the same segment, producing the same variation.
+
+### Query parameter overrides
+
+You can force a specific assignment on any `/authorize` request by passing query parameters:
+
+| Parameter | Description |
+|---|---|
+| `experiment_id` | Enroll in a specific experiment |
+| `variation_id` | Force a specific variation (requires `experiment_id`) |
+| `segment_id` | Force a specific segment (requires `experiment_id`) |
+
+This works for experiments in any status, including `draft`. Use this during development to verify that both variations render correctly before activating.
+
+---
+
+## Experiment context
+
+When an experiment is active and a variation is assigned, the Experiment Center injects an `ExperimentContext` object into the runtime surfaces you have opted into:
+
+```typescript
+{
+  experiment_id: string;   // The active experiment ID
+  variation_id: string;    // The assigned variation ID
+  config: {                // Merged configuration (baseline + overrides)
+    [paramName]: { value: unknown }
+  };
+  is_control: boolean;     // True if this is the control variation
+}
+```
+
+The `config` field contains the complete merged configuration for the assigned variation. Every parameter defined on the feature flag always has a value. You do not need to write fallback logic.
+
+
+
+
+## Prerequisites
+
+Before you start, you need:
+
+* An Auth0 [Machine-to-Machine](/docs/get-started/apis/create-m2m-app-test#create-machine-to-machine-applications-for-testing) application with following [Management API](/docs/secure/tokens/access-tokens/management-api-access-tokens) scopes:
+
+    ```bash
+    `read:experimentation`
+    `create:experimentation`
+    `update:experimentation`
+    `delete:experimentation`
+    ```
+
+* Install Auth0 [CLI](https://github.com/auth0/auth0-cli).
+
+    ```bash
+    brew install auth0
+    ```
+
+* Authenticate Auth0 CLI against your development tenant:
+
+    ```bash
+    auth0 login --domain YOUR_DEVELOPMENT_TENANT.us.auth0.com
+    ```
+
+* Access to tenant logs
+
+To read enriched Auth0 tenant events, you need either:
+
+    * Review the Auth0 [**Dashboard** > **Monitoring > Logs**](https://manage.auth0.com/dashboard/#/logs) on your development tenant.
+    * If you stream tenant logs to an analytics tool, for example Datadog, Splunk, Segment, enriched experiment metadata flows through the stream automatically.
+
+
+
+## Next steps
+
+Once your tenant is provisioned, start here:
+
+1. **[Concept guide](/experiment-center/beta/concepts)** — Understand feature flags, variations, segments, and experiments before you build anything.
+2. **[First experiment tutorial](/experiment-center/beta/first-experiment)** — Walk through creating a flag, activating an experiment, and observing enriched log events end to end.
