@@ -1,75 +1,29 @@
-export const ResponseSchema = ({ statusCode, children }) => {
+export const ResponseSchema = ({ statusCode, type = "{}", children }) => {
   const [open, setOpen] = useState(false);
 
-  const isSuccess =
-    statusCode &&
-    (statusCode.startsWith("2") || statusCode === "default success");
-  const isError =
-    statusCode &&
-    (statusCode.startsWith("4") ||
-      statusCode.startsWith("5") ||
-      statusCode === "default error");
-
-  const badgeStyle = {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "2px 8px",
-    borderRadius: "4px",
-    fontSize: "12px",
-    fontWeight: 600,
-    fontFamily: "monospace",
-    backgroundColor: isSuccess
-      ? "light-dark(#dcfce7, #14532d)"
-      : isError
-        ? "light-dark(#fee2e2, #450a0a)"
-        : "light-dark(#f3f4f6, #1f2937)",
-    color: isSuccess
-      ? "light-dark(#166534, #86efac)"
-      : isError
-        ? "light-dark(#991b1b, #fca5a5)"
-        : "light-dark(#374151, #d1d5db)",
-  };
-
-  const containerStyle = {
-    border: "1px solid light-dark(#e5e7eb, #374151)",
-    borderRadius: "8px",
-    marginBottom: "12px",
-    overflow: "hidden",
-  };
-
-  const headerStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "10px 16px",
-    cursor: "pointer",
-    userSelect: "none",
-    backgroundColor: open
-      ? "light-dark(#f9fafb, #1f2937)"
-      : "transparent",
-  };
-
-  const chevronStyle = {
-    marginLeft: "auto",
-    transition: "transform 0.2s",
-    transform: open ? "rotate(180deg)" : "rotate(0deg)",
-    opacity: 0.5,
-  };
-
-  const bodyStyle = {
-    padding: "4px 16px 12px",
-    borderTop: "1px solid light-dark(#e5e7eb, #374151)",
-  };
-
   return (
-    <div style={containerStyle}>
-      <div style={headerStyle} onClick={() => setOpen(!open)}>
-        {statusCode && <span style={badgeStyle}>{statusCode}</span>}
-        <span style={{ fontSize: "13px", color: "light-dark(#6b7280, #9ca3af)" }}>
-          {open ? "Hide fields" : "Show fields"}
+    <div className="border border-gray-100 dark:border-gray-800 rounded-lg mb-3 overflow-hidden">
+      <div
+        className={`flex items-center gap-2.5 px-4 py-2.5 cursor-pointer select-none ${
+          open ? "bg-gray-50 dark:bg-gray-800" : ""
+        }`}
+        onClick={() => setOpen(!open)}
+      >
+        {statusCode && (
+          <span className="border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-mono text-xs px-1.5 py-0.5 rounded">
+            {statusCode.startsWith("default") ? "default" : statusCode}
+          </span>
+        )}
+        <span className="text-gray-500 dark:text-gray-400 text-sm font-mono">
+          {type}
+        </span>
+        <span className="text-gray-400 dark:text-gray-500 text-sm italic">
+          application/json
         </span>
         <svg
-          style={chevronStyle}
+          className={`ml-auto opacity-50 transition-transform duration-200 ${
+            open ? "rotate-180" : ""
+          }`}
           width="16"
           height="16"
           viewBox="0 0 16 16"
@@ -84,7 +38,11 @@ export const ResponseSchema = ({ statusCode, children }) => {
           />
         </svg>
       </div>
-      {open && <div style={bodyStyle}>{children}</div>}
+      {open && (
+        <div className="px-4 pt-1 pb-3 border-t border-gray-100 dark:border-gray-800">
+          {children}
+        </div>
+      )}
     </div>
   );
 };
