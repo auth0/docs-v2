@@ -19,19 +19,19 @@ export const ResponseSchema = ({ statusCode, children }) => {
     fontWeight: 600,
     fontFamily: "monospace",
     backgroundColor: isSuccess
-      ? "var(--color-success-light, #dcfce7)"
+      ? "light-dark(#dcfce7, #14532d)"
       : isError
-        ? "var(--color-error-light, #fee2e2)"
-        : "var(--color-gray-light, #f3f4f6)",
+        ? "light-dark(#fee2e2, #450a0a)"
+        : "light-dark(#f3f4f6, #1f2937)",
     color: isSuccess
-      ? "var(--color-success, #166534)"
+      ? "light-dark(#166534, #86efac)"
       : isError
-        ? "var(--color-error, #991b1b)"
-        : "var(--color-gray, #374151)",
+        ? "light-dark(#991b1b, #fca5a5)"
+        : "light-dark(#374151, #d1d5db)",
   };
 
   const containerStyle = {
-    border: "1px solid var(--border-color, #e5e7eb)",
+    border: "1px solid light-dark(#e5e7eb, #374151)",
     borderRadius: "8px",
     marginBottom: "12px",
     overflow: "hidden",
@@ -45,7 +45,7 @@ export const ResponseSchema = ({ statusCode, children }) => {
     cursor: "pointer",
     userSelect: "none",
     backgroundColor: open
-      ? "var(--bg-subtle, #f9fafb)"
+      ? "light-dark(#f9fafb, #1f2937)"
       : "transparent",
   };
 
@@ -58,14 +58,14 @@ export const ResponseSchema = ({ statusCode, children }) => {
 
   const bodyStyle = {
     padding: "4px 16px 12px",
-    borderTop: "1px solid var(--border-color, #e5e7eb)",
+    borderTop: "1px solid light-dark(#e5e7eb, #374151)",
   };
 
   return (
     <div style={containerStyle}>
       <div style={headerStyle} onClick={() => setOpen(!open)}>
         {statusCode && <span style={badgeStyle}>{statusCode}</span>}
-        <span style={{ fontSize: "13px", color: "var(--text-muted, #6b7280)" }}>
+        <span style={{ fontSize: "13px", color: "light-dark(#6b7280, #9ca3af)" }}>
           {open ? "Hide fields" : "Show fields"}
         </span>
         <svg
