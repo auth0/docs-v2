@@ -69,6 +69,23 @@ Content-Type: application/json
 }
 ```
 
+### Configure IP allowlist
+
+To restrict which IP addresses may make Privileged Worker exchange requests, configure an `ip_allowlist` on your client. This binds the client credential to known server egress IPs, so a leaked credential cannot be used from an arbitrary IP address. Both IPv4 and IPv6 addresses and CIDR ranges are supported, with a maximum of 10 entries.
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "token_vault_privileged_access": {
+    "ip_allowlist": ["<YOUR_SERVER_IP_ADDRESS>", "<YOUR_CIDR_RANGE>"]
+  }
+}
+```
+
+Once you set an `ip_allowlist`, any Privileged Worker token exchange request from an IP not in the list is rejected with `access_denied`. Requests from a client with no `ip_allowlist` configured are allowed from any IP.
+
 ## Create signed JWT subject token
 
 After [configuring your client application with the public key](#configure-client-application), you need to create the subject token that will be exchanged for an access token for an external API. The subject token is a JSON Web Token (JWT) with the necessary claims. It is signed with the private key.
@@ -79,6 +96,8 @@ The JWT has a standard format and claims, where:
 - Payload’s `sub` is the user ID for whom you want to get the token for
 - Payload’s `aud` is your tenant host
 - Payload’s `iss` is your client ID making the request
+- Payload’s `jti` is a unique identifier for this JWT (UUID v4 recommended) — required for replay protection
+- Payload’s `audit_context` is a human-readable string (1–256 characters) describing the business reason for this privileged access — required for audit trail purposes
 
 The following is an example JWT:
 
@@ -94,29 +113,39 @@ The following is an example JWT:
     iss: "<YOUR_CLIENT_ID>",
     iat: 1758799540,
     exp: 1758800540,
-    nbf: 1758799540
+    nbf: 1758799540,
+    jti: "<UNIQUE_JWT_ID>",
+    audit_context: "<REASON_FOR_ACCESS>"
 }
 ```
+
+<Callout type="warning">
+Do not include personally identifiable information (PII) in `audit_context`. This value is recorded in tenant logs and may be visible to administrators and log streaming destinations.
+</Callout>
 
 The following code sample is a script that generates a signed JWT subject token:
 
 ```tsx lines
-import * as jwt from 'jsonwebtoken';
-   const privateKey = ‘-----BEGIN RSA PRIVATE KEY-----........’;
-   const subjectToken = jwt.sign(
-     {
-       iss: CLIENT_ID,
-       aud: 'https://' + TENANT_DOMAIN + '/',
-       sub: USER_ID,
-     },
-     privateKey,
-     {
-       algorithm: 'RS256',
-       header: {
-         typ: 'token-vault-req+jwt',
-       },
-     }
-   );
+import * as jwt from ‘jsonwebtoken’;
+import { v4 as uuidv4 } from ‘uuid’;
+
+const privateKey = ‘-----BEGIN RSA PRIVATE KEY-----........’;
+const subjectToken = jwt.sign(
+  {
+    iss: CLIENT_ID,
+    aud: ‘https://’ + TENANT_DOMAIN + ‘/’,
+    sub: USER_ID,
+    jti: uuidv4(),
+    audit_context: ‘Automated nightly sync for compliance report’,
+  },
+  privateKey,
+  {
+    algorithm: ‘RS256’,
+    header: {
+      typ: ‘token-vault-req+jwt’,
+    },
+  }
+);
 ```
 
 ## Request token for external API
@@ -147,21 +176,6 @@ curl --request POST 'https://{yourDomain}/oauth/token' \
 | `requested_token_type` | The requested token type. For Privileged Worker Token Exchange, you can request an access or refresh token. |
 | `connection` | The connection name, in this case, `google-oauth2`. |
 
-You should receive the access token stored in the Token Vault. You can similarly request the refresh token for the external API:
-
-```bash lines
-curl --request POST 'https://{yourDomain}/oauth/token' \
---header 'Content-Type: application/json' \
---data '{
-  "client_id": "<YOUR_CLIENT_ID>",
-  "client_secret": "<YOUR_CLIENT_SECRET>",
-  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
-  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
-  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-refresh-token",
-  "connection": "google-oauth2"
-}'
-```
 
 
 
