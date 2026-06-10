@@ -1,14 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { lazy } from 'react';
 
-// Components (and hooks like `useCoreClient`) are exposed from the package root,
-// while `Auth0ComponentProvider` lives on the `/spa` subpath. Merge both so the
-// wrapper in `src/index.tsx` can destructure everything from a single module.
-export const mintlifyLoader = () =>
-  Promise.all([
-    import('@auth0/universal-components-react'),
-    import('@auth0/universal-components-react/spa'),
-  ]).then(([components, provider]) => ({ ...components, ...provider }));
+// Main entry exports *View components + useCoreClient but not Auth0ComponentProvider.
+// /spa entry exports Auth0ComponentProvider but not View components or useCoreClient.
+// Merge both to satisfy getWrapper's needs.
+export const mintlifyLoader = async () => {
+  const [components, provider] = await Promise.all([
+    import("@auth0/universal-components-react"),
+    import("@auth0/universal-components-react/spa"),
+  ]);
+  return { ...components, ...provider };
+};
 
 // Component key mapping
 export const componentRoutes: Record<
