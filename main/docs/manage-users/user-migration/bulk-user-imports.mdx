@@ -1,51 +1,106 @@
 ---
-description: Learn how to perform bulk user imports with the Management API.
-title: Bulk User Imports
+title: Bulk Import User Data into Auth0 Database Connections
+sidebarTitle: Bulk Import User Data
+description: Migrate users from an existing database or service to Auth0 using bulk imports for database connections.
 ---
 import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
-
 import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
 
-You can bulk import user data into Auth0 using the [Create Import Users Job](https://auth0.com/docs/api/management/v2#!/Jobs/post_users_imports) endpoint. Bulk imports are useful for migrating users from an existing database or service to Auth0.
+You can bulk import existing user data into an Auth0 database connection. This can be useful for migrating users from an existing database or service to Auth0.
 
-<Warning>
-
-If you try to use more than one migration method (for example, automatic migration then bulk user import), you may encounter a `DUPLICATED_USER` error. This error indicates that the user exists in Auth0's internal user store but not in your tenant. To correct this error, delete the user with the Auth0 Management API [Delete a Connection User](https://auth0.com/docs/api/management/v2#!/Connections/delete_users_by_email) endpoint and then re-attempt the import.
-
-</Warning>
+To bulk import user data, you first create a user data file in the JSON format Auth0 expects and then start a job to import that data using the Dashboard or the Management API.
 
 ## Prerequisites
 
-Before you launch the import users job:
+<Tabs>
+<Tab title="Auth0 Dashboard">
+* You must have a [database connection](/docs/authenticate/database-connections) to import the user data into, which can be either:
+    * A database connection using the Auth0 user store.
+    * A [custom database connection](/docs/authenticate/database-connections/custom-db) using your external user store with import mode on.
 
-* Configure a database connection to import the users into and enable it for at least one application.
-* If you are importing passwords, make sure the passwords are hashed using one of the supported algorithms. Users with passwords hashed by unsupported algorithms will need to reset their password when they log in for the first time after the bulk import.
-* If you are importing <Tooltip tip="Multi-factor authentication (MFA): User authentication process that uses a factor in addition to username and password such as a code via SMS." cta="View Glossary" href="/docs/glossary?term=MFA">MFA</Tooltip> enrollments, make sure they are a supported type: `email`, `phone`, or `totp`.
-* [Get a Management API token](/docs/secure/tokens/access-tokens/management-api-access-tokens) for job endpoint requests.
+* You must have one of the following [tenant member roles](/docs/get-started/manage-dashboard-access/feature-access-by-role):
+    * **Admin**
+    * **Editor - Users**
+</Tab>
 
-<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+<Tab title="Management API">
+* You must have a [database connection](/docs/authenticate/database-connections) to import the user data into, which can be either:
+    * A database connection using the Auth0 user store.
+    * A [custom database connection](/docs/authenticate/database-connections/custom-db) using your external user store with import mode on.
 
-If you are using an export file from an Auth0 tenant, you must convert the exported file from `ndjson` to [JSON](/docs/manage-users/user-migration/bulk-user-exports#json-compatible-format). To keep the same user IDs, you must remove the `auth0| prefix` from all imported user IDs.
+* You must have or create a [Management API token](/docs/secure/tokens/access-tokens/management-api-access-tokens) for job endpoint requests with the necessary scopes for the [Create import users job endpoint](/docs/api/management/v2/jobs/post-users-imports).
+</Tab>
+</Tabs>
 
-The import process automatically adds the `auth0| prefix` to the imported user IDs. If you do not remove the `auth0|` prefix before importing, the user IDs return as `auth0|auth0|...`
+## 1. Create the user data file
 
-</Callout>
+First, format your existing user data into JSON for import into Auth0 following the structure defined in the [user data JSON schema and property reference](/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples).
 
-## Create users JSON file
+The following considerations may be helpful as you create the user data file:
 
-Create a JSON file with the user data you want to import into Auth0. How you export user data to a JSON file will vary depending on your existing user database. The <Tooltip tip="Management API: A product to allow customers to perform administrative tasks." cta="View Glossary" href="/docs/glossary?term=Management+API">Management API</Tooltip> endpoint expects sections of the JSON file. So instead of using `fs.readFileSync`, it requires `fs.createReadStream`. The endpoint expects a piped read stream instead of the whole JSON file.
+* The file size limit for a bulk import is 500KB. If your data exceeds this limit, you need to divide your user data into multiple smaller files to upload across multiple jobs.
 
-To learn more about the JSON file schema and see examples, read [Bulk Import Database Schema and Examples](/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples).
+    As a guideline, approximately 1,000 users with fewer than 10 metadata fields per user is typically under the file size limit.
 
-<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+* If you're starting with an [Auth0 user data export](/docs/manage-users/user-migration/bulk-user-exports):
 
-The file size limit for a bulk import is 500KB. You will need to start multiple imports if your data exceeds this size.
+    * Bulk imports support JSON format, but user exports generated by Auth0 are in [NDJSON](https://github.com/ndjson/ndjson-spec) format. You can convert from NDJSON to JSON using tools like [`jq`](https://jqlang.org/).
 
-</Callout>
+    * Bulk imports automatically add the `auth0|` prefix to imported user IDs, but user exports generated by Auth0 already have the `auth0|` prefix on user IDs.
 
-## Request bulk user import
+    To keep the same user IDs, remove the `auth0|` prefix from all imported user IDs. Otherwise, the user IDs will have the prefix twice (`auth0|auth0|<user_id>`).
 
-To start a bulk user import job, make a `POST` request to the [Create Import Users Job](https://auth0.com/docs/api/management/v2#!/Jobs/post_users_imports) endpoint. Be sure to replace the `MGMT_API_ACCESS_TOKEN`, `USERS_IMPORT_FILE.json`, `CONNECTION_ID`, and `EXTERNAL_ID` placeholder values with your Management API <Tooltip tip="Access Token: Authorization credential, in the form of an opaque string or JWT, used to access an API." cta="View Glossary" href="/docs/glossary?term=Access+Token">Access Token</Tooltip>, users JSON file, database [connection ID](/docs/authenticate/identity-providers/locate-the-connection-id), and external ID, respectively.
+* You can import user data with passwords hashed by a [supported algorithm](./bulk-user-import-schema#param-algorithm). Users with passwords hashed by unsupported algorithms must reset their password when they log in for the first time after the bulk import.
+
+    If a user did not log in with the `custom_password_hash` you imported initially, you can update it by resubmitting the user data with a different value for `custom_password_hash` in a new job with upserts enabled.
+
+## 2. Import the user data into your database connection
+
+<Tabs>
+<Tab title="Auth0 Dashboard">
+To import user data using the Auth0 Dashboard:
+
+1. Go to [**Dashboard > User Management > Users**](https://manage.auth0.com/#/users).
+
+2. In the top right corner of the page, select **Import/Export Users** to go to the **Import/Export Users** page.
+
+3. Select **Import Users** to go to the **Import Users** page.
+
+    <Frame>![](/docs/images/cdy7uua7fh8z/KrknYhAUOaYBzzBrgHp4M/b2389f5926122a306eab10e54b917da6/import.png)</Frame>
+
+4. Under **Users JSON file**, select **+ Choose File** and upload the user data JSON file.
+
+5. Under **Connection**, open the drop-down menu and select the database connection where you want to import the user data.
+
+6. Optionally, check **Upsert pre-existing users in connection**. When an imported user matches an existing user in the database connection, you can choose whether or not to upsert the data:
+
+    * By default, upserts are disabled. Imports of users that match on email address, user ID, phone, or username fail.
+
+    * With upserts enabled, imports of users matching on email address update all [upsertable attributes](/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples).
+
+7. Optionally, check **Send completion email to all tenant owners**. When enabled, this sends a completion email to all tenant administrators when the job succeeds or fails.
+
+8. To submit the job, select **Import Users**.
+</Tab>
+
+<Tab title="Management API">
+To import user data using the Management API, call the [Create Import Users Job endpoint](/docs/api/management/v2/jobs/post-users-imports) (`POST /jobs/users-imports`). View the endpoint documentation for details about the body parameters and response schemas.
+
+To use the examples below:
+
+* Replace the placeholder variables `MGMT_API_ACCESS_TOKEN`, `USERS_IMPORT_FILE.json`, `CONNECTION_ID`, and `EXTERNAL_ID` with your own values.
+
+    <Tip>
+    You can [view the database connection's ID in the Dashboard](/docs/authenticate/identity-providers/locate-the-connection-id) or get it with the Management API's [Get all connections endpoint](/docs/api/management/v2/connections/get-connections).
+    </Tip>
+
+* Optionally, set `upsert`. When an imported user matches an existing user in the database connection, you can choose whether or not to upsert the data:
+
+    * By default, upserts are disabled. Imports of users that match on email address, user ID, phone, or username fail.
+
+    * With `upsert` enabled, imports of users matching on email address update all [upsertable attributes](/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples).
+
+* Optionally, set `send_completion_email to send a completion email to all tenant administrators when the job succeeds or fails.
 
 <AuthCodeGroup>
 ```bash cURL
@@ -288,468 +343,81 @@ puts response.read_body
 ```
 </AuthCodeGroup>
 
-| Parameter | Description |
-| --- | --- |
-| `users` | File in JSON format that contains the users to import. |
-| `connection_id` | ID of the connection to which users will be inserted. You can retrieve the ID using the [GET /api/v2/connections](https://auth0.com/docs/api/management/v2#!/Connections/get_connections) endpoint. |
-| `upsert` | Boolean value; `false` by default. When set to `false`, pre-existing users that match on email address, user ID, phone, or username will fail. When set to true, pre-existing users that match on email address will be updated, but only with upsertable attributes. For a list of user profile fields that can be upserted during import, see [User Profile Structure: User profile attributes](/docs/manage-users/user-accounts/user-profiles/user-profile-structure#user-profile-attributes). Note: Providing a duplicated user entry in the import file will cause an error. In this case, Auth0 will not do an insert followed by an update. |
-| `external_id` | Optional user-defined string that can be used to correlate multiple jobs. Returned as part of the job status response. |
-| `send_completion_email` | Boolean value; `true` by default. When set to `true`, sends a completion email to all tenant owners when the import job is finished. If you do *not* want emails sent, you must explicitly set this parameter to `false`. |
-
-If the request is successful, you'll receive a response similar to the following:
-
-```json lines
-{
-  "status": "pending",
-  "type": "users_import",
-  "created_at": "",
-  "id": "job_abc123",
-  "connection_id": "CONNECTION_ID",
-  "upsert": false,
-  "external_id": "EXTERNAL_ID",
-  "send_completion_email": true
-}
-```
-
-The returned entity represents the import job.
-
-When the user import job finishes and if `send_completion_email` was set to `true`, the tenant administrator(s) will get an email notifying them that job either failed or succeeded. An email for a job that failed might notify the administrator(s) that it failed to parse the users JSON file when importing users.
-
-### Concurrent import jobs
-
-The [Create Import Users Job](https://auth0.com/docs/api/management/v2#!/Jobs/post_users_imports) endpoint has a limit of two concurrent import jobs. Requesting additional jobs while there are two pending returns a `429 Too Many Requests` response:
-
-```json lines
-{
-  "statusCode": 429,
-  "error": "Too Many Requests",
-  "message": "There are 2 active import users jobs, please wait until some of them are finished and try again
-}
-```
-
-## Check job status
-
-To check a job's status, make a `GET` request to the [Get a Job](https://auth0.com/docs/api/management/v2#!/Jobs/get_jobs_by_id) endpoint. Be sure to replace the `MGMT_API_ACCESS_TOKEN` and `JOB_ID` placeholder values with your Management API Access Token and user import job ID.
-
-<AuthCodeGroup>
-```bash cURL
-curl --request GET \
-  --url 'https://{yourDomain}/api/v2/jobs/JOB_ID' \
-  --header 'authorization: Bearer MGMT_API_ACCESS_TOKEN' \
-  --header 'content-type: application/json'
-```
-```csharp C#
-var client = new RestClient("https://{yourDomain}/api/v2/jobs/JOB_ID");
-var request = new RestRequest(Method.GET);
-request.AddHeader("content-type", "application/json");
-request.AddHeader("authorization", "Bearer MGMT_API_ACCESS_TOKEN");
-IRestResponse response = client.Execute(request);
-```
-```go Go
-package main
-
-import (
-	"fmt"
-	"net/http"
-	"io/ioutil"
-)
-
-func main() {
-
-	url := "https://{yourDomain}/api/v2/jobs/JOB_ID"
-
-	req, _ := http.NewRequest("GET", url, nil)
-
-	req.Header.Add("content-type", "application/json")
-	req.Header.Add("authorization", "Bearer MGMT_API_ACCESS_TOKEN")
-
-	res, _ := http.DefaultClient.Do(req)
-
-	defer res.Body.Close()
-	body, _ := ioutil.ReadAll(res.Body)
-
-	fmt.Println(res)
-	fmt.Println(string(body))
-
-}
-```
-```java Java
-HttpResponse<String> response = Unirest.get("https://{yourDomain}/api/v2/jobs/JOB_ID")
-  .header("content-type", "application/json")
-  .header("authorization", "Bearer MGMT_API_ACCESS_TOKEN")
-  .asString();
-```
-```javascript Node.JS
-var axios = require("axios").default;
-
-var options = {
-  method: 'GET',
-  url: 'https://{yourDomain}/api/v2/jobs/JOB_ID',
-  headers: {
-    'content-type': 'application/json',
-    authorization: 'Bearer MGMT_API_ACCESS_TOKEN'
-  }
-};
-
-axios.request(options).then(function (response) {
-  console.log(response.data);
-}).catch(function (error) {
-  console.error(error);
-});
-```
-```php PHP
-$curl = curl_init();
-
-curl_setopt_array($curl, [
-  CURLOPT_URL => "https://{yourDomain}/api/v2/jobs/JOB_ID",
-  CURLOPT_RETURNTRANSFER => true,
-  CURLOPT_ENCODING => "",
-  CURLOPT_MAXREDIRS => 10,
-  CURLOPT_TIMEOUT => 30,
-  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-  CURLOPT_CUSTOMREQUEST => "GET",
-  CURLOPT_HTTPHEADER => [
-    "authorization: Bearer MGMT_API_ACCESS_TOKEN",
-    "content-type: application/json"
-  ],
-]);
-
-$response = curl_exec($curl);
-$err = curl_error($curl);
-
-curl_close($curl);
-
-if ($err) {
-  echo "cURL Error #:" . $err;
-} else {
-  echo $response;
-}
-```
-```python Python
-import http.client
-
-conn = http.client.HTTPSConnection("")
-
-headers = {
-    'content-type': "application/json",
-    'authorization': "Bearer MGMT_API_ACCESS_TOKEN"
-    }
-
-conn.request("GET", "/{yourDomain}/api/v2/jobs/JOB_ID", headers=headers)
-
-res = conn.getresponse()
-data = res.read()
-
-print(data.decode("utf-8"))
-```
-```ruby Ruby
-require 'uri'
-require 'net/http'
-require 'openssl'
-
-url = URI("https://{yourDomain}/api/v2/jobs/JOB_ID")
-
-http = Net::HTTP.new(url.host, url.port)
-http.use_ssl = true
-http.verify_mode = OpenSSL::SSL::VERIFY_NONE
-
-request = Net::HTTP::Get.new(url)
-request["content-type"] = 'application/json'
-request["authorization"] = 'Bearer MGMT_API_ACCESS_TOKEN'
-
-response = http.request(request)
-puts response.read_body
-```
-</AuthCodeGroup>
-
-Depending on the status of the user import job, you'll receive a response similar to one of the following:
-
-**Pending**
-
-```json lines
-{
-  "status": "pending",
-  "type": "users_import",
-  "created_at": "",
-  "id": "job_abc123",
-  "connection_id": "CONNECTION_ID",
-  "external_id": "EXTERNAL_ID"
-}
-```
-
-**Completed**
-
-If a job is completed, the job status response will include totals of successful, failed, inserted, and updated records.
-
-```json lines
-{
-  "status": "completed",
-  "type": "users_import",
-  "created_at": "",
-  "id": "job_abc123",
-  "connection_id": "CONNECTION_ID",
-  "external_id": "EXTERNAL_ID",
-  "summary": {
-    "failed": 0,
-    "updated": 0,
-    "inserted": 1,
-    "total": 1
-  }
-}
-```
-
-**Failed**
-
-If there is an error in the job, it will return as failed. However, note that invalid user information, such as an invalid email, will not make the entire job fail.
-
-```json lines
-{
-  "status": "failed",
-  "type": "users_import",
-  "created_at": "",
-  "id": "job_abc123",
-  "connection_id": "CONNECTION_ID",
-  "external_id": "EXTERNAL_ID",
-}
-```
-
-To learn details for failed entries see **Retrieve failed entries** below.
-
-## Job timeouts
-
-All user import jobs timeout after **two (2) hours**. If your job does not complete within this time frame, it is marked as failed.
-
-Furthermore, all of your job-related data is automatically deleted after 24 hours and cannot be accessed afterward. As such, **we strongly recommend storing job results using the storage mechanism of your choice**.
-
-## Retrieve failed entries
-
-<Warning>
-
-All of the job-related data is automatically deleted after 24 hours and cannot be accessed thereafter. Because of this, we strongly recommend storing the job results using the storage mechanism of your choice.
-
-</Warning>
-
-If there were errors in the user import job, you can get the error details by making a `GET` request to the [Get Job Error Details](https://auth0.com/docs/api/management/v2#!/Jobs/get_errors) endpoint. Be sure to replace the `MGMT_API_ACCESS_TOKEN` and `JOB_ID` placeholder values with your Management API Access Token and user import job ID.
-
-<AuthCodeGroup>
-```bash cURL
-curl --request GET \
-  --url 'https://{yourDomain}/api/v2/jobs/JOB_ID/errors' \
-  --header 'authorization: Bearer MGMT_API_ACCESS_TOKEN' \
-  --header 'content-type: application/json'
-```
-```csharp C#
-var client = new RestClient("https://{yourDomain}/api/v2/jobs/JOB_ID/errors");
-var request = new RestRequest(Method.GET);
-request.AddHeader("content-type", "application/json");
-request.AddHeader("authorization", "Bearer MGMT_API_ACCESS_TOKEN");
-IRestResponse response = client.Execute(request);
-```
-```go Go
-package main
-
-import (
-	"fmt"
-	"net/http"
-	"io/ioutil"
-)
-
-func main() {
-
-	url := "https://{yourDomain}/api/v2/jobs/JOB_ID/errors"
-
-	req, _ := http.NewRequest("GET", url, nil)
-
-	req.Header.Add("content-type", "application/json")
-	req.Header.Add("authorization", "Bearer MGMT_API_ACCESS_TOKEN")
-
-	res, _ := http.DefaultClient.Do(req)
-
-	defer res.Body.Close()
-	body, _ := ioutil.ReadAll(res.Body)
-
-	fmt.Println(res)
-	fmt.Println(string(body))
-
-}
-```
-```java Java
-HttpResponse<String> response = Unirest.get("https://{yourDomain}/api/v2/jobs/JOB_ID/errors")
-  .header("content-type", "application/json")
-  .header("authorization", "Bearer MGMT_API_ACCESS_TOKEN")
-  .asString();
-```
-```javascript Node.JS
-var axios = require("axios").default;
-
-var options = {
-  method: 'GET',
-  url: 'https://{yourDomain}/api/v2/jobs/JOB_ID/errors',
-  headers: {
-    'content-type': 'application/json',
-    authorization: 'Bearer MGMT_API_ACCESS_TOKEN'
-  }
-};
-
-axios.request(options).then(function (response) {
-  console.log(response.data);
-}).catch(function (error) {
-  console.error(error);
-});
-```
-```php PHP
-$curl = curl_init();
-
-curl_setopt_array($curl, [
-  CURLOPT_URL => "https://{yourDomain}/api/v2/jobs/JOB_ID/errors",
-  CURLOPT_RETURNTRANSFER => true,
-  CURLOPT_ENCODING => "",
-  CURLOPT_MAXREDIRS => 10,
-  CURLOPT_TIMEOUT => 30,
-  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-  CURLOPT_CUSTOMREQUEST => "GET",
-  CURLOPT_HTTPHEADER => [
-    "authorization: Bearer MGMT_API_ACCESS_TOKEN",
-    "content-type: application/json"
-  ],
-]);
-
-$response = curl_exec($curl);
-$err = curl_error($curl);
-
-curl_close($curl);
-
-if ($err) {
-  echo "cURL Error #:" . $err;
-} else {
-  echo $response;
-}
-```
-```python Python
-import http.client
-
-conn = http.client.HTTPSConnection("")
-
-headers = {
-    'content-type': "application/json",
-    'authorization': "Bearer MGMT_API_ACCESS_TOKEN"
-    }
-
-conn.request("GET", "/{yourDomain}/api/v2/jobs/JOB_ID/errors", headers=headers)
-
-res = conn.getresponse()
-data = res.read()
-
-print(data.decode("utf-8"))
-```
-```ruby Ruby
-require 'uri'
-require 'net/http'
-require 'openssl'
-
-url = URI("https://{yourDomain}/api/v2/jobs/JOB_ID/errors")
-
-http = Net::HTTP.new(url.host, url.port)
-http.use_ssl = true
-http.verify_mode = OpenSSL::SSL::VERIFY_NONE
-
-request = Net::HTTP::Get.new(url)
-request["content-type"] = 'application/json'
-request["authorization"] = 'Bearer MGMT_API_ACCESS_TOKEN'
-
-response = http.request(request)
-puts response.read_body
-```
-</AuthCodeGroup>
-
-If the request is successful, you'll receive a response similar to the following. Sensitive fields such as `hash.value` will be redacted in the response.
-
-```json lines
-[
-    {
-        "user": {
-            "email": "test@test.io",
-            "user_id": "7af4c65cb0ac6e162f081822422a9dde",
-            "custom_password_hash": {
-                "algorithm": "ldap",
-                "hash": {
-                    "value": "*****"
-                }
-            }
-        },
-        "errors": [
-            {
-                "code": "...",
-                "message": "...",
-                "path": "..."
-            }
-        ]
-    }
-]
-```
-
-Each error object will include an error code and a message explaining the error in more detail. The possible error codes are:
-
-* ANY_OF_MISSING
-* ARRAY_LENGTH_LONG
-* ARRAY_LENGTH_SHORT
-* CONFLICT
-* CONFLICT_EMAIL
-* CONFLICT_USERNAME
-* CONNECTION_NOT_FOUND
-* DUPLICATED_USER
-* ENUM_MISMATCH
-* FORMAT
-* INVALID_TYPE
-* MAX_LENGTH
-* MAXIMUM
-* MFA_FACTORS_FAILED
-* MIN_LENGTH
-* MINIMUM
-* NOT_PASSED
-* OBJECT_REQUIRED
-* PATTERN
+When you successfully create a job, the return value includes information about the job, including the job ID.
+</Tab>
+</Tabs>
+
+## 3. Check job status
+
+<Tabs>
+
+<Tab title="Auth0 Dashboard">
+To check the status of a job:
+
+1. Go to [**Dashboard > User Management > Users**](https://manage.auth0.com/#/users).
+
+2. In the top right corner of the page, select **Import/Export Users** to go to the **Import/Export Users** page. Once you start at least one job, this page lists your submitted jobs.
+
+3. To view more information about a job, select **More info** next to any job.
+
+Job statuses include **Job creation failed**, **Job created, user import failed**, and **Job created, user import succeeded**.
+</Tab>
+
+<Tab title="Management API">
+To check the status of a job, call the [Get a job endpoint](/docs/api/management/v2/jobs/get-jobs-by-id) (`GET /jobs`) with the ID of the job. View the endpoint documentation for details about endpoint parameters and response schemas.
+
+The `status` of the returned job can be `pending`, `completed`, or `failed`. If the job completed, the response's `summary` object includes totals of successful, failed, inserted, and updated records.
+
+If a job fails, you can get the error details by calling the [Get job error details endpoint](https://auth0.com/docs/api/management/v2#!/Jobs/get_errors) (`GET /jobs/{id}/errors`) with the ID of the job. Each error object in the response includes an error code and a message explaining the error in more detail. The possible error codes are:
+
+* `ANY_OF_MISSING`
+* `ARRAY_LENGTH_LONG`
+* `ARRAY_LENGTH_SHORT`
+* `CONFLICT`
+* `CONFLICT_EMAIL`
+* `CONFLICT_USERNAME`
+* `CONNECTION_NOT_FOUND`
+* `DUPLICATED_USER`
+* `ENUM_MISMATCH`
+* `FORMAT`
+* `INVALID_TYPE`
+* `MAX_LENGTH`
+* `MAXIMUM`
+* `MFA_FACTORS_FAILED`
+* `MIN_LENGTH`
+* `MINIMUM`
+* `NOT_PASSED`
+* `OBJECT_REQUIRED`
+* `PATTERN`
+</Tab>
+</Tabs>
+
+Jobs fail if there is an error, but not if there is invalid user information (like an invalid email).
+
+## Limits
+
+* There is a limit of two concurrent import jobs per tenant.
+
+* User import jobs time out after two (2) hours. If a job does not complete within this time frame, it is marked as failed.
+
+* All job-related data is automatically deleted after 24 hours.
+
+* Duplicated user entries in the import file cause an error. They do not cause an import followed by an upsert.
+
+* Upserts do not merge `user_metadata` or `app_metadata`. The existing metadata is completely overwritten with the new metadata.
 
 ## Best practices for large-scale migrations
 
-When importing large user populations (requiring 10 or more jobs), follow these recommendations to ensure a successful migration:
+When importing large quantities of user data (requiring 10 or more jobs), we recommend the following strategies:
 
-### File size and chunking
+* **Use a job scheduler framework** (such as [Bull](https://github.com/OptimalBits/bull) or [Agenda](https://github.com/agenda/agenda)). This lets you:
 
-Split user records into small chunks of less than 400KB per file. This allows for approximately 1,000 users per job with fewer than 10 metadata fields per user, while staying well under the 500KB file size limit.
+    * Enforce the required concurrency limit.
 
-### Job scheduling and concurrency
+    * Include a retry strategy to handle network connection drops and temporary failures.
 
-Since Auth0 restricts user imports to two concurrent jobs per tenant, use a job scheduler framework (such as [Bull](https://github.com/OptimalBits/bull) or [Agenda](https://github.com/agenda/agenda)) to:
+    * Store job results and error details beyond the deletion window.
 
-- Schedule import jobs systematically
-- Enforce the required concurrency limit
-- Track import progress to restart where you left off if interrupted
-- Maintain job history and current statuses
+* **Don't interrupt imports on single user failures.**  Instead, implement a "finalizer" job that reviews all spawned jobs and collects failed records into a new file. Fix any errors in the collected failed records and import them as a new job.
 
-### Error handling strategy
-
-- Do not interrupt the import process on single user failures. Import all users and handle issues afterward.
-- Implement a "finalizer" job that reviews all spawned jobs and collects failed records into a new file.
-- Fix any errors in the collected failed records and import them as a new job.
-- Include a retry strategy to handle network connection drops and temporary failures.
-
-### Upsert mode considerations
-
-Use caution when enabling `upsert` mode:
-
-- Imports with upsert are slower than standard imports.
-- Upsert mode does not support merging of `user_metadata` or `app_metadata`. The existing metadata will be completely overwritten with new values.
-- Only use upsert mode when you need to update existing users and understand these limitations.
-
-### Data retention
-
-Remember that all job-related data is automatically deleted after 24 hours. Store job results and error details using your own storage mechanism for long-term tracking and analysis.
-
-
-## Learn more
-
-* [Configure Automatic Migration from Your Database](/docs/manage-users/user-migration/configure-automatic-migration-from-your-database)
-* [User Import / Export Extension](/docs/manage-users/user-migration/user-import-export-extension)
-* [Bulk User Import Database Schema and Examples](/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples)
-* [User Migration Scenarios](/docs/manage-users/user-migration/user-migration-scenarios)
+* **Use caution when enabling `upsert` mode.** Imports with upsert are slower than standard imports and do not merge metadata. Use upsert mode when you need to update existing users and understand these limitations.
