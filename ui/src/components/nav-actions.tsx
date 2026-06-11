@@ -26,8 +26,9 @@ const NavActions = observer(({ className }: { className?: string }) => {
       const { right } = referenceDiv.getBoundingClientRect();
 
       if (wrapperRef.current) {
-        const iconsWidth = isLgUp ? 30 + 16 : -8; // icon width + margin
-        wrapperRef.current.style.right = `${window.innerWidth - right + iconsWidth}px`;
+        const iconsWidth = isLgUp ? 30 + 16 : -8; // icon width + margin`
+        const mobileAuthSpacing = user && !isLgUp ? 100 : 0;
+        wrapperRef.current.style.right = `${window.innerWidth - right + iconsWidth + mobileAuthSpacing}px`;
       }
     };
 

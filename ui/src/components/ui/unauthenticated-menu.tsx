@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react';
+
 import { MoreVertical } from 'lucide-react';
 
 import { useBreakpoint } from '@/hooks/media-query';
@@ -13,68 +15,90 @@ import {
 
 const UnauthenticatedMenu = () => {
   const isLgUp = useBreakpoint('lg');
+  const [isIntersecting, setIsIntersecting] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const prevIsIntersecting = useRef(false);
 
-  if (isLgUp) {
-    return (
-      <>
-        <Button className='adu:text-sm!' variant="ghost" onClick={() => userLogin(window.location.href)}>
-          Log In
-        </Button>
-        <Button
-          className="no_external_icon adu:text-foreground-inverse!"
-          variant="default"
-          asChild
-        >
-          <a href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D">
-            Sign Up
-          </a>
-        </Button>
-        <Button
-          className="no_external_icon adu:adu:border-border-muted! adu:border!"
-          variant="outline"
-          asChild
-        >
-          <a href="https://auth0.com/get-started?place=header&type=button&text=talk%20to%20sales">
-            Let's Connect
-          </a>
-        </Button>
-      </>
-    );
-  }
+  useEffect(() => {
+    const checkOverlap = () => {
+      const target = document.getElementById('assistant-entry')?.parentElement;
+      if (!target || !ref.current) return;
+      const targetRight = target.getBoundingClientRect().right;
+      const refLeft = ref.current.getBoundingClientRect().left;
+      const areTheyIntersecting = refLeft <= targetRight;
+      if (areTheyIntersecting !== prevIsIntersecting.current) {
+        prevIsIntersecting.current = areTheyIntersecting;
+        setIsIntersecting(areTheyIntersecting);
+        console.log('isIntersecting set to', areTheyIntersecting);
+      }
+    };
+
+    checkOverlap();
+    window.addEventListener('resize', checkOverlap);
+    return () => window.removeEventListener('resize', checkOverlap);
+  }, []);
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="adu:h-8 adu:w-8 adu:p-0">
-          <MoreVertical className="adu:h-4 adu:w-4" />
-          <span className="adu:sr-only">Open menu</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="adu:w-48">
-        <DropdownMenuItem
-          className="adu:text-foreground-bold"
-          onClick={() => userLogin(window.location.href)}
-        >
-          Log In
-        </DropdownMenuItem>
-        <DropdownMenuItem className="adu:text-foreground-bold" asChild>
-          <a
-            className="no_external_icon"
-            href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D"
+    <div ref={ref} className='adu:flex adu:gap-3'>
+      {isLgUp && !isIntersecting ? (
+        <>
+          <Button className='adu:text-sm!' variant="ghost" onClick={() => userLogin(window.location.href)}>
+            Log In
+          </Button>
+          <Button
+            className="no_external_icon adu:text-foreground-inverse!"
+            variant="default"
+            asChild
           >
-            Sign Up
-          </a>
-        </DropdownMenuItem>
-        <DropdownMenuItem className="adu:text-foreground-bold" asChild>
-          <a
-            className="no_external_icon"
-            href="https://auth0.com/get-started?place=header&type=button&text=talk%20to%20sales"
+            <a href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D">
+              Sign Up
+            </a>
+          </Button>
+          <Button
+            className="no_external_icon adu:adu:border-border-muted! adu:border!"
+            variant="outline"
+            asChild
           >
-            Let's Connect
-          </a>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+            <a href="https://auth0.com/get-started?place=header&type=button&text=talk%20to%20sales">
+              Let's Connect
+            </a>
+          </Button>
+        </>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="adu:h-8 adu:w-8 adu:p-0">
+              <MoreVertical className="adu:h-4 adu:w-4" />
+              <span className="adu:sr-only">Open menu</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="adu:w-48">
+            <DropdownMenuItem
+              className="adu:text-foreground-bold"
+              onClick={() => userLogin(window.location.href)}
+            >
+              Log In
+            </DropdownMenuItem>
+            <DropdownMenuItem className="adu:text-foreground-bold" asChild>
+              <a
+                className="no_external_icon"
+                href="https://auth0.com/signup?&signUpData=%7B%22category%22%3A%22docs%22%7D"
+              >
+                Sign Up
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="adu:text-foreground-bold" asChild>
+              <a
+                className="no_external_icon"
+                href="https://auth0.com/get-started?place=header&type=button&text=talk%20to%20sales"
+              >
+                Let's Connect
+              </a>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
   );
 };
 
