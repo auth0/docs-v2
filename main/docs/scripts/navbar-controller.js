@@ -73,10 +73,15 @@ class NavbarController {
   }
 }
 
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
+if (document.readyState !== 'loading') {
+  // DOMContentLoaded already fired, so just initialize the controller
   window.navbarController = new NavbarController();
-});
+} else {
+  // Otherwise wait for DOM content to load
+  document.addEventListener('DOMContentLoaded', () => {
+    window.navbarController = new NavbarController();
+  });
+}
 
 // Also expose for manual control
 window.NavbarController = NavbarController;
