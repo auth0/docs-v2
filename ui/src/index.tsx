@@ -9,6 +9,7 @@ import { overrideHistoryMethods } from '@/lib/history';
 import { initOneTrust } from '@/lib/one-trust';
 import { initSentry } from '@/lib/sentry';
 import { initRootStore } from '@/stores';
+import { addResizeObserver } from '@/lib/resize-observer';
 
 function mountApp(root: HTMLElement) {
   createRoot(root).render(
@@ -43,6 +44,9 @@ async function main() {
 
   // Initialize feedback listeners for Mintlify documentation pages
   initFeedbackListeners();
+
+  // Adds resize observer for AI assistant chat window
+  addResizeObserver();
 
   // Mount the main application
   mountApp(root);

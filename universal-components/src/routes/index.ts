@@ -3,7 +3,7 @@ import { lazy } from "react";
 
 // Single import for all components
 export const mintlifyLoader = () =>
-  import("@auth0/universal-components-react/spa");
+  import("@auth0/universal-components-react");
 
 // Component key mapping
 export const componentRoutes: Record<
