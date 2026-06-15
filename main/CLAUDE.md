@@ -250,6 +250,52 @@ Link to glossary terms using Tooltip components rather than plain links for bett
 <Tooltip tip="Definition" href="/docs/glossary?term=TermName">Term</Tooltip>
 ```
 
+## ⚠️ Branch Isolation Warning
+
+**This file is on the `action-triggers-prototype` branch.** All changes documented below are **prototype-only** and must NOT be applied to `main` or any other branch. If you are not on `action-triggers-prototype`, stop and check your branch:
+
+```bash
+git branch --show-current
+```
+
+---
+
+## Action Triggers Prototype
+
+**Branch:** `action-triggers-prototype`
+**Purpose:** Usability testing prototype — flat nav + ACUL-style API Object pages for Action Triggers.
+
+### Current correct state (do not change unless asked)
+
+**`config/nav.en.json`** — Actions Triggers added to Dev Tools menu:
+```json
+{
+  "item": "Actions Triggers",
+  "icon": "zap",
+  "$ref": "./navigation/actions-triggers.json"
+}
+```
+
+**`config/navigation/actions-triggers.json`** — flat structure, blank group as landing page, then all 9 triggers each with Event Object + API Object. Entry point: `docs/customize/actions/actions-triggers-reference`.
+
+**`config/navigation/customize.json`** — Explore Triggers section replaced with single page `docs/customize/actions/explore-triggers`. All event-object and api-object pages removed from this file — they live exclusively in `actions-triggers.json`.
+
+**`ui/css/styles.css`** — `.mdx-content` font-size set to 14px.
+
+**All 9 API Object MDX files** — reformatted to ACUL style (`<ParamField>` + `<Expandable>` + inline JS code examples). `sidebarTitle` set to `'API Object'`.
+
+**All 9 Event Object MDX files** — `sidebarTitle` set to `'Event Object'`.
+
+**`docs/customize/actions/actions-triggers-reference.mdx`** — landing page for the Dev Tools Actions Triggers section (only exists in this nav).
+
+### How to run
+```bash
+cd ~/docs-v2/main
+git checkout action-triggers-prototype
+mint dev
+```
+If mint fails to download framework: `curl -s https://releases.mintlify.com/mint-version.txt` to get version, then pre-download with curl and extract manually (see memory file `project_action_triggers_prototype.md`).
+
 ## Additional Resources
 
 - **Mintlify Documentation**: https://mintlify.com/docs
