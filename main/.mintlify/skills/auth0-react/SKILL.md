@@ -4,6 +4,24 @@ description: Use when adding authentication to React applications (login, logout
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
+    requires:
+      bins:
+        - auth0
+      skills:
+        - auth0-cli
+    os:
+      - darwin
+      - linux
+    install:
+      - id: brew
+        kind: brew
+        package: auth0/auth0-cli/auth0
+        bins: [auth0]
+        label: 'Install Auth0 CLI (brew)'
 ---
 
 # Auth0 React Integration
@@ -149,6 +167,7 @@ npm start    # CRA
 - `auth0-quickstart` - Basic Auth0 setup
 - `auth0-migration` - Migrate from another auth provider
 - `auth0-mfa` - Add Multi-Factor Authentication
+- `auth0-cli` - Manage Auth0 resources from the terminal
 
 ---
 
