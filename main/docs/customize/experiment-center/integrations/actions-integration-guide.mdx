@@ -1,0 +1,182 @@
+---
+title: "Experiment Center and Auth0 Actions Integration"
+description: "How to read experiment context in Auth0 Actions and branch logic based on the assigned variation."
+sidebarTitle: Actions Integration
+---
+
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="Auth0 Experiment Center"
+    stage="beta"
+    terms="true"
+    contact="Auth0 Support"
+/>
+
+When an experiment is active, the Experiment Center injects the `ExperimentContext` object into supported Action triggers.
+
+<Warning>
+During Beta, Experiment Center runs on development tenants only. Production tenants are not supported.
+</Warning>
+
+## Supported triggers
+
+Experiment context is available for the following Auth0 [Actions](/docs/customize/actions/actions-overview):
+
+* [`post_login`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) trigger.
+* [`pre_user_registration`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger) trigger.
+* [`post_user_registration`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger) trigger.
+
+
+## The event.experiment object
+
+In supported triggers, the Experiment Center adds an `experiment` field to the event object:
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // The active experiment ID
+  variation_id: string;    // The assigned variation ID
+  config: {                // Merged configuration: baseline + overrides
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // True when this is the control variation
+}
+```
+
+When no experiment is active (or when the feature is not enabled for the tenant), `event.experiment` is `null` (not `undefined`).
+
+### config object contains the full merged configuration
+
+The `config` object contains every parameter defined on the feature flag, merged with the assigned variation's overrides. You never need to look up baseline values or write fallback logic. If the parameter exists on the feature flag, it exists in `config`.
+
+
+## Null-safety pattern
+
+Check for an active experiment before reading any properties:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return; // No active experiment; nothing to do
+
+  // Safe to access ec.config, ec.variation_id, ec.is_control here
+};
+```
+
+Use this pattern in all three supported triggers. The early return keeps your Action clean and ensures it behaves correctly during periods when no experiment is running.
+
+
+## Example: post_login — conditional MFA policy
+
+This example reads a boolean parameter and applies a different MFA policy depending on the variation.
+
+```javascript
+// post_login Action
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enforceMfa = ec.config?.require_mfa?.value;
+
+  if (enforceMfa === true) {
+    // Treatment variation: enforce MFA for this user
+    api.multifactor.enable("any", { allowRememberBrowser: false });
+  }
+  // Control variation: no MFA enforcement change (baseline behavior)
+};
+```
+
+`ec.config.require_mfa.value` is `true` for users in the treatment variation and `false` (the baseline) for users in the control variation. No fallback logic needed.
+
+
+
+## Example: post_login — set a custom claim based on variation
+
+This example stamps the experiment assignment into the user's ID token as a custom claim. Some analytics pipelines read token claims instead of tenant logs.
+
+```javascript
+// post_login Action
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  // Add experiment assignment to the ID token
+  api.idToken.setCustomClaim("https://example.com/experiment", {
+    experiment_id: ec.experiment_id,
+    variation_id: ec.variation_id,
+  });
+};
+```
+
+Use a namespaced claim URL per the OIDC custom claim convention. The recipient (your app) can then read the claim from the token without querying tenant logs.
+
+
+
+## Example pre_user_registration — variation-based metadata
+
+This example uses a registration-flow experiment to set `user_metadata` based on which variant the registering user lands in.
+
+```javascript
+// pre_user_registration Action
+exports.onExecutePreUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const onboardingVariant = ec.config?.onboarding_variant?.value;
+
+  if (onboardingVariant) {
+    api.user.setUserMetadata("onboarding_variant", onboardingVariant);
+    api.user.setUserMetadata("onboarding_experiment_id", ec.experiment_id);
+  }
+};
+```
+
+The metadata is written during registration, so it follows the user across sessions. You can query it later to understand which signup cohort a user belongs to.
+
+## Example: post_user_registration — trigger downstream enrollment
+
+This example fires a webhook after registration based on the variation assigned to the new user.
+
+```javascript
+// post_user_registration Action
+exports.onExecutePostUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enrollInNewProgram = ec.config?.enroll_welcome_program?.value;
+
+  if (enrollInNewProgram === true) {
+    await fetch("https://your-backend.example.com/api/enrollment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: event.user.user_id,
+        email: event.user.email,
+        experiment_id: ec.experiment_id,
+        variation_id: ec.variation_id,
+      }),
+    });
+  }
+};
+```
+
+Only users in the treatment variation trigger the enrollment webhook. Control users follow the standard post-registration path.
+
+## Use is_control
+
+The parameter `is_control` is `true` when the user is in the control group (they received the baseline, no overrides applied). Use it when you need to track which users saw the unmodified experience, or when you want to skip optional processing for control users.
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  if (!ec.is_control) {
+    // Only track treatment users in your analytics system
+    // (control users are tracked separately, outside the Action)
+    await logTreatmentEvent(ec.experiment_id, ec.variation_id, event.user.user_id);
+  }
+};
+```
+
+For branching on behavior (not analytics), check `config` parameter values directly. They are more explicit and readable.
