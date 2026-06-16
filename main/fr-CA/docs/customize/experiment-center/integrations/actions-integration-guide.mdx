@@ -1,0 +1,189 @@
+---
+title: "Experiment Center et Auth0 Actions Integration"
+description: "Comment lire le contexte de l’expérimentation dans Auth0 Actions et adapter la logique selon la variation attribuée."
+sidebarTitle: Actions Integration
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-CA/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="beta" terms="true" contact="assistance Auth0" />
+
+Lorsqu’une expérimentation est active, Experiment Center injecte l’objet `ExperimentContext` dans les déclencheurs d’Action pris en charge.
+
+<Warning>
+  En version bêta, Experiment Center fonctionne uniquement avec les locataires de développement. Les locataires de production ne sont pas pris en charge.
+</Warning>
+
+<div id="supported-triggers">
+  ## Déclencheurs pris en charge
+</div>
+
+Le contexte d’expérimentation est disponible pour les Actions Auth0 suivantes :
+
+* [`post_login`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) déclencheur.
+* [`login`](/fr-CA/docs/customize/actions/actions-overview) déclencheur.
+* [`pre_user_registration`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger) déclencheur.
+* [`post_user_registration`](/fr-CA/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger) déclencheur.
+
+<div id="the-eventexperiment-object">
+  ## L’objet event.experiment
+</div>
+
+Pour les déclencheurs pris en charge, Experiment Center ajoute un champ `experiment` à l’objet d’événement :
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // L'ID de l'expérience active
+  variation_id: string;    // L'ID de la variation assignée
+  config: {                // Configuration fusionnée : valeurs de référence + overrides
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // Vrai lorsqu'il s'agit de la variation de contrôle
+}
+```
+
+Lorsqu’aucune expérimentation n’est active (ou que la fonctionnalité n’est pas activée pour le locataire), `event.experiment` vaut `null` (et non `undefined`).
+
+<div id="config-object-contains-the-full-merged-configuration">
+  ### L’objet `config` contient l’ensemble de la configuration fusionnée
+</div>
+
+L’objet `config` contient tous les paramètres définis dans le flag de fonctionnalité, fusionnés avec les remplacements de la variation attribuée. Vous n’avez jamais besoin de rechercher les valeurs de base ni d’écrire une logique de rechange. Si le paramètre existe dans le flag de fonctionnalité, il existe dans `config`.
+
+<div id="null-safety-pattern">
+  ## Patron de sécurité des valeurs nulles
+</div>
+
+Vérifiez qu’une expérimentation est en cours avant de lire ses propriétés :
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return; // Aucune expérience active ; rien à faire
+
+  // Accès sûr à ec.config, ec.variation_id, ec.is_control ici
+};
+```
+
+Utilisez ce modèle dans les trois déclencheurs pris en charge. Le retour anticipé simplifie votre Action et garantit qu’elle se comporte correctement pendant les périodes où aucune expérimentation n’est en cours.
+
+<div id="example-post_login-conditional-mfa-policy">
+  ## Exemple : post_login — stratégie MFA conditionnelle
+</div>
+
+Cet exemple lit un paramètre booléen et applique une stratégie MFA différente selon la valeur.
+
+```javascript
+// Action post_login
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enforceMfa = ec.config?.require_mfa?.value;
+
+  if (enforceMfa === true) {
+    // Variation de traitement : appliquer le MFA pour cet utilisateur
+    api.multifactor.enable("any", { allowRememberBrowser: false });
+  }
+  // Variation de contrôle : aucun changement d'application du MFA (comportement de référence)
+};
+```
+
+`ec.config.require_mfa.value` est `true` pour les utilisateurs de la variante de traitement et `false` (la valeur de référence) pour les utilisateurs de la variante témoin. Aucune logique de repli n’est nécessaire.
+
+<div id="example-post_login-set-a-custom-claim-based-on-variation">
+  ## Exemple : post_login — définir un claim personnalisé selon la variation
+</div>
+
+Cet exemple ajoute l’attribution de l’expérimentation au jeton d’identité de l’utilisateur sous forme de claim personnalisé. Certains pipelines d’analyse lisent les claims du jeton plutôt que les logs du locataire.
+
+```javascript
+// Action post_login
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  // Ajouter l'affectation de l'expérience au jeton d'identité
+  api.idToken.setCustomClaim("https://example.com/experiment", {
+    experiment_id: ec.experiment_id,
+    variation_id: ec.variation_id,
+  });
+};
+```
+
+Utilisez une URL de claim avec espace de noms, conformément à la convention OIDC relative aux claims personnalisés. Le destinataire (votre application) peut ensuite lire ce claim dans le jeton sans interroger les logs du locataire.
+
+<div id="example-pre_user_registration-variation-based-metadata">
+  ## Exemple pre_user_registration — métadonnées en fonction de la variante
+</div>
+
+Cet exemple utilise une expérimentation sur le flux d’inscription pour définir `user_metadata` en fonction de la variante dans laquelle l’utilisateur qui s’inscrit aboutit.
+
+```javascript
+// Action pre_user_registration
+exports.onExecutePreUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const onboardingVariant = ec.config?.onboarding_variant?.value;
+
+  if (onboardingVariant) {
+    api.user.setUserMetadata("onboarding_variant", onboardingVariant);
+    api.user.setUserMetadata("onboarding_experiment_id", ec.experiment_id);
+  }
+};
+```
+
+Les métadonnées sont enregistrées lors de l’inscription; elles suivent donc l’utilisateur d’une session à l’autre. Vous pourrez ensuite les interroger pour savoir à quelle cohorte d’inscription appartient un utilisateur.
+
+<div id="example-post_user_registration-trigger-downstream-enrollment">
+  ## Exemple : post_user_registration — déclencher l’inscription dans le système en aval
+</div>
+
+Cet exemple déclenche un webhook après l’inscription, selon la variante attribuée au nouvel utilisateur.
+
+```javascript
+// Action post_user_registration
+exports.onExecutePostUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enrollInNewProgram = ec.config?.enroll_welcome_program?.value;
+
+  if (enrollInNewProgram === true) {
+    await fetch("https://your-backend.example.com/api/enrollment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: event.user.user_id,
+        email: event.user.email,
+        experiment_id: ec.experiment_id,
+        variation_id: ec.variation_id,
+      }),
+    });
+  }
+};
+```
+
+Seuls les utilisateurs de la variante de traitement déclenchent le webhook d’inscription. Les utilisateurs du groupe témoin suivent le flux standard après l’inscription.
+
+<div id="use-is_control">
+  ## Utiliser is_control
+</div>
+
+Le paramètre `is_control` vaut `true` lorsque l’utilisateur fait partie du groupe témoin (il a reçu la version de base, sans aucune substitution appliquée). Utilisez-le lorsque vous devez savoir quels utilisateurs ont vu l’expérience non modifiée, ou lorsque vous souhaitez ignorer un traitement optionnel pour les utilisateurs du groupe témoin.
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  if (!ec.is_control) {
+    // Suivre uniquement les utilisateurs du groupe de traitement dans votre système d'analyse
+    // (les utilisateurs du groupe de contrôle sont suivis séparément, en dehors de l'Action)
+    await logTreatmentEvent(ec.experiment_id, ec.variation_id, event.user.user_id);
+  }
+};
+```
+
+Pour faire varier le comportement (et non l’analytique), vérifiez directement les valeurs du paramètre `config`. Elles sont plus explicites et plus faciles à lire.

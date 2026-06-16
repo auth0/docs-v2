@@ -1,0 +1,188 @@
+---
+title: "Experiment Center と Auth0 Actions Integration"
+description: "Auth0 Actions で実験コンテキストを読み取り、割り当てられたバリエーションに応じてロジックを分岐する方法。"
+sidebarTitle: Actions Integration
+---
+
+import { ReleaseStageNotice } from "/snippets/ja/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="beta" terms="true" contact="Auth0 Support" />
+
+実験が有効な場合、Experiment Center はサポート対象の Action トリガーに `ExperimentContext` オブジェクトを注入します。
+
+<Warning>
+  Beta 期間中、Experiment Center は開発テナントでのみ実行されます。本番テナントはサポート対象外です。
+</Warning>
+
+<div id="supported-triggers">
+  ## サポート対象のトリガー
+</div>
+
+実験コンテキストは、次の Auth0 [Actions](/ja/docs/customize/actions/actions-overview) のトリガーで使用できます。
+
+* [`post_login`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) トリガー。
+* [`pre_user_registration`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger) トリガー。
+* [`post_user_registration`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger) トリガー。
+
+<div id="the-eventexperiment-object">
+  ## event.experiment オブジェクト
+</div>
+
+サポート対象のトリガーでは、Experiment Center により、イベントオブジェクトに `experiment` フィールドが追加されます:
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // アクティブな実験ID
+  variation_id: string;    // 割り当てられたバリエーションID
+  config: {                // マージされた設定: ベースライン + オーバーライド
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // コントロールバリエーションの場合はtrue
+}
+```
+
+有効な実験がない場合 (またはその機能がテナントで有効になっていない場合) 、`event.experiment` は `null` になります (`undefined` ではありません) 。
+
+<div id="config-object-contains-the-full-merged-configuration">
+  ### `config` オブジェクトには、完全にマージされた設定が含まれます
+</div>
+
+`config` オブジェクトには、機能フラグで定義されたすべてのパラメーターが含まれており、割り当てられたバリエーションの上書き設定がマージされています。ベースライン値を参照したり、フォールバックロジックを実装したりする必要はありません。機能フラグに存在するパラメーターは、`config` にも必ず存在します。
+
+<div id="null-safety-pattern">
+  ## null安全パターン
+</div>
+
+プロパティを読み取る前に、有効な実験があることを確認します。
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return; // アクティブな実験なし。処理不要
+
+  // ここで ec.config、ec.variation_id、ec.is_control に安全にアクセス可能
+};
+```
+
+このパターンは、サポート対象の3つのトリガーすべてで使用してください。早期リターンを使うことで、Action を簡潔に保ちつつ、実験を実施していない期間でも正しく動作させられます。
+
+<div id="example-post_login-conditional-mfa-policy">
+  ## 例: post_login — 条件付きMFAポリシー
+</div>
+
+この例では、真偽値のパラメーターを読み取り、その値に応じて異なるMFAポリシーを適用します。
+
+```javascript
+// post_login Action
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enforceMfa = ec.config?.require_mfa?.value;
+
+  if (enforceMfa === true) {
+    // トリートメントバリエーション: このユーザーにMFAを強制する
+    api.multifactor.enable("any", { allowRememberBrowser: false });
+  }
+  // コントロールバリエーション: MFA強制の変更なし（ベースラインの動作）
+};
+```
+
+`ec.config.require_mfa.value` は、トリートメントバリエーションのユーザーでは `true`、コントロールバリエーションのユーザーでは `false` (ベースライン) になります。フォールバックロジックは不要です。
+
+<div id="example-post_login-set-a-custom-claim-based-on-variation">
+  ## 例: post_login — バリエーションに基づいてカスタムクレームを設定する
+</div>
+
+この例では、実験の割り当て情報をカスタムクレームとしてユーザーのIDトークンに埋め込みます。分析パイプラインによっては、テナントログではなくトークン内のクレームを読み取ります。
+
+```javascript
+// post_login Action
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  // IDトークンに実験の割り当てを追加する
+  api.idToken.setCustomClaim("https://example.com/experiment", {
+    experiment_id: ec.experiment_id,
+    variation_id: ec.variation_id,
+  });
+};
+```
+
+OIDC のカスタムクレーム規約に従って、名前空間付きクレームの URL を使用します。これにより、受け取り側 (アプリケーション) はテナントログを照会しなくても、トークンからそのクレームを読み取れます。
+
+<div id="example-pre_user_registration-variation-based-metadata">
+  ## 例: pre_user_registration — バリエーション別のメタデータ
+</div>
+
+この例では、登録フローの実験を使用して、登録中のユーザーがどのバリエーションに割り当てられたかに応じて `user_metadata` を設定します。
+
+```javascript
+// pre_user_registration Action
+exports.onExecutePreUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const onboardingVariant = ec.config?.onboarding_variant?.value;
+
+  if (onboardingVariant) {
+    api.user.setUserMetadata("onboarding_variant", onboardingVariant);
+    api.user.setUserMetadata("onboarding_experiment_id", ec.experiment_id);
+  }
+};
+```
+
+メタデータは登録時に書き込まれるため、セッションをまたいでもユーザーに紐づいて保持されます。後からこれを照会して、ユーザーがどの登録グループに属しているかを把握できます。
+
+<div id="example-post_user_registration-trigger-downstream-enrollment">
+  ## 例: post_user_registration — 下流側の登録をトリガーする
+</div>
+
+この例では、新しいユーザーに割り当てられたバリエーションに応じて、登録後に webhook を送信します。
+
+```javascript
+// post_user_registration Action
+exports.onExecutePostUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enrollInNewProgram = ec.config?.enroll_welcome_program?.value;
+
+  if (enrollInNewProgram === true) {
+    await fetch("https://your-backend.example.com/api/enrollment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: event.user.user_id,
+        email: event.user.email,
+        experiment_id: ec.experiment_id,
+        variation_id: ec.variation_id,
+      }),
+    });
+  }
+};
+```
+
+トリートメントバリエーションのユーザーのみが登録 Webhook をトリガーします。コントロールのユーザーは標準の登録後フローに従います。
+
+<div id="use-is_control">
+  ## is_control を使用する
+</div>
+
+パラメーター `is_control` は、ユーザーがコントロールグループに属している場合に `true` になります (ベースラインが適用され、オーバーライドは適用されません) 。変更されていないエクスペリエンスをどのユーザーが見たかを追跡する必要がある場合や、コントロールユーザーに対する任意の処理をスキップしたい場合に使用します。
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  if (!ec.is_control) {
+    // 分析システムではトリートメントユーザーのみを追跡する
+    // （コントロールユーザーはActionの外部で個別に追跡される）
+    await logTreatmentEvent(ec.experiment_id, ec.variation_id, event.user.user_id);
+  }
+};
+```
+
+挙動で分岐する場合 (分析用途ではない場合) は、`config` パラメーターの値を直接確認してください。その方が、より明確で読みやすくなります。

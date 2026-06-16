@@ -1,0 +1,192 @@
+---
+title: Migrar a Unified Phone Experience con Terraform
+description: Aprende a migrar de la configuración telefónica heredada de Guardian a Unified Phone Experience con el Terraform Provider de Auth0.
+---
+
+Migra tu inquilino de la configuración telefónica heredada de [Auth0 Guardian](/es/docs/secure/multi-factor-authentication/auth0-guardian) a [Unified Phone Experience (UPE)](/es/docs/customize/phone-messages/unified-phone/configure-unified-phone) con el [Terraform Provider](https://registry.terraform.io/providers/auth0/auth0/latest/docs) de Auth0.
+
+Después de la migración, todas las [notificaciones telefónicas de autenticación multifactor (MFA)](/es/docs/customize/phone-messages/unified-phone/use-auth0s-unified-phone-experience-for-multi-factor-authentication) se canalizan a través de un único proveedor telefónico a nivel de inquilino.
+
+<div id="prerequisites">
+  ## Requisitos previos
+</div>
+
+Antes de comenzar la migración, necesita lo siguiente:
+
+* [Auth0 Terraform Provider v1.49.0](https://registry.terraform.io/providers/auth0/auth0/latest) o una versión posterior.
+* Si desea configurar un proveedor telefónico personalizado, cree e implemente una Action de Auth0 [`custom-phone-provider`](/es/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider) para gestionar la entrega de mensajes.
+
+<div id="enable-the-phone-provider-resource-and-remove-legacy-configuration">
+  ## Habilite el recurso de proveedor telefónico y elimine la configuración heredada
+</div>
+
+Para habilitar el recurso `auth0_phone_provider` de Terraform y limpiar la configuración heredada:
+
+* [Establezca el indicador phone&#95;consolidated&#95;experience en true](#set-the-phone-consolidated-experience-flag-to-true)
+* [Agregue el proveedor telefónico a nivel del inquilino](#add-the-tenant-level-phone-provider)
+* [Agregue el recurso auth0&#95;branding&#95;phone&#95;notification&#95;template (opcional)](#add-the-auth0-branding-phone-notification-template-resource-optional)
+* [Limpie el bloque phone del recurso auth0&#95;guardian](#clean-up-the-auth0-guardian-resource-phone-block)
+* [Planifique y aplique](#plan-and-apply)
+
+<div id="set-the-consolidated-experience-flag">
+  ### Configura el indicador de experiencia consolidada
+</div>
+
+Para asegurarte de que tu inquilino de Auth0 habilite UPE y enrute todas las notificaciones telefónicas de MFA a través del proveedor unificado, edita tu recurso [`auth0_tenant`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/tenant) y establece el indicador `phone_consolidated_experience` en `true`.
+
+```hcl wrap lines
+resource "auth0_tenant" "main" {
+    # ... otras configuraciones del inquilino ...
+
+    phone_consolidated_experience = true
+}
+```
+
+<div id="add-the-tenant-level-phone-provider">
+  ### Añada el proveedor telefónico a nivel de inquilino
+</div>
+
+Cree un proveedor telefónico a nivel de inquilino con el recurso de Terraform [`auth0_phone_provider`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/phone_provider) para gestionar el envío en todos los flujos basados en teléfono de Unified Phone Experience.
+
+<Tabs>
+  <Tab title="Twilio">
+    ```hcl wrap lines
+    resource "auth0_phone_provider" "default" {
+        name = "twilio"
+
+        configuration {
+            delivery_methods = ["text", "voice"]
+            default_from     = "YOUR_DEFAULT_PHONE_NUMBER"
+            sid              = var.twilio_sid
+            mssid            = var.twilio_messaging_service_sid # Optional
+        }
+
+        credentials {
+            auth_token = var.twilio_auth_token
+        }
+    }
+    ```
+
+    Para enviar solo SMS, establezca `delivery_methods` en `["text"]`.
+  </Tab>
+
+  <Tab title="Custom (Actions)">
+    ```hcl wrap lines
+    resource "auth0_phone_provider" "default" {
+        name = "custom"
+
+        configuration {
+            delivery_methods = ["text"]
+        }
+    }
+    ```
+
+    Para un [proveedor telefónico personalizado](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/phone_provider), Auth0 requiere que la Action [`custom-phone-provider`](/es/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider) se haya desplegado antes de ejecutar `terraform apply`. La Action gestiona el envío.
+  </Tab>
+</Tabs>
+
+<div id="add-the-auth0_branding_phone_notification_template-resource-optional">
+  ### Añada el recurso auth0_branding_phone_notification_template (opcional)
+</div>
+
+Si usa `enrollment_message` o `verification_message` en el bloque `phone` legado de Guardian para personalizar el texto del mensaje del código OTP, puede reproducir ese comportamiento con el recurso [`auth0_branding_phone_notification_template`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/branding_phone_notification_template).
+
+```hcl wrap lines
+resource "auth0_branding_phone_notification_template" "default" {
+    # Consulte la documentación del Auth0 Terraform Provider para conocer las variables de plantilla disponibles.
+}
+```
+
+<div id="clean-up-the-auth0-guardian-resource-phone-block">
+  ### Limpiar el bloque `phone` del recurso Auth0 Guardian
+</div>
+
+Elimine todos los atributos heredados específicos del proveedor del bloque `phone` de [`auth0_guardian`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/guardian).
+
+Después de esta limpieza, el bloque debe contener solo los atributos `enabled` y `message_types`, además de un bloque `depends_on` que haga referencia a los recursos `auth0_tenant.main` y `auth0_phone_provider.default`. Esto aplica la configuración de UPE y del proveedor de teléfono antes del bloque `phone` heredado de Guardian.
+
+**Antes:**
+
+```hcl wrap lines
+resource "auth0_guardian" "default" {
+    phone {
+        enabled       = true
+        provider      = "twilio"
+        message_types = ["sms"]
+
+        options {
+            enrollment_message   = "Your enrollment code is {{code}}"
+            verification_message = "Your verification code is {{code}}"
+        }
+
+        twilio_config {
+            sid                   = var.twilio_sid
+            auth_token            = var.twilio_auth_token
+            from                  = "YOUR_DEFAULT_PHONE_NUMBER"
+            messaging_service_sid = var.twilio_messaging_service_sid
+        }
+    }
+}
+```
+
+**Después:**
+
+```hcl wrap lines
+resource "auth0_guardian" "default" {
+    phone {
+        enabled       = true
+        message_types = ["sms"]
+    }
+    depends_on = [auth0_tenant.main, auth0_phone_provider.default]
+}
+```
+
+<div id="plan-and-apply">
+  ### Planificar y aplicar
+</div>
+
+Revise detenidamente el plan antes de aplicarlo. Debería ver lo siguiente:
+
+* `auth0_phone_provider.default` creado
+* `auth0_guardian.default` actualizado (se eliminaron los atributos)
+* `auth0_tenant.main` actualizado (`phone_consolidated_experience = true`)
+* `auth0_branding_phone_notification_template.default` creado (si se agregó)
+
+```bash wrap lines
+terraform plan
+terraform apply
+```
+
+<div id="troubleshooting">
+  ## Solución de problemas
+</div>
+
+<div id="403-forbidden-errors-during-terraform-apply">
+  ### Errores 403 Forbidden al ejecutar `terraform apply`
+</div>
+
+Este error normalmente significa que `phone_consolidated_experience` ya se había establecido en `true` cuando Terraform intentó administrar los atributos de teléfono heredados de Guardian. Asegúrese de que el bloque [`depends_on`](#clean-up-the-auth0-guardian-resource-phone-block) haga referencia a `auth0_tenant.main` y `auth0_phone_provider.default` para que Terraform los aplique en el orden correcto.
+
+<div id="409-conflict-error-message-type-is-not-supported-by-the-configured-phone-provider">
+  ### Error 409 Conflict: el tipo de mensaje no es compatible con el proveedor telefónico configurado
+</div>
+
+Este error significa que el valor `message_types` del recurso [`auth0_guardian`](#clean-up-the-auth0-guardian-resource-phone-block) no es compatible con el proveedor configurado. Asegúrese de que `delivery_methods` del proveedor incluya los `message_types` solicitados. Use `message_types: ["sms"]` para la entrega `text`, o `message_types: ["voice"]` para la entrega `voice`.
+
+<div id="terraform-apply-error-provider-or-options-cannot-be-specified">
+  ### Error de `terraform apply`: no se pueden especificar `provider` ni `options`
+</div>
+
+El recurso heredado `auth0_guardian` todavía tiene un atributo `provider` o un bloque `options` mientras UPE está habilitado. Elimina `provider` y `options` de la [configuración](#clean-up-the-auth0-guardian-resource-phone-block) para que el bloque `phone` contenga únicamente la configuración de `enabled` y `message_types`.
+
+<div id="custom-phone-provider-not-delivering-messages">
+  ### El proveedor telefónico personalizado no envía mensajes
+</div>
+
+Verifica que exista en Auth0 una Action con el desencadenador [custom-phone-provider](/es/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider) y que esté desplegada antes de ejecutar `terraform apply`.
+
+<div id="otp-messages-not-arriving-after-migration">
+  ### Los mensajes OTP no llegan tras la migración
+</div>
+
+Confirma que las credenciales de `auth0_phone_provider` sean correctas y que `delivery_methods` incluya `"text"` para SMS. Si antes usabas un SID de Messaging Service, asegúrate de que `mssid` esté configurado en el nuevo proveedor.

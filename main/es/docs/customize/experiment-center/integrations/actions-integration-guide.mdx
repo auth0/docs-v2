@@ -1,0 +1,188 @@
+---
+title: "Experiment Center y la integración de Auth0 Actions"
+description: "Cómo leer el contexto del experimento en Auth0 Actions y aplicar una lógica distinta según la variación asignada."
+sidebarTitle: Actions Integration
+---
+
+import { ReleaseStageNotice } from "/snippets/es/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="beta" terms="true" contact="Auth0 Support" />
+
+Cuando un experimento está activo, Experiment Center inyecta el objeto `ExperimentContext` en los desencadenadores de Action compatibles.
+
+<Warning>
+  Durante la beta, Experiment Center se ejecuta solo en inquilinos de desarrollo. Los inquilinos de producción no están soportados.
+</Warning>
+
+<div id="supported-triggers">
+  ## Desencadenadores soportados
+</div>
+
+El contexto del experimento está disponible para los siguientes Actions de Auth0 [Actions](/es/docs/customize/actions/actions-overview):
+
+* el desencadenador [`post_login`](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger).
+* el desencadenador [`pre_user_registration`](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger).
+* el desencadenador [`post_user_registration`](/es/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger).
+
+<div id="the-eventexperiment-object">
+  ## El objeto event.experiment
+</div>
+
+En los desencadenadores soportados, Experiment Center agrega un campo `experiment` al objeto event:
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // El ID del experimento activo
+  variation_id: string;    // El ID de la variación asignada
+  config: {                // Configuración combinada: línea base + sobrescritura
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // True cuando esta es la variación de control
+}
+```
+
+Cuando no hay ningún experimento activo (o cuando la función no está habilitada para el inquilino), `event.experiment` es `null` (no `undefined`).
+
+<div id="config-object-contains-the-full-merged-configuration">
+  ### El objeto config contiene la configuración combinada completa
+</div>
+
+El objeto `config` contiene todos los parámetros definidos en la feature flag, combinados con las sobrescrituras de la variación asignada. No necesitas buscar valores base ni implementar lógica de respaldo. Si el parámetro existe en la feature flag, existe en `config`.
+
+<div id="null-safety-pattern">
+  ## Patrón de seguridad contra valores nulos
+</div>
+
+Compruebe si hay un experimento activo antes de leer cualquiera de sus propiedades:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return; // Sin experimento activo; nada por hacer
+
+  // Aquí es seguro acceder a ec.config, ec.variation_id, ec.is_control
+};
+```
+
+Usa este patrón en los tres desencadenadores soportados. La salida anticipada mantiene tu Action limpia y garantiza que se comporte correctamente durante los períodos en los que no se está ejecutando ningún experimento.
+
+<div id="example-post_login-conditional-mfa-policy">
+  ## Ejemplo: post_login — política condicional de MFA
+</div>
+
+Este ejemplo lee un parámetro booleano y aplica una política de MFA distinta según la variación.
+
+```javascript
+// Action post_login
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enforceMfa = ec.config?.require_mfa?.value;
+
+  if (enforceMfa === true) {
+    // Variación de tratamiento: aplicar MFA para este usuario
+    api.multifactor.enable("any", { allowRememberBrowser: false });
+  }
+  // Variación de control: sin cambios en la aplicación de MFA (comportamiento base)
+};
+```
+
+`ec.config.require_mfa.value` es `true` para los usuarios de la variación de tratamiento y `false` (el valor de referencia) para los usuarios de la variación de control. No hace falta lógica de respaldo.
+
+<div id="example-post_login-set-a-custom-claim-based-on-variation">
+  ## Ejemplo: post_login — definir una claim personalizada según la variación
+</div>
+
+Este ejemplo incorpora la asignación del experimento en el ID Token del usuario como una claim personalizada. Algunos flujos de análisis leen las claim del token en lugar de los registros del inquilino.
+
+```javascript
+// Action post_login
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  // Agregar la asignación del experimento al ID token
+  api.idToken.setCustomClaim("https://example.com/experiment", {
+    experiment_id: ec.experiment_id,
+    variation_id: ec.variation_id,
+  });
+};
+```
+
+Utilice una URL de claim con espacio de nombres conforme a la convención de custom claim de OIDC. El destinatario (su aplicación) puede entonces leer el claim del token sin consultar los registros del inquilino.
+
+<div id="example-pre_user_registration-variation-based-metadata">
+  ## Ejemplo pre_user_registration — metadatos basados en variantes
+</div>
+
+Este ejemplo usa un experimento del flujo de registro para establecer `user_metadata` en función de la variante a la que llega el usuario que se registra.
+
+```javascript
+// Action pre_user_registration
+exports.onExecutePreUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const onboardingVariant = ec.config?.onboarding_variant?.value;
+
+  if (onboardingVariant) {
+    api.user.setUserMetadata("onboarding_variant", onboardingVariant);
+    api.user.setUserMetadata("onboarding_experiment_id", ec.experiment_id);
+  }
+};
+```
+
+Los metadatos se guardan durante el registro, por lo que acompañan al usuario entre sesiones. Más adelante, puedes consultarlos para entender a qué cohorte de registro pertenece un usuario.
+
+<div id="example-post_user_registration-trigger-downstream-enrollment">
+  ## Ejemplo: post_user_registration — activar la inscripción posterior
+</div>
+
+Este ejemplo activa un webhook tras el registro, según la variación asignada al nuevo usuario.
+
+```javascript
+// Action post_user_registration
+exports.onExecutePostUserRegistration = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  const enrollInNewProgram = ec.config?.enroll_welcome_program?.value;
+
+  if (enrollInNewProgram === true) {
+    await fetch("https://your-backend.example.com/api/enrollment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: event.user.user_id,
+        email: event.user.email,
+        experiment_id: ec.experiment_id,
+        variation_id: ec.variation_id,
+      }),
+    });
+  }
+};
+```
+
+Solo los usuarios de la variación de tratamiento desencadenan el webhook de inscripción. Los usuarios del grupo de control siguen el flujo estándar posterior al registro.
+
+<div id="use-is_control">
+  ## Uso de is_control
+</div>
+
+El parámetro `is_control` es `true` cuando el usuario está en el grupo de control (recibió la versión base, sin sobrescrituras aplicadas). Úselo cuando necesite hacer un seguimiento de qué usuarios vieron la experiencia sin modificar o cuando quiera omitir el procesamiento opcional para los usuarios del grupo de control.
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ec = event.experiment;
+  if (!ec) return;
+
+  if (!ec.is_control) {
+    // Solo registra los usuarios de tratamiento en tu sistema de análisis
+    // (los usuarios de control se registran por separado, fuera del Action)
+    await logTreatmentEvent(ec.experiment_id, ec.variation_id, event.user.user_id);
+  }
+};
+```
+
+Para variar el comportamiento (no la analítica), comprueba directamente los valores del parámetro `config`. Son más explícitos y fáciles de leer.

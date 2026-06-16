@@ -1,0 +1,202 @@
+---
+title: "Experiment Center と Auth0 ACUL の統合"
+description: "Auth0 の Custom Universal Login（ACUL）画面で実験コンテキストを取得し、バリエーションに応じてレンダリングを分岐する方法。"
+sidebarTitle: ACUL 統合
+---
+
+import { ReleaseStageNotice } from "/snippets/ja/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="beta" terms="true" contact="Auth0 サポート" />
+
+実験が有効で、バリエーションが割り当てられている場合、Experiment Center は [ACUL](/ja/docs/customize/login-pages/advanced-customizations) コンポーネントに `ExperimentContext` オブジェクトを `experiment` として挿入します。
+
+<Warning>
+  Beta の期間中、Experiment Center は開発テナントでのみ動作します。本番テナントはサポート対象ではありません。
+</Warning>
+
+挿入は、オプトインした画面でのみ行われます。オプトインは画面ごとに行い、その画面の `context_configuration` 配列に `"experiment"` を追加します。
+
+画面で実験コンテキストを受け取るようにオプトインするには、[`/api/v2/prompts/{prompt}/screen/{screen}/rendering`](/ja/docs/api/management/v2/prompts/patch-rendering) エンドポイントに対して `PATCH` リクエストを実行します。
+
+```json Example
+    "context_configuration": ["experiment"]
+```
+
+`{prompt}` はプロンプト名 (例: `login`) に、`{screen}` は画面名 (例: `login`) に置き換えます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  実験の解決処理とテナントログの拡張は、画面がオプトインしているかどうかにかかわらず、常に実行されます。オプトインで制御されるのは、`experiment` プロパティを ACUL コンポーネントに渡すかどうかだけです。これはデータ最小化のための措置です。実験コンテキストを必要としない画面はオプトインしないでください。
+</Callout>
+
+<div id="the-experiment-context-shape">
+  ## 実験コンテキストの構造
+</div>
+
+画面がオプトインしており、実験が有効な場合は、`window.universal_login_context.experiment` を介して実験コンテキストにアクセスできます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Experiment Center (Beta) では、ACUL SDK は `experiment` プロパティを自動的に追加しないため、`window.universal_login_context.experiment` を使用して定義する必要があります。
+</Callout>
+
+```typescript
+const experiment = window.universal_login_context.experiment;
+```
+
+experiment context の形式は次のとおりです:
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // アクティブな実験ID
+  variation_id: string;    // 割り当てられたバリエーションID
+  config: {                // マージされた設定: ベースライン + オーバーライド
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // コントロールバリエーションの場合はtrue
+}
+```
+
+アクティブな実験がない場合 (またはその機能がテナントで有効になっていない場合) 、`experiment` は `null` です。
+
+`config` パラメーターには、割り当てられたバリエーションに対する完全なマージ済み設定が含まれます。Experiment Center は、機能フラグのベースラインパラメーターを基に、その上に割り当てられたバリエーションのオーバーライドをマージします。機能フラグで定義されたすべてのパラメーターには、常に `config` 内で値が設定されます。
+
+たとえば、機能フラグにベースライン値が `"Sign in"` の `button_label` パラメーターがあり、割り当てられたバリエーションでその値が `"Continue"` にオーバーライドされている場合、`config.button_label.value` は `"Continue"` になります。
+コントロールバリエーション (オーバーライドなし) の場合、`config.button_label.value` は `"Sign in"` です。
+
+<div id="read-a-parameter-value">
+  ## パラメーター値を読み取る
+</div>
+
+`config[paramName].value` を使用してパラメーター値にアクセスできます。
+
+```typescript
+const experiment = window.universal_login_context.experiment;
+const label = experiment?.config?.button_label?.value;
+```
+
+全体でオプショナルチェイニング (`?.`) を使用してください。アクティブな実験がない場合、`experiment` prop は `undefined` になります。
+
+<div id="use-is_control">
+  ## `is_control` を使用する
+</div>
+
+パラメーター `is_control` は、ユーザーがコントロールグループに属している場合に `true` になります (ベースラインが適用され、オーバーライドは適用されていません) 。変更のないエクスペリエンスをどのユーザーが見たかを追跡する必要がある場合や、コントロールグループのユーザーに対する任意の処理をスキップしたい場合に使用します。
+
+```typescript
+if (!experiment?.is_control) {
+  // トリートメントユーザーにのみ実行される
+  trackExperimentImpression(experiment.experiment_id, experiment.variation_id);
+}
+```
+
+分岐レンダリングでは、`is_control` ではなく、パラメーターの値 (`config.my_param.value`) を直接確認してください。
+パラメーターの値に基づく確認のほうが可読性が高く、将来の実験でどのバリエーションを統計上のコントロールにするかを変更しても、正しく機能します。
+
+<div id="example-copy-variant-experiment">
+  ## 例: 文言バリエーションの実験
+</div>
+
+この例では、ボタンの文言を変更する 2 つのバリエーションを持つ機能フラグを示します。コントロールでは標準のラベルを使用し、トリートメントでは代替のラベルを使用します。
+
+**機能フラグのパラメーター:**
+
+```json
+{
+  "button_label": {
+    "type": "string",
+    "value": "Sign in",
+    "description": "Label for the primary login button"
+  }
+}
+```
+
+**コントロールバリエーション:** 空の overrides (`button_label: "Sign in"` を継承)
+
+**トリートメントバリエーション:**
+
+```json
+{
+  "overrides": {
+    "button_label": { "value": "Continue to your account" }
+  }
+}
+```
+
+**パラメーターを読み取る ACUL コンポーネント:**
+
+```typescript
+// LoginScreen.tsx
+export default function LoginScreen({...props }) {
+  // configには常に値があります — フォールバック不要
+  const experiment = window.universal_login_context.experiment;
+  const buttonLabel = experiment?.config?.button_label?.value ?? "Sign in";
+
+  return (
+    <div>
+      <h1>Welcome back</h1>
+      <form onSubmit={props.onSubmit}>
+        <input type="email" name="email" placeholder="Email" />
+        <input type="password" name="password" placeholder="Password" />
+        <button type="submit">{buttonLabel}</button>
+      </form>
+    </div>
+  );
+}
+```
+
+最終行の `?? "Sign in"` フォールバックは、有効な実験がない場合 (この場合、`experiment` は `undefined` となり、`config?.button_label?.value` も `undefined` と評価されます) に対応します。必要に応じて、個別に null チェックを行うこともできます:
+
+```typescript
+const buttonLabel = experiment
+  ? experiment.config.button_label.value
+  : "Sign in"; // アクティブな実験なし。デフォルトを使用
+```
+
+<div id="example-boolean-feature-rollout">
+  ## 例: 真偽値を使った機能の段階的ロールアウト
+</div>
+
+この例では、真偽値パラメーターを使用して、新しい UI 要素を条件付きで表示します。
+
+```typescript
+// PostLoginScreen.tsx
+export default function PostLoginScreen({...props }) {
+  const experiment = window.universal_login_context.experiment;
+  const showPasskeyBanner = experiment?.config?.show_passkey_banner?.value === true;
+
+  return (
+    <div>
+      <p>You're signed in.</p>
+      {showPasskeyBanner && (
+        <div className="banner">
+          <p>Set up a passkey for faster sign-in next time.</p>
+          <button onClick={props.onEnrollPasskey}>Set up passkey</button>
+          <button onClick={props.onDismiss}>Not now</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+`=== true` のチェック (truthy チェックではなく) を意図的に使用しているのは、パラメーターが明示的に `true` の場合にのみバナーが表示されるようにするためです。`experiment` が `undefined` の場合や `config` が存在しない場合には表示されません。
+
+<div id="troubleshoot">
+  ## トラブルシューティング
+</div>
+
+`experiment` プロパティが `undefined` になるケースは 3 つあります。
+
+1. 現在、テナントで有効な実験がない
+2. 画面が `context_configuration` でオプトインしていない
+3. テナントで Experiment Center が有効になっていない
+
+`experiment` は常に `undefined` になる可能性があるものとして扱ってください。最も安全なパターンは次のとおりです。
+
+```typescript
+const experiment = window.universal_login_context.experiment;
+const myParam = experiment?.config?.my_param?.value;
+// アクティブな実験がない場合、myParam は undefined になります
+// デフォルト値を使用: myParam ?? "your-default"
+```
+
+`experiment` プロパティが存在するものと決めつけないでください。`experiment` が定義されていることに依存したコードは、実行中の実験がない場合にエラーをスローします。実際には、ほとんどの時間で実験は実行されていません。

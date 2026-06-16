@@ -1,0 +1,128 @@
+---
+title: Main.cpp
+---
+
+```cpp windows/runner/main.cpp expandable lines
+#include <flutter/dart_project.h>
+#include <flutter/flutter_view_controller.h>
+#include <windows.h>
+
+#include <iostream>
+#include <string>
+#include <thread>
+
+#include "flutter_window.h"
+#include "utils.h"
+
+// --- Auth0 シングルインスタンスとコールバック処理 ---
+static const wchar_t* kMutexName = L"auth0flutter_single_instance_mutex";
+static const wchar_t* kPipeName = L"\\\\.\\pipe\\auth0flutter_pipe";
+static const wchar_t* kCallbackPrefix = L"auth0flutter://callback";
+
+// 名前付きパイプを使用して、既に実行中のインスタンスに URI を転送する
+bool ForwardUriToRunningInstance(const std::wstring& uri) {
+  HANDLE hPipe = CreateFileW(kPipeName, GENERIC_WRITE, 0, NULL,
+                             OPEN_EXISTING, 0, NULL);
+  if (hPipe == INVALID_HANDLE_VALUE) return false;
+
+  DWORD bytesWritten;
+  WriteFile(hPipe, uri.c_str(), (DWORD)(uri.size() * sizeof(wchar_t)),
+           &bytesWritten, NULL);
+  CloseHandle(hPipe);
+  return true;
+}
+
+// 転送された URI を受信するパイプサーバースレッドを起動する
+void StartPipeServer() {
+  std::thread([]() {
+    while (true) {
+      HANDLE hPipe = CreateNamedPipeW(
+          kPipeName, PIPE_ACCESS_INBOUND,
+          PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+          1, 4096, 4096, 0, NULL);
+
+      if (hPipe == INVALID_HANDLE_VALUE) break;
+
+      if (ConnectNamedPipe(hPipe, NULL) ||
+          GetLastError() == ERROR_PIPE_CONNECTED) {
+        wchar_t buffer[2048] = {};
+        DWORD bytesRead;
+        if (ReadFile(hPipe, buffer, sizeof(buffer) - sizeof(wchar_t),
+                     &bytesRead, NULL)) {
+          std::wstring uri(buffer);
+          if (uri.find(kCallbackPrefix) == 0) {
+            SetEnvironmentVariableW(L"PLUGIN_STARTUP_URL", uri.c_str());
+          }
+        }
+      }
+      DisconnectNamedPipe(hPipe);
+      CloseHandle(hPipe);
+    }
+  }).detach();
+}
+
+int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
+                      _In_ wchar_t* command_line, _In_ int show_command) {
+  // シングルインスタンスの強制
+  HANDLE hMutex = CreateMutexW(NULL, TRUE, kMutexName);
+  bool alreadyRunning = (hMutex && GetLastError() == ERROR_ALREADY_EXISTS);
+
+  // コールバック URI で起動されたかどうかを確認する
+  int argc;
+  LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  std::wstring startupUri;
+  if (argc > 1) {
+    std::wstring arg(argv[1]);
+    if (arg.find(kCallbackPrefix) == 0) {
+      startupUri = arg;
+    }
+  }
+  LocalFree(argv);
+
+  // 別のインスタンスが実行中の場合、URI を転送して終了する
+  if (alreadyRunning) {
+    if (!startupUri.empty()) {
+      ForwardUriToRunningInstance(startupUri);
+    }
+    ReleaseMutex(hMutex);
+    CloseHandle(hMutex);
+    return 0;
+  }
+
+  // プラグインが読み取れるよう、起動 URI を環境変数として設定する
+  if (!startupUri.empty()) {
+    SetEnvironmentVariableW(L"PLUGIN_STARTUP_URL", startupUri.c_str());
+  }
+
+  // 今後起動するインスタンスから URI を受信するためにパイプサーバーを起動する
+  StartPipeServer();
+
+  // --- 標準的な Flutter の初期化 ---
+  ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+  flutter::DartProject project;
+  std::vector<std::string> command_line_arguments =
+      GetCommandLineArguments();
+  project.set_dart_entrypoint_arguments(
+      std::move(command_line_arguments));
+
+  FlutterWindow window(project);
+  Win32Window::Point origin(10, 10);
+  Win32Window::Size size(1280, 720);
+  if (!window.Create(L"My App", origin, size)) {
+    return EXIT_FAILURE;
+  }
+  window.SetQuitOnClose(true);
+
+  ::MSG msg;
+  while (::GetMessage(&msg, nullptr, 0, 0)) {
+    ::TranslateMessage(&msg);
+    ::DispatchMessage(&msg);
+  }
+
+  ::CoUninitialize();
+  ReleaseMutex(hMutex);
+  CloseHandle(hMutex);
+  return EXIT_SUCCESS;
+}
+```

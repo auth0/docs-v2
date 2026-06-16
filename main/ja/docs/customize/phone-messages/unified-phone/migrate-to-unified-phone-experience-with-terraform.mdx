@@ -1,0 +1,192 @@
+---
+title: Terraform で Unified Phone Experience に移行する
+description: Auth0 Terraform プロバイダーを使用して、レガシーな Guardian の電話設定から Unified Phone Experience に移行する方法を説明します。
+---
+
+Auth0 の [Terraform プロバイダー](https://registry.terraform.io/providers/auth0/auth0/latest/docs) を使用して、テナントの電話設定をレガシーな [Auth0 Guardian](/ja/docs/secure/multi-factor-authentication/auth0-guardian) から [Unified Phone Experience (UPE)](/ja/docs/customize/phone-messages/unified-phone/configure-unified-phone) に移行します。
+
+移行後は、すべての[多要素認証 (MFA) の電話通知](/ja/docs/customize/phone-messages/unified-phone/use-auth0s-unified-phone-experience-for-multi-factor-authentication)が、テナントレベルの単一の電話プロバイダーを介して送信されます。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+移行を開始する前に、次のものが必要です。
+
+* [Auth0 Terraform プロバイダー v1.49.0](https://registry.terraform.io/providers/auth0/auth0/latest) 以降が必要です。
+* カスタム電話プロバイダーを設定する場合は、メッセージ配信を処理する [`custom-phone-provider`](/ja/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider) Auth0 Action を作成してデプロイしておく必要があります。
+
+<div id="enable-the-phone-provider-resource-and-remove-legacy-configuration">
+  ## 電話プロバイダーリソースを有効にし、レガシー構成を削除する
+</div>
+
+Terraform の `auth0_phone_provider` リソースを有効にし、レガシー構成を整理するには、次の操作を行います。
+
+* [`phone_consolidated_experience` フラグを `true` に設定する](#set-the-phone-consolidated-experience-flag-to-true)
+* [テナントレベルの電話プロバイダーを追加する](#add-the-tenant-level-phone-provider)
+* [`auth0_branding_phone_notification_template` リソースを追加する (任意) ](#add-the-auth0-branding-phone-notification-template-resource-optional)
+* [`auth0_guardian` リソースの `phone` ブロックを整理する](#clean-up-the-auth0-guardian-resource-phone-block)
+* [plan と apply を実行する](#plan-and-apply)
+
+<div id="set-the-consolidated-experience-flag">
+  ### 統合エクスペリエンス フラグを設定する
+</div>
+
+Auth0 テナントで UPE を有効にし、すべての MFA の電話通知を統合プロバイダー経由で送信するには、[`auth0_tenant`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/tenant) リソースを編集し、`phone_consolidated_experience` フラグを `true` に設定します。
+
+```hcl wrap lines
+resource "auth0_tenant" "main" {
+    # ... その他のテナント設定 ...
+
+    phone_consolidated_experience = true
+}
+```
+
+<div id="add-the-tenant-level-phone-provider">
+  ### テナントレベルの電話プロバイダーを追加する
+</div>
+
+Unified Phone Experience のすべての電話ベースのフローでの配信を処理するため、Terraform の [`auth0_phone_provider`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/phone_provider) リソースを使用して、テナントレベルの電話プロバイダーを作成します。
+
+<Tabs>
+  <Tab title="Twilio">
+    ```hcl wrap lines
+    resource "auth0_phone_provider" "default" {
+        name = "twilio"
+
+        configuration {
+            delivery_methods = ["text", "voice"]
+            default_from     = "YOUR_DEFAULT_PHONE_NUMBER"
+            sid              = var.twilio_sid
+            mssid            = var.twilio_messaging_service_sid # Optional
+        }
+
+        credentials {
+            auth_token = var.twilio_auth_token
+        }
+    }
+    ```
+
+    SMS のみを送信する場合は、`delivery_methods` を `["text"]` に設定します。
+  </Tab>
+
+  <Tab title="Custom (Actions)">
+    ```hcl wrap lines
+    resource "auth0_phone_provider" "default" {
+        name = "custom"
+
+        configuration {
+            delivery_methods = ["text"]
+        }
+    }
+    ```
+
+    [カスタム電話プロバイダー](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/phone_provider) を使用する場合、Auth0 では `terraform apply` を実行する前に [`custom-phone-provider`](/ja/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider) Action がデプロイされていることを前提としています。この Action が配信を処理します。
+  </Tab>
+</Tabs>
+
+<div id="add-the-auth0_branding_phone_notification_template-resource-optional">
+  ### auth0_branding_phone_notification_template リソースを追加する (任意)
+</div>
+
+レガシーの Guardian phone ブロックで `enrollment_message` または `verification_message` を使用してワンタイムパスコード (OTP) メッセージの本文をカスタマイズしている場合は、[`auth0_branding_phone_notification_template`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/branding_phone_notification_template) リソースを使ってその動作を再現できます。
+
+```hcl wrap lines
+resource "auth0_branding_phone_notification_template" "default" {
+    # 利用可能なテンプレート変数については、Auth0 Terraform プロバイダーのドキュメントを参照してください。
+}
+```
+
+<div id="clean-up-the-auth0-guardian-resource-phone-block">
+  ### Auth0 Guardian リソースの phone ブロックを整理する
+</div>
+
+[`auth0_guardian`](https://registry.terraform.io/providers/auth0/auth0/latest/docs/resources/guardian) の phone ブロックから、レガシーなプロバイダー固有の属性をすべて削除します。
+
+整理後、このブロックに含めるのは `enabled` 属性と `message_types` 属性、および `auth0_tenant.main` リソースと `auth0_phone_provider.default` リソースを参照する `depends_on` ブロックのみです。これにより、レガシー Guardian の phone ブロックより前に、UPE と phone-provider の設定が適用されます。
+
+**変更前:**
+
+```hcl wrap lines
+resource "auth0_guardian" "default" {
+    phone {
+        enabled       = true
+        provider      = "twilio"
+        message_types = ["sms"]
+
+        options {
+            enrollment_message   = "Your enrollment code is {{code}}"
+            verification_message = "Your verification code is {{code}}"
+        }
+
+        twilio_config {
+            sid                   = var.twilio_sid
+            auth_token            = var.twilio_auth_token
+            from                  = "YOUR_DEFAULT_PHONE_NUMBER"
+            messaging_service_sid = var.twilio_messaging_service_sid
+        }
+    }
+}
+```
+
+**変更後:**
+
+```hcl wrap lines
+resource "auth0_guardian" "default" {
+    phone {
+        enabled       = true
+        message_types = ["sms"]
+    }
+    depends_on = [auth0_tenant.main, auth0_phone_provider.default]
+}
+```
+
+<div id="plan-and-apply">
+  ### Plan と apply
+</div>
+
+apply する前に、plan をよく確認してください。次の内容が表示されるはずです。
+
+* `auth0_phone_provider.default` が作成されている
+* `auth0_guardian.default` が更新されている (属性が削除される)
+* `auth0_tenant.main` が更新されている (`phone_consolidated_experience = true`)
+* `auth0_branding_phone_notification_template.default` が作成されている (追加した場合)
+
+```bash wrap lines
+terraform plan
+terraform apply
+```
+
+<div id="troubleshooting">
+  ## トラブルシューティング
+</div>
+
+<div id="403-forbidden-errors-during-terraform-apply">
+  ### terraform apply 中の 403 Forbidden エラー
+</div>
+
+このエラーは通常、Terraform がレガシー Guardian の電話番号属性を管理しようとした時点で、`phone_consolidated_experience` がすでに `true` に設定されていたことを示します。Terraform が正しい順序で適用できるよう、[`depends_on`](#clean-up-the-auth0-guardian-resource-phone-block) ブロックで `auth0_tenant.main` と `auth0_phone_provider.default` を参照していることを確認してください。
+
+<div id="409-conflict-error-message-type-is-not-supported-by-the-configured-phone-provider">
+  ### 409 Conflict エラー: 構成済みの電話プロバイダーではメッセージタイプがサポートされていません
+</div>
+
+このエラーは、[`auth0_guardian`](#clean-up-the-auth0-guardian-resource-phone-block) リソースの `message_types` の値が、構成済みの電話プロバイダーでサポートされていないことを意味します。電話プロバイダーの `delivery_methods` に、要求された `message_types` が含まれていることを確認してください。`text` 配信には `message_types: ["sms"]` を、`voice` 配信には `message_types: ["voice"]` を使用します。
+
+<div id="terraform-apply-error-provider-or-options-cannot-be-specified">
+  ### Terraform apply エラー: provider または options は指定できません
+</div>
+
+UPE が有効になっているにもかかわらず、レガシー `auth0_guardian` リソースに `provider` 属性または `options` ブロックがまだ指定されています。phone ブロックに `enabled` と `message_types` の設定のみが含まれるように、[設定](#clean-up-the-auth0-guardian-resource-phone-block) から `provider` と `options` を削除してください。
+
+<div id="custom-phone-provider-not-delivering-messages">
+  ### カスタム電話プロバイダーでメッセージが配信されない
+</div>
+
+`terraform apply` を実行する前に、[custom-phone-provider](/ja/docs/customize/phone-messages/configure-phone-messaging-providers/configure-a-custom-phone-provider) トリガーの Auth0 Action が存在し、Auth0 にデプロイされていることを確認してください。
+
+<div id="otp-messages-not-arriving-after-migration">
+  ### 移行後にOTPメッセージが届かない
+</div>
+
+`auth0_phone_provider` の認証情報が正しく、SMS 用の `delivery_methods` に `"text"` が含まれていることを確認してください。以前 Messaging Service SID を使用していた場合は、新しいプロバイダーに `mssid` が設定されていることを確認してください。

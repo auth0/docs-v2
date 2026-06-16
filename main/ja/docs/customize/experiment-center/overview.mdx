@@ -1,0 +1,172 @@
+---
+title: "Experiment Center"
+description: "Auth0 Experiment Center の概要と、A/B テスト用の認証フローを作成する方法について説明します。"
+sidebarTitle: 概要
+---
+
+import { ReleaseStageNotice } from "/snippets/ja/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="beta" terms="true" contact="Auth0 Support" />
+
+Auth0 Experiment Center は、Auth0 にネイティブに組み込まれた実験エンジンです。これにより、[認証](/ja/docs/authenticate/login/auth0-universal-login)エクスペリエンスの変更を A/B テストし、その影響を認証イベントの[ログ](/ja/docs/deploy-monitor/logs)で確認できます。
+
+Experiment Center では、Auth0 上で A/B テストを定義すると、トラフィックが決定論的に振り分けられ、既存の認証イベントには実験のメタデータが付加されて返されるため、独自のツールで結果を分析できます。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+Experiment Center では、Auth0 認証パイプラインで管理された A/B テストを実行できます。変更を一度にすべてのユーザーにデプロイするのではなく、新しい動作をトラフィックの一定割合にのみ適用し、拡張情報を含む認証イベントで結果を測定したうえで、準備ができたら勝ちパターンを採用できます。
+
+Experiment Center は、次の 3 つのエンティティを中心に構成されています。
+
+* **Experiment**: トラフィックをどのように分割し、テストをいつ実施するかを定義します。
+* **Feature flag**: 何をテストするかと、利用可能なバリエーションを定義します。
+* **Segment**: 実験を特定のバリエーションに振り分けるための一連のルールを定義します。
+
+<Warning>
+  ベータ期間中、Experiment Center は開発テナントでのみ利用できます。本番テナントはサポート対象ではありません。
+</Warning>
+
+<div id="experiment">
+  ## 実験
+</div>
+
+実験は、機能フラグに対する測定を行うためのラッパーです。次の内容を定義します。
+
+* テスト対象の機能フラグ
+* バリエーション間でトラフィックをどのように割り当てるか
+* テストの実行期間
+
+各実験は、必ず 1 つの機能フラグを参照します。
+
+<div id="experiment-lifecycle">
+  ### 実験のライフサイクル
+</div>
+
+実験には 5 つの状態があります。
+
+| Status      | Meaning                                                 |
+| ----------- | ------------------------------------------------------- |
+| `draft`     | 作成済みですが、まだ実行されていません。クエリパラメーターのオーバーライドを使用して安全にテストできます。   |
+| `active`    | 実行中です。すべての認証トランザクションで、バリアントの割り当てとコンテキストの挿入が有効になります。     |
+| `paused`    | 一時停止中です。新しい割り当ては行われません。進行中のセッションでは、割り当て済みのバリアントが維持されます。 |
+| `completed` | 完了しています。新しい割り当ては行われません。手動で昇格する際の参照用に、設定は保持されます。         |
+| `archived`  | 論理削除されています。デフォルトの一覧表示には表示されません。分析データは保持されます。            |
+
+<div id="allocation-strategies">
+  ### 割り当て戦略
+</div>
+
+実験では、2 つの割り当て戦略のいずれかを使用します。
+
+**割合ベース:** トラフィックは、重みに応じて各バリエーションに分配されます。すべての重みの合計は 100 である必要があります。重み 0 も有効です (そのバリエーションは実験定義に含まれますが、トラフィックは割り当てられません) 。
+
+**セグメントベース (ターゲティング) :** トラフィックは、セグメントへの所属に基づいてバリエーションに振り分けられます。セグメントは優先度順に評価されます。最初に一致したセグメントが採用されます。どのセグメントにも一致しない場合は、`is_fallback` の割り当てがリクエストを受け取ります。
+
+実験エンティティの詳細については、[エンティティの詳細](/ja/docs/customize/experiment-center/entities#experiment)を参照してください。
+
+<div id="experiment-context">
+  ### Experiment コンテキスト
+</div>
+
+実験がアクティブでバリエーションが割り当てられている場合、Experiment Center は `ExperimentContext` オブジェクトをランタイムの各サーフェスに挿入します。
+
+[ACUL](/ja/docs/customize/login-pages/advanced-customizations#advanced-customizations-for-universal-login-acul) 画面では、`context_configuration` を使用してその画面をオプトインした場合にのみ、これを受け取ります。
+詳しくは、[ACUL 統合ガイド](/ja/docs/customize/experiment-center/integrations/acul-integration-guide) を参照してください。
+
+[Actions](/ja/docs/customize/actions/actions-overview) と [ページテンプレート](/ja/docs/customize/login-pages/universal-login/customize-templates#customize-universal-login-page-templates) では、実験がアクティブな場合、このオブジェクトが常に自動的に渡されます。オブジェクトの構造は次のとおりです。
+
+```typescript
+{
+  experiment_id: string;   // アクティブな実験ID
+  variation_id: string;    // 割り当てられたバリエーションID
+  config: {                // マージ済み設定（ベースライン + オーバーライド）
+    [paramName]: { value: unknown }
+  };
+  is_control: boolean;     // コントロールバリエーションの場合はtrue
+}
+```
+
+The `config` フィールドには、割り当てられたバリエーションに対するマージ済みの完全な設定が含まれます。機能フラグで定義されたすべてのパラメーターには、常に値が設定されます。フォールバック ロジックを記述する必要はありません。
+
+<div id="assignment">
+  ### 割り当て
+</div>
+
+割り当てとは、認証トランザクション中にユーザーが特定のバリエーションへどのように振り分けられるかを指します。割り当ては決定論的で固定的です。つまり、同じユーザーは同じデバイス上で同じ実験に対して常に同じバリエーションを見るため、ログインをまたいでも体験の一貫性が保たれます。
+
+* **割合による割り当て**では、重みに基づいてトラフィックを各バリエーションに振り分けます。特定の対象は常に同じバリエーションに割り当てられます。
+* **セグメントによる割り当て**では、リクエストのプロパティをセグメントルールに対して優先度順に評価します。最初に一致したセグメントによってバリエーションが決まり、同じセグメントに一致するリクエストは常に同じバリエーションに割り当てられます。
+
+割り当て結果はテナントログの `details.experiment` に記録され、個別のAPIとして公開されることはありません。
+
+割り当てエンティティの詳細については、[エンティティの詳細](/ja/docs/customize/experiment-center/entities#assignment)を参照してください。
+
+<div id="feature-flag">
+  ## 機能フラグ
+</div>
+
+機能フラグは、何をテストするかを管理する単位です。これには次が含まれます。
+
+* **ベースライン構成**: 型付きパラメーターとそのデフォルト値
+* 1 つ以上の **バリエーション**: ベースラインとは異なる代替構成
+
+機能フラグはテナント単位で適用され、再利用できます。同じフラグを、複数の実験で繰り返し参照できます (たとえば、同じ機能に対する第 1 四半期のテストと第 2 四半期の改善) 。
+
+<div id="feature-flag-lifecycle">
+  ### 機能フラグのライフサイクル
+</div>
+
+機能フラグには、次の 3 つのライフサイクル状態があります。
+
+| 状態         | 意味                                                  |
+| ---------- | --------------------------------------------------- |
+| `draft`    | 作成済みですが、まだ有効ではありません。アクティブな実験から参照することはできません。         |
+| `active`   | 使用可能な状態です。このフラグを参照する実験を有効化するには、この状態である必要があります。      |
+| `archived` | 終了状態です。新しい実験からはこのフラグを参照できません。必要に応じて新しいフラグを作成してください。 |
+
+機能フラグエンティティの詳細については、[エンティティの詳細](/ja/docs/customize/experiment-center/entities#feature-flag)を参照してください。
+
+<div id="variation">
+  ### バリエーション
+</div>
+
+バリエーションは、機能フラグ内で定義されるエクスペリエンスの1つのバージョンです。ベースラインと比べて、どの設定パラメーターがどの程度異なるかを指定します。
+
+* **control variation** はベースラインです。overrides は空であり (flag のデフォルトから変更されたパラメーターはありません) 。
+* **Treatment variations** はそれぞれ、1つ以上のパラメーター override を指定します。
+
+バリエーション自体には `is_control` マーカーはありません。特定の実験でどのバリエーションを統計上のコントロールにするかは、バリエーションではなく 割り当て で設定されます。同じバリエーションが、ある実験ではコントロールになり、別の実験ではトリートメントになることがあります。
+
+バリエーションエンティティの詳細については、[エンティティの詳細](/ja/docs/customize/experiment-center/entities#variation) を参照してください。
+
+<div id="segment">
+  ## セグメント
+</div>
+
+セグメントは、一連のルールに一致する認証リクエストをまとめた名前付きのグループです。ターゲットを絞った割り当て実験では、特定のトラフィックグループを特定のバリエーションに振り分けるためにセグメントを使用します。
+
+セグメントはテナント単位で管理され、複数の実験で再利用できます。
+
+セグメントエンティティの詳細については、[エンティティの詳細](/ja/docs/customize/experiment-center/entities#segment)を参照してください。
+
+<div id="limitations">
+  ## 制限事項
+</div>
+
+ベータ期間中は、次の制限が適用されます。
+
+* **テナントごとにアクティブな実験は 1 つのみ。** `draft`、`paused`、`completed` 状態の実験は複数保持できますが、同時に `active` にできるのは 1 つだけです。
+* **構造化パラメーターのみ。** 機能フラグのパラメーターでは、キー / 型 / 値の構造を使用します。
+* **3 つの Actions トリガー。** 実験コンテキストは、[`post_login`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger)、[`pre_user_registration`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger)、[`post_user_registration`](/ja/docs/customize/actions/explore-triggers/signup-and-login-triggers/post-user-registration-trigger) で利用できます。
+* **テストトラフィックのみ。** ベータは、開発テナントで生成したトラフィックのみを対象に実行されます。本番環境のエンドユーザーデータがベータを通過することはありません。
+* **手動での反映。** 実験が完了したら、勝利したバリエーションの設定をテナントに手動で反映します。
+
+<div id="learn-more">
+  ## 詳細
+</div>
+
+Experiment Center のエンティティとプロパティについては、**[エンティティの詳細](/ja/docs/customize/experiment-center/entities)** を参照してください。
+
+フラグの作成、実験の有効化、拡張情報が付加されたログイベントをエンドツーエンドで確認する方法については、**[Experiment Center クイックスタート](/ja/docs/customize/experiment-center/quickstart)** を参照してください。
