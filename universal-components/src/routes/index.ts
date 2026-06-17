@@ -1,9 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { lazy } from "react";
+import { lazy } from 'react';
 
-// Single import for all components
-export const mintlifyLoader = () =>
-  import("@auth0/universal-components-react");
+// Main entry exports *View components + useCoreClient but not Auth0ComponentProvider.
+// /spa entry exports Auth0ComponentProvider but not View components or useCoreClient.
+// Merge both to satisfy getWrapper's needs.
+export const mintlifyLoader = async () => {
+  const [components, provider] = await Promise.all([
+    import("@auth0/universal-components-react"),
+    import("@auth0/universal-components-react/spa"),
+  ]);
+  return { ...components, ...provider };
+};
 
 // Component key mapping
 export const componentRoutes: Record<
@@ -13,26 +20,26 @@ export const componentRoutes: Record<
     componentKey: string;
   }
 > = {
-  "domain-table-view": { LazyComponent: null, componentKey: "DomainTableView" },
-  "sso-provider-create": {
+  'domain-table-view': { LazyComponent: null, componentKey: 'DomainTableView' },
+  'sso-provider-create': {
     LazyComponent: null,
-    componentKey: "SsoProviderCreateView",
+    componentKey: 'SsoProviderCreateView',
   },
-  "sso-provider-edit": {
+  'sso-provider-edit': {
     LazyComponent: null,
-    componentKey: "SsoProviderEditView",
+    componentKey: 'SsoProviderEditView',
   },
-  "sso-provider-table": {
+  'sso-provider-table': {
     LazyComponent: null,
-    componentKey: "SsoProviderTableView",
+    componentKey: 'SsoProviderTableView',
   },
-  "organization-details-edit": {
+  'organization-details-edit': {
     LazyComponent: null,
-    componentKey: "OrganizationDetailsEditView",
+    componentKey: 'OrganizationDetailsEditView',
   },
-  "user-mfa-management": {
+  'user-mfa-management': {
     LazyComponent: null,
-    componentKey: "UserMFAMgmtView",
+    componentKey: 'UserMFAMgmtView',
   },
 };
 
