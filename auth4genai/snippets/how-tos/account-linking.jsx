@@ -2,8 +2,8 @@ export const AccountLinking = ({ connectionLabel = "any Identity Provider" }) =>
   <>
     <h2>Account Linking</h2>
     <p>
-      If you're integrating with {connectionLabel}, but users in your app or agent can sign in using
-      other methods (e.g., a username and password or another social provider), you'll need to link
+      If you're integrating with {connectionLabel} and want users to be able to sign in using a different
+      method (e.g., username and password or another external provider), you need to link
       these identities into a single user account. Auth0 refers to this process as{" "}
       <a href="https://auth0.com/docs/manage-users/user-accounts/user-account-linking">
         Account Linking
@@ -31,11 +31,8 @@ export const AccountLinking = ({ connectionLabel = "any Identity Provider" }) =>
       define the session context; they do not create a shared external account for the organization.
     </p>
     <p>
-      <strong>Account Linking</strong> logic and handling will vary depending on your app or agent.
-      You can find an example of how to implement it in a Next.js chatbot app{" "}
-      <a href="https://github.com/auth0-lab/market0/blob/main/app/api/auth/%5Bauth0%5D/route.ts#L43">
-        here
-      </a>
+      Account Linking logic and handling varies depending on your app or agent.
+      You can find an example of how to implement it in a{" "} <a href="https://github.com/auth0-lab/market0/blob/main/app/api/auth/%5Bauth0%5D/route.ts#L43">Next.js chatbot app</a>
       . If you have questions or are looking for best practices,{" "}
       <a href="http://discord.gg/XbQpZSF2Ys">join our Discord</a> and ask in the{" "}
       <code>#auth0-for-gen-ai</code> channel.
