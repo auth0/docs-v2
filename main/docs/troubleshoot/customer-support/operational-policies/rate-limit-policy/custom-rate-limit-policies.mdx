@@ -1,0 +1,343 @@
+---
+title: Custom Rate Limit Policies
+description: Set per-application rate limit ceilings to protect your tenant from misconfigured or misbehaving applications.
+---
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="Custom Rate Limit Policies"
+    stage="ea"
+    terms="true"
+    contact="Auth0 Support"
+/>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Customers with Auth0 v202625.470.0 and operate in Public Cloud Environments prod-jp-1 prod-uk-1 prod-au-1 can now access Custom Rate Limits EA
+</Callout>
+
+Custom rate limit policies let you set per-application request ceilings on your tenant's calls to [Authentication API](https://auth0.com/docs/api/authentication). When an application calls Auth0 (requesting tokens, starting authorization flows, or refreshing credentials) each request counts toward that application's configured limit. If an application exceeds its ceiling due to a bug, retry loop, or unexpected behavior, Auth0 throttles it before it can consume your tenant's shared rate limit capacity.
+
+You can apply custom rate limit policies to both first-party applications and third-party applications whose behavior you do not directly control.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Custom rate limit policies are safety ceilings, not capacity dividers. They aren't intended to split your tenant's total rate limit entitlement evenly across applications. Set them high enough that normal traffic never triggers them, but low enough that a misbehaving application is caught before it affects your tenant.
+
+</Callout>
+
+## How custom rate limits relate to tenant rate limits
+
+Your tenant has a [global authentication rate limit](/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy) based on your subscription plan. Custom rate limit policies add a *per-application* ceiling below that global limit. The two layers work together:
+
+- Every request that passes the custom rate limit check still counts toward your tenant's global rate limit.
+- If an application exceeds its custom limit, Auth0 returns HTTP 429 to that application. The rejected request does not count toward your tenant's global rate limit.
+- If your tenant's global limit is reached first, all applications are throttled, regardless of whether individual applications are within their custom limits.
+
+Custom rate limits protect your tenant from individual applications consuming a disproportionate share of your global capacity. They do not increase your tenant's total throughput.
+
+## How policy evaluation works
+
+Auth0 evaluates custom rate limit policies in a strict hierarchy, from most specific to most general. The first matching level is enforced and all broader levels are skipped.
+
+1. **Client ID**: A policy targeting a specific application by its Client ID. If a matching policy exists, evaluation stops here.
+2. **Group**: Grouped profiles (such as third-party applications or CIMD) that apply a single shared limit to the *combined* traffic from all applications in the group. All applications in the group draw from the same policy. There is no per-application subdivision within the group. If the application belongs to a group with a policy, evaluation stops here.
+3. **Global / Default**: A fallback policy that applies to any application not covered by a Client ID or Group policy. Each application gets its own independent policy at the configured limit. The limit is shared, but the policies are not. This means each application is evaluated separately against the same ceiling.
+
+This hierarchy protects against both individual misbehaving applications and aggregate surges from entire classes of applications.
+
+### Pooled counters (Group policies)
+
+Group policies use a single, shared counter for all applications in the group. Every request from any group member draws from the same bucket.
+
+For example, if you create a Group policy called "Third-Party Clients" with a limit of 100 RPS, and the group contains five applications, the 100 RPS limit applies to their combined traffic. If one application sends 90 RPS and the others send 5 RPS each, the group hits its limit (90 + 5 + 5 + 5 + 5 = 110 RPS). Auth0 throttles subsequent requests from any application in the group. There is no guaranteed allocation per application within the group.
+
+If one third-party application needs different treatment, assign it a Client ID policy, which takes precedence over the group limit.
+
+#### Third-party apps vs. CIMD clients
+
+Although CIMD (Client-Initiated Managed Delegation) clients are technically third-party applications, Auth0 places them in a separate group from traditional third-party apps. This means two distinct group buckets exist:
+
+- **Third-party apps** (Client ID prefix: `tpa_`):  Traditional third-party applications, including those created via the Management API or Dynamic Client Registration (DCR).
+- **CIMD clients** (Client ID prefix: `https://`): Applications created through Client-Initiated Managed Delegation.
+
+Each group has its own pooled counter. Traffic from CIMD clients does not count against the third-party apps group limit, and vice versa. You can identify which group an application belongs to by its Client ID prefix.
+
+### Independent counters (Global / Default policies)
+
+Global policies use independent counters. Each application gets its own separate counter evaluated against the same configured ceiling. Applications do not compete with each other for capacity.
+
+For example, if you set a Global default policy of 50 RPS: Application A can send 50 RPS, Application B can send 50 RPS, and Application C can send 50 RPS, all independently. Application A hitting its limit has no effect on Applications B or C. Each application is throttled only when it individually exceeds 50 RPS.
+
+Use Group policies when you need to cap the *aggregate* load from a class of applications (such as third-party integrations whose combined traffic could overwhelm your tenant). Use the Global default when you need a uniform safety ceiling per application without coordination between them.
+
+## Requests that count toward custom rate limits
+
+Custom rate limit policies count Authentication API requests that are attributed to an application's `client_id`. Auth0 counts a request when the application controls whether and how often that request occurs, even if the end user's browser is the HTTP client that delivers it.
+
+| Endpoint | Path | Notes |
+| --- | --- | --- |
+| Token requests | `/oauth/token` | Back-channel call from your application server. |
+| Authorization requests | `/authorize` | The application constructs this URL and triggers the redirect. Although the browser executes the request, the application controls the rate. |
+| Device code requests | `/oauth/device/code` | Back-channel call to start device authorization. |
+| Passwordless start | `/passwordless/start` | Back-channel call to initiate passwordless login. |
+| Passwordless verify | `/passwordless/verify` | Back-channel call to verify a passwordless code. |
+| Pushed authorization requests | `/oauth/par` | Back-channel call to push authorization parameters. |
+| Token revocation | `/oauth/revoke` | Back-channel call to revoke a token. |
+| Back-channel authorization (CIBA) | `/bc-authorize` | Back-channel call to initiate a CIBA authorization flow. |
+| Cross-origin authentication | `/co/authenticate` | Back-channel call for cross-origin authentication. |
+| Passkey challenge | `/passkey/challenge` | Back-channel call to initiate a passkey authentication challenge. |
+| Passkey registration | `/passkey/register` | Back-channel call to register a new passkey. |
+
+## Custom rate limit exclusions
+
+Once Auth0 begins an authentication flow (after `/authorize`), the end user's browser interacts directly with Auth0 to complete login. These subsequent requests (rendering the login page, submitting credentials, completing MFA challenges) are not counted against custom rate limits. The application does not initiate these requests and cannot control their rate or timing.
+
+For example, in a typical login flow:
+
+1. Your application redirects the user to `/authorize` → **counted** (your app initiated this).
+2. Auth0 renders the login page → **not counted** (browser-to-Auth0, outside your app's control).
+3. The user submits their credentials → **not counted**.
+4. The user completes an MFA challenge → **not counted**.
+5. Auth0 redirects back with an authorization code → **not counted**.
+6. Your application exchanges the code at `/oauth/token` → **counted** (your app initiated this).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+Because browser-initiated requests are excluded, custom rate limit policies reduce but do not eliminate the risk of attacks that exhaust tenant-wide rate limits by triggering complete authentication flows. For protection against those attack patterns, read [Attack Protection](/docs/secure/attack-protection).
+
+</Callout>
+
+## Log-only mode
+
+When you enable log-only mode on a policy, Auth0 tracks requests against the configured limit and emits `api_limit` log events with `action: log`, but does not actually return HTTP 429 responses. Traffic continues to flow normally.
+
+Use log-only mode to:
+
+- Validate that a new limit is set appropriately before blocking traffic.
+- Identify applications that would be affected by a policy change.
+- Establish baseline traffic patterns for an application or group.
+
+You can switch a policy between log-only and enforced at any time without recreating it.
+
+## Choose a rate limit value
+
+How you determine an appropriate limit depends on whether you control the application's traffic patterns.
+
+### First-party applications (Client ID policies)
+
+For applications you own and operate, you can measure traffic directly:
+
+1. Enable **log-only mode** on the policy.
+2. Observe the application's request patterns for 3–7 days.
+3. Review [`api_limit` log events](/docs/deploy-monitor/logs/log-event-type-codes) to identify peak request rates.
+4. Set the limit at 2–3x the observed peak. For example, if an application peaks at 10 RPS, set its limit to 20–30 RPS.
+
+Because you control the application code, you can predict traffic scaling and adjust the limit proactively when deploying changes that increase request volume.
+
+### Third-party applications (Group or Global policies)
+
+For applications you do not control, such as partner integrations, customer-built apps, or marketplace connectors, you cannot predict traffic patterns in advance. Set limits based on what your tenant can safely absorb:
+
+1. Calculate the maximum RPS your tenant can tolerate from a single source without impacting other applications.
+2. Set the limit at that threshold or below.
+3. Enable **log-only mode** to validate the limit against real traffic before enforcement.
+4. Monitor for `api_limit` events and adjust as third-party usage patterns emerge.
+
+Because you cannot control when third-party applications change their behavior, treat these limits as protective ceilings rather than performance targets.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+The goal is a ceiling that normal traffic never reaches. If an application routinely approaches its limit, the limit is set too low. Raise it and investigate the traffic pattern.
+
+</Callout>
+
+### Block an application entirely
+
+Setting a custom rate limit to `0` blocks all Authentication API requests from that application immediately without consuming any rate limit capacity. Use this to shut down a compromised or severely misbehaving application while you investigate.
+
+## Create a custom rate limit policy
+
+<Tabs>
+  <Tab title="Single application">
+
+  Set a rate limit for one specific application by its Client ID. This is the most specific policy level and takes precedence over Group and Global policies.
+
+  <Steps>
+    <Step title="Navigate to rate limit settings">
+
+    Go to **Auth0 Dashboard > Security > Rate Limits > Custom Policies** and select **Create Policy**.
+
+    </Step>
+
+    <Step title="Select policy type">
+
+    Choose **Single Application** and select the target application from the dropdown.
+
+    </Step>
+
+    <Step title="Configure the limit">
+
+    Set the requests-per-second ceiling. Use 2–3x the application's expected peak rate.
+
+    </Step>
+
+    <Step title="Enable log-only mode (recommended)">
+
+    Toggle **Log Only** to observe the policy without enforcing it. Monitor [`api_limit` events](/docs/deploy-monitor/logs/log-event-type-codes) for 3–7 days before switching to enforcement.
+
+    </Step>
+
+    <Step title="Save and activate">
+
+    Save the policy. If log-only mode is disabled, enforcement begins immediately.
+
+    </Step>
+  </Steps>
+
+  </Tab>
+
+  <Tab title="Application group">
+
+  Set a shared rate limit for a named group of applications. The limit applies to the *aggregate* traffic from all applications in the group.
+
+  <Steps>
+    <Step title="Navigate to rate limit settings">
+
+    Go to **Auth0 Dashboard > Security > Rate Limits > Custom Policies** and select **Create Policy**.
+
+    </Step>
+
+    <Step title="Select policy type">
+
+    Choose **Application Group** and either select an existing group or create a new one (for example, "Third-Party Clients").
+
+    </Step>
+
+    <Step title="Add applications to the group">
+
+    Select the applications that belong to this group. Their combined traffic counts toward a single shared bucket.
+
+    </Step>
+
+    <Step title="Configure the limit">
+
+    Set the requests-per-second ceiling for the group's aggregate traffic.
+
+    </Step>
+
+    <Step title="Enable log-only mode (recommended)">
+
+    Toggle **Log Only** to observe without enforcing. Monitor [`api_limit` events](/docs/deploy-monitor/logs/log-event-type-codes) for 3–7 days.
+
+    </Step>
+
+    <Step title="Save and activate">
+
+    Save the policy. If log-only mode is disabled, enforcement begins immediately.
+
+    </Step>
+  </Steps>
+
+  </Tab>
+
+  <Tab title="Global default">
+
+  Set a default rate limit that applies to all applications not covered by a Client ID or Group policy.
+
+  <Steps>
+    <Step title="Navigate to rate limit settings">
+
+    Go to **Auth0 Dashboard > Security > Rate Limits > Custom Policies** and select **Create Policy**.
+
+    </Step>
+
+    <Step title="Select policy type">
+
+    Choose **Global Default**.
+
+    </Step>
+
+    <Step title="Configure the limit">
+
+    Set the requests-per-second ceiling. This acts as a catch-all for any application without a more specific policy.
+
+    </Step>
+
+    <Step title="Enable log-only mode (recommended)">
+
+    Toggle **Log Only** to observe without enforcing. Monitor [`api_limit` events](/docs/deploy-monitor/logs/log-event-type-codes) for 3–7 days.
+
+    </Step>
+
+    <Step title="Save and activate">
+
+    Save the policy. If log-only mode is disabled, enforcement begins immediately.
+
+    </Step>
+  </Steps>
+
+  </Tab>
+</Tabs>
+
+## Monitor via logs
+
+Use tenant logs to observe how custom rate limit policies affect traffic:
+
+| Log event | Description |
+| --- | --- |
+| `api_limit` | Triggered when a rate limit is exceeded. For custom rate limit policies, the log event includes the policy name and the `client_id` of the affected application. |
+
+Auth0 emits these log events at most once per minute per policy and application combination. If an application exceeds its limit continuously, you will see one `api_limit` event per minute rather than one per rejected request. This prevents log volume from compounding during sustained overload.
+
+To view these events, go to **Auth0 Dashboard > Monitoring > Logs** and filter by event type. For details on log event fields, see [Log Event Type Codes](/docs/deploy-monitor/logs/log-event-type-codes).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+The `api_limit` event type is shared between custom rate limit policies and your tenant's global rate limits. To identify events triggered by a custom policy, check the log event details for the policy name and target `client_id`. Global rate limit events do not include a policy name.
+
+Enable log-only mode on new policies to observe their impact without blocking traffic. Review the logs after 3–7 days, then switch to enforcement once you confirm the limit is appropriately set.
+
+</Callout>
+
+## Monitor via HTTP response headers
+
+Auth0 returns an `Auth0-RateLimit` response header on all requests evaluated by a custom rate limit policy. This header is specific to custom rate limit policies and communicates the application's current quota status:
+
+```
+Auth0-RateLimit: client;q=10;t=1;r=9
+```
+
+| Parameter | Description |
+| --- | --- |
+| `client` | The rate limit entity (the application identified by `client_id`). |
+| `q` | The configured quota (requests per interval). |
+| `t` | The reset interval in seconds. |
+| `r` | Remaining requests available in the current interval. |
+
+When an application exceeds its custom rate limit, Auth0 returns an HTTP `429 Too Many Requests` response with a `Retry-After` header indicating the number of seconds to wait before retrying.
+
+The response body contains a JSON error:
+
+```json
+{
+  "error": "too_many_requests",
+  "error_description": "Rate limit exceeded."
+}
+```
+
+For `/authorize` requests, Auth0 does not return a JSON error response since these requests originate from a browser redirect. Instead, Auth0 presents an error page directly to the user. If you enable the **Redirect** option on the policy, Auth0 redirects the user to a configured URL instead of displaying the error page.
+
+Throttling applies only to the application that exceeded its limit. Other applications on the same tenant are unaffected.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+
+The `X-RateLimit-*` headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) reflect your tenant's [global rate limit](/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy), not the custom policy limit. These headers appear on both successful and throttled responses but always report tenant-level capacity. Use the `Auth0-RateLimit` header to monitor custom policy quota consumption.
+
+</Callout>
+
+## Learn more
+
+- [Rate Limit Policy](/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy)
+- [Rate Limit Configurations](/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations)
+- [Rate Limit Use Cases](/docs/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-use-cases)
+- [Attack Protection](/docs/secure/attack-protection)
