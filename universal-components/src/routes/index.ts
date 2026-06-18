@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { lazy } from 'react';
-import { lazy } from 'react';
 
 // Components (and hooks like `useCoreClient`) are exposed from the package root,
 // while `Auth0ComponentProvider` lives on the `/spa` subpath. Merge both so the
@@ -21,34 +20,23 @@ export const componentRoutes: Record<
 > = {
   'domain-table-view': { LazyComponent: null, componentKey: 'DomainTableView' },
   'sso-provider-create': {
-  'domain-table-view': { LazyComponent: null, componentKey: 'DomainTableView' },
-  'sso-provider-create': {
     LazyComponent: null,
-    componentKey: 'SsoProviderCreateView',
     componentKey: 'SsoProviderCreateView',
   },
   'sso-provider-edit': {
-  'sso-provider-edit': {
     LazyComponent: null,
-    componentKey: 'SsoProviderEditView',
     componentKey: 'SsoProviderEditView',
   },
   'sso-provider-table': {
-  'sso-provider-table': {
     LazyComponent: null,
-    componentKey: 'SsoProviderTableView',
     componentKey: 'SsoProviderTableView',
   },
   'organization-details-edit': {
-  'organization-details-edit': {
     LazyComponent: null,
-    componentKey: 'OrganizationDetailsEditView',
     componentKey: 'OrganizationDetailsEditView',
   },
   'user-mfa-management': {
-  'user-mfa-management': {
     LazyComponent: null,
-    componentKey: 'UserMFAMgmtView',
     componentKey: 'UserMFAMgmtView',
   },
 };
