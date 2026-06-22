@@ -4,6 +4,13 @@ description: Use when securing Fastify API endpoints with JWT Bearer token valid
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
+    requires:
+      bins:
+        - auth0
 ---
 
 # Auth0 Fastify API Integration
@@ -121,8 +128,9 @@ curl http://localhost:3001/api/public
 Test protected endpoint (requires access token):
 
 ```bash
+# First, obtain an access token (e.g. via Auth0 Dashboard > APIs > Test tab)
 curl http://localhost:3001/api/private \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 ---
@@ -144,6 +152,7 @@ curl http://localhost:3001/api/private \
 - `auth0-quickstart` - Basic Auth0 setup
 - `auth0-fastify` - For server-rendered Fastify web apps with sessions
 - `auth0-mfa` - Add Multi-Factor Authentication
+- `auth0-cli` - Manage Auth0 resources from the terminal
 
 ---
 
