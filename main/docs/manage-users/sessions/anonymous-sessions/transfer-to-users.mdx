@@ -1,0 +1,228 @@
+---
+title: Transfer Anonymous Sessions to Users
+description: Migrate anonymous session data to an authenticated user profile when a guest signs up or logs in.
+---
+
+When an anonymous user signs up or logs in, you can transfer their anonymous session data — shopping cart contents, preferences, browsing history, and so on — to their authenticated account. This gives your users a seamless transition from guest to registered.
+
+With session transfer, users can:
+
+- Migrate shopping carts or orders from guest to registered accounts
+- Carry preferences and settings into their profile
+- Preserve browsing history and favorites
+- Continue where they left off
+
+## How session transfer works
+
+When a user who has an anonymous session decides to log in or sign up, your application passes the `anonymous_session_token` to the `/authorize` endpoint — either as a query parameter or as a cookie. Auth0 runs the login or sign-up ceremonies normally, then makes the anonymous session data available in your Pre-Registration and Post-Login Actions via `event.anonymous_session`.
+
+The authenticated session continues normally, enriched with the anonymous session information.
+
+<Note>
+Anonymous sessions are **not** automatically invalidated after transfer. The user retains access to the anonymous session until it expires or is explicitly logged out. To end the anonymous session after transfer, call `POST /anonymous/logout`.
+</Note>
+
+## Pass the anonymous session token
+
+### Method 1: Via cookie (automatic)
+
+If you store the anonymous session token in a cookie named `anon`, Auth0 detects it automatically during authentication — no extra code required.
+
+```javascript wrap lines
+// No extra code needed — cookie is sent automatically
+await auth0.loginWithRedirect();
+```
+
+The `anon` cookie must contain a valid anonymous session token.
+
+### Method 2: Via /authorize query parameter
+
+Add `anonymous_session_token` to the authorization request:
+
+```text wrap lines
+https://YOUR_DOMAIN/authorize?
+  client_id=YOUR_CLIENT_ID&
+  redirect_uri=https://app.example.com/callback&
+  response_type=code&
+  scope=openid profile&
+  anonymous_session_token=SESSION_TOKEN
+```
+
+## Access anonymous data in Actions
+
+When Auth0 detects an anonymous session token, it populates `event.anonymous_session` in your Actions:
+
+```json wrap lines
+{
+  "anonymous_session": {
+    "user_id": "anon|abc123",
+    "session_id": "sess_123",
+    "created_at": "2026-05-14T10:30:00Z",
+    "metadata": {
+      "cart": {
+        "items": [{ "sku": "ITEM-001", "qty": 2 }]
+      },
+      "preferences": {
+        "theme": "dark"
+      }
+    }
+  }
+}
+```
+
+## Action examples
+
+### Pre-Registration Action (new users)
+
+Use a Pre-Registration Action to copy anonymous data into the new user profile when someone signs up:
+
+```javascript wrap lines
+exports.onExecutePreUserRegistration = async (event, api) => {
+  if (event.anonymous_session) {
+    // Store reference to the anonymous session
+    api.user.setAppMetadata(
+      'linked_anonymous_id',
+      event.anonymous_session.user_id
+    );
+
+    // Migrate cart data
+    if (event.anonymous_session.metadata.cart) {
+      api.user.setAppMetadata(
+        'migrated_cart',
+        event.anonymous_session.metadata.cart
+      );
+    }
+
+    // Copy preferences to user metadata
+    if (event.anonymous_session.metadata.preferences) {
+      api.user.setUserMetadata(
+        'preferences',
+        event.anonymous_session.metadata.preferences
+      );
+    }
+  }
+};
+```
+
+### Post-Login Action (existing users)
+
+Use a Post-Login Action to link anonymous data to returning users:
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.anonymous_session) {
+    // Store last anonymous session reference
+    api.user.setAppMetadata(
+      'last_anonymous_session',
+      event.anonymous_session.user_id
+    );
+
+    // Add anonymous cart to access token for your API to process
+    api.accessToken.setCustomClaim(
+      'anonymous_cart',
+      event.anonymous_session.metadata.cart
+    );
+
+    // Track all linked sessions (optional)
+    const linkedSessions =
+      event.user.app_metadata?.linked_sessions || [];
+    if (!linkedSessions.includes(event.anonymous_session.user_id)) {
+      api.user.setAppMetadata('linked_sessions', [
+        ...linkedSessions,
+        event.anonymous_session.user_id,
+      ]);
+    }
+  }
+};
+```
+
+### Merge cart data
+
+When an existing user with a cart logs in with an anonymous session that also has cart items, merge the two:
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.anonymous_session?.metadata?.cart) {
+    return; // No anonymous cart to merge
+  }
+
+  const anonymousCart = event.anonymous_session.metadata.cart;
+  const existingCart = event.user.app_metadata?.cart || { items: [] };
+
+  // Merge cart items, combining quantities for matching SKUs
+  const mergedItems = [...existingCart.items];
+  for (const anonItem of anonymousCart.items) {
+    const existingIndex = mergedItems.findIndex(
+      (item) => item.sku === anonItem.sku
+    );
+    if (existingIndex >= 0) {
+      mergedItems[existingIndex].qty += anonItem.qty;
+    } else {
+      mergedItems.push(anonItem);
+    }
+  }
+
+  api.user.setAppMetadata('cart', { items: mergedItems });
+  api.accessToken.setCustomClaim('cart', { items: mergedItems });
+};
+```
+
+## Handle multiple anonymous sessions
+
+When a user logs in from different devices, they may have multiple anonymous sessions. Handle them in your Post-Login Action:
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.anonymous_session) return;
+
+  const linkedSessions =
+    event.user.app_metadata?.linked_sessions || [];
+
+  // Option 1: Keep all linked sessions
+  api.user.setAppMetadata('linked_sessions', [
+    ...linkedSessions,
+    {
+      user_id: event.anonymous_session.user_id,
+      linked_at: new Date().toISOString(),
+      device: event.request.user_agent,
+    },
+  ]);
+
+  // Option 2: Keep only the most recent
+  api.user.setAppMetadata('last_anonymous_session', {
+    user_id: event.anonymous_session.user_id,
+    metadata: event.anonymous_session.metadata,
+  });
+};
+```
+
+## End the anonymous session after transfer
+
+Anonymous sessions are not automatically invalidated when a user authenticates. To end the session explicitly:
+
+```javascript wrap lines
+// In your application, after successful login
+if (wasAnonymousSession) {
+  await fetch('https://YOUR_DOMAIN/anonymous/logout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include', // Send cookies
+    body: JSON.stringify({ client_id: 'YOUR_CLIENT_ID' }),
+  });
+}
+```
+
+## Unsupported flows
+
+Session transfer does not occur during:
+
+- **Device Code** — the authentication request and the actual login happen on different devices
+- **Client-Initiated Backchannel Authentication (CIBA)** — the authentication request and confirmation happen on different devices
+- **Custom token exchange** — given the nature of the transaction (for example, impersonation), there is a likelihood of attributing anonymous data to the wrong user
+- **Refresh token exchange** — it is assumed the user was already logged in if they had a refresh token
+- **Password reset flows** — intentionally excluded to prevent accidentally associating anonymous data with accounts during password recovery, and because the two-step process may result in mismatching anonymous data being merged
+
+## Learn more
+
+- [Claims Mapping](/docs/manage-users/sessions/anonymous-sessions/claims-mapping) — Include session metadata in access tokens without writing Actions code.
+- [Anonymous Sessions Best Practices](/docs/manage-users/sessions/anonymous-sessions/best-practices) — Security recommendations for session transfer.

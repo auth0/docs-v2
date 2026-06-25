@@ -1,0 +1,379 @@
+---
+title: Anonymous Sessions Best Practices
+description: Security, performance, and implementation recommendations for Auth0 Anonymous Sessions.
+---
+
+Follow these best practices to ensure secure, performant, and reliable Anonymous Sessions implementations.
+
+## Security
+
+### Configure appropriate session lifetimes
+
+Auth0 recommends sessions of 30 days or longer for most applications. Sessions shorter than 24 hours are generally only useful in shared computer environments — for example, library kiosks — where multiple users access the same device.
+
+```json wrap lines
+{ "anonymous_session_lifetime": 2592000 }
+```
+
+<Note>
+Sessions shorter than 24 hours on personal devices will likely result in data loss, as users may not return within that timeframe. This leads to a poor user experience and lost cart or preference data.
+</Note>
+
+### Use JWE token format
+
+If you do not need to read what the user has already provided in previous interactions, keep session tokens encrypted (JWE) in production. A potential attacker cannot see the contents of an encrypted token.
+
+```json wrap lines
+{ "anonymous_session_token_format": "jwe" }
+```
+
+JWE:
+
+- Hides session metadata from users
+- Prevents token inspection attacks
+- Maintains session privacy
+
+### Validate tokens server-side
+
+Always validate anonymous session tokens on your server, even if Auth0 issued them:
+
+```javascript wrap lines
+// In your API middleware
+import { jwtVerify, createRemoteJWKSet } from 'jose';
+
+const JWKS = createRemoteJWKSet(
+  new URL('https://YOUR_DOMAIN/.well-known/jwks.json')
+);
+
+async function validateAnonymousToken(token) {
+  try {
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: 'https://YOUR_DOMAIN/',
+      audience: 'YOUR_AUDIENCE',
+    });
+
+    // Verify it's an anonymous user
+    if (!payload.sub?.startsWith('anon|')) {
+      throw new Error('Not an anonymous session');
+    }
+
+    return payload;
+  } catch (error) {
+    throw new Error('Invalid token');
+  }
+}
+```
+
+### Limit sensitive operations
+
+Restrict what anonymous users can do. Anonymous users have never proved their identities:
+
+```javascript wrap lines
+// In your API
+app.post('/api/checkout', async (req, res) => {
+  const user = req.auth;
+
+  if (user.sub.startsWith('anon|')) {
+    // Anonymous users can only checkout with guest checkout
+    // Require email for order tracking
+    if (!req.body.email) {
+      return res.status(400).json({
+        error: 'Email required for guest checkout',
+      });
+    }
+  }
+
+  // Process checkout...
+});
+```
+
+### Sanitize metadata
+
+Never trust metadata from clients without validation. Validate structure and types before migrating anonymous data to a user profile:
+
+```javascript wrap lines
+// In your Action
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.anonymous_session?.metadata) {
+    const { cart, preferences } = event.anonymous_session.metadata;
+
+    // Validate cart structure
+    if (cart && Array.isArray(cart.items)) {
+      const sanitizedCart = cart.items
+        .filter(
+          (item) =>
+            typeof item.sku === 'string' &&
+            typeof item.qty === 'number'
+        )
+        .slice(0, 100); // Max 100 items
+      api.user.setAppMetadata('migrated_cart', {
+        items: sanitizedCart,
+      });
+    }
+
+    // Validate preferences
+    if (
+      preferences?.theme &&
+      ['light', 'dark'].includes(preferences.theme)
+    ) {
+      api.user.setUserMetadata('preferences', {
+        theme: preferences.theme,
+      });
+    }
+  }
+};
+```
+
+## Performance
+
+### Cache access tokens
+
+Access tokens can be reused until they expire. Avoid fetching a new token on every request:
+
+```javascript wrap lines
+class TokenCache {
+  constructor() {
+    this.tokens = new Map();
+  }
+
+  async getToken(audience) {
+    const cached = this.tokens.get(audience);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.token;
+    }
+
+    // Get new token
+    const response = await anonymousClient.getAccessToken({ audience });
+    this.tokens.set(audience, {
+      token: response.access_token,
+      expiresAt:
+        Date.now() + response.expires_in * 1000 - 60000, // 1 min buffer
+    });
+    return response.access_token;
+  }
+}
+```
+
+### Batch metadata updates
+
+Avoid frequent metadata updates. Batch changes into a single call:
+
+```javascript wrap lines
+// Avoid: multiple API calls
+await updateMetadata({ cart_items: 1 });
+await updateMetadata({ last_viewed: 'product-1' });
+await updateMetadata({ preferences: { theme: 'dark' } });
+
+// Prefer: single API call
+await updateMetadata({
+  cart_items: 1,
+  last_viewed: 'product-1',
+  preferences: { theme: 'dark' },
+});
+```
+
+### Keep metadata small
+
+Minimize metadata size for better performance. Store references, not full objects:
+
+```javascript wrap lines
+// Avoid: storing full product data
+{
+  "cart": [
+    {
+      "id": 1,
+      "name": "Product1",
+      "description": "...",
+      "images": [...],
+      "price": 99.99
+    }
+  ]
+}
+
+// Prefer: storing only references
+{
+  "cart": [
+    { "sku": "PROD-001", "qty": 2 },
+    { "sku": "PROD-002", "qty": 1 }
+  ]
+}
+
+// Or: store a cart ID and fetch items from your own system
+{
+  "cart_id": "https://my_webstore.com/carts/cart_1234"
+}
+```
+
+## Implementation
+
+### Handle session expiration gracefully
+
+When a session expires, create a new one rather than letting the error surface to users:
+
+```javascript wrap lines
+class AnonymousSessionManager {
+  async getSession() {
+    try {
+      return await anonymousClient.getSession();
+    } catch (error) {
+      if (error.error === 'session_expired') {
+        return await anonymousClient.createSession();
+      }
+      throw error;
+    }
+  }
+
+  async refreshIfNeeded() {
+    const session = await this.getSession();
+    const expiresIn = session.expires_at - Date.now();
+    if (expiresIn < 3600000) {
+      // Refresh if expiring within 1 hour
+      return await anonymousClient.updateSession({});
+    }
+    return session;
+  }
+}
+```
+
+### Implement offline support
+
+Queue metadata updates when the user is offline and sync when they reconnect:
+
+```javascript wrap lines
+class OfflineAwareSession {
+  constructor() {
+    this.pendingUpdates = [];
+  }
+
+  async updateMetadata(metadata) {
+    try {
+      await anonymousClient.updateSession({ metadata });
+    } catch (error) {
+      if (!navigator.onLine) {
+        this.pendingUpdates.push(metadata);
+        this.saveToLocalStorage();
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async syncPendingUpdates() {
+    if (!this.pendingUpdates.length) return;
+    const merged = this.pendingUpdates.reduce(
+      (acc, update) => ({ ...acc, ...update }),
+      {}
+    );
+    await anonymousClient.updateSession({ metadata: merged });
+    this.pendingUpdates = [];
+  }
+}
+
+// Sync when back online
+window.addEventListener('online', () => {
+  sessionManager.syncPendingUpdates();
+});
+```
+
+### Clear anonymous data after login
+
+If the anonymous session data is no longer needed after a user authenticates, clean it up:
+
+```javascript wrap lines
+// After login callback
+async function handleLoginCallback() {
+  const { isAuthenticated } = await auth0.handleRedirectCallback();
+  if (isAuthenticated) {
+    // Clear anonymous session
+    await anonymousClient.logout();
+    // Or just clear local storage
+    localStorage.removeItem('anon_session');
+    // Redirect to authenticated experience
+    window.location.href = '/dashboard';
+  }
+}
+```
+
+### Test session transfer thoroughly
+
+Test the full range of transfer scenarios:
+
+```javascript wrap lines
+describe('Session Transfer', () => {
+  it('should migrate cart on signup', async () => {
+    const session = await createAnonymousSession({
+      metadata: { cart: [{ sku: 'TEST-001', qty: 2 }] },
+    });
+
+    await signUp({
+      email: 'test@example.com',
+      password: 'Test123!',
+      anonymous_session_token: session.session_token,
+    });
+
+    const user = await getUser('test@example.com');
+    expect(user.app_metadata.migrated_cart).toEqual([
+      { sku: 'TEST-001', qty: 2 },
+    ]);
+  });
+
+  it('should merge carts on login', async () => {
+    await updateUser('user@example.com', {
+      app_metadata: { cart: [{ sku: 'EXISTING-001', qty: 1 }] },
+    });
+
+    const session = await createAnonymousSession({
+      metadata: { cart: [{ sku: 'ANON-001', qty: 3 }] },
+    });
+
+    await login({
+      email: 'user@example.com',
+      anonymous_session_token: session.session_token,
+    });
+
+    const user = await getUser('user@example.com');
+    expect(user.app_metadata.cart.length).toBe(2);
+  });
+});
+```
+
+## Common anti-patterns
+
+### Storing sensitive data
+
+Never store sensitive information in anonymous session metadata:
+
+```javascript wrap lines
+// Never do this
+{
+  "metadata": {
+    "credit_card": "4111111111111111",
+    "ssn": "123-45-6789"
+  }
+}
+
+// Store only non-sensitive references
+{
+  "metadata": {
+    "cart": [{ "sku": "ITEM-001", "qty": 1 }],
+    "preferences": { "theme": "dark" }
+  }
+}
+```
+
+### Infinite session lifetimes
+
+Avoid infinite session lifetimes in production. A device may change hands:
+
+```javascript wrap lines
+// Avoid: infinite lifetime
+{ "anonymous_session_lifetime": 0 }
+
+// Prefer: finite lifetime (for example, 90 days)
+{ "anonymous_session_lifetime": 7776000 }
+```
+
+## Learn more
+
+- [Transfer Anonymous Sessions to Users](/docs/manage-users/sessions/anonymous-sessions/transfer-to-users) — Migrate guest activity at login or sign-up.
+- [Claims Mapping](/docs/manage-users/sessions/anonymous-sessions/claims-mapping) — Include session attributes in access tokens without Actions code.
