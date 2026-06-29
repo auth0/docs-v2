@@ -1,9 +1,14 @@
 ---
 name: auth0-react-native
-description: Use when adding authentication to React Native or Expo mobile apps (iOS/Android) with biometric support - integrates react-native-auth0 SDK with native deep linking
+description: >
+  Use when adding Auth0 login, logout, or biometric auth to a bare React Native app (not Expo). Integrates react-native-auth0 with native deep linking.
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
 ---
 
 # Auth0 React Native Integration
@@ -20,6 +25,7 @@ Add authentication to React Native and Expo mobile applications using react-nati
 
 ## When NOT to Use
 
+- **Expo managed workflow** - Use `auth0-expo` skill for Expo apps with config plugin
 - **React web applications** - Use `auth0-react` skill for SPAs (Vite/CRA)
 - **React Server Components** - Use `auth0-nextjs` for Next.js applications
 - **Non-React native apps** - Use platform-specific SDKs (Swift for iOS, Kotlin for Android)
@@ -221,6 +227,7 @@ npx react-native run-android
 - `auth0-quickstart` - Basic Auth0 setup
 - `auth0-migration` - Migrate from another auth provider
 - `auth0-mfa` - Add Multi-Factor Authentication
+- `auth0-cli` - Manage Auth0 resources from the terminal
 
 ---
 

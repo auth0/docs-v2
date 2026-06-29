@@ -1,9 +1,14 @@
 ---
 name: auth0-fastify
-description: Use when adding authentication (login, logout, protected routes) to Fastify web applications - integrates @auth0/auth0-fastify for session-based auth. For stateless Fastify APIs use auth0-fastify-api instead.
+description: >
+  Use when adding session-based login, logout, or protected routes to a Fastify web application. Integrates @auth0/auth0-fastify — use even if the user says "add login to my Fastify app". For Fastify APIs validating Bearer tokens, use auth0-fastify-api instead.
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
 ---
 
 # Auth0 Fastify Integration
@@ -142,6 +147,7 @@ Visit `http://localhost:3000` and test the login flow.
 - `auth0-quickstart` - Basic Auth0 setup
 - `auth0-migration` - Migrate from another auth provider
 - `auth0-mfa` - Add Multi-Factor Authentication
+- `auth0-cli` - Manage Auth0 resources from the terminal
 
 ---
 

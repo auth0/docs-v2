@@ -1,9 +1,14 @@
 ---
 name: auth0-flask
-description: Use when adding login, logout, and user profile to a Flask web application using session-based authentication - integrates auth0-server-python for server-rendered apps with login/callback/profile/logout flows.
+description: >
+  Use when adding session-based login, logout, or user profile to a Flask web application. Integrates auth0-server-python — use even if the user says "add login to my Flask app" or "protect my Flask routes".
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
 ---
 
 # Auth0 Flask Web App Integration
@@ -327,6 +332,7 @@ All methods are async:
 
 - `auth0-express` — For server-rendered Express web apps with login/logout sessions
 - `auth0-fastify` — For Fastify web applications with session-based auth
+- `auth0-cli` — Manage Auth0 resources from the terminal
 
 ---
 

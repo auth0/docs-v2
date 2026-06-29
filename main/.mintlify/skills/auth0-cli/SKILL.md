@@ -1,6 +1,7 @@
 ---
 name: auth0-cli
-description: Reference for Auth0 CLI commands — apps, apis, users, roles, organizations, actions, logs, custom domains, universal-login, terraform, raw API mode, and --json output. Use this skill whenever you need to run Auth0 CLI commands to create or manage applications, APIs, users, roles, organizations, actions, log streams, custom domains, or Universal Login configuration, or when you need to call the Auth0 Management API directly. Trigger on prompts like "create an Auth0 app", "list my Auth0 users", "assign a role", "set up an organization", "deploy an action", "configure a custom domain", "generate Terraform for Auth0", "stream Auth0 logs", "call the Management API", or any task involving the auth0 CLI tool.
+description: >
+  Use when running Auth0 CLI commands to manage tenant resources — creating apps or APIs, managing users, roles, organizations, actions, log streams, custom domains, or Universal Login config. Also use when calling the Auth0 Management API directly via the CLI.
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
@@ -24,7 +25,7 @@ metadata:
 
 # Auth0 CLI — Command Reference
 
-The Auth0 CLI (`auth0`) lets you manage your tenant from the terminal. Install with `brew install auth0/auth0-cli/auth0`. For complete flag definitions and examples, see the [Full CLI Reference](references/cli.md).
+The Auth0 CLI (`auth0`) lets you manage your tenant from the terminal. Install it via Homebrew (`brew install auth0/auth0-cli/auth0`). For complete flag definitions and examples, see the [Full CLI Reference](references/cli.md).
 
 ---
 
@@ -33,7 +34,7 @@ The Auth0 CLI (`auth0`) lets you manage your tenant from the terminal. Install w
 ```bash
 auth0 login                          # interactive device-code login
 auth0 login --scopes "read:client_grants"  # request extra scopes if 403
-auth0 login --domain <tenant>.auth0.com --client-id <id> --client-secret <secret>  # CI/CD
+auth0 login --domain <tenant>.auth0.com --client-id <id> --client-secret "$AUTH0_CLIENT_SECRET"  # CI/CD
 ```
 
 See [Authentication Details](references/cli.md#authentication) for machine login with JWT, tenant management, and logout.
@@ -72,12 +73,13 @@ Create or inspect Auth0 applications (client ID, secret, callback URLs, app type
 
 ```bash
 auth0 apps create --name "My SPA" --type spa \
+  --auth-method None \
   --callbacks "http://localhost:3000" \
   --logout-urls "http://localhost:3000" \
   --origins "http://localhost:3000" --json
 
 auth0 apps list --json-compact
-auth0 apps show <client-id> --reveal-secrets --json
+auth0 apps show <client-id> --json
 auth0 apps update <client-id> --callbacks "http://localhost:3000,https://myapp.com" --json
 auth0 apps delete <client-id> --force
 ```
@@ -110,7 +112,7 @@ Create, search, inspect, import, and manage users in your tenant.
 auth0 users search --query "email:user@example.com" --json
 auth0 users search-by-email user@example.com --json-compact
 auth0 users create --connection-name "Username-Password-Authentication" \
-  --email "test@example.com" --password "SecureP@ss!" --json
+  --email "test@example.com" --password "$USER_PASSWORD" --json
 auth0 users show <user-id> --json
 auth0 users blocks list <email> --json
 auth0 users blocks unblock <email>

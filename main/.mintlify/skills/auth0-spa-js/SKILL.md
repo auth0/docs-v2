@@ -1,9 +1,14 @@
 ---
 name: auth0-spa-js
-description: Use when adding authentication to Vanilla JS, Svelte, or any framework-agnostic single-page applications - integrates @auth0/auth0-spa-js SDK for SPAs without framework-specific wrappers
-license: Proprietary
+description: >
+  Use when adding Auth0 login or token management to a Vanilla JS, Svelte, or framework-agnostic SPA. Integrates @auth0/auth0-spa-js — use when there is no framework-specific Auth0 SDK available.
+license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
 ---
 
 # Auth0 SPA JS Integration
@@ -167,6 +172,7 @@ const response = await fetch('https://your-api.example.com/data', {
 - [auth0-angular](/auth0-angular) — Auth0 for Angular SPAs
 - [auth0-vue](/auth0-vue) — Auth0 for Vue 3 SPAs
 - [auth0-mfa](/auth0-mfa) — Add Multi-Factor Authentication
+- [auth0-cli](/auth0-cli) — Manage Auth0 resources from the terminal
 
 ## Quick Reference
 

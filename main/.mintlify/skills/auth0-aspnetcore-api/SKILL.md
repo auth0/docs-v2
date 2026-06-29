@@ -1,9 +1,14 @@
 ---
 name: auth0-aspnetcore-api
-description: "Use when securing ASP.NET Core Web API endpoints with JWT Bearer token validation, scope/permission checks, or stateless auth - integrates Auth0.AspNetCore.Authentication.Api for REST APIs receiving access tokens from frontends or mobile apps. Also handles DPoP proof-of-possession token binding. Triggers on: AddAuth0ApiAuthentication, .NET Web API auth, JWT validation, UseAuthentication, UseAuthorization."
+description: >
+  Use when protecting ASP.NET Core Web API endpoints with JWT Bearer token validation, scope checks, or DPoP binding. Integrates Auth0.AspNetCore.Authentication.Api for stateless REST APIs receiving access tokens from frontends or mobile apps.
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
 ---
 
 # Auth0 ASP.NET Core Web API Integration
@@ -190,6 +195,7 @@ Built-in proof-of-possession token binding per RFC 9449. See [Integration Guide]
 
 - `auth0-quickstart` - Basic Auth0 setup
 - `auth0-mfa` - Add Multi-Factor Authentication
+- `auth0-cli` - Manage Auth0 resources from the terminal
 
 ---
 

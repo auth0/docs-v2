@@ -1,9 +1,14 @@
 ---
 name: auth0-nextjs
-description: Use when adding authentication to Next.js applications (login, logout, protected pages, middleware, server components) - supports App Router and Pages Router with @auth0/nextjs-auth0 SDK.
+description: >
+  Use when adding Auth0 login, logout, protected pages, or middleware to a Next.js application. Supports App Router and Pages Router with @auth0/nextjs-auth0 — use even if the user says "add login to my Next.js app" or "protect my Next.js routes".
 license: Apache-2.0
 metadata:
   author: Auth0 <support@auth0.com>
+  version: '1.0.0'
+  openclaw:
+    emoji: "\U0001F510"
+    homepage: https://github.com/auth0/agent-skills
 ---
 
 # Auth0 Next.js Integration
@@ -244,6 +249,7 @@ Visit `http://localhost:3000` and test the login flow.
 - `auth0-quickstart` - Basic Auth0 setup
 - `auth0-migration` - Migrate from another auth provider
 - `auth0-mfa` - Add Multi-Factor Authentication
+- `auth0-cli` - Manage Auth0 resources from the terminal
 
 ---
 
