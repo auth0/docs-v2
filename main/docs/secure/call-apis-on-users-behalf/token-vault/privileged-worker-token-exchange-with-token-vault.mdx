@@ -28,8 +28,18 @@ Before configuring Privileged Worker Token Exchange for your client application:
 
 ## Configure client application
 
-To configure the client application’s privileged access to Token Vault, you need to provide a public key that will be used to verify a signed JWT as the subject token.
+To configure the client application's privileged access to Token Vault, you need to provide a public key that will be used to verify a signed JWT as the subject token.
 
+<Tabs><Tab title="Auth0 Dashboard">
+
+1. Navigate to **Applications > Applications** and select your application.
+2. Select the **Settings** tab, scroll to the **Privileged Worker** section, and toggle on **Enable Privileged Worker**. In the modal, select an existing public key credential or upload a new one, then select **Save**.
+3. Once the credential is saved, enter at least one IP address or CIDR range in the **IP Allowlist** field.
+4. Select **Save Changes**.
+
+<Frame>![Token Vault settings showing Enable Token Vault toggle and Credential selector](/docs/images/token-vault/token_vault_privileged_access_settings.png)</Frame>
+
+</Tab><Tab title="Management API">
 Similar to [configuring JAR](/docs/get-started/applications/configure-jar#configure-jwt-secured-authorization-requests-jar), you can set the Token Vault privileged access public key when creating a new client:
 
 ```bash lines
@@ -69,16 +79,61 @@ Content-Type: application/json
 }
 ```
 
+The credential `id` is returned in the response when you created your client. If you need to look it up, retrieve it with a GET request:
+
+```bash lines
+GET https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+```
+
+The `token_vault_privileged_access.credentials[].id` field in the response contains the credential ID.
+
+### Configure IP allowlist
+
+To restrict which IP addresses may make Privileged Worker exchange requests, configure an `ip_allowlist` on your client. This binds the client credential to known server egress IPs, so a leaked credential cannot be used from an arbitrary IP address. Both IPv4 and IPv6 addresses and CIDR ranges are supported, with a maximum of 10 entries.
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "token_vault_privileged_access": {
+    "credentials": [{"id": "<YOUR_CREDENTIAL_ID>"}],
+    "ip_allowlist": ["<YOUR_SERVER_IP_ADDRESS>"]
+  }
+}
+```
+
+</Tab></Tabs>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Configuring an `ip_allowlist` is required as part of the client configuration. Any Privileged Worker token exchange request from an IP not in the list will be rejected.
+</Callout>
+
 ## Create signed JWT subject token
 
 After [configuring your client application with the public key](#configure-client-application), you need to create the subject token that will be exchanged for an access token for an external API. The subject token is a JSON Web Token (JWT) with the necessary claims. It is signed with the private key.
 
-The JWT has a standard format and claims, where:
-- Header’s `typ` is `token-vault-req+jwt`
-- Header’s `kid` is optional if you have only one public key configured
-- Payload’s `sub` is the user ID for whom you want to get the token for
-- Payload’s `aud` is your tenant host
-- Payload’s `iss` is your client ID making the request
+The JWT has a standard format and claims:
+
+**Header**
+
+| **Claim** | **Description** |
+|-------|-------------|
+| `typ` | Required. Must be `token-vault-req+jwt`. |
+| `kid` | Optional. Only needed if you have multiple public keys configured. |
+
+**Payload**
+
+| **Claim** | **Description** |
+|-------|-------------|
+| `sub` | Required. The user ID for whom you want to get the token. |
+| `aud` | Required. Your tenant host. |
+| `iss` | Required. Your client ID making the request. |
+| `iat` | Required. Issued-at timestamp. |
+| `exp` | Optional. Expiration timestamp. Tokens older than 60 seconds are rejected regardless. |
+| `jti` | Required. A unique identifier for this JWT (UUID v4 recommended) for replay protection. |
+| `audit_context` | Required. A human-readable string (1–256 characters) describing the business reason for this privileged access. |
 
 The following is an example JWT:
 
@@ -94,9 +149,15 @@ The following is an example JWT:
     iss: "<YOUR_CLIENT_ID>",
     iat: 1758799540,
     exp: 1758800540,
-    nbf: 1758799540
+    nbf: 1758799540,
+    jti: "<UNIQUE_JWT_ID>",
+    audit_context: "<REASON_FOR_ACCESS>"
 }
 ```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Do not include personally identifiable information (PII) in `audit_context`. This value is recorded in tenant logs and may be visible to administrators and log streaming destinations.
+</Callout>
 
 The following code sample is a script that generates a signed JWT subject token:
 
@@ -108,6 +169,8 @@ import * as jwt from 'jsonwebtoken';
        iss: CLIENT_ID,
        aud: 'https://' + TENANT_DOMAIN + '/',
        sub: USER_ID,
+       jti: uuidv4(),
+       audit_context: 'Automated nightly sync for compliance report',
      },
      privateKey,
      {
@@ -146,23 +209,6 @@ curl --request POST 'https://{yourDomain}/oauth/token' \
 | `subject_token` | The signed JWT bearer token that the Auth0 Authorization Server validates to identify the user. |
 | `requested_token_type` | The requested token type. For Privileged Worker Token Exchange, you can request an access or refresh token. |
 | `connection` | The connection name, in this case, `google-oauth2`. |
-
-You should receive the access token stored in the Token Vault. You can similarly request the refresh token for the external API:
-
-```bash lines
-curl --request POST 'https://{yourDomain}/oauth/token' \
---header 'Content-Type: application/json' \
---data '{
-  "client_id": "<YOUR_CLIENT_ID>",
-  "client_secret": "<YOUR_CLIENT_SECRET>",
-  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
-  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
-  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-refresh-token",
-  "connection": "google-oauth2"
-}'
-```
-
 
 
 
