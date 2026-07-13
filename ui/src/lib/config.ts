@@ -108,15 +108,13 @@ const env: { [key in Env]: EnvConfig } = {
 
 const hostEnvMap: { [key: string]: Env } = {
   'auth0.com': 'prod',
-  'auth0.auth0-mintlify.app': 'prod',
+  'auth0.mintlify.site': 'prod',
 
   'sus.auth0.com': 'staging',
-  'docs-staging.mintlify.app': 'staging',
-  'docs-staging.mintlify-auth0.app': 'staging',
+  'docs-staging.mintlify.site': 'staging',
 
   'tus.auth0.com': 'dev',
-  'docs-dev.mintlify.app': 'dev',
-  'docs-dev.mintlify-auth0.app': 'dev',
+  'docs-dev.mintlify.site': 'dev',
 
   localhost: 'local',
   '127.0.0.1': 'local',
