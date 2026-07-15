@@ -37,6 +37,7 @@ To configure the client application's privileged access to Token Vault, you need
 3. Once the credential is saved, enter at least one IP address or CIDR range in the **IP Allowlist** field.
 4. Under **Permissions**, select **Add Permission**. In the modal, select a **Connection** and enter the **Scopes** this connection is allowed to request, then select **Save**. Repeat for each connection you want to allow. You can configure up to 5 permissions and 20 scopes in total.
 5. Select **Save Changes**.
+6. For each connection referenced in **Permissions**, make sure it's also enabled for this application. Navigate to **Authentication > [Connection type]**, select the connection, go to the **Applications** tab, and toggle the connection on for your application.
 
 <Frame>![Token Vault settings showing Enable Token Vault toggle and Credential selector](/docs/images/token-vault/token_vault_privileged_access_settings.png)</Frame>
 
@@ -102,17 +103,29 @@ Content-Type: application/json
 The credential `id` is returned in the response when you created your client. If you need to look it up, retrieve it with a GET request:
 
 ```bash lines
-GET https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+GET https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}/credentials
 Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
 ```
 
-The `token_vault_privileged_access.credentials[].id` field in the response contains the credential ID.
+For each connection referenced in `grants`, the connection must also be enabled for this client. Enable it with:
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/connections/{yourConnectionId}/clients
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+[
+  {
+    "client_id": "<YOUR_CLIENT_ID>",
+    "status": true
+  }
+]
+```
 
 </Tab></Tabs>
 
 The `ip_allowlist` (**IP Allowlist** in the Dashboard) restricts which IP addresses may make Privileged Worker exchange requests. This binds the client credential to known server egress IPs, so a leaked credential cannot be used from an arbitrary IP address. Both IPv4 and IPv6 addresses and CIDR ranges are supported, with a maximum of 10 entries.
 
-`grants` (**Permissions** in the Dashboard) pins the client to a specific set of connections and, within each connection, a specific set of scopes. A Privileged Worker token exchange request is rejected if it targets a connection not listed in `grants`, or requests a scope not listed for that connection. This limits the blast radius of a compromised credential: even with a valid signed JWT, the client can only reach the external connections and scopes you've explicitly allowed. A maximum of 5 connections and 20 scopes (across all connections combined) can be configured.
+The `grants` (**Permissions** in the Dashboard) pins the client to a specific set of connections and, within each connection, a specific set of scopes. A Privileged Worker token exchange request is rejected if it targets a connection not listed in `grants`. Additionally, requesting a narrower scope than what was granted causes Token Vault to return a token restricted to that narrower scope provided the identity provider supports downscoping, otherwise the request fails rather than silently returning the full granted scope. A maximum of 5 connections and 20 scopes (across all connections combined) can be configured. Note that the listed connection must be enabled for the client, as described above.
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
 `ip_allowlist` and `grants` are not required to save a client's configuration, but both must be populated for the Privileged Worker Token Exchange to work: any request from an IP not in `ip_allowlist`, or for a connection or scope not in `grants`, will be rejected.
@@ -142,6 +155,7 @@ The JWT has a standard format and claims:
 | `exp` | Optional. Expiration timestamp. Tokens older than 60 seconds are rejected regardless. |
 | `jti` | Required. A unique identifier for this JWT (UUID v4 recommended) for replay protection. |
 | `audit_context` | Required. A human-readable string (1–256 characters) describing the business reason for this privileged access. |
+| `org_id` | Optional. The organization ID, if the request is scoped to an organization. |
 
 The following is an example JWT:
 
@@ -159,7 +173,8 @@ The following is an example JWT:
     exp: 1758800540,
     nbf: 1758799540,
     jti: "<UNIQUE_JWT_ID>",
-    audit_context: "<REASON_FOR_ACCESS>"
+    audit_context: "<REASON_FOR_ACCESS>",
+    org_id: "<YOUR_ORGANIZATION_ID>"
 }
 ```
 
@@ -179,6 +194,8 @@ import * as jwt from 'jsonwebtoken';
        sub: USER_ID,
        jti: uuidv4(),
        audit_context: 'Automated nightly sync for compliance report',
+       // org_id is optional; include it if this request is scoped to an organization
+       org_id: ORGANIZATION_ID,
      },
      privateKey,
      {
