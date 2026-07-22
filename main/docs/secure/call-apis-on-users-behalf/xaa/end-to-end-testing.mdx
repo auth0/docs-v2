@@ -13,58 +13,226 @@ import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
   terms="true"
 />
 
-To test the end-to-end XAA flow, you need to verify that your Auth0 tenant can accept the JWT-Bearer requests sent by the Requesting App. Auth0 handles that for you out of the box.
+To test the XAA flow, the Requesting App must obtain an Identity Assertion Authorization Grant (ID-JAG) from the enterprise IdP, then exchange it with Auth0 for an access token. This article walks through both steps: obtaining the ID-JAG (via SAML or OIDC) and sending it to Auth0's `/token` endpoint to get an access token for your API.
 
-Before you can test the end-to-end XAA flow, update the **Redirect URI** field to the callback URL of your testing application that acts as your Requesting App in your Okta tenant, as explained in [Register the Requesting App in Okta](/docs/secure/call-apis-on-users-behalf/xaa/idp/okta-as-oidc-idp#register-the-requesting-app-in-okta).
+## Obtain the ID-JAG
 
-### Exchange the ID token for an ID-JAG
+There are two ways to obtain an ID-JAG, depending on whether the Requesting App authenticates with your enterprise IdP using SAML or OIDC.
 
-First, you need to log in to your Requesting App with your Okta test tenant. When you successfully log in and grant consent, Okta redirects the browser back to your Requesting App with an authorization code. Your Requesting App then securely exchanges the authorization code for an Okta access token and ID token.
+### SAML Requesting App
 
-To exchange the Okta ID token for an ID-JAG, the Requesting App makes a [token exchange request](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) to the `/token` endpoint of your Okta test tenant with the following parameters:
+First, you need to log in to your Requesting App with your IdP tenant. When you successfully log in, the IdP redirects the browser back to your Requesting App with a SAML response. Your Requesting App then securely exchanges the SAML assertion contained within the SAML response for an OIDC `refresh_token` and then exchanges the `refresh_token` for an ID-JAG.
 
+<div align="center">
+    SAML Response => SAML Assertion => refresh_token => ID-JAG
+</div>
+
+Once you receive the SAML response from the IdP, extract the SAML assertion using a SAML library. The following is an example SAML response: 
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<saml2p:Response Destination="http://localhost:3000/saml/callback" Version="2.0" xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+    <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+        ...
+    </saml2:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        ...
+    </ds:Signature>
+    <saml2p:Status xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+        <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+    </saml2p:Status>
+    <!-- Assertion begins here -->
+    <saml2:Assertion Version="2.0" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+        ...
+    </saml2:Assertion>
+    <!-- Assertion ends here -->
+</saml2p:Response>
 ```
+
+You can use the `xmllint` command line tool to extract the SAML assertion:
+
+```bash
+saml_xml=$(printf '%s' "${saml_response}" | base64 -d 2>/dev/null)
+saml_assertion=$(printf '%s' "${saml_xml}" | xmllint --nsclean --xpath "//*[local-name()='Assertion']" - 2>/dev/null)
+subject_token=$(printf '%s' "${saml_assertion}" | base64 | tr -d '\n')
+```
+
+To exchange the SAML assertion for an OIDC refresh token, the Requesting App makes a [token exchange request](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) to the `/token` endpoint of your IdP with the following parameters:
+
+```bash
 POST /oauth2/v1/token HTTP/1.1
-Host: {{YOUR_TENANT}}.okta.com
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&subject_token_type=urn:ietf:params:oauth:token-type:saml2
+&requested_token_type=urn:ietf:params:oauth:token-type:refresh_token
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&scope=openid offline_access
+&subject_token={{SAML_ASSERTION_BASE64}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| __Parameter__ | __Description__ |
+|---------------|-----------------|
+| `grant_type` | The grant type. Set to the token exchange grant type: `urn:ietf:params:oauth:grant-type:token-exchange`. |
+| `subject_token_type` | The type of token provided in the `subject_token` parameter. Set to `urn:ietf:params:oauth:token-type:saml2` to indicate a SAML assertion is being presented. |
+| `requested_token_type` | The type of token the client wants to receive back from the authorization server. Set to `urn:ietf:params:oauth:token-type:refresh_token`. |
+| `scope` | Fixed value. Set to `openid offline_access`. |
+| `subject_token` | The SAML assertion extracted from the SAML response, base64-encoded. |
+| `client_id` | The client ID of the Requesting App within the enterprise IdP that is making the token exchange request. |
+| `client_secret` | (Optional) The client secret the Requesting App uses to authenticate itself with the enterprise IdP. |
+| `client_assertion` | (Optional) The client assertion, optionally used to authenticate the Requesting App via Private Key JWT. |
+| `client_assertion_type` | (Optional) The type of the client assertion. For Private Key JWT, set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. |
+
+If the IdP client is confidential, either `client_secret` or `client_assertion` is sent in the form post or HTTP headers; as a result, they are mutually exclusive and marked as optional.
+
+When the call is successful, `refresh_token` is returned inside the `access_token` property of the JSON response:
+
+```json
+{
+  "token_type": "N_A",
+  "expires_in": 2592000,
+  "access_token": "4SsoXJDBgcq0xxxxxxYn2K-p5l_GCdo",
+  "scope": "openid offline_access",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:refresh_token"
+}
+```
+
+To exchange the `refresh_token` for an ID-JAG, make another [token exchange request](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) to the `/token` endpoint of your IdP with the following parameters:
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&subject_token_type=urn:ietf:params:oauth:token-type:refresh_token
 &audience={{YOUR_AUTH0_TENANT_ISSUER_URL}}
-&resource={{YOUR_AUTH0_TENANT_API_AUDIENCE}}
-&subject_token={{OKTA_ID_TOKEN}}
+&scope={{YOUR_AUTH0_API_SCOPE}}
+&subject_token={{REFRESH_TOKEN}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| __Parameter__ | __Description__ |
+|---------------|-----------------|
+| `grant_type` | The grant type. Set to the token exchange grant type: `urn:ietf:params:oauth:grant-type:token-exchange`. |
+| `requested_token_type` | The type of token the client wants to receive back from the authorization server. Set to the Identity Assertion Authorization Grant, or ID-JAG: `urn:ietf:params:oauth:token-type:id-jag`. |
+| `subject_token_type` | The type of token provided in the `subject_token` parameter. Set to `urn:ietf:params:oauth:token-type:refresh_token`. |
+| `audience` | The intended recipient of the final token. Set to your Auth0 tenant issuer URL, or your Resource App whose authorization server is located at that specific URL. |
+| `scope` | Optional. The Resource App's API scope(s) that the client wants to access. When the authorization server issues the final access token, it includes these scope(s). |
+| `subject_token` | The `refresh_token` obtained by exchanging the SAML assertion. |
+| `client_id` | The client ID of the Requesting App within the enterprise IdP that is making the token exchange request. |
+| `client_secret` | (Optional) The client secret the Requesting App uses to authenticate itself with the enterprise IdP. |
+| `client_assertion` | (Optional) The client assertion, optionally used to authenticate the Requesting App via Private Key JWT. |
+| `client_assertion_type` | (Optional) The type of the client assertion. For Private Key JWT, set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. |
+
+If the IdP client is confidential, either `client_secret` or `client_assertion` is sent in the form post or HTTP headers; as a result, they are mutually exclusive and marked as optional.
+
+The response of this call contains the ID-JAG inside the `access_token` property:
+
+```json
+{
+  "token_type": "N_A",
+  "expires_in": 300,
+  "access_token": "eyJraWQiOiJFeEwySxxxx",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:id-jag"
+}
+```
+
+The ID-JAG follows a JWT format, such as the following:
+
+```json
+{
+  "jti": "IDAAG.jrdCpdgazbi52j3UxXT_MqgAUMW2n57EZq8RG0ucRnU",
+  "iss": "https://integrator-4598441.okta.com",
+  "aud": "https://amin.jp.auth0.com/",
+  "iat": 1784620622,
+  "exp": 1784620922,
+  "sub": "00u14j584jskYLAVs698",
+  "email": "test-xaa@example.com",
+  "client_id": "Josz8cBBCWKA6Q7CkhyhYjbKY4hqjXMG",
+  "sub_profile": "user",
+  "scope": "read",
+  "act": {
+    "sub": "wlp15fk3702lJwVLG698",
+    "sub_profile": "ai_agent"
+  },
+  "sub_id": {
+    "format": "saml-nameid",
+    "issuer": "http://www.okta.com/exk15fjrhugHeRpO1698",
+    "nameid": "test-xaa@example.com",
+    "nameid_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+  }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+When the Resource App is a SAML application, the ID-JAG also includes a `sub_id` claim containing the SAML `NameID` details (`format`, `issuer`, `nameid`, and `nameid_format`) of the authenticated user, alongside the standard `sub` claim.
+</Callout>
+
+### OIDC Requesting App
+
+First, you need to log in to your Requesting App with your IdP tenant. When you successfully log in, the IdP redirects the browser back to your Requesting App with an authorization code. Your Requesting App then securely exchanges the authorization code for an access token and ID token.
+
+<div align="center">
+    ID Token => ID-JAG
+</div>
+
+To exchange the ID token for an ID-JAG, the Requesting App makes a [token exchange request](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) to the `/token` endpoint of your IdP with the following parameters:
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
 &subject_token_type=urn:ietf:params:oauth:token-type:id_token
-&client_id={{REQUESTING_APP_CLIENT_ID_IN_OKTA}}
-&client_secret={{REQUESTING_APP_CLIENT_SECRET_IN_OKTA}}
+&audience={{YOUR_AUTH0_TENANT_ISSUER_URL}}
+&scope={{YOUR_AUTH0_API_SCOPE}}
+&subject_token={{IDP_ID_TOKEN}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
 ```
 
 | __Parameter__ | __Description__ |
 |---------------|-----------------|
 | `grant_type` | The grant type. Set to the token exchange grant type: `urn:ietf:params:oauth:grant-type:token-exchange`. | 
 | `requested_token_type` | The type of token the client wants to receive back from the authorization server. Set to the Identity Assertion Authorization Grant, or ID-JAG: `urn:ietf:params:oauth:token-type:id-jag`. | 
-| `audience` | The intended recipient of the final token. Set to your Auth0 tenant issuer URL, or your Resource App whose authorization server is located at that specific URL. | 
-| `resource` | Optional. The Resource App's API that the client wants to access. When the authorization server issues the final access token, it includes this resource in the token's `aud` claim, which the Resource App's API will use for validation. If you don’t specify a `resource` parameter, the default audience you set for your tenant is used in the next request to get an access token. If you specify a `resource` that does not match a valid API audience in your Auth0 tenant, the token exchange request does not fail and you still receive an ID-JAG in return. However, the subsequent request to get an access token with the ID-JAG will be rejected by your Auth0 tenant. | 
-| `subject_token` | The token the client is exchanging. For XAA, the subject token is the “proof” or “assertion” of the user’s identity. Set to the Okta ID token that the IdP will use to verify the user’s identity. |
+| `client_assertion_type` | (Optional) The type of the client assertion. For Private Key JWT, set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. |
 | `subject_token_type` | The type of token provided in the `subject_token` parameter. For XAA, it specifies that an ID token is being presented to the authorization server. |
+| `audience` | The intended recipient of the final token. Set to your **Auth0 tenant issuer URL**, or your Resource App whose authorization server is located at that specific URL. |
+| `scope` | Optional. The Resource App’s API scope(s) that the client wants to access. When the authorization server issues the final access token, it includes these scope(s). |
+| `subject_token` | The token the client is exchanging. For XAA, the subject token is the “proof” or “assertion” of the user’s identity. Set to the IdP ID token that the IdP will use to verify the user’s identity. |
 | `client_id` | The client ID of the Requesting App within the enterprise IdP that is making the token exchange request. |
-| `client_secret` | The client secret that that Requesting App uses to authenticate itself with the enterprise IdP. |
+| `client_secret` | (Optional) The client secret the Requesting App uses to authenticate itself with the enterprise IdP. |
+| `client_assertion` | (Optional) The client assertion, optionally used to authenticate the Requesting App via Private Key JWT. |
 
-XAA Beta does not support passing scopes to Okta’s `/token` endpoint. You can set the scopes in the next request to Auth0’s /token endpoint once the Requesting App receives the ID-JAG.
+If the IdP client is confidential, either `client_secret` or `client_assertion` is sent in the form post or HTTP headers; as a result, they are mutually exclusive and marked as optional.
 
-In a production environment, the Requesting App makes the token exchange request to the `/token` endpoint of your customer’s Okta tenant.
 
-### Send ID-JAG to Auth0's /token endpoint
+## Send ID-JAG to Auth0's `/token` endpoint
 
 Once the Requesting App gets an ID-JAG, it sends an [access token request](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-access-token-request) to the `/token` endpoint of your Auth0 tenant:
 
-```
+```bash
 POST https://{{YOUR_AUTH0_TENANT_DOMAIN}}/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
 &client_id={{REQUESTING_APP_CLIENT_ID_IN_AUTH0}}
 &client_secret={{REQUESTING_APP_CLIENT_SECRET_IN_AUTH0}}
-&scope=scope1%20scope2%20
+&resource={{AUTH0_API_IDENTIFIER}}
+&scope=scope1%20scope2
 &assertion={{ID_JAG}}
 ```
 
@@ -72,15 +240,22 @@ grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
 |---------------|-----------------|
 | `grant_type` | The grant type. It tells the Authorization Server to expect a JSON Web Token (JWT) as the primary credential in the request. | 
 | `client_id` | The client ID of the Requesting App within the Resource App Authorization Server making the API call. |
-| `client_secret` | The client secret of the Requesting App within the Resource App Authorization Server making the API call. |
+| `resource` | The resource identifier of the resource server (API) in your Auth0 tenant. |
 | `scope` | The set of permissions the Requesting App is requesting for the access token. |
 | `assertion` | The ID-JAG or JSON Web Token (JWT) that acts as the bearer of the identity assertion. | 
+| `client_secret` | (Optional) The client secret of the Requesting App within the Resource App Authorization Server making the API call. |
+| `client_assertion` | (Optional) The client assertion, optionally used to authenticate the Requesting App via Private Key JWT. |
+| `client_assertion_type` | (Optional) The type of the client assertion. For Private Key JWT, set to `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. |
 
-After the Auth0 Authorization Server validates the ID-JAG to verify the user’s identity, it issues an access token to consume the target API audience of your Auth0 tenant. The access token also includes the scopes you requested that are allowed by RBAC and other policies set in your Auth0 tenant.
+If the Requesting App is a confidential client, either `client_secret` or `client_assertion` is sent in the form post or HTTP headers; as a result, they are mutually exclusive and marked as optional.
+
+After the Auth0 Authorization Server validates the ID-JAG to verify the user’s identity, it issues an access token for the API in your Auth0 tenant. The access token also includes the scopes you requested that are allowed by RBAC and other policies set in your Auth0 tenant.
 
 The Auth0 Authorization Server does not issue refresh tokens in response to ID-JAG token exchanges. As a result, the Requesting App needs to get a new ID-JAG from the enterprise IdP, and undergo the applicable access controls, to get a new access token via XAA.
 
-## Further reading
+## Learn more
+
+To help you test the XAA flow, use the following resources:
 
 - [Auth0 Cross App Access Inspector](https://github.com/auth0-samples/auth0-cross-app-access-inspector): A simple Node.js application for testing the XAA flow between Okta and Auth0.
 - [XAA.dev](https://xaa.dev/): An online sandbox for testing Cross App Access in your browser.
