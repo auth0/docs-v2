@@ -1,6 +1,6 @@
 ---
 title: Configure Session Delegation
-description: Learn the security model behind Session Delegation and how to configure the client settings required to request and accept delegated sessions.
+description: Learn how to configure the client settings required to request and accept delegated sessions.
 ---
 import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
 import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
@@ -12,36 +12,45 @@ import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
     terms="true"
 />
 
-## Security model
-
-A delegated session is established through the same [Custom Token Exchange](/docs/authenticate/custom-token-exchange) Action logic you control for every other token exchange — Auth0 does not decide on your behalf who is allowed to act for whom. Your Action is responsible for authorizing the delegation before calling `setActor()`.
-
-Once a delegated session is established:
-
-* The actor identity is recorded on the session (`session.actor`) and is available to your [Actions](/docs/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#actions) and in [tenant logs](/docs/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#monitoring), using the same shape as the actor object passed to `setActor()`.
-* The session is ephemeral and short-lived — see [Session behavior](/docs/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#session-behavior).
-* No refresh tokens are issued, no MFA/consent/enrollment prompts are allowed, and existing active sessions block delegated access, all by design, to limit how far a delegated session can outlive or interact with a legitimate one.
-* Delegated sessions generate dedicated tenant log event types, distinct from regular logins, so you can audit them separately.
-
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-This page covers the target application (session-establishment) side of Session Delegation. For requirements on the actor/issuance side — including the `cte_session_transfer_token` feature requirement and the `setActor()` call — read [Custom Token Exchange: Get Token](/docs/api/authentication/custom-token-exchange/get-token).
+This page covers configuration only. Read [Implement Session Delegation](/docs/authenticate/single-sign-on/session-delegation/implement-session-delegation) for the security model and the request/response detail once both applications below are configured.
 </Callout>
 
 ## Configure your applications
 
 ### Configure the requesting application
 
-The application that calls Custom Token Exchange to obtain a Session Transfer Token must be able to create one, using the same `session_transfer` client setting as Native to Web SSO:
+The application that calls Custom Token Exchange to obtain a Session Transfer Token needs Custom Token Exchange enabled and the ability to create a Session Transfer Token:
 
 ```json lines
 {
+  "token_exchange": {
+    "allow_any_profile_of_type": ["custom_authentication"]
+  },
   "session_transfer": {
-    "can_create_session_transfer_token": true
+    "can_create_session_transfer_token": true,
+    "enforce_cascade_revocation": true
   }
 }
 ```
 
-Read [Create and manage Session Transfer Tokens](/docs/authenticate/single-sign-on/native-to-web/configure-implement-native-to-web#create-and-manage-session-transfer-tokens) for the Management API and Auth0 CLI calls to update this setting.
+export const codeExample1 = `curl --request PATCH \
+  --url 'https://{yourDomain}/api/v2/clients/{yourClientId}' \
+  --header 'authorization: Bearer {yourMgmtApiAccessToken}' \
+  --header 'content-type: application/json' \
+  --data '{
+  "token_exchange": {
+    "allow_any_profile_of_type": ["custom_authentication"]
+  },
+  "session_transfer": {
+    "can_create_session_transfer_token": true,
+    "enforce_cascade_revocation": true
+  }
+}'`;
+
+<AuthCodeBlock children={codeExample1} language="bash" filename="cURL" />
+
+Read [Create and manage Session Transfer Tokens](/docs/authenticate/single-sign-on/native-to-web/configure-implement-native-to-web#create-and-manage-session-transfer-tokens) for more on the `can_create_session_transfer_token` setting.
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
 The application that calls Custom Token Exchange to request a Session Transfer Token must be a confidential client, authenticating with a Client Secret (or another confidential-client method). Unlike a standard Custom Token Exchange request, the `tokenEndpointAuthMethod: none` public-client option is not supported when requesting a Session Transfer Token.
@@ -49,38 +58,46 @@ The application that calls Custom Token Exchange to request a Session Transfer T
 
 ### Configure the target web application
 
-Your web application must explicitly opt in to accept delegated sessions by enabling `allow_delegated_access`:
+Your web application must explicitly opt in to accept delegated sessions, and accept the Session Transfer Token as a query parameter on `/authorize`:
 
 ```json lines
 {
-  "session_transfer": {
-    "delegation": {
-      "allow_delegated_access": true
+    "session_transfer": {
+        "allowed_authentication_methods": ["cookie", "query"],
+        "enforce_device_binding": "ip", // also "none" or "asn"
+        "allow_refresh_token": false,
+        "enforce_online_refresh_tokens": true,
+        "delegation": {
+           "allow_delegated_access": true,
+           "enforce_device_binding": "ip" // this is the only allowed value for delegation
+        }
     }
-  }
 }
 ```
 
-Update it with the [Update a Client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) endpoint:
-
-export const codeExample1 = `curl --request PATCH \
+export const codeExample2 = `curl --request PATCH \
   --url 'https://{yourDomain}/api/v2/clients/{yourClientId}' \
   --header 'authorization: Bearer {yourMgmtApiAccessToken}' \
   --header 'content-type: application/json' \
   --data '{
-  "session_transfer": {
-    "delegation": {
-      "allow_delegated_access": true
+    "session_transfer": {
+        "allowed_authentication_methods": ["cookie", "query"],
+        "enforce_device_binding": "ip",
+        "allow_refresh_token": false,
+        "enforce_online_refresh_tokens": true,
+        "delegation": {
+           "allow_delegated_access": true,
+           "enforce_device_binding": "ip"
+        }
     }
-  }
 }'`;
 
-<AuthCodeBlock children={codeExample1} language="bash" filename="cURL" />
+<AuthCodeBlock children={codeExample2} language="bash" filename="cURL" />
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-This setting is disabled by default and has no equivalent Dashboard UI toggle at this time — configure it through the Management API, Auth0 CLI, or your infrastructure-as-code tooling (Terraform, Deploy CLI).
+`allowed_authentication_methods` must include `query` because Session Delegation passes the Session Transfer Token as a URL query parameter — the cookie-based transfer used by Native to Web SSO doesn't apply here. `delegation.enforce_device_binding` only accepts `"ip"` — IP-based device binding is enforced automatically for delegated sessions. This configuration is disabled by default and has no equivalent Dashboard UI toggle at this time: configure it through the Management API or your infrastructure-as-code tooling (Terraform, Deploy CLI).
 
 If a Session Transfer Token carrying an actor is presented to a client without `allow_delegated_access` enabled, Auth0 does not return an error — it falls back to showing the login page and emits a warning (`w`) tenant log. Check for this if a delegated session unexpectedly falls back to a login prompt.
 </Callout>
 
-Once both applications are configured, read [Session Delegation Behavior and Monitoring](/docs/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring) to understand how delegated sessions behave, their side effects, Actions support, and how to audit them in tenant logs.
+Once both applications are configured, read [Implement Session Delegation](/docs/authenticate/single-sign-on/session-delegation/implement-session-delegation) to make the requests, and [Delegated Session Behavior and Monitoring](/docs/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring) to understand session behavior and audit logging.
