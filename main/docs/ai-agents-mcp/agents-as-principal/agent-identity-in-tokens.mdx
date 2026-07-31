@@ -1,0 +1,179 @@
+---
+title: "Agent Identity in Tokens"
+description: "How Auth0 embeds agent identity in access tokens across client credentials, OBO token exchange, and standard login flows."
+---
+
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="Agents as Principal"
+    stage="ea"
+    contact="Auth0 Support"
+    terms="true"
+/>
+
+Once [associated with a client](/docs/ai-agents-mcp/agents-as-principal/associate-agent-client), tokens issued to that client carry the agent's identity for attribution and traceability. How the agent's identity appears in the token depends on the grant type:
+
+- [Client credentials flow](#client-credentials-flow): the agent is the subject. Its identity appears in the top-level `sub` claim.
+- [Standard login flow](#standard-login-flow): the user is the subject. The agent's identity appears in a single-level `act` claim.
+- [On-Behalf-Of (OBO) token exchange](#on-behalf-of-obo-token-exchange): the user remains the subject. The agent's identity appears in the `act` claim alongside a nested `act` showing the originating client.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Auth0 does not support the [`jwt_bearer` grant](/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) for agent-linked clients.
+</Callout>
+
+Auth0 also adopts the [OAuth Actor Profile for Delegation](https://www.ietf.org/archive/id/draft-mcguinness-oauth-actor-profile-00.html) draft, introducing `sub_profile` and `client_profile` claims to explicitly identify the type of entity in each position of the token.
+
+## Agent subject claims
+
+The `sub_profile` and `client_profile` claims specify the entity type in tokens issued by agent-linked clients:
+
+| Claim | Description |
+|---|---|
+| `sub_profile` | Entity type of the subject. Values: `user`, `ai_agent`, `service`, `browser_app`, `native_app`. |
+| `client_profile` | Entity type of the requesting client. Values: `user`, `ai_agent`, `service`, `browser_app`, `native_app`. Multiple space-separated values permitted (for example, `service ai_agent`). |
+| `act` | Actor claim for the OBO token exchange. Present whenever an agent-linked client is involved. Contains `sub`, `iss`, `sub_profile`, `client_id`, `client_profile`, and optionally `cnf` ([DPoP binding](/docs/secure/sender-constraining/demonstrating-proof-of-possession-dpop)) and a nested `act` for multi-hop chains. |
+
+You must [configure your resource server](#configure-resource-server-to-receive-agent-subject-claims) to receive `sub_profile` and `client_profile` claims in issued tokens. Wherever an agent's ID appears in a claim (top-level `sub` or `act.sub`), it is the agent's `external_agent_id` if one was set at creation; otherwise, it is the `agent_id`.
+
+## Configure resource server to receive agent subject claims
+
+To receive `sub_profile` and `client_profile` claims, set `agent_subject_claims: 'auth0-v1'` on the target resource server. This is opt-in per resource server.
+
+```http
+PATCH /api/v2/resource-servers/{id}
+Content-Type: application/json
+
+{
+  "agent_subject_claims": "auth0-v1"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+The `sub_profile` claim introduces a formal entity type into the token. Services that receive tokens should not assume `sub_profile` will always be user. If `sub_profile` is absent (resource server opt-in is not enabled), existing behavior remains unchanged.
+
+Review `sub` parsing in downstream services before enabling. Services that validate or parse the `sub` claim format may need updates to handle `ai_agent` as a valid entity type for client credentials grants.
+</Callout>
+
+## Standard login flow
+
+An agent-linked client can perform a standard login flow using authorization code, implicit, CIBA, device, MFA, password, passkey, or refresh token grant. The subject remains the user. The agent identity does not appear in the top-level `sub` claim. Instead, a single-level `act` claim is added so the agent is identifiable in the token.
+
+In the following example, an agent-linked client performs a standard login flow and issues a token with the following agent subject claims:
+
+- `sub`: the user ID
+- `sub_profile`: `user`
+- `client_profile`: `ai_agent`, identifying the client as agent-linked
+- `act`: a single-level actor claim identifying the agent (`"sub": "agt_1a2b3c", "sub_profile": "ai_agent"`)
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "agent-linked-client-id",
+  "client_profile": "ai_agent",
+  "aud": "https://resource-api.example.com",
+  "scope": "read:data",
+  "exp": 1711820400,
+  "iat": 1711816800,
+  "act": {
+    "sub": "agt_1a2b3c",
+    "sub_profile": "ai_agent",
+    "client_id": "agent-linked-client-id"
+  }
+}
+```
+
+## Client credentials flow
+
+An agent-linked machine-to-machine (M2M) client performs a client credentials flow. The agent is the subject and authenticates as itself; there is no user involved.
+
+In the following example, an agent-linked M2M client performs a client credentials flow and issues a token with the following agent subject claims:
+
+- `sub`: the agent's `external_agent_id` if one was set at creation, otherwise the `agent_id`
+- `sub_profile`: `ai_agent`
+- `client_profile`: `service ai_agent`, representing the agent-linked M2M client
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "agt_1a2b3c",
+  "sub_profile": "ai_agent",
+  "client_id": "YOUR_CLIENT_ID",
+  "client_profile": "service ai_agent",
+  "aud": "https://your-resource-api.example.com",
+  "scope": "read:data",
+  "exp": 1711820400,
+  "iat": 1711816800
+}
+```
+
+## On-Behalf-Of (OBO) token exchange
+
+In the OBO token exchange, a user authenticates and receives an access token with the agent's resource server as the audience. The agent-linked client then exchanges this token for a delegated token using the [On-Behalf-Of Token Exchange](/docs/secure/call-apis-on-users-behalf/on-behalf-of-token-exchange). The user remains the subject throughout. The agent is identified as the actor in the `act` claim.
+
+Before the token exchange, the user authenticates via a browser app and receives an access token: 
+
+- `sub`: the user ID
+- `sub_profile`: `user`
+- `client_profile`: identifies the originating client as a `browser_app`
+- `aud`: the agent resource server
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "spa-client-id",
+  "client_profile": "browser_app",
+  "aud": "https://ai-agent-resource-server.example.com",
+  "scope": "read:data",
+  "exp": 1711820300,
+  "iat": 1711816700
+}
+```
+
+The agent-linked client exchanges the user token using the OBO token exchange:
+
+- `sub`: the user ID (unchanged)
+- `sub_profile`: `user` (unchanged)
+- `client_profile`: `service ai_agent`, representing the agent-linked client
+- `aud`: the new resource server
+- `act`: the immediate actor is the agent, with a nested `act` showing the original client that initiated the flow. The maximum delegation depth is 5 hops or 4 nested `act` levels.
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "agent-client-id",
+  "client_profile": "service ai_agent",
+  "aud": "https://resource-api.example.com",
+  "scope": "read:data",
+  "cnf": { "jkt": "NzbLsXh8uDCcd7MNwrnNZpX0ak8ACQ" },
+  "exp": 1711820400,
+  "iat": 1711816800,
+  "act": {
+    "sub": "agt_1a2b3c",
+    "sub_profile": "ai_agent",
+    "client_id": "agent-client-id",
+    "act": {
+      "sub": "spa-client-id",
+      "sub_profile": "browser_app",
+      "client_id": "spa-client-id"
+    }
+  }
+}
+```
+
+Token exchange currently supports OBO only when the subject of the incoming token is a user. Issuing tokens where an agent or a client is itself the top-level subject of an OBO exchange is not yet supported.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Refresh tokens are not supported for the OBO token exchange. To learn more about setup and limitations, read [On-Behalf-Of Token Exchange](/docs/secure/call-apis-on-users-behalf/on-behalf-of-token-exchange).
+</Callout>
+
+## Next steps
+
+- Add [agent context to access tokens using Actions](/docs/ai-agents-mcp/agents-as-principal/actions-context)
+- Query the [agent ID in tenant logs](/docs/ai-agents-mcp/agents-as-principal/tenant-logs) for agent identity attribution and traceability
