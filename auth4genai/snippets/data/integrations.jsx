@@ -213,9 +213,9 @@ export const integrations = [
   },
   {
     id: "stripe",
-    title: "Stripe",
+    title: "Stripe Connect",
     icon: "/ai/docs/img/integrations/stripe-avatar.png",
-    href: "/integrations/stripe",
+    href: "/integrations/stripe-connect",
     status: "Available",
     type: "Social",
     description:

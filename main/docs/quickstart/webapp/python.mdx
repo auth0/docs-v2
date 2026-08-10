@@ -1,0 +1,875 @@
+---
+mode: wide
+description: 'Add Auth0 authentication to a Flask web application with login, protected routes, and user profiles'
+sidebarTitle: Flask
+title: 'Add Login to Your Flask Application'
+---
+
+import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
+
+import {HowToSchema} from "/snippets/HowToSchema.jsx";
+
+<HowToSchema />
+<Note>
+  **Prerequisites:** Before you begin, ensure you have the following installed:
+
+  - **[Python](https://www.python.org/downloads/)** 3.9 or newer
+  - **[pip](https://pip.pypa.io/en/stable/installation/)** 20.0 or newer
+  - **[jq](https://jqlang.org/)** - Required for Auth0 CLI setup
+
+  **Flask Version Compatibility:** This quickstart uses **Flask 2.0+** with the `[async]` extra for async support.
+</Note>
+
+## Get Started
+
+This quickstart demonstrates how to add Auth0 authentication to a Flask application. You'll build a secure web application with login functionality, protected routes, and user profile access using the [Auth0 WebApp Python SDK](https://github.com/auth0/auth0-server-python).
+
+<Steps>
+  <Step title="Set up your environment" stepNumber={1}>
+    Create a new directory for your Flask project:
+
+    ```bash
+    mkdir auth0-flask-app && cd auth0-flask-app
+    ```
+
+    Create a virtual environment:
+
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    ```
+  </Step>
+  <Step title="Install dependencies" stepNumber={2}>
+    Create `requirements.txt` to track your dependencies:
+
+    ```txt requirements.txt
+    auth0-server-python>=1.0.0b7
+    flask[async]>=2.0.0
+    python-dotenv>=1.0.0
+    ```
+
+    The `requirements.txt` file tracks all project dependencies. To install them, run:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+  <Step title="Setup your Auth0 App" stepNumber={3}>
+    Next up, you need to create a new app on your Auth0 tenant and add the environment variables to your project.
+
+    You can choose to set up your Auth0 app automatically by running a CLI command, or do it manually via the Dashboard:
+
+    <Tabs>
+      <Tab title="CLI">
+        Run the following shell command on your project's root directory to create an Auth0 application and generate a `.env` file:
+
+        <CodeGroup>
+          ```shellscript Mac
+          # Install Auth0 CLI (if not already installed)
+          brew tap auth0/auth0-cli && brew install auth0
+
+          # Set up Auth0 app and generate .env file
+          auth0 qs setup --app --type regular --framework vanilla-python --port 5000 --name "My Flask App"
+          ```
+
+          ```powershell Windows
+          # Install Auth0 CLI (if not already installed)
+          scoop bucket add auth0 https://github.com/auth0/scoop-auth0-cli.git
+          scoop install auth0
+
+          # Set up Auth0 app and generate .env file
+          auth0 qs setup --app --type regular --framework vanilla-python --port 5000 --name "My Flask App"
+          ```
+        </CodeGroup>
+
+        <Note>
+          This command will:
+          1. Check if you're authenticated (and prompt for login if needed)
+          2. Create an Auth0 Regular Web Application configured for `http://localhost:5000`
+          3. Generate a `.env` file with `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH0_SECRET`, and `AUTH0_REDIRECT_URI`
+        </Note>
+      </Tab>
+
+      <Tab title="Dashboard">
+        Before you start, create a `.env` file in your project root:
+
+        ```bash .env
+        # Auth0 Configuration
+        AUTH0_DOMAIN=YOUR_AUTH0_DOMAIN
+        AUTH0_CLIENT_ID=YOUR_CLIENT_ID
+        AUTH0_CLIENT_SECRET=YOUR_CLIENT_SECRET
+        AUTH0_SECRET=YOUR_GENERATED_SECRET
+        AUTH0_REDIRECT_URI=http://localhost:5000/callback
+        ```
+
+        1. Go to [Auth0 Dashboard](https://manage.auth0.com/dashboard/) → **Applications** → **Applications**
+        2. Click **Create Application**
+        3. Name your application (e.g., "My Flask App") and select **Regular Web Application**
+        4. Click **Create**
+        5. In the **Settings** tab, configure the following:
+           - **Allowed Callback URLs**: `http://localhost:5000/callback`
+           - **Allowed Logout URLs**: `http://localhost:5000`
+           - **Allowed Web Origins**: `http://localhost:5000`
+        6. Click **Save Changes**
+        7. Replace `YOUR_AUTH0_DOMAIN` in `.env` with your **Domain** from the Settings tab (e.g., `your-tenant.auth0.com`)
+        8. Replace `YOUR_CLIENT_ID` in `.env` with your **Client ID**
+        9. Replace `YOUR_CLIENT_SECRET` in `.env` with your **Client Secret**
+
+        Generate a secure secret for `AUTH0_SECRET`:
+
+        ```bash
+        openssl rand -hex 64
+        ```
+
+        <Info>
+          **Important:** Never commit your `.env` file to version control. Add it to `.gitignore`.
+        </Info>
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Create Auth Configuration, Routes, and Templates" stepNumber={4}>
+    Create files
+
+    ```bash
+    mkdir templates static && touch app.py auth.py templates/index.html templates/profile.html static/style.css
+    ```
+
+    And add the following code snippets:
+
+    <AuthCodeGroup>
+
+    ```python auth.py expandable lines
+    import os
+    from auth0_server_python.auth_server.server_client import ServerClient
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    # Simple in-memory storage for development
+    # For production, use Redis, PostgreSQL, or other persistent storage
+    class MemoryStateStore:
+        """In-memory state store for session data (development only)"""
+        def __init__(self):
+            self._data = {}
+        
+        async def get(self, key, options=None):
+            return self._data.get(key)
+        
+        async def set(self, key, value, options=None):
+            self._data[key] = value
+        
+        async def delete(self, key, options=None):
+            self._data.pop(key, None)
+        
+        async def delete_by_logout_token(self, claims, options=None):
+            # For backchannel logout support
+            pass
+
+    class MemoryTransactionStore:
+        """In-memory transaction store for OAuth flows (development only)"""
+        def __init__(self):
+            self._data = {}
+        
+        async def get(self, key, options=None):
+            return self._data.get(key)
+        
+        async def set(self, key, value, options=None):
+            self._data[key] = value
+        
+        async def delete(self, key, options=None):
+            self._data.pop(key, None)
+
+    # Initialize stores
+    state_store = MemoryStateStore()
+    transaction_store = MemoryTransactionStore()
+
+    # Initialize the Auth0 ServerClient
+    auth0 = ServerClient(
+        domain=os.getenv('AUTH0_DOMAIN'),
+        client_id=os.getenv('AUTH0_CLIENT_ID'),
+        client_secret=os.getenv('AUTH0_CLIENT_SECRET'),
+        secret=os.getenv('AUTH0_SECRET'),
+        redirect_uri=os.getenv('AUTH0_REDIRECT_URI'),
+        state_store=state_store,
+        transaction_store=transaction_store,
+        authorization_params={
+            'scope': 'openid profile email',
+            'audience': os.getenv('AUTH0_AUDIENCE', '')  # Optional: for API access
+        }
+    )
+    ```
+
+    
+    ```python app.py expandable lines
+    import os
+    from flask import Flask, redirect, render_template, request, url_for, g
+    from auth0_server_python.auth_types import LogoutOptions
+    from auth import auth0
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    app = Flask(__name__)
+    app.secret_key = os.getenv('AUTH0_SECRET')
+
+    # Configure session for Auth0
+    app.config.update(
+        SESSION_COOKIE_SECURE=False,  # Set to True in production with HTTPS
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE='Lax',
+    )
+
+    @app.before_request
+    def store_request_response():
+        """Make request/response available for Auth0 SDK"""
+        g.store_options = {"request": request}
+
+    @app.route('/')
+    async def index():
+        """Home page - shows login button or user profile"""
+        user = await auth0.get_user(g.store_options)
+        return render_template('index.html', user=user)
+
+    @app.route('/login')
+    async def login():
+        """Redirect to Auth0 login"""
+        authorization_url = await auth0.start_interactive_login({}, g.store_options)
+        return redirect(authorization_url)
+
+    @app.route('/callback')
+    async def callback():
+        """Handle Auth0 callback after login"""
+        try:
+            result = await auth0.complete_interactive_login(str(request.url), g.store_options)
+            return redirect(url_for('index'))
+        except Exception as e:
+            return f"Authentication error: {str(e)}", 400
+
+    @app.route('/profile')
+    async def profile():
+        """Protected route - shows user profile"""
+        user = await auth0.get_user(g.store_options)
+        
+        if not user:
+            return redirect(url_for('login'))
+        
+        return render_template('profile.html', user=user)
+
+    @app.route('/logout')
+    async def logout():
+        """Logout and redirect to Auth0 logout"""
+        options = LogoutOptions(return_to=url_for("index", _external=True))
+        logout_url = await auth0.logout(options, g.store_options)
+        return redirect(logout_url)
+
+    if __name__ == '__main__':
+        app.run(debug=True, port=5000)
+    ```
+
+    
+    ```html templates/index.html expandable lines
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flask + Auth0</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <img src="https://cdn.auth0.com/quantum-assets/dist/latest/logos/auth0/auth0-lockup-en-ondark.png"
+                 alt="Auth0 Logo" class="logo">
+            <h1>Flask + Auth0</h1>
+            
+            {% if user %}
+                <div class="logged-in">
+                    <p class="success">✅ Successfully logged in!</p>
+                    <div class="user-info">
+                        {% if user.picture %}
+                        <img src="{{ user.picture }}" alt="Profile" class="profile-pic">
+                        {% endif %}
+                        <h2>{{ user.name }}</h2>
+                        <p>{{ user.email }}</p>
+                    </div>
+                    <a href="/profile" class="button">View Full Profile</a>
+                    <a href="/logout" class="button logout">Log Out</a>
+                </div>
+            {% else %}
+                <div class="logged-out">
+                    <p>Welcome! Please log in to access your protected content.</p>
+                    <a href="/login" class="button">Log In</a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
+    ```
+
+    
+    ```html templates/profile.html expandable lines
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Profile - Flask + Auth0</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <img src="https://cdn.auth0.com/quantum-assets/dist/latest/logos/auth0/auth0-lockup-en-ondark.png"
+                 alt="Auth0 Logo" class="logo">
+            <h1>User Profile</h1>
+            
+            <div class="profile-details">
+                {% if user.picture %}
+                <img src="{{ user.picture }}" alt="Profile" class="profile-pic-large">
+                {% endif %}
+                
+                <div class="profile-info">
+                    <h2>{{ user.name }}</h2>
+                    <p class="email">{{ user.email }}</p>
+                    
+                    <div class="profile-data">
+                        <h3>Profile Information</h3>
+                        <dl>
+                            <dt>User ID:</dt>
+                            <dd>{{ user.sub }}</dd>
+                            
+                            {% if user.nickname %}
+                            <dt>Nickname:</dt>
+                            <dd>{{ user.nickname }}</dd>
+                            {% endif %}
+                            
+                            {% if user.updated_at %}
+                            <dt>Last Updated:</dt>
+                            <dd>{{ user.updated_at }}</dd>
+                            {% endif %}
+                        </dl>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="actions">
+                <a href="/" class="button">Back to Home</a>
+                <a href="/logout" class="button logout">Log Out</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+    ```
+
+    
+    ```css static/style.css expandable lines
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: linear-gradient(135deg, #1a1e27 0%, #2d313c 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #e2e8f0;
+    padding: 20px;
+}
+
+.container {
+    width: 100%;
+    max-width: 600px;
+}
+
+.card {
+    background-color: #262a33;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    padding: 3rem;
+    animation: fadeInScale 0.6s ease-out;
+}
+
+@keyframes fadeInScale {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.logo {
+    width: 160px;
+    margin: 0 auto 2rem;
+    display: block;
+    animation: slideDown 0.8s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 2rem;
+    color: #f7fafc;
+    text-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+h2 {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0.5rem 0;
+    color: #f7fafc;
+}
+
+h3 {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+    color: #cbd5e0;
+}
+
+.logged-in, .logged-out {
+    text-align: center;
+}
+
+.logged-out p {
+    font-size: 1.2rem;
+    color: #cbd5e0;
+    margin-bottom: 2rem;
+    line-height: 1.6;
+}
+
+.success {
+    font-size: 1.5rem;
+    color: #68d391;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+}
+
+.user-info {
+    background-color: #2d313c;
+    border-radius: 15px;
+    padding: 2rem;
+    margin: 2rem 0;
+}
+
+.profile-pic {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    margin-bottom: 1rem;
+    border: 3px solid #63b3ed;
+    object-fit: cover;
+}
+
+.profile-pic-large {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    margin-bottom: 1rem;
+    border: 4px solid #63b3ed;
+    object-fit: cover;
+}
+
+.user-info p, .email {
+    color: #a0aec0;
+    font-size: 1.1rem;
+}
+
+.button {
+    display: inline-block;
+    padding: 1rem 2.5rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0.5rem;
+    background-color: #63b3ed;
+    color: #1a1e27;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.button:hover {
+    background-color: #4299e1;
+    transform: translateY(-3px);
+    box-shadow: 0 12px 25px rgba(0, 0, 0, 0.5);
+}
+
+.button.logout {
+    background-color: #fc8181;
+}
+
+.button.logout:hover {
+    background-color: #e53e3e;
+}
+
+.profile-details {
+    text-align: center;
+}
+
+.profile-info {
+    background-color: #2d313c;
+    border-radius: 15px;
+    padding: 2rem;
+    margin-top: 1.5rem;
+}
+
+.profile-data {
+    margin-top: 2rem;
+    text-align: left;
+}
+
+.profile-data dl {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.profile-data dt {
+    font-weight: 600;
+    color: #cbd5e0;
+}
+
+.profile-data dd {
+    color: #a0aec0;
+    word-break: break-all;
+}
+
+.actions {
+    margin-top: 2rem;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 600px) {
+    .card {
+        padding: 2rem;
+    }
+    
+    h1 {
+        font-size: 2rem;
+    }
+    
+    .button {
+        padding: 0.8rem 2rem;
+        font-size: 1rem;
+    }
+    
+    .logo {
+        width: 120px;
+    }
+    
+    .profile-data dl {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    
+    .profile-data dt {
+        margin-top: 1rem;
+    }
+}
+    ```
+
+    </AuthCodeGroup>
+
+    <Info>
+      **Development Only:** This example uses simple in-memory storage classes (`MemoryStateStore` and `MemoryTransactionStore`) for demonstration purposes. These stores will lose all session data when your application restarts and won't work in multi-instance deployments.
+      
+      **For production applications**, you must implement persistent storage. The SDK is framework-agnostic and requires you to provide custom `StateStore` and `TransactionStore` implementations. See the [official SDK storage examples](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md) for detailed guidance on implementing Redis, PostgreSQL, or other persistent storage backends.
+    </Info>
+  </Step>
+  <Step title="Run your app" stepNumber={5}>
+    Start the Flask development server:
+
+    ```bash
+    python app.py
+    ```
+
+    Your app will be available at [http://localhost:5000](http://localhost:5000). The Auth0 SDK handles authentication routes automatically.
+  </Step>
+</Steps>
+
+<Check>
+  **Checkpoint**
+
+  You should now have a fully functional Auth0 login page running on your [localhost](http://localhost:5000/)
+</Check>
+
+---
+
+## Advanced Usage
+
+<Accordion title="Accessing API Tokens">
+If you need to call a protected API, retrieve an access token:
+
+```python
+@app.route('/api-call')
+@require_auth
+async def api_call():
+    try:
+        # Get access token for your API
+        access_token = await auth0.get_access_token(
+            audience='https://your-api.example.com',
+            store_options=g.store_options
+        )
+        
+        # Use the token to call your API
+        # headers = {'Authorization': f'Bearer {access_token}'}
+        # response = requests.get('https://your-api.example.com/data', headers=headers)
+        
+        return f"Access token retrieved: {access_token[:20]}..."
+    except Exception as e:
+        return f"Error getting access token: {str(e)}", 500
+```
+
+<Info>
+To use this feature, you must:
+1. Set `AUTH0_AUDIENCE` in your `.env` file
+2. Include `offline_access` in your scopes (for refresh tokens)
+3. Update `authorization_params` in `auth.py`:
+   ```python
+   authorization_params={
+       'scope': 'openid profile email offline_access',
+       'audience': os.getenv('AUTH0_AUDIENCE')
+   }
+   ```
+</Info>
+</Accordion>
+
+<Accordion title="Custom Storage Configuration">
+By default, the SDK uses cookie-based storage. For production environments with specific needs (horizontal scaling, session sharing across services), you can configure custom storage backends like Redis or PostgreSQL.
+
+**When to use custom storage:**
+- You need to share sessions across multiple servers
+- You have large session data exceeding cookie size limits
+- You need centralized session management for backchannel logout
+
+**Redis Example:**
+
+```python auth.py
+from auth0_server_python.stores.redis_state_store import RedisStateStore
+import redis.asyncio as redis
+
+# Initialize custom state store
+redis_client = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+state_store = RedisStateStore(
+    secret=os.getenv('AUTH0_SECRET'),
+    redis_client=redis_client
+)
+
+# Pass to ServerClient
+auth0 = ServerClient(
+    domain=os.getenv('AUTH0_DOMAIN'),
+    client_id=os.getenv('AUTH0_CLIENT_ID'),
+    client_secret=os.getenv('AUTH0_CLIENT_SECRET'),
+    secret=os.getenv('AUTH0_SECRET'),
+    redirect_uri=os.getenv('AUTH0_REDIRECT_URI'),
+    state_store=state_store,  # Custom storage
+    authorization_params={'scope': 'openid profile email'}
+)
+```
+
+<Info>
+For most applications, the default cookie-based storage is sufficient. Custom storage requires implementing the `StateStore` interface. See the [SDK examples](https://github.com/auth0/auth0-server-python/blob/main/examples/ConfigureStore.md) for detailed implementations.
+</Info>
+</Accordion>
+
+---
+
+## Common Issues
+
+<AccordionGroup>
+<Accordion title="MissingRequiredArgumentError">
+**Problem:** You see "MissingRequiredArgumentError: secret" when starting the app
+
+**Cause:** The `AUTH0_SECRET` environment variable is missing or not loaded properly.
+
+**Solution:**
+1. Verify your `.env` file exists in the project root
+2. Ensure `python-dotenv` is installed: `pip install python-dotenv`
+3. Generate a new secret if needed: `openssl rand -hex 64`
+4. Add it to `.env`: `AUTH0_SECRET=your_generated_secret`
+5. Restart your Flask application
+</Accordion>
+
+<Accordion title="Invalid Callback URL Error">
+**Problem:** You see "Callback URL mismatch" or "invalid_request" error during login
+
+**Cause:** The redirect URI in your code doesn't match what's registered in Auth0 Dashboard.
+
+**Solution:**
+1. Check your `.env` file: `AUTH0_REDIRECT_URI=http://localhost:5000/callback`
+2. Go to [Auth0 Dashboard](https://manage.auth0.com/dashboard/) → Applications → Your App → Settings
+3. Add `http://localhost:5000/callback` to **Allowed Callback URLs**
+4. Click **Save Changes**
+5. Restart your Flask application
+</Accordion>
+
+<Accordion title="AsyncIO Event Loop Errors">
+
+**Problem:** You see "RuntimeError: This event loop is already running" or similar async errors
+
+**Cause:** Flask 2.0+ async support may have issues with certain configurations.
+
+**Solution:**
+
+Install Flask with async support:
+```bash
+pip install "flask[async]"
+```
+
+Then restart your Flask application.
+</Accordion>
+
+<Accordion title="Module Not Found Errors">
+
+**Problem:** You see "ModuleNotFoundError: No module named 'auth0_server_python'" or similar
+
+**Cause:** The SDK is not installed or the virtual environment is not activated.
+
+**Solution:**
+1. Ensure your virtual environment is activated:
+   ```bash
+   source venv/bin/activate  # macOS/Linux
+   # or
+   venv\Scripts\activate  # Windows
+   ```
+2. Install the SDK:
+   ```bash
+   pip install auth0-server-python "flask[async]" python-dotenv
+   ```
+3. Verify installation:
+```bash
+pip list | grep auth0
+```
+</Accordion>
+
+<Accordion title="ClaimDecodingFailed Error">
+**Problem:** You see "ClaimDecodingFailed" or "Failed to decode claims" error during authentication
+
+**Cause:** The ID token or access token received from Auth0 couldn't be properly decoded, often due to:
+- Invalid JWT format
+- Corrupted session data
+- Mismatched signing algorithms
+- Clock skew between your server and Auth0
+
+**Solution:**
+1. Ensure your `AUTH0_CLIENT_SECRET` is correct in the `.env` file
+2. Check your system time is synchronized (NTP):
+   ```bash
+   # macOS
+   sudo sntp -sS time.apple.com
+   
+   # Linux
+   sudo ntpdate -s time.nist.gov
+   ```
+3. Clear browser cookies and restart authentication
+4. Verify the `AUTH0_DOMAIN` doesn't include `https://` prefix
+5. Check Auth0 Dashboard → Applications → Your App → Settings → Advanced → OAuth → JsonWebToken Signature Algorithm matches your SDK configuration
+</Accordion>
+
+<Accordion title="Token Expired or Invalid">
+**Problem:** You see "Token has expired" or "invalid_token" errors
+
+**Cause:** The access token or ID token has exceeded its lifetime, or the session has expired.
+
+**Solution:**
+1. The SDK automatically handles token refresh if you include `offline_access` scope:
+   ```python
+   authorization_params={
+       'scope': 'openid profile email offline_access',
+   }
+   ```
+2. For APIs, ensure you're requesting fresh tokens:
+   ```python
+   access_token = await auth0.get_access_token(
+       audience='https://your-api.example.com',
+       force_refresh=True  # Force refresh if needed
+   )
+   ```
+3. Adjust token lifetimes in Auth0 Dashboard → Applications → Your App → Settings → Advanced → OAuth
+4. Implement proper error handling to redirect users to login when tokens expire
+</Accordion>
+
+<Accordion title="CORS and Cross-Origin Errors">
+**Problem:** You see CORS errors or "Blocked by CORS policy" in browser console
+
+**Cause:** Your application's origin isn't properly configured in Auth0.
+
+**Solution:**
+1. Add your origin to Auth0 Dashboard → Applications → Your App → Settings:
+   - **Allowed Web Origins**: `http://localhost:5000`
+   - **Allowed Callback URLs**: `http://localhost:5000/callback`
+   - **Allowed Logout URLs**: `http://localhost:5000`
+2. For production, add your production URLs:
+   ```
+   https://yourdomain.com
+   https://yourdomain.com/callback
+   ```
+3. Ensure your Flask app has proper CORS configuration if calling Auth0 APIs from frontend JavaScript:
+   ```python
+   from flask_cors import CORS
+   CORS(app, origins=['http://localhost:5000'])
+   ```
+</Accordion>
+
+<Accordion title="Rate Limit Exceeded">
+**Problem:** You see "Too many requests" or "Rate limit exceeded" errors
+
+**Cause:** Your application has exceeded Auth0's rate limits for authentication requests.
+
+**Solution:**
+1. Check Auth0 Dashboard → Monitoring → Logs for rate limit details
+2. Implement exponential backoff for retries:
+   ```python
+   import time
+   from auth0_server_python.error import ApiError
+   
+   async def login_with_retry():
+       max_retries = 3
+       for attempt in range(max_retries):
+           try:
+               return await auth0.start_interactive_login({}, g.store_options)
+           except ApiError as e:
+               if e.status_code == 429 and attempt < max_retries - 1:
+                   wait_time = 2 ** attempt
+                   time.sleep(wait_time)
+               else:
+                   raise
+   ```
+3. Review your Auth0 subscription plan limits
+4. Optimize authentication flow to reduce unnecessary token requests
+5. Cache tokens appropriately instead of requesting new ones frequently
+</Accordion>
+</AccordionGroup>
+

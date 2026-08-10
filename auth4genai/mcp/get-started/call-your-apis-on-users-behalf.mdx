@@ -1,0 +1,239 @@
+---
+title: Call Your API on a User's Behalf
+description: Learn how to call an Auth0-protected API from your MCP server.
+sidebarTitle: Call Your API on a User's Behalf
+og:title: "Call Your API on User's Behalf - Auth for MCP Quickstart"
+og:description: "Learn how to call an Auth0-protected API from your MCP server."
+og:url: "https://auth0.com/ai/docs"
+twitter:title: "Call Your API on User's Behalf - Auth for MCP Quickstart"
+twitter:description: "Learn how to call an Auth0-protected API from your MCP server."
+permalink: "/mcp/get-started/call-your-apis-on-users-behalf"
+---
+
+import MCPGetStartedPrerequisites from "/snippets/mcp/get-started/pre-reqs/prerequisites.mdx";
+import MCPGetStartedConfigTenantSettings from "/snippets/mcp/get-started/config-tenant/config-tenant-settings.mdx";
+import MCPGetStartedCreateRoles from "/snippets/mcp/get-started/config-tenant/roles-management.mdx";
+import CreateProfile from "/snippets/mcp/get-started/create-custom-token-exchange-profile.mdx";
+import CreateMCPAPI from "/snippets/mcp/get-started/create-mcp-api.mdx";
+import AssignPermissionsToRoles from "/snippets/mcp/get-started/config-tenant/assign-permissions-to-roles.mdx";
+import AssignDownstreamPermissionsToRoles from "/snippets/mcp/get-started/config-tenant/assign-downstream-permissions-to-roles.mdx";
+import { DownloadQuickstartButton } from "/snippets/download-quickstart/DownloadQuickstartButton.jsx";
+import MCPGetStartedTestingInstructions from "/snippets/mcp/get-started/testing-instructions.mdx";
+import CreateEnvFile from "/snippets/mcp/get-started/call-your-apis/create-env-file.mdx";
+import CustomTokenExchangeAction from "/snippets/mcp/get-started/call-your-apis/custom-token-exchange-action.mdx";
+import RunMcpServerJs from "/snippets/mcp/get-started/call-your-apis/run-mcp-server-js.mdx";
+import RunMcpServerPython from "/snippets/mcp/get-started/call-your-apis/run-mcp-server-python.mdx";
+import ExchangeAccessTokenJs from "/snippets/mcp/get-started/call-your-apis/exchange-access-token-js.mdx";
+import ExchangeAccessTokenPython from "/snippets/mcp/get-started/call-your-apis/exchange-access-token-python.mdx";
+
+Auth0 implements the On-Behalf-Of (OBO) token exchange ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html)) to enable MCP servers to preserve user identity and permissions when calling downstream APIs. In the OBO token exchange flow, the MCP server acts in a dual role: as a resource server when receiving requests from the client, and as a client when calling your downstream API on the user’s behalf.
+
+To call your APIs on a user’s behalf, the MCP server must exchange the Auth0 access token it receives from the MCP client for a new access token with a different audience. The original token has the MCP server as its audience, while the new token has your downstream API as its audience.
+
+<Frame>
+  <img
+    className="hidden dark:block"
+    src="/img/mcp/mcp_call_api_obo_exchange_dark.png"
+    alt="MCP Diagram"
+  />
+  <img
+    className="block dark:hidden"
+    src="/img/mcp/mcp_call_api_obo_exchange_light.png"
+    alt="MCP Diagram"
+  />
+</Frame>
+
+By the end of this quickstart, you will have:
+
+* An MCP server that calls your protected APIs on behalf of authenticated users using the OBO token exchange
+* Token verification and exchange using the `@auth0/auth0-api-js` library (JavaScript) or `auth0-api-python` library (Python)
+* A working example demonstrating the end-to-end OBO token exchange flow from client to MCP server to downstream API
+
+<MCPGetStartedPrerequisites />
+
+## Configure tenant settings
+
+<AccordionGroup>
+<MCPGetStartedConfigTenantSettings />
+
+<MCPGetStartedCreateRoles />
+</AccordionGroup>
+
+## Set up the Auth0 applications and APIs
+
+The MCP server's dual role requires two configurations in Auth0:
+
+1. As a resource server: An API that the MCP client calls
+2. As a client: An application that can exchange tokens to call downstream APIs
+
+Let's set up both configurations.
+
+### Create an API to represent your MCP server
+
+<CreateMCPAPI />
+
+<AssignPermissionsToRoles />
+
+### Create an application for your MCP server
+
+Create an application that allows your MCP server to act as a client for the OBO token exchange. This application must:
+- Have the same identifier as your MCP server API (`resource_server_identifier`)
+- Use `app_type: resource_server` to link it to the MCP server
+- Enable OBO token exchange in the `token_exchange` configuration
+
+The following command creates an application linked to your MCP server with OBO token exchange enabled:
+
+```shell wrap lines
+auth0 api post clients --data '{
+  "name": "MCP Server Client",
+  "app_type": "resource_server",
+  "oidc_conformant": true,
+  "resource_server_identifier": "http://localhost:3001/",
+  "token_exchange": {
+    "allow_any_profile_of_type": ["on_behalf_of_token_exchange"]
+  }
+}' | jq -c '{client_id, client_secret}' > auth0-app-details.json
+```
+
+Save the `client_id` and `client_secret` from the output; you'll need them to configure your MCP server environment.
+
+### Create a downstream API
+
+Create the protected API that your MCP server will call on the user's behalf. This API represents your business logic API (e.g., a calendar API, document API, etc.).
+
+The following command creates an API with the following configurations:
+- Client grants: Gives the MCP server [user-delegated and client access](https://auth0.com/docs/get-started/applications/application-access-to-apis-client-grants) the API
+- Scope enforcement: Requires specific permissions (`read:private`)
+- First-party status: Skips user consent for your own applications
+
+```shell
+auth0 api post resource-servers --data '{
+  "identifier": "http://localhost:8787/",
+  "name": "Protected Downstream API",
+  "signing_alg": "RS256",
+  "enforce_policies": true,
+  "scopes": [
+    {"value": "read:private", "description": "Private scope"}
+  ],
+  "subject_type_authorization": {
+    "user": {
+        "policy": "require_client_grant"
+    },
+    "client": {
+        "policy": "require_client_grant"
+    }
+  },
+  "skip_consent_for_verifiable_first_party_clients": false
+}'
+```
+
+Save the API identifier (audience) from the output; you'll configure it in your environment variables as `API_AUTH0_AUDIENCE`.
+
+<AssignDownstreamPermissionsToRoles />
+
+## Sample app
+<Tabs>
+  <Tab title="Javascript" icon="js">
+    <Tabs>
+      <Tab title="Use sample app (recommended)">
+        Start by downloading the sample app for this quickstart. The sample includes a FastMCP MCP server with an Auth0 integration and a protected API built with
+        [Fastify](https://fastify.dev/).
+
+        <DownloadQuickstartButton
+          category="auth-for-mcp"
+          framework="fastmcp-mcp-on-behalf-of-tokenexchange-js"
+        />
+
+        Once downloaded, extract the files and open the project in your preferred IDE.
+      </Tab>
+      <Tab title="Clone GitHub repository">
+        Clone the repository and navigate to the sample app folder, which includes a FastMCP MCP server with an Auth0 integration and a protected API built with
+        [Fastify](https://fastify.dev/).
+
+        ```shell wrap lines
+        git clone https://github.com/auth0-samples/auth0-ai-samples.git
+        cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-on-behalf-of-tokenexchange-js
+        ```
+
+        Once cloned, open the project in your preferred IDE.
+      </Tab>
+    </Tabs>
+
+    The sample app demonstrates the complete OBO flow with a `greet` tool that:
+    1. Receives an authenticated request from an MCP client
+    2. Exchanges the token for downstream API access
+    3. Calls your protected API on the user's behalf
+    4. Returns the result
+
+    ## Install packages
+
+    Make sure you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm). Then, in the `fastmcp-mcp-on-behalf-of-tokenexchange-js` directory, install the required packages:
+
+    ```shell
+    npm install
+    ```
+
+    ## Create your environment file
+    <CreateEnvFile/>
+
+    ## Run the MCP server and the API
+    <RunMcpServerJs/>
+
+    ## Exchange your access token
+    <ExchangeAccessTokenJs/>
+  </Tab>
+
+  <Tab title="Python" icon="python">
+    <Tabs>
+      <Tab title="Use sample app (recommended)">
+        Start by downloading the sample app for this quickstart. The sample includes a FastMCP MCP server with an Auth0 integration and a protected Starlette-based API.
+
+        <DownloadQuickstartButton
+          category="auth-for-mcp"
+          framework="fastmcp-mcp-on-behalf-of-tokenexchange-python"
+        />
+
+        Once downloaded, extract the files and open the project in your preferred IDE.
+      </Tab>
+      <Tab title="Clone GitHub repository">
+        Clone the repository and navigate to the sample app folder which includes a FastMCP MCP server with an Auth0 integration and a protected Starlette-based API.
+
+        ```shell wrap lines
+        git clone https://github.com/auth0-samples/auth0-ai-samples.git
+        cd auth0-ai-samples/auth-for-mcp/fastmcp-mcp-on-behalf-of-tokenexchange-python
+        ```
+
+        Once cloned, open the project in your preferred IDE.
+      </Tab>
+    </Tabs>
+
+    The sample app demonstrates the complete OBO flow with a `greet` tool that:
+    1. Receives an authenticated request from an MCP client
+    2. Exchanges the token for downstream API access
+    3. Calls your protected API on the user's behalf
+    4. Returns the result
+
+      ## Install packages
+
+      Make sure you have [poetry installed](https://python-poetry.org/docs/). Then, in the `fastmcp-mcp-on-behalf-of-tokenexchange-python` directory, install the required packages:
+
+      ```shell
+      poetry install
+      ```
+
+      ## Create your environment file
+      <CreateEnvFile/>
+
+      ## Run the MCP server and the API
+      <RunMcpServerPython/>
+
+      ## Exchange your access token
+      <ExchangeAccessTokenPython/>
+  </Tab>
+</Tabs>
+
+<MCPGetStartedTestingInstructions />
+
+## Next steps
+
+* To set up MCP server authorization, complete the [Authorization for Your MCP Server](./authorization-for-your-mcp-server) quickstart.

@@ -1,3 +1,5 @@
+import ConfigureCloudflareKvStore from "/snippets/common/configure-cloudflare-kv-store.mdx";
+
 ### 1. Configure Auth0 AI
 
 <Note>If you started from the [Auth0 Cloudflare Agents starter kit](https://github.com/auth0-lab/cloudflare-agents-starter), you can skip this step as the Auth0 AI SDK is already configured.</Note>
@@ -15,9 +17,9 @@ Then, you need to install the Auth0 AI SDK for Cloudflare Agents:
 npm install @auth0/ai-vercel @auth0/ai-cloudflare @auth0/ai
 ```
 
-Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required Github scopes.
+Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required GitHub scopes.
 
-```typescript ./src/lib/auth0-ai.ts wrap lines
+```typescript ./src/agent/auth0-ai.ts wrap lines
 import { Auth0AI, setGlobalAIContext } from "@auth0/ai-vercel";
 import { getCurrentAgent } from "agents";
 import type { Chat } from "./chat";
@@ -34,13 +36,15 @@ setGlobalAIContext(() => ({ threadID: getAgent().name }));
 
 const auth0AI = new Auth0AI();
 
-export const withSlack = auth0AI.withTokenForConnection({
+const refreshToken = async () => {
+  const credentials = getAgent().getCredentials();
+  return credentials?.refresh_token;
+};
+
+export const withSlack = auth0AI.withTokenVault({
+  refreshToken,
   connection: "sign-in-with-slack",
   scopes: ["channels:read", "groups:read"],
-  refreshToken: async () => {
-    const credentials = getAgent().getCredentials();
-    return credentials?.refresh_token;
-  },
 });
 ```
 
@@ -48,21 +52,22 @@ export const withSlack = auth0AI.withTokenForConnection({
 
 Wrap your tool using the Auth0 AI SDK to obtain an access token for the Slack API.
 
-```typescript ./src/agent/tools/listRepositories.ts wrap lines highlight={2-4,8,14,18,30-32}
-import { ErrorCode, WebClient } from "@slack/web-api";
-import { getAccessTokenForConnection } from "@auth0/ai-vercel";
-import { FederatedConnectionError } from "@auth0/ai/interrupts";
-import { withSlack } from "@/lib/auth0-ai";
+```typescript ./src/agent/tools/listRepositories.ts wrap lines highlight={4-5,9,15,19,31-33}
 import { tool } from "ai";
-import { z } from "zod";
+import { z } from "zod/v3";
+
+import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
+import { TokenVaultError } from "@auth0/ai/interrupts";
+import { withSlack } from "@/agent/auth0-ai";
+import { ErrorCode, WebClient } from "@slack/web-api";
 
 export const listChannels = withSlack(
   tool({
     description: "List channels for the current user on Slack",
-    parameters: z.object({}),
+    inputSchema: z.object({}),
     execute: async () => {
       // Get the access token from Auth0 AI
-      const accessToken = getAccessTokenForConnection();
+      const accessToken = getAccessTokenFromTokenVault();
 
       // Slack SDK
       try {
@@ -78,8 +83,8 @@ export const listChannels = withSlack(
       } catch (error) {
         if (error && typeof error === "object" && "code" in error) {
           if (error.code === ErrorCode.HTTPError) {
-            throw new FederatedConnectionError(
-              `Authorization required to access the Federated Connection`
+            throw new TokenVaultError(
+              `Authorization required to access the Token Vault`
             );
           }
         }
@@ -101,86 +106,140 @@ Interrupts are a way for the system to pause execution and prompt the user to ta
 
 On the Chat agent class, you need to set up the tool invocation and handle the interruption messaging via the `errorSerializer`.
 
-```typescript ./src/agent/chat.ts wrap lines highlight={1-2,52-54,63-66}
-import { setAIContext } from "@auth0/ai-vercel";
-import { errorSerializer, withInterruptions } from "@auth0/ai-vercel/interrupts";
-// Other dependencies
-import { AuthAgent, OwnedAgent } from "@auth0/auth0-cloudflare-agents-api";
+```typescript ./src/agent/chat.ts wrap lines highlight={1-10,52,54-57,101}
 import { openai } from "@ai-sdk/openai";
+import {
+  AsyncUserConfirmationResumer,
+  CloudflareKVStore,
+} from "@auth0/ai-cloudflare";
+import {
+  errorSerializer,
+  invokeTools,
+  withInterruptions,
+} from "@auth0/ai-vercel/interrupts";
+import { AuthAgent, OwnedAgent } from "@auth0/auth0-cloudflare-agents-api";
 import { AIChatAgent } from "agents/ai-chat-agent";
+import {
+  convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  generateId,
+  stepCountIs,
+  streamText,
+  type UIMessage,
+} from "ai";
+import { executions, tools } from "./tools";
+import { processToolCalls } from "./utils";
 
-const SuperAgent = OwnedAgent(AuthAgent(AIChatAgent<Env>));
+const model = openai("gpt-4o-2024-11-20");
 
-export class Chat extends SuperAgent {
- async onChatMessage(
-    onFinish: StreamTextOnFinishCallback<ToolSet>,
-    options?: { abortSignal?: AbortSignal }
-  ) {
-    // Collect all tools, including MCP tools
+class BaseChat extends AIChatAgent<Env> {}
+
+const AuthedChat = AuthAgent(BaseChat);
+const OwnedAuthedChat = OwnedAgent(AuthedChat);
+const ResumableOwnedAuthedChat = AsyncUserConfirmationResumer(OwnedAuthedChat);
+
+export class Chat extends ResumableOwnedAuthedChat {
+  messages: UIMessage[] = [];
+
+  declare mcp?:
+    | {
+    unstable_getAITools?: () => Record<string, unknown>;
+  }
+    | undefined;
+
+  async onChatMessage() {
     const allTools = {
       ...tools,
-      ...this.mcp.unstable_getAITools(),
+      ...(this.mcp?.unstable_getAITools?.() ?? {}),
     };
-    const claims = this.getClaims();
-    // Create a streaming response that handles both text and tool outputs
-    const dataStreamResponse = createDataStreamResponse({
-      execute: withInterruptions(async (dataStream) => {
-        // Process any pending tool calls from previous messages
-        // This handles human-in-the-loop confirmations for tools
-        const processedMessages = await processToolCalls({
-          messages: this.messages,
-          dataStream,
-          tools: allTools,
-          executions,
-        });
 
-        // Stream the AI response using GPT-4
-        const result = streamText({
-          model,
-          system: `You are a helpful assistant that can do various tasks...
+    const claims = this.getClaims?.();
 
-${unstable_getSchedulePrompt({ date: new Date() })}
+    const stream = createUIMessageStream({
+      originalMessages: this.messages,
+      execute: withInterruptions(
+        async ({ writer }) => {
+          await invokeTools({
+            messages: await convertToModelMessages(this.messages),
+            tools: allTools,
+          });
+
+          const processed = await processToolCalls({
+            messages: this.messages,
+            dataStream: writer,
+            tools: allTools,
+            executions,
+          });
+
+          const result = streamText({
+            model,
+            stopWhen: stepCountIs(10),
+            messages: await convertToModelMessages(processed),
+            system: `You are a helpful assistant that can do various tasks...
 
 If the user asks to schedule a task, use the schedule tool to schedule the task.
 
-The name of the user is ${claims?.name ?? "unknown"}.
-`,
-          messages: processedMessages,
-          tools: allTools,
-          onFinish: async (args) => {
-            onFinish(
-              args as Parameters<StreamTextOnFinishCallback<ToolSet>>[0]
-            );
-          },
-          onError: (error) => {
-            if (!Auth0Interrupt.isInterrupt(error)) {
-              return;
-            }
-            console.error("Error while streaming:", error);
-          },
-          maxSteps: 10,
-        });
+The name of the user is ${claims?.name ?? "unknown"}.`,
+            tools: allTools,
+            onStepFinish: (output) => {
+              if (output.finishReason === "tool-calls") {
+                const last = output.content[output.content.length - 1];
+                if (last?.type === "tool-error") {
+                  const { toolName, toolCallId, error, input } = last;
+                  const serializableError = {
+                    cause: error,
+                    toolCallId,
+                    toolName,
+                    toolArgs: input,
+                  };
+                  throw serializableError;
+                }
+              }
+            },
+          });
 
-        // Merge the AI response stream with tool execution outputs
-        result.mergeIntoDataStream(dataStream);
-      }),
-      onError: errorSerializer((err) => {
-        console.log(err);
-        return "Oops, an error occured!";
-      }),
+          writer.merge(
+            result.toUIMessageStream({
+              sendReasoning: true,
+            })
+          );
+        },
+        { messages: this.messages, tools: allTools }
+      ),
+      onError: errorSerializer(),
     });
 
-    return dataStreamResponse;
+    return createUIMessageStreamResponse({ stream });
+  }
+
+  async executeTask(description: string) {
+    await this.saveMessages([
+      ...this.messages,
+      {
+        id: generateId(),
+        role: "user",
+        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
+      },
+    ]);
+  }
+
+  get auth0AIStore() {
+    return new CloudflareKVStore({ kv: this.env.Session });
   }
 }
 ```
 
+**Note about CloudflareKVStore:**
+
+<ConfigureCloudflareKvStore />
+
 #### Client Side
 
-On this example we utilize the `EnsureAPIAccessPopup` component to show a popup that allows the user to authenticate with Github and grant access with the requested scopes. You'll first need to install the `@auth0/ai-components` package:
+In this example, we utilize the `TokenVaultConsentPopup` component to show a pop-up that allows the user to authenticate with GitHub and grant access with the requested scopes. You'll first need to install the `@auth0/ai-components` package:
 
 ```bash wrap lines
-npx @auth0/ai-components add FederatedConnections
+npx @auth0/ai-components add TokenVault
 ```
 
 Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
@@ -190,8 +249,8 @@ Then, you can integrate the authentication popup in your chat component, using t
 
 import { useChat } from "@ai-sdk/react";
 import { useAgentChatInterruptions } from "@auth0/ai-cloudflare/react";
-import { FederatedConnectionInterrupt } from "@auth0/ai/interrupts";
-import { EnsureAPIAccessPopup } from "@/components/auth0-ai/FederatedConnections/popup";
+import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
+import { TokenVaultConsentPopup } from "@/components/auth0-ai/TokenVault/popup";
 
 export default function Chat() {
 
@@ -218,8 +277,8 @@ export default function Chat() {
         </div>
       ))}
 
-      {FederatedConnectionInterrupt.isInterrupt(toolInterrupt) && (
-        <EnsureAPIAccessPopup
+      {TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
+        <TokenVaultConsentPopup
           interrupt={toolInterrupt}
           connectWidget={{
             title: "Access to your Slack channels",
