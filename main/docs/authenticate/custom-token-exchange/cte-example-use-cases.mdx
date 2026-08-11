@@ -338,7 +338,7 @@ curl --location 'https://{yourDomain}.auth0.com/oauth/token' \
 
 Read [code samples](#code-samples) for a more detailed example on how to validate opaque refresh token with the legacy IdP.
 
-### Use Case: Support agent acting on behalf of an end user
+### Use Case: Support agent acting on behalf of an end user via API
 
 GearUp's support agents need to access end-user data and perform actions via GearUp's backend APIs on behalf of the end-user. The support tool authenticates the agent, then uses the Custom Token Exchange to obtain an access token representing the end-user with the agent tracked as the actor.
 
@@ -426,7 +426,7 @@ The issued access token will include the `act` claim:
 }
 ```
 
-### Important considerations for delegated authorization
+#### Important considerations for delegated authorization
 
 When implementing delegated authorization with Custom Token Exchange, follow these guidelines:
 
@@ -439,8 +439,117 @@ When implementing delegated authorization with Custom Token Exchange, follow the
 * **For auditing purposes**, you can make use of the actor details in Auth0 tenant logs. Successful Custom Token Exchange transactions (`secte` log events) include the `actor` property with the `sub` and any nested `actor` information.
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-Auth0 does not notify the end-user when a delegated authorization token is issued on their behalf. If your use case requires user notification or explicit consent before delegated access takes place, consider using [Client Initiated Backchannel Authentication (CIBA)](/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-ciba-flow) to push a consent request to the end-user's device prior to performing the token exchange. For simpler notification needs, you can implement notification logic within your Custom Token Exchange Action, a Post-Login Action, or in your downstream services.
+Auth0 does not notify the end-user when a delegated authorization token is issued on their behalf. If your use case requires user notification or explicit consent before delegated access takes place, consider using [Client Initiated Backchannel Authentication (CIBA)](/docs/get-started/authentication-and-authorization-flow/client-initiated-backchannel-authentication-flow) to push a consent request to the end-user's device prior to performing the token exchange. For simpler notification needs, you can implement notification logic within your Custom Token Exchange Action, a Post-Login Action, or in your downstream services.
 </Callout>
+
+### Use Case: Support agent accessing a web application on behalf of an end user
+
+Sometimes a support agent needs to reproduce an issue directly in GearUp's web application, acting as the end-user, rather than just calling GearUp's API. Instead of exchanging tokens for an access token, the support tool requests a Session Transfer Token, which it uses to establish a delegated web session for the end-user in GearUp's web application.
+
+<Frame>![](/docs/images/custom-token-exchange/Support-agent-accessing-a-web-application-on-behalf-of-an-end-user.png)</Frame>
+
+1. The support tool authenticates the agent with Auth0 and obtains the agent's ID token.
+2. The support tool calls Auth0's `/oauth/token` using a [Custom Token Exchange request](/docs/get-started/authentication-and-authorization-flow/token-exchange-flow/call-your-api-using-the-custom-token-exchange-flow), setting `audience` to `urn:YOUR_AUTH0_TENANT_DOMAIN:session_transfer`, with a signed JWT identifying the end-user as `subject_token` and the agent's ID token as `actor_token`.
+3. The associated Custom Token Exchange Action validates the subject token, authorizes the delegation, and calls `api.authentication.setActor()` and `api.authentication.setUserByConnection()` to select the connection the target application accepts. Calling `setActor()` is required when requesting a Session Transfer Token; omitting it returns a `400` error.
+4. Auth0 issues a Session Transfer Token (`issued_token_type: urn:auth0:params:oauth:token-type:session_transfer_token`) instead of an access token.
+5. The support tool redirects the agent's browser to GearUp's web application, passing the Session Transfer Token as a query parameter on GearUp's `initiate_login_uri`.
+6. GearUp's web application passes the Session Transfer Token through to its own call to Auth0's `/authorize` endpoint, which validates the token and establishes an ephemeral, time-limited session for the end-user, with the agent recorded as the actor for auditing. Read [Implement Session Delegation](/docs/authenticate/single-sign-on/session-delegation/implement-session-delegation) for the full request/response detail.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Your web application must explicitly opt in to accept delegated sessions, and several session behaviors differ from a regular login (session lifetime, refresh tokens, MFA, and more). Read [Session Delegation](/docs/authenticate/single-sign-on/session-delegation) to configure your web application and understand these behaviors, limitations, and how to audit delegated sessions.
+</Callout>
+
+The following code sample shows how to implement session delegation in the Custom Token Exchange Action. We check the requested `audience` to tell a session delegation request apart from a plain API-access request and apply a distinct authorization policy for each. Then, set the actor and the user. Auth0 decides whether to issue an access token or a Session Transfer Token based on the requested `audience`, not on the Action's logic.
+
+```javascript lines expandable
+const jwksUri = "https://gearup.com/.well-known/jwks.json";
+
+// The audience is `urn:YOUR_AUTH0_TENANT_DOMAIN:session_transfer` - a suffix check (not
+// equality) because the domain prefix varies per tenant.
+const SESSION_TRANSFER_AUDIENCE_SUFFIX = ":session_transfer";
+
+/**
+ * Handler to be executed while executing a custom token exchange request
+ * @param {Event} event - Details about the incoming token exchange request.
+ * @param {CustomTokenExchangeAPI} api - Methods and utilities to define token exchange process.
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+
+  // 1. VALIDATE the end-user token received in the subject_token
+  const { isValid, payload } = await validateToken(event.transaction.subject_token);
+
+  if (!isValid) {
+    api.access.rejectInvalidSubjectToken("Invalid subject_token");
+    return;
+  }
+
+  // 2. DETECT whether this request is for a Session Transfer Token rather than
+  // an access token, so a distinct authorization policy can be applied.
+  const isSessionDelegation = event.resource_server?.identifier?.endsWith(SESSION_TRANSFER_AUDIENCE_SUFFIX);
+
+  // 3. AUTHORIZE the actor — verify the agent has the right to act on behalf of this end-user
+  const actorUser = event.transaction.actor_token_user;
+  if (!actorUser) {
+    api.access.deny("invalid_request", "Actor token is required for this profile");
+    return;
+  }
+
+  const isAuthorized = isSessionDelegation
+    ? await checkSessionDelegationPolicy(actorUser, payload.sub)
+    : await checkApiDelegationPolicy(actorUser, payload.sub);
+
+  if (!isAuthorized) {
+    api.access.deny("unauthorized_actor", "Agent is not authorized to act on behalf of this user");
+    return;
+  }
+
+  // 4. SET THE ACTOR — Auth0 issues a Session Transfer Token instead of an
+  // access token because the requested audience is the session_transfer audience.
+  api.authentication.setActor({
+    sub: actorUser.user_id,
+    sub_profile: "human",
+    role: "support"
+  });
+
+  // 5. SET THE USER by connection — the Session Transfer Token is scoped to
+  // this specific connection, so the target application can only redeem it if
+  // this connection is enabled for it. We trust the calling application to
+  // embed the intended connection as a custom claim in subject_token (it
+  // signed that token).
+  if (!payload.connection) {
+    api.access.deny("invalid_request", "subject_token missing connection claim");
+    return;
+  }
+  api.authentication.setUserByConnection(payload.connection, { user_id: payload.sub }, {
+    creationBehavior: "none",
+    updateBehavior: "none"
+  });
+
+  async function validateToken(subjectToken) {
+    // Add your code here. REFER TO CODE SAMPLES FOR DETAILED EXAMPLES
+  }
+
+  async function checkApiDelegationPolicy(agent, userId) {
+    // Implement your API-access delegation policy check here.
+  }
+
+  async function checkSessionDelegationPolicy(agent, userId) {
+    // Implement your session delegation policy check here.
+  }
+};
+```
+
+#### Important considerations for session delegation
+
+In addition to the [considerations for delegated authorization](#important-considerations-for-delegated-authorization), keep in mind:
+
+* Detect it is a session delegation request based on the `session_transfer` audience and apply specific authorization policy for that case.
+* Target application reachability depends on the specific connection your Action sets.
+* To set the connection, the application calling Custom Token Exchange needs access to the same connections as your target application(s).
+* Use separate Auth0 domains for the initiating and target applications to avoid an existing session on a shared domain blocking the delegated one.
+* Agents must log out between delegated sessions for different users.
+
+Read [Implement Session Delegation](/docs/authenticate/single-sign-on/session-delegation/implement-session-delegation) for the full end-to-end implementation detail, including these considerations.
 
 ## Code samples
 
