@@ -1,88 +1,101 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable react-hooks/rules-of-hooks */
-import { useState } from 'react';
-
-const mockProvider = {
-  id: 'test-provider-id',
-  name: 'Provider Name',
-  is_enabled: true,
-  strategy: 'waad' as const,
-  options: {},
-};
-
-const mockProvisioningConfig = {
-  scim_url: 'https://scim.example.com',
-  scim_token: 'mock-scim-token',
-  status: 'active',
-  last_synced: '2024-06-01T12:00:00Z',
-};
-
-const initialScimTokens = [
-  { id: 'token-1', value: 'scim-token-1', created_at: '2024-06-01T12:00:00Z' },
-  { id: 'token-2', value: 'scim-token-2', created_at: '2024-06-02T12:00:00Z' },
-];
-
-const emptyStrategy = { provisioning_methods: [], enabled_features: [] };
-
-/**
- * Mock for `SsoProviderEditView`.
- */
 export const getSsoProviderEditMock = () => {
-  const [provider, setProvider] = useState(mockProvider);
-  const [provisioningConfig, setProvisioningConfig] = useState<any>(
-    mockProvisioningConfig,
-  );
-  const [scimTokens, setScimTokens] = useState(initialScimTokens);
-  const [tokenSeq, setTokenSeq] = useState(initialScimTokens.length);
+  const mockProvider = {
+    id: 'test-provider-id',
+    name: 'Provider Name',
+    is_enabled: true,
+    strategy: 'waad' as const,
+    options: {},
+  };
 
-  return {
+  const mockProvisioningConfig = {
+    scim_url: 'https://scim.example.com',
+    scim_token: 'mock-scim-token',
+    status: 'active',
+    last_synced: '2024-06-01T12:00:00Z',
+  };
+
+  const mockScimTokens = [
+    {
+      token_id: 'token-1',
+      scopes: ['scim'],
+      created_at: '2024-06-01T12:00:00Z',
+    },
+    {
+      token_id: 'token-2',
+      scopes: ['scim'],
+      created_at: '2024-06-02T12:00:00Z',
+    },
+  ];
+
+  const mockLogic = {
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
-    customMessages: {},
+    activeTab: 'sso',
     schema: undefined,
     readOnly: true,
     providerId: 'mock-provider-id',
     domains: undefined,
     hideHeader: false,
-    hideProvisioningTab: false,
-    hideDeleteProvider: false,
-    hideRemoveFromOrganization: false,
-    hideAttributeMappings: false,
-    backButton: undefined,
-    enableProviderAction: undefined,
-
-    provider,
+    currentStyles: { variables: {}, classes: {} },
+    provider: mockProvider,
     organization: {
       name: 'Org',
       branding: {
-        colors: { primary: '', page_background: '' },
+        colors: {
+          primary: '',
+          page_background: '',
+        },
         logo_url: undefined,
       },
     },
-    provisioningConfig,
+    isLoading: false,
+    isUpdating: false,
+    isEnabling: false,
+    isDeleting: false,
+    isRemoving: false,
     idpConfig: {
       organization: {
         can_set_show_as_button: false,
         can_set_assign_membership_on_login: false,
       },
       strategies: {
-        waad: emptyStrategy,
-        adfs: emptyStrategy,
-        'google-apps': emptyStrategy,
-        oidc: emptyStrategy,
-        samlp: emptyStrategy,
-        okta: emptyStrategy,
-        pingfederate: emptyStrategy,
+        waad: {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
+        adfs: {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
+        'google-apps': {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
+        oidc: {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
+        samlp: {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
+        okta: {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
+        pingfederate: {
+          provisioning_methods: [],
+          enabled_features: [],
+        },
       },
     },
-
-    isLoading: false,
-    isUpdating: false,
-    isEnabling: false,
-    isDeleting: false,
-    isRemoving: false,
+    customMessages: {},
+    backButton: undefined,
+    shouldAllowDeletion: true,
+    isLoadingConfig: false,
+    isLoadingIdpConfig: false,
+    showProvisioningTab: true,
     isProvisioningUpdating: false,
     isProvisioningDeleting: false,
-    isProvisioningLoading: false,
     isScimTokensLoading: false,
     isScimTokenCreating: false,
     isScimTokenDeleting: false,
@@ -90,43 +103,49 @@ export const getSsoProviderEditMock = () => {
     isProvisioningAttributesSyncing: false,
     hasSsoAttributeSyncWarning: false,
     hasProvisioningAttributeSyncWarning: false,
-    shouldAllowDeletion: true,
-    isLoadingConfig: false,
-    isLoadingIdpConfig: false,
-    showProvisioningTab: true,
+    provisioningConfig: mockProvisioningConfig as
+      | typeof mockProvisioningConfig
+      | undefined,
+    scimTokens: mockScimTokens,
+    t: (key: string) => key,
+  };
 
-    fetchProvider: async () => provider,
-    fetchOrganizationDetails: async () => {},
-    fetchProvisioning: async () => {
-      setProvisioningConfig(mockProvisioningConfig);
-      return mockProvisioningConfig;
-    },
+  const mockHandlers = {
+    setActiveTab: () => {},
     updateProvider: async () => {},
-    enableProvider: async () => {},
-    createProvisioning: async () =>
-      setProvisioningConfig(mockProvisioningConfig),
-    deleteProvisioning: async () => setProvisioningConfig(null),
-    listScimTokens: async () => scimTokens,
-    createScimToken: async () => {
-      const next = tokenSeq + 1;
+    createProvisioningAction: async () => {
+      mockLogic.provisioningConfig = mockProvisioningConfig;
+    },
+    deleteProvisioningAction: async () => {
+      mockLogic.provisioningConfig = undefined;
+    },
+    listScimTokens: async () => ({ scim_tokens: mockScimTokens }),
+    createScimTokenAction: async () => {
       const token = {
-        id: `token-${next}`,
-        value: `scim-token-${next}`,
+        token_id: `token-${mockLogic.scimTokens.length + 1}`,
+        scopes: ['scim'],
         created_at: '2024-06-03T12:00:00Z',
       };
-      setTokenSeq(next);
-      setScimTokens((prev) => [...prev, token]);
-      return token;
+      mockLogic.scimTokens.push(token);
+      return { ...token, token: `scim-secret-${token.token_id}` };
     },
-    deleteScimToken: async (id: string) => {
-      setScimTokens((prev) => prev.filter((t) => t.id !== id));
+    deleteScimTokenAction: async (idpScimTokenId: string) => {
+      mockLogic.scimTokens = mockLogic.scimTokens.filter(
+        (t) => t.token_id !== idpScimTokenId,
+      );
     },
     syncSsoAttributes: async () => {},
     syncProvisioningAttributes: async () => {},
     onDeleteConfirm: async () => {},
     onRemoveConfirm: async () => {},
-    handleToggleProvider: async (enabled: boolean) => {
-      setProvider((prev) => ({ ...prev, is_enabled: enabled }));
+    handleToggleProvider: async () => {
+      mockLogic.provider.is_enabled = !mockLogic.provider.is_enabled;
+    },
+    fetchProvisioning: async () => {
+      mockLogic.provisioningConfig = mockProvisioningConfig;
+      return mockProvisioningConfig;
     },
   };
+
+  return { logic: mockLogic, handlers: mockHandlers };
 };
