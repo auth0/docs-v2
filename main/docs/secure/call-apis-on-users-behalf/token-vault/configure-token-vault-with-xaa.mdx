@@ -1,0 +1,150 @@
+---
+description: Learn how to configure Token Vault to use Cross App Access (XAA) to obtain access tokens.
+title: Configure Token Vault with XAA
+---
+
+The Cross App Access (XAA) standard is a [draft IETF specification](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)
+that enables applications to obtain an access token for a third party API without needing the end 
+user to sign into the third party app and approve the application access. Instead, that access is
+mediated by a centralized identity provider (IdP), that is trusted by both your organization and the
+third party API.
+
+In a workplace environment, IT admins would often prefer to manage which applications employees have
+access to and which applications are connecting to each other's APIs. Rather than employees
+connecting accounts and approving information sharing individually. The XAA specification allows
+that to happen, and Token Vault can use this approach to obtain access tokens, while exposing those
+access tokens to your applications and AI Agents through its existing API. Meaning you write the 
+code once, and it works with either Connected Accounts or XAA.
+
+## What's different with XAA?
+
+1. When using Token Vault with XAA, end users do not need to [connect their account](main/docs/fr-ca/secure/tokens/token-vault/connected-accounts-for-token-vault.mdx)
+with external applications. Your application does not need to provide a button to "Connect to 
+[Third-party Application]" that makes a POST request to the My Account API's 
+`/me/v1/connected-accounts/connect` endpoint.
+2. XAA depends on the end using having authenticated using a federated login with an Okta or OIDC
+connection that is configured for XAA. That connection must be configured as a "Requestion 
+Application" (check [Configuring the Requesting App Connection](#configuring-the-requesting-app-connection)
+for details).
+3. The third party API being accessed must support XAA as a "Resource App". Meaning it can exchange
+an `ID-JAG` for access tokens. Third-party applications that are also using Auth0 can enable this
+feature, check [Cross App Access (XAA)](/docs/ai-agents-mcp/cross-app-access) for details.
+4. A Connection to the third-party application must exist which has enable Connected Accounts for 
+Token Vault, and Cross App Access for Token Vault. (Check [Configuring the Resource App 
+Connection](#configuring-the-resource-app-connection) for details)
+
+## Configuring Token Vault with XAA
+
+### Configuring the Requesting App Connection
+
+Both Okta and OIDC connection types can be configured to act as XAA Requesting Applications. To 
+enable, open the Connection details in the management dashboard, scroll down to the Cross App Access
+section and toggle the "Requesting Application" toggle.
+
+<Frame>![](/docs/images/xaa/xaa_connection_requesting_app.png)</Frame>
+
+Also, ensure the a the *Scopes* contains `offline_access` as Token Vault requires a Refresh Token in
+order to work
+
+*TODO: Is it necessary to select the Okta User Mapping template?*
+
+Alternatively, use the Management API to set the `cross_app_access_requesting_app.active` property 
+to `true` on the connection:
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/connections/{yourConnectionId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "options": {
+    "scope": "openid profile email offline_access"
+  }
+  "cross_app_access_requesting_app": { "active": true } 
+}
+```
+
+The next time a user signs in using that connection, Token Vault will retain the Refresh Token,
+and this can be used to request access to a third party API.
+
+### Configuring the Resource App Connection
+
+To enable Token Vault to use XAA to request access tokens for a third-party API, create or edit a 
+connection to that third-party API's authorization server.
+
+#### Enable Connected Accounts for Token Vault
+
+This step is the same as when not using XAA, on the Connection's settings tab find the *Purpose* 
+section and select either "Connected Accounts for Token Vault" or "Authentication and Connected 
+Accounts for Token Vault".
+
+<Frame>![](/docs/images/token-vault/enable_connected_account_purpose.png)</Frame>
+
+#### Enable Cross App Access for Token Vault
+
+Next, scroll down to the Cross App Access section and turn on the *Enable Cross App Access for Token
+Vault*ß setting:
+
+<Frame>![](/docs/images/xaa/xaa_connection_token_vault.png)</Frame>
+
+#### Using the Management API
+
+Alternatively, use the Managment API to set the `connected_accounts.active` and 
+`connected_accounts.cross_app_access` properties to `true` on the connection:
+
+```bash lines
+PATCH https://{yourDomain}.auth0.com/api/v2/connections/{yourConnectionId}
+Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+Content-Type: application/json
+{
+  "connected_accounts": { 
+    "active": true,
+    "cross_app_access": true
+  } 
+}
+```
+
+#### Call Token Vault as Usual
+
+Token Vault can now be called as you normally would, for the Resource App Connection:
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+--header 'Content-Type: application/json' \
+--data '{
+  "client_id": "<YOUR_CLIENT_ID>",
+  "client_secret": "<YOUR_CLIENT_SECRET>",
+  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+  "subject_token": "<YOUR_AUTH0_REFRESH_TOKEN>",  
+  "subject_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+  "requested_token_type": "http://auth0.com/oauth/token-type/federated-connection-access-token",
+  "connection": "<YOUR_RESOURCE_APP_CONNECTION>"
+}'
+```
+
+In the background, Token Vault will attempt to use the XAA flow to obtain those access tokens, 
+meaning that it will look for a stored Refresh Token from a valid Requesting App IdP, ask that IdP 
+for an `ID-JAG` token on your behalf, and then present it to the `Resource App` in exchange for
+an access token, before returning it to your app.
+
+### Handline Multiple Requesting App IdPs
+
+An Auth0 tenant might have many connections configured to IdPs that support XAA as a Requesting App,
+and which have thier `cross_app_access_requesting_app.active` property set to true. When a Token
+Vault request is made, the actual IdP to request an `ID-JAG` from depends on which IdPs the user has
+sign in to. The must be exactly one valid XAA Requesting App identity linked to the current users
+profile, otherwise Token Vault will not know which IdP to request an `ID-JAG` from. If there are
+multiple, the request will fail because it is unclear which IdP to call.
+
+*TODO: Document what error message you get, I believe we just fall back to Connected Accounts in
+some cases*
+
+#### Using Auth0 Organizations with XAA
+
+Token Vault will filter the available Requesting App connections by those that are enabled for the
+current user's organization. An Auth0 solution that uses Organizations can limit access to each IdP
+by Organization in order to clarify which Requesting App connection should be used for each user.
+
+Each `subject_token` that is used in a Token Vault exchange contains information about the 
+organization that the user logged into, this organization context will be used to find the correct
+XAA Requesting App connection. However, if multiple valid connections are found, the request will 
+fail.
