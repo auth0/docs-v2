@@ -17,6 +17,11 @@ type ModalState =
   | { type: 'assignRole'; member: any }
   | { type: 'removeFromOrganization'; member: any };
 
+type ViewMemberDetailsParams = {
+  userId: string;
+  tab?: 'details' | 'roles';
+};
+
 const ORG_NAME = 'Auth0 Corporation';
 
 const availableRoles = [
@@ -66,7 +71,7 @@ const initialMembers = [
     created_at: '2024-03-02T14:10:00.000Z',
     updated_at: '2025-05-19T16:41:00.000Z',
     last_login: '2025-07-30T13:47:00.000Z',
-    roles: [availableRoles[1], availableRoles[2]],
+    roles: availableRoles,
   },
   {
     user_id: 'auth0|65f1a2b3c4d5e6f7a8b9c0d3',
@@ -134,6 +139,9 @@ export const getOrganizationMemberManagementMock = () => {
 
   const closeModal = () => setModalState({ type: null });
 
+  const memberRoles =
+    modalState.type === 'assignRole' ? (modalState.member?.roles ?? []) : [];
+
   const pagination = (totalItems: number) => ({
     pageSize: 10,
     currentPage: 1,
@@ -169,11 +177,13 @@ export const getOrganizationMemberManagementMock = () => {
     isResendingInvitation,
     isAssigningRoles,
     isRemovingFromOrganization,
+    isLoadingMemberRoles: false,
+    memberRoles,
 
     invitationPagination: pagination(invitations.length),
     memberPagination: pagination(members.length),
     invitationFilters: {},
-    invitationSortConfig: { key: null, direction: 'asc' },
+    invitationSortConfig: { key: null, direction: 'asc' as const },
     memberFilters,
     memberSortConfig,
 
@@ -269,8 +279,12 @@ export const getOrganizationMemberManagementMock = () => {
     handleRoleFilterChange: (roleId: string | undefined) =>
       setMemberFilters((prev: any) => ({ ...prev, roleId })),
 
-    handleViewMemberDetails: (userId: string) => {
-      console.log('[preview] navigate to member detail for', userId);
+    handleViewMemberDetails: ({ userId, tab }: ViewMemberDetailsParams) => {
+      console.log(
+        '[preview] navigate to member detail for',
+        userId,
+        tab ? `(tab: ${tab})` : '',
+      );
     },
 
     handleAssignRolesSubmit: async (
