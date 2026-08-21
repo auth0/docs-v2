@@ -113,9 +113,6 @@ export const getOrganizationMemberDetailMock = () => {
       );
     },
 
-    // Required by the props type and still wired to the (hidden) header button
-    // and to the `memberError` branch's own back button. Kept so this mock stays
-    // a complete example of the View's contract.
     handleBack: () => {
       console.log('[preview] navigate back to member management');
     },
