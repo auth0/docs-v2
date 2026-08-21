@@ -1,0 +1,139 @@
+---
+description: Learn how to identify, review, and migrate away from oversized Auth0 user profiles ahead of the 10KB size limit enforcement.
+title: Migrate Oversized User Profiles
+validatedOn: 2026-08-21
+---
+
+Auth0 introduced a 10KB limit on the serialized representation of [user profile](/docs/manage-users/user-accounts/user-profiles) data. Previously, user profile data was limited solely by the underlying database engine's document size.
+
+To minimize the functional impact of the new limit, Auth0 applies an extended size allowance on top of it. Operations on user profiles that breach the 10KB limit but remain within the extended allowance continue to succeed, but issue warnings in the tenant logs. For now, the extended allowance is substantial, about 10 times the limit, to provide ample time to achieve compliance once a user profile exceeds 10KB.
+
+Existing tenants with one or more user profiles that were close to or had already exceeded the 10KB limit were granted a migration period during which the original behavior, without explicit limits, remains available. The migration period ends on **March 4, 2027**. Sometime after this date, these tenants transition to enforcing the 10KB limit plus the extended size allowance.
+
+To learn more about migration timelines, review the entry on [Deprecations and Migrations](/docs/troubleshoot/product-lifecycle/deprecations-and-migrations).
+
+Follow the steps below to identify whether your tenants were flagged for having user profiles that exceed the 10KB limit, review non-compliant user profiles, and opt out of the deprecated behavior.
+
+<Warning>
+Private Cloud tenant administrators can follow these instructions if their [Private Cloud deployment](/docs/deploy-monitor/deploy-private-cloud) is version `TBD` or later, as that's the version at which the respective migration toggle and tenant logs become available in applicable tenants. To learn more about Private Cloud deployment versions, read [How to Check the Auth0 Private Cloud's Release Number and Deployment Date](https://support.auth0.com/center/s/article/How-to-check-the-Auth0-private-cloud-s-release-number-and-deployment-date).
+</Warning>
+
+## Verify affected tenants
+
+Use the Auth0 Dashboard to confirm whether a tenant has been flagged as having non-compliant user profiles and requires migration.
+
+1. Navigate to [Auth0 Dashboard > Tenant Settings > Advanced](https://manage.auth0.com/dashboard/#/tenant/advanced).
+2. Scroll down to the **Migrations** section.
+3. Look for the **Uncapped User Profile Data** toggle:
+    * Toggle is **on**: Your tenant is unmigrated and has access to user profiles without explicit size limits. You must complete migration before the **March 4, 2027** deadline.
+    * Toggle is absent or **off**: Your tenant no longer observes the deprecated behavior, and no further action is required.
+
+### Functional differences in unmigrated tenants
+
+In a tenant where the **Uncapped User Profile Data** migration toggle is enabled, the service does **not** raise an error during operations that depend on user creation or updates, even if the user profile exceeds both the 10KB limit and the extended size allowance. The extended size allowance remains applicable even after a tenant migrates to the new behavior.
+
+## Identify oversized user profiles
+
+Review the associated `depnote` tenant logs to identify attempts to create or update user profiles above the new profile size limit. These tenant logs trigger only when there is associated user activity that requires a profile update, such as a new login attempt. Consequently, these logs won't help identify existing user profiles that are already above the limit if the respective users remain inactive.
+
+### Query Uncapped User Profile Data deprecation logs
+
+Use the following query to search for tenant logs specific to this deprecation. To learn more about tenant log querying, read [Log Search Query Syntax](/docs/deploy-monitor/logs/log-search-query-syntax).
+
+```bash lines
+type:depnote AND description:Uncapped\ User\ Profile\ Data*
+```
+
+Once you have the query results, inspect the `user_id` and `projected_size_bytes` fields in the `details` object to identify oversized user profiles and their sizes. The structure of the `details` object, as well as additional contextual information, may vary slightly depending on the underlying operation that triggered the tenant log.
+
+Below is a sample log entry triggered by an end user with an oversized profile who completed a login via Universal Login. Some of the default tenant log fields were omitted from the sample for brevity.
+
+```json lines
+{
+  "date": "2026-08-12T10:41:05.694Z",
+  "type": "depnote",
+  "description": "Uncapped User Profile Data: This feature is being deprecated. Please see details.feature of this log for more information.",
+  "connection_id": "",
+  "client_id": "Bd5rq9AlKTuOIUCc1JWB5WfmsTmN6iCf",
+  "client_name": "example-app",
+  "ip": "165.85.168.10",
+  "user_agent": "Chrome 153.0.0 / Mac OS X 10.15.7",
+  "details": {
+    "feature": {
+      "projected_size_bytes": "37581",
+      "operation": "users.save",
+      "user_id": "auth0|6a7c4da311eb043fbeed60f3",
+      "id": "allow_oversize_profile",
+      "name": "Uncapped User Profile Data",
+      "description": "User profile data will be limited to 10KB. User profiles above that limit are deprecated."
+    },
+    "path": "/u/login",
+    "method": "POST"
+  },
+  "log_id": "90020260812104105751616000000000000001223372045702376794"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Once a tenant transitions to the new behavior, the deprecation-specific tenant logs no longer apply. However, you can continue to monitor new occurrences of user profiles exceeding the limit using the `user_profile_size_exceeded` tenant log type.
+</Callout>
+
+### Ad hoc calculation of user profile size
+
+Limit checks performed by the service are based on the internal representation of the serialized data associated with a user profile. Because this serialization process includes operational fields that aren't surfaced externally, ad hoc calculations based solely on externally facing user profile data may differ from the checks performed by the service.
+
+Still, ad hoc calculations based on the JSON representation of the user profile returned by the [Get a User](https://auth0.com/docs/api/management/v2/users/get-users-by-id) endpoint can be useful for determining an approximate value and for comparing user profiles with different attribute sets. This works because oversized profiles that already exist in the system continue to be returned without limitation via retrieval (`GET`) endpoints and bulk user export jobs, regardless of whether they exceed the limit.
+
+## Address the root cause of oversized user profiles
+
+The exact steps needed to reduce the size of a flagged user profile can vary significantly, but generally fall into one of the following scenarios:
+
+* Remove data not used for authentication and authorization from user profiles.
+* Move data required for authentication and authorization from the user profile to other data stores.
+
+Concrete examples of actions for each scenario are available below.
+
+### Prevent storage of unneeded attributes from external identity providers
+
+To prevent the storage of unnecessary user attributes from external identity providers, use the [Auth0 User Attributes Deny List](https://auth0.com/docs/secure/security-guidance/data-security/denylist). This feature lets you explicitly block specific attributes from being persisted to the user profile, keeping profiles lean and avoiding unnecessary data bloat.
+
+Attributes added to the deny list remain accessible in post-login extensibility, so you can use that information, or store it in an external data store, without impacting the user profile size.
+
+### Use extensibility to query additional business data dynamically
+
+For unbounded data structures, such as dynamic arrays, or other data with a large size footprint, avoid storing these values directly in `user_metadata` or `app_metadata`. Instead, maintain this data in your own external data stores and fetch it dynamically during authentication using a Post-Login Action:
+
+1. Use a Post-Login Action to execute custom code immediately after a user authenticates.
+2. Within your Action, perform a secure network request (for example, using `axios` or native `fetch`) to your own backend API or database to retrieve the required attributes.
+3. Use the retrieved data to set custom claims in issued tokens, or to inform authorization logic, without persisting the raw data to the user profile.
+
+This pattern keeps your user profiles compliant with the 10KB limit, while your application continues to receive the necessary contextual data. To learn more, read [Auth0 Actions](https://auth0.com/docs/customize/actions/write-your-first-action).
+
+### Use Enterprise Groups to sync group information
+
+Instead of storing user group information from external identity providers directly in the user profile, use [Enterprise Groups](https://auth0.com/docs/authenticate/protocols/scim), available via SCIM endpoints, to manage group information as a separate entity. You can then use the groups provisioned this way [in multiple ways](https://auth0.com/docs/authenticate/protocols/scim/configure-inbound-scim#group-provisioning-options), either alongside Auth0 Organizations or independently in post-login Actions for custom access control and authorization decisions.
+
+For example, you can use this approach to transition away from storing Entra ID (Azure AD) user group information directly in user profiles as part of [existing Azure AD connections](https://auth0.com/docs/authenticate/protocols/scim/inbound-scim-for-older-azure-ad-connections).
+
+## Opt out to complete migration
+
+Once you have addressed the source of your oversized user profiles and no longer depend on the deprecated behavior, opt out of it as early as possible. Doing so lets you choose exactly when your tenant adopts the new behavior, providing more control over your migration.
+
+1. Navigate to [Auth0 Dashboard > Tenant Settings > Advanced](https://manage.auth0.com/dashboard/#/tenant/advanced).
+2. Under **Migrations**, toggle off **Uncapped User Profile Data**.
+
+If you run into issues, you can temporarily turn the toggle back on to restore the previous behavior while you address the problem. The operations most commonly subject to the limit check, and that may fail if a user profile grows beyond the extended size allowance, include:
+
+* **Administrative operations via the Management API**
+    * User creation (`POST /api/v2/users`).
+    * User update (`PATCH /api/v2/users/{id}`).
+    * Bulk user import (`POST /api/v2/jobs/users-imports`).
+* **Authentication-related operations**
+    * User logins via custom database connections, because custom database scripts return excessive attributes.
+    * User logins via external identity providers, such as social or enterprise connections, because the identity provider returns excessive attributes.
+    * User logins via any connection type, if the profile is already oversized, due to the need to update operational attributes as part of a standard login.
+    * Updating multi-factor authentication (MFA) factors via Universal Login, the MFA API, or the My Account API.
+    * Metadata updates via the extensibility `api` object, for example, in a post-login Action.
+* **User provisioning operations**
+    * User resource modification requests via SCIM.
+    * Directory Sync for Google Workspace connections.
