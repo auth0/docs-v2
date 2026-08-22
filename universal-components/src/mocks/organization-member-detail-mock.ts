@@ -76,7 +76,12 @@ export const getOrganizationMemberDetailMock = () => {
   const closeModal = () => setModalState({ type: null });
 
   return {
-    styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
+    styling: {
+      variables: { common: {}, light: {}, dark: {} },
+      classes: {
+        'OrganizationMemberDetail-header': 'uc-preview-hide-back-button',
+      },
+    },
     customMessages: {},
 
     activeTab,
