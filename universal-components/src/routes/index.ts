@@ -39,6 +39,14 @@ export const componentRoutes: Record<
     LazyComponent: null,
     componentKey: 'UserMFAManagementView',
   },
+  'organization-member-management': {
+    LazyComponent: null,
+    componentKey: 'OrganizationMemberManagementView',
+  },
+  'organization-member-detail': {
+    LazyComponent: null,
+    componentKey: 'OrganizationMemberDetailView',
+  },
 };
 
 // Create lazy components for each route
