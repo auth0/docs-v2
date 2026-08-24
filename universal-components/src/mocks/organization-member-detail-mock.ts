@@ -35,6 +35,7 @@ const allRoles = [
 
 const mockMember = {
   user_id: 'auth0|65f1a2b3c4d5e6f7a8b9c0d1',
+  access_level: 'full',
   email: 'ada.lovelace@example.com',
   name: 'Ada Lovelace',
   given_name: 'Ada',
