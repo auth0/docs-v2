@@ -43,14 +43,24 @@ const availableRoles = [
   },
 ];
 
-const availableProviders = [
-  { id: 'con_okta123', name: 'Okta Workforce', type: 'okta' },
-  { id: 'con_waad456', name: 'Microsoft Entra ID', type: 'waad' },
+const availableConnections = [
+  { id: 'con_okta123', name: 'Okta Workforce', type: 'identity_provider' as const },
+  {
+    id: 'con_waad456',
+    name: 'Microsoft Entra ID',
+    type: 'identity_provider' as const,
+  },
+  {
+    id: 'con_db789',
+    name: 'Username-Password-Authentication',
+    type: 'user_store' as const,
+  },
 ];
 
 const initialMembers = [
   {
     user_id: 'auth0|65f1a2b3c4d5e6f7a8b9c0d1',
+    access_level: 'full',
     email: 'ada.lovelace@example.com',
     name: 'Ada Lovelace',
     given_name: 'Ada',
@@ -63,6 +73,7 @@ const initialMembers = [
   },
   {
     user_id: 'auth0|65f1a2b3c4d5e6f7a8b9c0d2',
+    access_level: 'full',
     email: 'grace.hopper@example.com',
     name: 'Grace Hopper',
     given_name: 'Grace',
@@ -75,6 +86,7 @@ const initialMembers = [
   },
   {
     user_id: 'auth0|65f1a2b3c4d5e6f7a8b9c0d3',
+    access_level: 'full',
     email: 'alan.turing@example.com',
     name: 'Alan Turing',
     given_name: 'Alan',
@@ -159,7 +171,7 @@ export const getOrganizationMemberManagementMock = () => {
     activeTab,
     availableRoles,
     searchedRoles,
-    availableProviders,
+    availableConnections,
     members,
     invitations,
     organizationDisplayName: ORG_NAME,
