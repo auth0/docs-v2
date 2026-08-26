@@ -35,7 +35,7 @@ const UnauthenticatedMenu = () => {
           asChild
         >
           <a href="https://auth0.com/get-started?place=header&type=button&text=talk%20to%20sales">
-            Contact Sales
+            Let's Connect
           </a>
         </Button>
       </>
@@ -70,7 +70,7 @@ const UnauthenticatedMenu = () => {
             className="no_external_icon"
             href="https://auth0.com/get-started?place=header&type=button&text=talk%20to%20sales"
           >
-            Contact Sales
+            Let's Connect
           </a>
         </DropdownMenuItem>
       </DropdownMenuContent>

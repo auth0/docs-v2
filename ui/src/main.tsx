@@ -18,7 +18,6 @@ import {
   postSample,
   userLogin,
 } from '@/lib/api';
-import { initOneTrust } from '@/lib/one-trust';
 import { initRootStore } from './stores';
 
 async function main() {
@@ -27,8 +26,6 @@ async function main() {
   });
 
   await initRootStore();
-
-  initOneTrust();
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
