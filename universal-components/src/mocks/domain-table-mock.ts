@@ -82,6 +82,15 @@ export const getDomainManagementMock = () => {
   const noop = () => {};
 
   const domainTable = {
+    permissions: {
+      canCreateDomain: true,
+      canVerifyDomain: true,
+      canDeleteDomain: true,
+      canAssociateProvider: true,
+      canDissociateProvider: true,
+      canConfigureDomain: true,
+      canShowDomainMenu: true,
+    },
     domains,
     providers: mockProviders,
     isFetching: false,
