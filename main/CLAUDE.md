@@ -137,12 +137,31 @@ The `docs.json` file at the root defines the entire site structure:
 
 ### Redirects
 
-`docs.json` includes a `redirects` array for URL changes:
-```json
-"redirects": [
-  {"source": "/old-path", "destination": "/new-path"}
-]
+`config/redirects.json` is **generated** — never edit it by hand. Add the old path
+to the `redirects:` frontmatter of the page it should land on; the destination is
+derived from the file's location on disk:
+
+```yaml
+---
+title: Auth0 APIs
+redirects:
+  - "/docs/api/postman"
+  - "/docs/api/info"
+---
 ```
+
+Then regenerate from the repo root:
+
+```bash
+node scripts/build-redirects.js          # rewrite config/redirects.json
+node scripts/build-redirects.js --check  # CI: fail if it is out of date
+```
+
+Redirects with no page to live in — an external destination, or a path parameter
+pattern like `/docs/a/:path*` → `/docs/b/:path*` — are hand-maintained in
+`config/redirects-explicit.json`, which the script merges in. That file also
+overrides frontmatter when both claim the same source (used for the few
+destinations that need a `#anchor`).
 
 ## Content Organization
 
