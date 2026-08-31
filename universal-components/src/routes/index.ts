@@ -37,7 +37,7 @@ export const componentRoutes: Record<
   },
   'user-mfa-management': {
     LazyComponent: null,
-    componentKey: 'UserMFAMgmtView',
+    componentKey: 'UserMFAManagementView',
   },
 };
 
