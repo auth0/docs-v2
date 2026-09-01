@@ -1,0 +1,154 @@
+---
+title: Business-to-Consumer の認可
+sidebarTitle: 認可
+description: B2C IAM 実装におけるユーザー認可と、それに関連する設計上の考慮事項。
+validatedOn: 2026-02-17
+---
+
+まずは少し引いた視点から、アクセス制御について見ていきましょう。業界においてアクセス制御に唯一の明確な定義があるわけではありませんが、少し調べてみると、多くの信頼できる情報源が、認証、認可、同意、ポリシー適用をまとめた包括的な概念であり、適切な人とサービスだけがアプリケーションや API にアクセスできるようにするものだという点で一致していることがわかります。次に、認証、認可、同意、ポリシー適用の違いをもう少し詳しく見ていきましょう。Auth0 の <Tooltip tip="単一のソフトウェアインスタンスに対して、特定の特権を伴う共通のアクセスを共有する、論理的に分離されたユーザーグループ。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Tenant">テナント</Tooltip> (つまり <Tooltip tip="Authorization Server: ユーザーのアクセス境界の定義に関与する集中型サーバー。たとえば、認可サーバーはユーザーが利用できるデータ、タスク、機能を制御できます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Authorization+Server">認可サーバー</Tooltip>) は、通常、認証と同意、さらに認可とポリシー適用の一部または全部を担います。さらに、<Tooltip tip="認証およびアイデンティティ管理に Auth0 を利用するあなたのソフトウェア。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Application">アプリケーション</Tooltip> や API 自体も、ほとんどの場合、ポリシーを適用する主要な役割を担います。特に、コンテキストに応じたアクセス制御が必要な場合はそうです。
+
+* **認証**: プリンシパル (ユーザーまたはアプリケーション) が、名乗っている本人またはその主体であるかどうかを判断するプロセス。
+* **認可**: プリンシパル、付与されている権限、そして/または状況に応じた具体的なアクセス条件のセットに基づいて、何が許可されるかを判断するプロセス。
+* **同意**: ユーザー (<Tooltip tip="Resource Owner: 保護されたリソースへのアクセスを許可できる主体（ユーザーやアプリケーションなど）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Resource+Owner">リソースオーナー</Tooltip>) が、アプリケーションに対して自身に代わって何を行うことを許可したかを指します。これは一般に委任された認可の要件です。ユーザーは、別のシステムにある自分のデータに Client がアクセスすることを許可する必要があります。
+* **ポリシー適用**: アプリケーションまたは API のポリシーを適用し、ユーザーの認証情報および/または認可情報に基づいてアクセスを拒否または許可すること。
+
+一般に、アクセス制御のさまざまなタイプは、a) どの主体が情報の保存を担うのか、b) どの主体が判断を担うのか、c) どの主体が制限の適用を担うのか、を理解しやすくするために、通常 3 つの明確なカテゴリに分けて考えます。
+
+* 1 つ目のカテゴリは、アプリケーションまたは API 全体に対してアクセスを許可または拒否するものです。これを適用するために必要なデータと適用プロセスは、通常、認可サーバーのコンテキストで定義されます。たとえば、ユーザーに関連付けられた [`app_metadata`](/docs/ja-jp/manage-users/user-accounts/metadata) と、Auth0 テナントで定義された [Action](/docs/ja-jp/customize/actions) を使用する方法があります。
+* 2 つ目のカテゴリは、アプリケーションまたは API の機能の特定の一部に対してアクセスを許可または拒否するものです。これを適用するために必要なデータは、通常、認可サーバーに保存されます。たとえば、Auth0 テナント内のユーザーの `app_metadata` を使用し、適用プロセスはアプリケーションまたは API 自体で実行されます。このシナリオでは、データは通常、[`id`](/docs/ja-jp/secure/tokens/id-tokens) または [`access`](/docs/ja-jp/secure/tokens/access-tokens) トークン内の 1 つ以上のカスタムクレームとして伝達されます。
+* 3 つ目のカテゴリは、アプリケーションまたは API のコンテキストの中で、プリンシパル (サブジェクト) が何を操作できるかに応じてアクセスを許可または拒否するものです。これを適用するために必要なデータと適用プロセスは、通常、アプリケーションまたは API のコンテキストで定義されます。このシナリオでは、`id` または `access` トークン内の 1 つ以上のカスタムクレームとして伝達されるデータは、Auth0 以外の外部ソースのデータと組み合わせて、あるいは組み合わせずに利用されることがあります。
+
+さらに、ロールベースのアクセス制御 (RBAC) および属性ベースのアクセス制御 (ABAC) の仕組みは、上で説明したどのアクセス制御カテゴリにも適用できます。ユースケースが何であれ、必要な機能やワークフローを検討する際には、考慮すべき点がいくつかあります。
+
+* アプリケーションまたは API 全体へのアクセスを拒否すべきシナリオはありますか？
+* サードパーティアプリケーションからアクセスできる API を提供する予定はありますか？
+* 自社の (ファーストパーティ) アプリケーションからも API にアクセスしますか？
+* アプリケーションからサードパーティ API を呼び出しますか？
+* アプリケーションおよび/または API で、ユーザーのクレームに基づくアクセス制御を強制適用する必要がありますか？
+
+Auth0 は、特定の条件に基づいて、アプリケーションまたは API へのアクセス制限をサポートしています。状況によっては、たとえばユーザーが不適切な時間帯にアプリケーションまたは API へのアクセスを試みた場合 (この[例](/docs/ja-jp/manage-users/access-control/sample-use-cases-actions-with-authorization#allow-access-only-on-weekdays-for-a-specific-application)で説明しています) 、あるいは `app_metadata` に必要な <Tooltip tip="エンティティについてトークンの発行者が主張する内容を表す、セキュリティトークンに含まれる属性。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Claim">クレーム</Tooltip> が含まれていない場合に、`api.access.deny()` を使ってアクセスを拒否する Action を作成したいことがあります。[OpenID Connect (OIDC)](/docs/ja-jp/authenticate/protocols/openid-connect-protocol) を使用するアプリケーションでは、これによりアクセス認可に使われる [ID Token](/docs/ja-jp/secure/tokens/id-tokens) の発行を防ぐことができます。同様に API の場合も、API 呼び出し時に使用される OAuth2 の [Access Token](/docs/ja-jp/secure/tokens/access-tokens) の発行を、この[例](/docs/ja-jp/manage-users/access-control/sample-use-cases-actions-with-authorization#deny-access-to-anyone-calling-an-api)で説明されているように防ぐことができます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  一般に、Auth0 の顧客が自社アプリケーションの認証で最もよく利用している業界標準プロトコルは [OIDC](/docs/ja-jp/authenticate/protocols/openid-connect-protocol) です。また、[OAuth2](/docs/ja-jp/authenticate/protocols/oauth) は委任のためのプロトコルとして作られたものですが、アプリケーションと共有セッションを持たない API がある場合には、ファーストパーティアプリケーション内でも広く使われていることがわかっています。
+</Callout>
+
+Auth0 は、アプリケーション側で制限を適用するために必要な情報を提供することもできます。[アプリケーションレベルの統合](#application-integration)では、Auth0 で <Tooltip tip="ID Token: リソースへのアクセスではなく、クライアント自体を対象とした認証情報。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=ID+Token">ID Token</Tooltip> に[カスタムクレーム](#id-token-claims)を追加でき、アプリケーションはそれを検証したうえで、ポリシーの適用に利用できます。この場合は、アプリケーションが適用判断を行うためにどの情報が必要かを決める必要があります。アプリケーション内ではなく API 側で判断する必要がある場合は、ID token ではなく <Tooltip tip="Access Token: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Access+Token">Access Token</Tooltip> を使用することになる可能性が高いです。詳しくはこのまま読み進めてください。
+
+<Warning>
+  ID token や access token に含めるデータを決める際は、特に URL でトークンを渡す場合、トークンのサイズを考慮してください。URL でトークンを渡さない場合でも、機微な PII (Personally Identifiable Information: 個人を特定できる情報) が露出する可能性を考慮する必要があります。トークン内の情報は暗号化されていないため、一般的には ID token が漏えいしてもセキュリティ上の問題にはなりませんが、トークンに含まれるデータによってはプライバシー上の問題になる可能性があります。
+</Warning>
+
+[API レベルの統合](#api-integration)では、Auth0 は Access Token のコンテキスト内で、[カスタムクレーム](#access-token-claims)と[スコープ](#access-token-scopes)の再設定の両方をサポートしています。ここでも、API がアクセス判断を行うために必要な情報が何かを決める必要があり、API は Access Token の内容を検証してそれを適用する必要があります。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  カスタムクレームまたはスコープを通じて権限を使うかどうかを判断する際は、スコープの性質と目的をきちんと理解しておく必要があります。この点については、読みやすく、理解を深めるのに役立つ[ブログ記事](https://auth0.com/blog/on-the-nature-of-oauth2-scopes/)があります。
+</Callout>
+
+<div id="application-integration">
+  ## アプリケーション統合
+</div>
+
+このシナリオでは、Auth0テナントが、アプリケーションへの認可されたアクセスを示すトークンを提供します。[OpenID Connect (OIDC)](/docs/ja-jp/authenticate/protocols/openid-connect-protocol) を利用するアプリケーション、つまり顧客向けアプリケーションで一般的に最も広く使われている業界標準のプロトコルの場合、これは [JWT](/docs/ja-jp/secure/tokens/json-web-tokens) 形式の ID Token になります。
+
+<div id="id-token-claims">
+  ### ID Token クレーム
+</div>
+
+Action の拡張機能を利用すると、Auth0 では、たとえばユーザーの [Metadata](/docs/ja-jp/manage-users/user-accounts/metadata) の内容に基づいて、[ID Token にカスタムクレームを追加する](/docs/ja-jp/get-started/apis/scopes/sample-use-cases-scopes-and-claims#add-custom-claims-to-a-token)ことが簡単にできます。これにより、アプリケーションは ID Token に必要なクレームが含まれているかを検証し、必要に応じて特定の機能へのアクセスを許可または拒否できます。Action を使ったカスタムクレームの追加は簡単ですが、Action ランタイムは柔軟性が高いため、悪影響を及ぼす可能性のあるカスタムコードも記述できる点に注意してください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  カスタムクレームの追加を検討している場合は、クレームに含める必要のあるアクセス制御データを、ユーザーの [`app_metadata`](/docs/ja-jp/manage-users/user-accounts/metadata) の一部として保存することをお勧めします。まず、これによりデータ取得のために外部 API を呼び出す必要がなくなり、ログイン処理のパフォーマンスやスケーラビリティへの悪影響を抑えられます。次に、`app_metadata` はユーザーが**変更できない**ため、ユーザーが自分自身の <Tooltip tip="ユーザーが更新できる情報。たとえば、設定やプロフィール設定などです。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Metadata">メタデータ</Tooltip> を変更してアクセス制御の制限を直接回避することはできません。あわせて、[メタデータ のベストプラクティス](/docs/ja-jp/get-started/architecture-scenarios/business-to-consumer/profile-management#metadata) に関するガイダンスもご確認ください。
+</Callout>
+
+<div id="id-token-scopes">
+  ### ID Token スコープ
+</div>
+
+[OIDC Scopes](/docs/ja-jp/get-started/apis/scopes/openid-connect-scopes) は通常、認証時にユーザーの詳細情報への認可されたアクセスについて同意を得るためにアプリケーションで使用されます。事前定義された各スコープは、定義されている標準クレームのセットを返します。その内容は [OIDC specification](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims) に記載されているとおりです。アプリケーションが要求するスコープは、そのアプリケーションが必要とするユーザー属性によって異なります。ユーザーが要求されたスコープを認可すると、クレームは ID Token で返され、 [/userinfo](https://auth0.com/docs/api/authentication#get-user-info) エンドポイントからも利用できます。
+
+<div id="api-integration">
+  ## API 連携
+</div>
+
+このシナリオでは、Auth0 テナント は OAuth2 の [Access Token](/docs/ja-jp/secure/tokens/access-tokens) (通常は [JWT](/docs/ja-jp/secure/tokens/json-web-tokens) 形式) を発行でき、API はこれを使って特定の主体にのみアクセスを許可できます。さらに Auth0 は、概念的に [First-Party and Third-Party Applications](/docs/ja-jp/get-started/applications/first-party-and-third-party-applications) の両方をサポートしています。
+
+認可サーバーとして機能する Auth0 テナント は、ユーザー (リソースオーナー) の同意を得たうえで、アプリケーション (クライアント) に Access Token (通常は [JWT](/docs/ja-jp/secure/tokens/json-web-tokens) 形式) を発行できます。これにより、そのアプリケーションはリソースオーナーに代わって、<Tooltip tip="リソースサーバー: 保護されたリソースをホストするサーバー。リソースサーバーは保護されたリソース要求を受け取り、応答します。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=resource+server">リソースサーバー</Tooltip> でホストされている保護されたリソースにアクセスできます。発行された Access Token は通常、API に送信する HTTP Authorization ヘッダー内で Bearer トークンとして渡されます。
+
+API が 1 つだけの場合でも、論理的に関連する [microservice APIs](/docs/ja-jp/get-started/apis/set-logical-api) 群がある場合でも、Auth0 が提供する Access Token を利用してサービスへのアクセスを保護できます。[Auth0 Dashboard](https://manage.auth0.com/) または [Auth0 Management API](https://auth0.com/docs/api/management/v2#!/Resource_Servers/post_resource_servers) から比較的簡単に設定できますが、システムに最適なアーキテクチャを判断するには、さまざまなアプリケーションシナリオや API 構成を確認することが重要です。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  OAuth2 Access Token は主に、公開 API を保護する用途を想定して設計されています。JWT 形式の Access Token は自己完結型であるため、追加でサードパーティ API を呼び出さなくても検証できます。API がこのカテゴリに当てはまらない、つまりアプリケーション自体の一部であってそのアプリケーションからしか呼び出されない場合や、ファイアウォールの内側に配置されている場合は、トークンで保護するのは過剰かもしれず、既存の Cookie ベースなどのワークフローで十分なこともあります。
+</Callout>
+
+OAuth2 は、サードパーティアクセスを特に念頭に置いて設計されています。たとえば、ユーザー (リソースオーナー) が、そのユーザーのデータを提供するサービス (リソースサーバー) とは別の組織に属するアプリケーション (クライアント) を利用したい、というケースです。この場合、アプリケーションがユーザー所有のデータにアクセスする必要があると、そのアプリケーションはユーザーデータが存在する組織へリダイレクトされます。そこでユーザーが認証され、その後、アプリケーションにデータへのアクセス権を与えるかどうかの確認が求められます。この許可を求めることを [同意](/docs/ja-jp/get-started/applications/third-party-applications/user-consent-and-third-party-applications) と呼び、[サードパーティアプリケーション](/docs/ja-jp/get-started/apis/scopes/api-scopes#example-an-api-called-by-a-third-party-application) をサポートするうえで重要な要素となります。サードパーティアプリケーションを統合する予定がある場合は、Auth0 がユーザー同意の確認を適切に処理できるよう、早い段階でそれらをサードパーティとしてマークしておくことが重要です。
+
+一方、組織がアプリケーション、ユーザーデータそのもの、そのデータにアクセスするための API を所有している場合、やり取りはすべて [ファーストパーティ](/docs/ja-jp/get-started/apis/scopes/api-scopes#example-an-api-called-by-a-first-party-application) となるため、通常は同意は必要ありません。ファーストパーティアプリケーションのみを作成する場合は、各リソースサービス定義の一部として [allowing user consent to be skipped](/docs/ja-jp/get-started/apis) することで、不要な同意画面をユーザーに表示しないようにできます。
+
+<Warning>
+  アプリケーションをファーストパーティとして設定し、さらに API 側でファーストパーティクライアントに対して同意を省略できるよう設定することは可能です。ただし、`localhost` を使用している場合、Auth0 はそのアプリケーションが本当にファーストパーティアプリであるかを検証できないため、ユーザーには引き続き同意が求められます。この制約を回避するには、開発中にローカルマシンでテストする際は、[ダミーのローカルホスト名を作成して代わりに使用してください](https://community.auth0.com/t/how-do-i-skip-the-consent-page-for-my-api-authorization-flow/6035)。
+</Warning>
+
+あるいは、ユーザーに関連するデータで、追加の[機能が提供される](/docs/ja-jp/get-started/apis/scopes/api-scopes#example-an-api-called-by-a-back-end-service)一方、明示的なユーザー同意を取得できない場合もあります (つまり、それを提供できる認証済みユーザーが存在しない場合です) 。この場合は、[Client Credentials grant が有効なアプリケーションの一覧](/docs/ja-jp/get-started/authentication-and-authorization-flow/client-credentials-flow)を定義できます。
+
+<div id="access-token-claims">
+  ### Access Token のクレーム
+</div>
+
+ID Token と同様に、Auth0 Action の拡張機能を使用して、[Access Token にカスタムクレームを追加](/docs/ja-jp/get-started/apis/scopes/sample-use-cases-scopes-and-claims#add-custom-claims-to-a-token)できます。追加後は、API で Access Token に必要なクレームが含まれているかを検証し、必要に応じて特定の機能へのアクセスを許可または拒否できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  カスタムクレームの追加を検討している場合は、クレームに含める必要があるアクセス制御データを、ユーザーの [`app_metadata`](/docs/ja-jp/manage-users/user-accounts/metadata) に保存することをお勧めします。1 つ目の理由は、データ取得のために外部 API を呼び出す必要がなくなり、パフォーマンスやスケーラビリティへの悪影響を避けられるためです。2 つ目に、`app_metadata` はユーザーが**変更できません**。そのため、ユーザーが自分でメタデータを書き換えてアクセス制御の制限を直接回避することはできません。[メタデータ のベストプラクティス](/docs/ja-jp/get-started/architecture-scenarios/business-to-consumer/profile-management#metadata) に関するガイダンスもぜひご確認ください。
+</Callout>
+
+<div id="access-token-scopes">
+  ### Access Token のスコープ
+</div>
+
+[OAuth2 Scopes](/docs/ja-jp/get-started/apis/scopes/api-scopes) は通常、API がユーザーに代わってどの <Tooltip tip="Secure, tenant-specific, versioned functions written in Node." cta="用語集を見る" href="/docs/ja-jp/glossary?term=Actions">アクション</Tooltip> を実行できるかを判断するための仕組みとして使用されます。スコープは API ごとに追加でき、<Tooltip tip="Auth0 Dashboard: Auth0's main product to configure your services." cta="用語集を見る" href="/docs/ja-jp/glossary?term=Auth0+Dashboard">Auth0 Dashboard</Tooltip> または Auth0 <Tooltip tip="Auth0 Dashboard: Auth0's main product to configure your services." cta="用語集を見る" href="/docs/ja-jp/glossary?term=Management+API">Management API</Tooltip> で [特定のアクセス権限を定義](/docs/ja-jp/get-started/apis/add-api-permissions) できます。スコープは、Auth0 の拡張機能 (たとえば、この[例](/docs/ja-jp/get-started/architecture-scenarios/spa-api/part-2#create-an-action-to-validate-token-scopes)のように Action 経由) で操作することもできます。アプリケーションが API にアクセスするために要求するスコープは、アプリケーションが利用する機能のうち、ユーザーの許可が必要なものに応じて決めるべきです。要求されたスコープが承認されると、それらは Access Token に含まれて返され、後で [その API によって検証](/docs/ja-jp/secure/tokens/access-tokens/validate-access-tokens) できます。これをよく示す例として、ソーシャルプロバイダーを使ってログインするアプリケーションにログインする場合があります。ソーシャルプロバイダーの API では、アプリケーションがユーザーに代わって投稿を行うことをユーザーが許可するかどうかを、アプリケーション側で指定する必要があります。これにより、ユーザーはこの要求を承諾または拒否できます。この例が示しているのは、ユーザーがアプリケーションに権限を委譲しているということです。これは、API がユーザーの <Tooltip tip="Aspect of a user’s identity assigned to the user to indicate the level of access they should have to the system." cta="用語集を見る" href="/docs/ja-jp/glossary?term=Role">ロール</Tooltip> に基づいてアクセスを制限するのとは異なるため、別の方法で扱う必要があります。
+
+<Tip>
+  Auth0 の拡張機能を使えば Access Token のスコープを完全に操作できますが、セキュリティ上のベストプラクティスとして、承認されていないスコープだけを削除し、要求されていないスコープは追加しないようにしてください。
+</Tip>
+
+スコープはユーザーのアクセス権限を適用する手段としてよく使われますが、このような使い方をすると [扱いが難しくなる](https://auth0.com/blog/on-the-nature-of-oauth2-scopes/) ことがあります。そのため、スコープは本来の目的 (つまり、アプリケーションへの権限の委譲) に使い、ロールベースやその他のアクセス制御のシナリオでは [カスタムクレーム](#access-token-claims) を使用することをお勧めします。
+
+<div id="fine-grained-authorization-fga">
+  ## きめ細かな認可 (FGA)
+</div>
+
+[きめ細かな認可](https://docs.fga.dev/fga-concepts)を使用すると、次の条件に基づいて、特定のリソースまたはオブジェクトへのアクセス権を個々のユーザーに付与できます。
+
+* `editor` や `admin` など、組織内でのユーザーの役割
+* ユーザーの `manager` やオブジェクトの `marketing` など、ユーザーまたはオブジェクトの属性
+* ユーザーとオブジェクトの関係。たとえば、親フォルダーへの閲覧権限を持つユーザーは、子フォルダーへの閲覧権限も持ちます
+
+<Tooltip tip="きめ細かな認可（FGA）: 特定のオブジェクトまたはリソースへのアクセスを個々のユーザーに許可できる Auth0 製品。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=FGA">FGA</Tooltip> を使用すると、ユーザーアクセスを判定するために、どのような関係を用いるかを定義した認可モデルを作成できます。
+
+<div id="role-based-access-control-rbac">
+  ## ロールベースのアクセス制御 (RBAC)
+</div>
+
+Auth0 は、ロールベースのアクセス制御 ([RBAC](/docs/ja-jp/manage-users/access-control/rbac)) を標準でサポートしています。RBAC とは、組織内でのユーザーの役割に応じてユーザーに permissions を割り当てることで、より管理しやすくミスも起こりにくい方法を提供し、アクセス制御を簡素化するものです。
+
+<div id="machine-to-machine-m2m-authorization">
+  ## マシン間 (M2M) 認可
+</div>
+
+ユーザーとの対話セッションを伴わないアプリケーションが、API を呼び出すために Access Token を取得する必要があるケースは数多くあります。こうしたケースでは、ユーザーではなくクライアントを認証する必要があり、<Tooltip tip="OAuth 2.0: 認可のプロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=OAuth">OAuth</Tooltip> 2 では、これを簡単に実現できるように [client credentials](/docs/ja-jp/get-started/authentication-and-authorization-flow/client-credentials-flow) グラントタイプが提供されています。これが必要になる代表的な例として、次のようなものがあります。
+
+* API と通信する必要がある cron ジョブやその他のサービス (例: 日次レポートを生成して管理者にメールで送信する必要がある場合) 。
+* 特権アクセスをサポートする別の API (例: その API はユーザーに直接公開されず、バックエンドからのみ利用される場合) 。
+* 一部のマイクロサービス アーキテクチャで、ユーザーが関与しないまま、またはユーザートークンの有効期限が切れた後に、ある API レイヤーが別の API レイヤーと通信する必要がある場合。
+* ユーザーが認証される前に呼び出す必要がある特権 API (つまり、Auth0 テナント内のアクションやカスタム DB スクリプトから呼び出す場合)
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  従来、こうしたケースに対応するために、特別な「サービスアカウント」を作成するのが一般的でした。これは、非対話型のユースケースをサポートするサービス向けに設定された、ユーザー名とパスワードを持つユーザーです。しかし、この方法は多くの理由から現在では推奨されておらず、このような状況での現在のベストプラクティスは、[OAuth 2.0 Client Credentials Grant](/docs/ja-jp/get-started/authentication-and-authorization-flow/client-credentials-flow) を使用することです。
+</Callout>
+
+<div id="project-planning-guide">
+  ## プロジェクト計画ガイド
+</div>
+
+推奨戦略の詳細をご確認いただけるよう、ダウンロードして参照できるPDF形式の計画ガイドをご用意しています。
+
+[B2C IAM プロジェクト計画ガイド](https://assets.ctfassets.net/cdy7uua7fh8z/3er1aEQ7Ul0q3c9leJWczR/b1f18b4c16abb7e78b01e4eb2b52bb8e/B2C_Project_Planning.pdf)

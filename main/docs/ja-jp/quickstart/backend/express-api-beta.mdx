@@ -1,0 +1,452 @@
+---
+mode: wide
+title: Express.js API を保護する
+sidebarTitle: Express API（ベータ）
+description: このガイドでは、@auth0/auth0-express-api SDK（ベータ）を使用して、JWT アクセストークンで Express.js API エンドポイントを保護する方法を説明します。
+---
+
+import {HowToSchema} from "/snippets/ja-jp/HowToSchema.jsx";
+import {AuthCodeBlock} from "/snippets/ja-jp/AuthCodeBlock.jsx";
+import {AuthCodeGroup} from "/snippets/ja-jp/AuthCodeGroup.jsx";
+
+<HowToSchema />
+
+export const envSnippet = `AUTH0_DOMAIN={yourDomain}
+AUTH0_AUDIENCE=YOUR_API_IDENTIFIER`;
+
+export const envSnippetDashboard = `AUTH0_DOMAIN=YOUR_AUTH0_DOMAIN
+AUTH0_AUDIENCE=YOUR_API_IDENTIFIER`;
+
+<Warning>
+  このQuickstartは現在**Beta**です。ぜひフィードバックをお寄せください！
+</Warning>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  **前提条件：** 始める前に、以下がインストールされていることを確認してください。
+
+  * [Node.js](https://nodejs.org/) 22 LTS以降
+  * [npm](https://www.npmjs.com/) 10以降、または[yarn](https://yarnpkg.com/) 1.22以降
+</Callout>
+
+<div id="get-started">
+  ## はじめに
+</div>
+
+このQuickstartでは、JWT アクセストークンを使用して Express.js API エンドポイントを保護する方法を説明します。Auth0 アクセストークンの検証、ルートの保護、スコープ と クレーム に基づく認可の実装を行う安全な API を構築します。
+
+<Steps>
+  <Step title="新しいプロジェクトを作成する" stepNumber={1}>
+    Express API 用の新しいディレクトリを作成し、Node.js プロジェクトを初期化します。
+
+    <AuthCodeGroup>
+      ```shellscript Mac
+      mkdir auth0-express-api && cd auth0-express-api
+      npm init -y
+      touch server.js .env
+      ```
+
+      ```shellscript Windows
+      mkdir auth0-express-api; cd auth0-express-api
+      npm init -y
+      New-Item server.js, .env
+      ```
+    </AuthCodeGroup>
+
+    `package.json` を更新して ES モジュールを使用するようにし、start スクリプトを追加します。
+
+    ```json
+    {
+      "name": "auth0-express-api",
+      "version": "1.0.0",
+      "type": "module",
+      "main": "server.js",
+      "scripts": {
+        "start": "node server.js",
+        "dev": "node --watch server.js"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="SDKをインストールする" stepNumber={2}>
+    `@auth0/auth0-express-api`、`express`、`dotenv` をインストールします。
+
+    ```shell
+    npm install @auth0/auth0-express-api@beta express dotenv
+    ```
+  </Step>
+
+  <Step title="Auth0 API を設定する" stepNumber={3}>
+    Auth0 テナントに新しい API を作成し、環境変数を設定します。
+
+    <Tabs>
+      <Tab title="CLI">
+        プロジェクトのルートディレクトリで次のコマンドを実行して、Auth0 API を作成します。
+
+        <AuthCodeGroup>
+          ```shellscript Mac
+          # Auth0 CLI をインストールします（未インストールの場合）
+          brew tap auth0/auth0-cli && brew install auth0
+
+          # Auth0 API を作成します
+          auth0 apis create \
+            --name "My Express API" \
+            --identifier https://my-express-api.example.com
+          ```
+
+          ```powershell Windows
+          # Auth0 CLI をインストールします（未インストールの場合）
+          scoop bucket add auth0 https://github.com/auth0/scoop-auth0-cli.git
+          scoop install auth0
+
+          # Auth0 API を作成します
+          auth0 apis create `
+            --name "My Express API" `
+            --identifier https://my-express-api.example.com
+          ```
+        </AuthCodeGroup>
+
+        作成後、**Identifier** と **Domain** の値をコピーして、`.env` ファイルを作成します。
+
+        <AuthCodeBlock children={envSnippet} language="shellscript" filename=".env" />
+
+        `YOUR_API_IDENTIFIER` を、上記で使用した API 識別子 (例: `https://my-express-api.example.com`) に置き換えます。
+      </Tab>
+
+      <Tab title="Dashboard">
+        1. [Auth0 Dashboard](https://manage.auth0.com/) で **アプリケーション &gt; APIs** → **Create API** に移動します
+        2. 名前を入力します (例: &quot;My Express API&quot;)
+        3. **Identifier** を設定します。これは API の audience です (例: `https://my-express-api.example.com`) 。実際の URL である必要はありません。
+        4. **Signing Algorithm** は **RS256** のままにします
+        5. **Create** をクリックします
+        6. テナントの **Domain** と **API Settings** の **Identifier** をコピーします
+
+        `.env` ファイルを作成します。
+
+        <AuthCodeBlock children={envSnippetDashboard} language="shellscript" filename=".env" />
+
+        <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+          `YOUR_AUTH0_DOMAIN` を Auth0 テナントのドメイン (例: `dev-abc123.us.auth0.com`) に、`YOUR_API_IDENTIFIER` を上記で設定した API 識別子に置き換えます。
+        </Callout>
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="JWT middleware を設定する" stepNumber={4}>
+    Express アプリケーションに `createAuth0Api()` を登録して、JWT バリデーションを設定します。次に、パブリックルートと保護されたルートを追加します。
+
+    ```javascript server.js
+    import 'dotenv/config';
+    import express from 'express';
+    import { createAuth0Api, requiresAuth } from '@auth0/auth0-express-api';
+
+    const app = express();
+    const port = process.env.PORT || 3001;
+
+    app.use(express.json());
+    app.use(createAuth0Api());
+
+    // 公開ルート — トークン不要
+    app.get('/api/public', (req, res) => {
+      res.json({
+        message: 'Hello from a public endpoint! No authentication required.',
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    // 保護されたルート — 有効なアクセストークンが必要
+    app.get('/api/private', requiresAuth(), (req, res) => {
+      res.json({
+        message: 'Hello from a protected endpoint! You are authenticated.',
+        sub: req.auth0.user?.sub,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    app.listen(port, () => {
+      console.log(`API server running at http://localhost:${port}`);
+    });
+    ```
+
+    **この処理で行われること:**
+
+    * `createAuth0Api()` は環境変数から `AUTH0_DOMAIN` と `AUTH0_AUDIENCE` を自動的に読み取ります
+    * `requiresAuth()` は各リクエストの `Authorization: Bearer <token>` ヘッダーを検証します
+    * `req.auth0.user` には、認証済みリクエストのデコード済み JWT クレームが含まれます — `sub` はユーザーの一意の識別子です
+  </Step>
+
+  <Step title="必要なscopeでrouteを保護する" stepNumber={5}>
+    有効なトークンに加えて、特定のスコープを必須にすることもできます。`requiresAuth()` に `scopes` オプションを渡すと、トークンにそのスコープがない場合、SDK は `403 insufficient_scope` を返します。
+
+    ```javascript server.js
+    // "read:messages" scope が必要
+    app.get('/api/messages', requiresAuth({ scopes: ['read:messages'] }), (req, res) => {
+      res.json({ messages: ['Hello!', 'World!'] });
+    });
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      API の **Permissions** タブでスコープを定義し ([高度な使用方法](#advanced-usage)を参照) 、アクセストークンの取得時にリクエストします。複数のスコープの照合やカスタムクレームに基づく認可には、SDK の `scopesInclude`、`claimEquals`、`claimIncludes`、`claimCheck` も使用できます。詳細は[高度な使用方法](#advanced-usage)を参照してください。
+    </Callout>
+  </Step>
+
+  <Step title="API を実行する" stepNumber={6}>
+    開発サーバーを起動します。
+
+    ```shell
+    npm run dev
+    ```
+
+    API は現在、[http://localhost:3001](http://localhost:3001) で起動しています。
+  </Step>
+
+  <Step title="API をテストする" stepNumber={7}>
+    公開エンドポイントをテストします (トークンは不要です) ：
+
+    ```shell
+    curl http://localhost:3001/api/public
+    ```
+
+    想定される応答：
+
+    ```json
+    {
+      "message": "Hello from a public endpoint! No authentication required.",
+      "timestamp": "2026-06-22T12:00:00.000Z"
+    }
+    ```
+
+    保護されたエンドポイントを呼び出すには、アクセストークンが必要です。
+
+    1. [Auth0 Dashboard](https://manage.auth0.com/) で **アプリケーション &gt; APIs** に移動します
+    2. API を選択し、**Test** タブを開きます
+    3. 生成されたアクセストークンをコピーします
+
+    保護されたエンドポイントをテストします。
+
+    ```shell
+    curl http://localhost:3001/api/private \
+      -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+    ```
+
+    期待されるレスポンス：
+
+    ```json
+    {
+      "message": "Hello from a protected endpoint! You are authenticated.",
+      "sub": "auth0|abc123...",
+      "timestamp": "2026-06-22T12:00:00.000Z"
+    }
+    ```
+
+    <Check>
+      **チェックポイント**
+
+      これで API は保護されています。API は次のことを行います。
+
+      1. トークンなしでパブリックエンドポイントへのリクエストを受け付ける
+      2. 有効なアクセストークンが指定された場合に保護されたレスポンスを返す
+      3. JWT を Auth0 ドメインと audience に照らして検証する
+      4. デコードされたトークンのクレームを `req.auth0.user` を通じて公開する
+    </Check>
+  </Step>
+</Steps>
+
+***
+
+<div id="advanced-usage">
+  ## 高度な使用方法
+</div>
+
+<AccordionGroup>
+  <Accordion title="scopesInclude で複数のスコープを照合する">
+    ルートで複数のスコープのいずれか 1 つを許可する場合や、複数のスコープをすべて必須にする場合は、`scopesInclude` を使用します。デフォルトでは、指定したスコープの**いずれか**に一致します。すべてを必須にするには、`{ match: 'all' }` を渡します。スコープは配列またはスペース区切りの文字列で指定できます。以下の例では配列を使用しています。
+
+    ```javascript server.js
+    import { scopesInclude } from '@auth0/auth0-express-api';
+
+    // これらのスコープのいずれかが必要
+    app.get('/api/feed', requiresAuth(), scopesInclude(['read:feed', 'read:admin']), (req, res) => {
+      res.json({ feed: [] });
+    });
+
+    // これらのスコープすべてが必要
+    app.get('/api/admin/edit', requiresAuth(), scopesInclude(['read:admin', 'write:admin'], { match: 'all' }), (req, res) => {
+      res.json({ message: 'Admin editor access granted.' });
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="カスタムクレームに基づく認可">
+    認可が `scope` 以外のクレームに依存する場合は、`claimEquals`、`claimIncludes`、または `claimCheck` を使用します。いずれも `requiresAuth()` の後に実行され、クレームの要件を満たさない場合は `401 invalid_token` を返します。
+
+    ```javascript server.js
+    import { claimEquals, claimIncludes, claimCheck } from '@auth0/auth0-express-api';
+
+    // claimEquals — クレームは指定した値と完全に一致する必要があります
+    app.get('/api/admin', requiresAuth(), claimEquals('isAdmin', true), (req, res) => {
+      res.json({ message: 'Admin access granted.' });
+    });
+
+    // claimIncludes — 配列クレームには指定した値がすべて含まれている必要があります
+    app.get('/api/editor', requiresAuth(), claimIncludes('roles', ['admin', 'editor']), (req, res) => {
+      res.json({ message: 'Editor access granted.' });
+    });
+
+    // claimCheck — デコードされたトークンに対するカスタムロジック
+    app.get('/api/premium', requiresAuth(), claimCheck(
+      (req, token) => token.tier === 'premium' || token.roles?.includes('admin'),
+      { errorMessage: 'Premium tier or admin role required' }
+    ), (req, res) => {
+      res.json({ message: 'Premium content access granted.' });
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="TypeScript でカスタムトークンクレームを定義する">
+    TypeScript を使用している場合は、`Token` インターフェースを拡張することで、カスタムクレームに型安全にアクセスできます。
+
+    ```typescript server.ts
+    import '@auth0/auth0-express-api';
+
+    declare module '@auth0/auth0-express-api' {
+      interface Token {
+        tier: 'free' | 'premium';
+        roles: string[];
+        'https://myapp.com/org_id': string;
+      }
+    }
+    ```
+
+    型サポートをインストールします。
+
+    ```shell
+    npm install -D typescript @types/express @types/node
+    ```
+  </Accordion>
+
+  <Accordion title="Web クライアント向けの CORS 設定">
+    Web アプリケーションから API を呼び出せるよう、CORS を有効にします。
+
+    ```shell
+    npm install cors
+    ```
+
+    ```javascript server.js
+    import cors from 'cors';
+
+    app.use(cors({
+      origin: ['http://localhost:3000', 'http://localhost:5173'],
+      allowedHeaders: ['Authorization', 'Content-Type'],
+      exposedHeaders: ['WWW-Authenticate'],
+    }));
+
+    app.use(createAuth0Api());
+    ```
+
+    本番環境では、ワイルドカードではなく、許可するオリジンを明示的に指定してください。
+  </Accordion>
+
+  <Accordion title="Auth0 Dashboard でスコープを設定する">
+    スコープベースの認可を使用するには、まず API にアクセス許可を定義します。
+
+    1. [Auth0 Dashboard](https://manage.auth0.com/) → **Applications &gt; APIs** → 対象の API に移動します
+    2. **Permissions** タブに移動します
+    3. `read:messages`、`write:messages`、`read:admin` などのアクセス許可を追加します
+    4. **Save** をクリックします
+
+    次に、クライアントアプリケーションは アクセストークン を取得する際に、これらのスコープをリクエストする必要があります。トークンに必要なスコープが含まれていない場合、API は `403 Forbidden` を返します。
+  </Accordion>
+</AccordionGroup>
+
+***
+
+<div id="troubleshooting">
+  ## トラブルシューティング
+</div>
+
+<AccordionGroup>
+  <Accordion title="空の本文と 'WWW-Authenticate: Bearer' ヘッダーのみを伴う 401">
+    **原因:** `Authorization` ヘッダーがないか形式が不正なため、bearer token を抽出できませんでした。[RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750#section-3) に従い、この場合 SDK は `WWW-Authenticate: Bearer` ヘッダーのみを含む `401` を返し、エラー本文は返しません。これは、*存在するものの無効または期限切れの token* とは異なります。後者の場合は、`invalid_token` エラーと JSON 本文を伴う `401` が返されます (以下を参照) 。
+
+    **修正:**
+
+    1. ヘッダーが含まれていることを確認します: `Authorization: Bearer YOUR_TOKEN`
+    2. token の前に「Bearer」 (大文字の B とスペース) があることを確認します
+  </Accordion>
+
+  <Accordion title="'Invalid token' または audience/発行者の不一致（401）">
+    **原因:** token がこの API 向けに発行されていないか、ドメインまたは audience の値が一致していません。
+
+    **修正:**
+
+    1. [jwt.io](https://jwt.io) で token をデコードします
+    2. `iss` が `https://{yourDomain}/` と一致することを確認します (末尾のスラッシュに注意)
+    3. `aud` が `AUTH0_AUDIENCE` と完全に一致することを確認します
+    4. ID トークンではなく**アクセストークン**を使用していることを確認します。アクセストークンは `audience` パラメータを指定して取得します
+  </Accordion>
+
+  <Accordion title="'Insufficient scope'（403）">
+    **原因:** token に必要な スコープ が含まれていません。
+
+    **修正:**
+
+    1. 必要な スコープ が Auth0 Dashboard の API の Permissions タブで定義されていることを確認します
+    2. クライアントがアクセストークンを取得する際に スコープ をリクエストしていることを確認します
+    3. [jwt.io](https://jwt.io) で token をデコードし、`scope` クレーム を確認します
+  </Accordion>
+
+  <Accordion title="環境変数が読み込まれない">
+    **原因:** `dotenv` が設定されていないか、変数名が間違っています。
+
+    **修正:**
+
+    1. `import 'dotenv/config'` がエントリーファイル内の最初のインポート文であることを確認します
+    2. `.env` に `AUTH0_DOMAIN` と `AUTH0_AUDIENCE` が含まれていることを確認します
+    3. デバッグ:
+
+    ```javascript
+    console.log({
+      domain: !!process.env.AUTH0_DOMAIN,
+      audience: !!process.env.AUTH0_AUDIENCE,
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="ESM のインポートエラー（'Cannot use import statement'）">
+    **原因:** `@auth0/auth0-express-api` SDK は ES モジュールを使用します。
+
+    **修正:** `package.json` に `"type": "module"` を追加します。
+
+    📁 **package.json**
+
+    ```json
+    {
+      "type": "module"
+    }
+    ```
+
+    または、サーバーファイルの名前を `server.mjs` に変更します。
+  </Accordion>
+</AccordionGroup>
+
+***
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+* **[Express Web App に Login を追加する](/docs/ja-jp/quickstart/webapp/express-beta)** — Web アプリでのセッションベース認証に `@auth0/auth0-express` を使用する
+* **[ロールベースのアクセス制御](https://auth0.com/docs/manage-users/access-control/rbac)** — きめ細かな権限を実装する
+* **[Access Token のベストプラクティス](https://auth0.com/docs/secure/tokens/access-tokens)** — アクセストークン の取り扱いについて学ぶ
+* **[API を監視する](https://auth0.com/docs/deploy-monitor/logs)** — ログ記録と監視を設定する
+
+***
+
+<div id="resources">
+  ## リソース
+</div>
+
+* **[auth0/auth0-express-api GitHub](https://github.com/auth0/auth0-express/tree/main/packages/auth0-express-api)** — ソースコードとサンプル
+* **[Auth0 Community](https://community.auth0.com/)** — コミュニティからサポートを受ける
+* **[JWT.io](https://jwt.io/)** — JWTをデバッグ・デコードする

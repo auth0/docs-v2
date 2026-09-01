@@ -1,0 +1,261 @@
+---
+description: Highly Regulated Identity で、認可コードフローを使用したトランザクション認可を実現する方法について説明します。
+title: 認可コードフローを使用したトランザクション認可
+---
+
+Highly Regulated Identity では、トランザクションを認可するためにステップアップ <Tooltip tip="多要素認証（MFA）: SMS で送信されるコードなど、ユーザー名とパスワードに加えて認証要素を使用するユーザー認証プロセス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=multi-factor+authentication">多要素認証</Tooltip> (MFA) を適用することで、[認可コードフロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow)によるトランザクション認可を実現できます。ステップアップ MFA では、1 回限りの操作に関するトランザクションの詳細をユーザーが明示的に認可できるように、2 つ目の認証要素による確認を求めます。これは、金融グレードのセキュリティが求められる次のようなユースケースで役立ちます。
+
+* 銀行振込の承認、操作履歴へのアクセス、アクセス資格情報の変更など、自社サービスから実行される機密性の高い操作を保護すること。
+* デジタル決済の承認や、口座確認のための 1 回限りのアクセス許可など、サードパーティのサービスから要求される機密性の高い操作を保護すること。
+
+この記事では、銀行振込を承認するまでのエンドツーエンドの流れを順を追って説明します。同じトランザクション <Tooltip tip="認可フロー: OAuth 2.0 フレームワークで規定された認可グラント（またはワークフロー）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=authorization+flow">認可フロー</Tooltip>は、他のユースケースにも適用できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  トランザクション認可は、API ごとに設定する必要があります。有効化すると、その API のスコープと `authorization_details.types` に適用されます。
+</Callout>
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+<Warning>
+  `authorization_details` の外部に、詳細なトランザクション認可データや、その他の機密情報または規制対象データを渡さないでください。
+</Warning>
+
+開始する前に、[Rich Authorization Requests を設定する](/docs/ja-jp/get-started/apis/configure-rich-authorization-requests) の手順に従って、API または <Tooltip tip="Resource Server: 保護されたリソースをホストするサーバー。リソースサーバーは保護されたリソースへのリクエストを受け取り、それに応答します。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=resource+server">リソースサーバー</Tooltip> の `authorization_details.types` を登録してください。
+
+<div id="end-to-end-flow">
+  ## エンドツーエンドフロー
+</div>
+
+次の図は、Contextual SCA を使用した Transactional Authorization のエンドツーエンドフローを示しています。主なフェーズは 4 つあります。
+
+1. トランザクションの詳細とともに、ユーザーを安全に Auth0 にリダイレクトします。このステップでは、フロントチャネル (例: ブラウザー) 上で機密情報が露出しないようにします。
+2. ユーザーの認証後に動的ポリシーを適用します。[Actions](/docs/ja-jp/customize/actions) を使うと、トランザクションの詳細や、外部 API などのソースから取得できるその他の情報に基づいて、次のステップを動的に決定できます。詳しくは、[動的ポリシーを適用する](#apply-dynamic-policy) を参照してください。
+3. 第 2 の認証要素でユーザーに確認を求め、ユーザーが明示的に承認できるようにトランザクションの詳細を表示します。このステップは、Actions を使って適用するよう選択した認証要素によって異なります。
+4. アクセストークンを取得し、機密性の高い操作を続行します。API は、アクセストークンに関連付けられた承認済みのトランザクション詳細を検証します。
+
+<Frame>![](/docs/images/cdy7uua7fh8z/6VYcY5YJRT9Ngaomj5f9yi/ea5f0caa41a7db330a1c1d980ce7116c/Transactional_Authorization__1_.png)</Frame>
+
+以降のセクションでは、各フェーズについて詳しく説明します。
+
+<div id="communicate-transaction-details-and-redirect-to-auth0">
+  ### トランザクションの詳細を伝え、Auth0 にリダイレクトする
+</div>
+
+ユーザーはまず、Auth0 で認証した後、あなたの Web アプリケーションにアクセスします。今回のユースケース例では、その後ユーザーは自分の連絡先の 1 つへの送金を依頼します。
+
+金融グレードのセキュリティ基準を満たすため、Highly Regulated Identity では、Pushed Authorization Requests (PAR) を使用して、トランザクションの詳細をブラウザーから隠します。`/authorize` エンドポイントにクエリパラメータをブラウザー経由で送信する代わりに、PAR では POST リクエストを使って、バックエンドから特別な `/par` エンドポイントへパラメータを直接送信します。設定方法については、[Configure Pushed Authorization Requests](/docs/ja-jp/get-started/applications/configure-par) を参照してください。
+
+PAR のリクエストボディでは、トランザクションの詳細は `authorization_details` JSON オブジェクトの一部として送信されます。
+
+```json lines
+"authorization_details": [
+ {
+   "type": "money_transfer",
+   "instructedAmount": {
+     "amount": 150,
+     "currency": "USD"
+   },
+   "sourceAccount": "xxxxxxxxxxx1234",
+   "destinationAccount": "xxxxxxxxxxx9876",
+   "beneficiary": "Hanna Herwitz",
+   "subject": "A Lannister Always Pays His Debts"
+ }
+]
+```
+
+トランザクションに応じて使用する認証要素を判断するには、Actions を使って `authorization_details` を確認します。`authorization_details` と、それを PAR と併用する方法について詳しくは、[Rich Authorization Requests を使用する認可コードフロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow/authorization-code-flow-with-rar) をお読みください。
+
+FAPI 1 Advanced Security の準拠要件を満たすには、バックエンドが `/par` または `/token` エンドポイントに対して認証する際に、公開鍵暗号方式も使用する必要があります。これは、<Tooltip tip="Client Secret: クライアント（アプリケーション）が認可サーバーに対して認証するために使用する秘密情報です。これはクライアントと認可サーバーだけが知っている必要があり、推測できないよう十分にランダムでなければなりません。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Client+Secret">Client Secret</Tooltip> を送信するよりも安全です。Auth0 では、次の公開鍵暗号方式による認証方法を提供しています。
+
+* [Private Key JWT](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt)
+* [OAuth の相互 TLS (mTLS) ](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-mtls)
+
+PAR リクエストに対する成功レスポンスを受け取ったら、ユーザーを Auth0 テナントの `/authorize` エンドポイントにリダイレクトします。PAR レスポンスで受け取った `request_uri` パラメータと `client_id` のみをクエリパラメータとして追加することで、機密情報をブラウザーから実質的に隠せます。
+
+<div id="apply-dynamic-policy">
+  ### 動的ポリシーを適用する
+</div>
+
+ユーザーが <Tooltip tip="シングルサインオン（SSO）: ユーザーが1つのアプリケーションにログインした後、そのユーザーを他のアプリケーションにも自動的にログインさせるサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=SSO">SSO</Tooltip> を使用せずにログインし、ブラウザーが Auth0 テナント の `/authorize` エンドポイントにアクセスすると、Auth0 はユーザーの認証を試みます。銀行振込の承認を例にすると、Auth0 はユーザーが Web アプリケーションにアクセスするための認証をすでに完了しています。しかし、デジタル決済などでサードパーティがユーザーをリダイレクトした場合、Auth0 はユーザーにログイン画面を表示します。認証フローの詳細については、[Authenticate](/docs/ja-jp/authenticate) のドキュメントを参照してください。
+
+Auth0 がユーザーの認証に成功すると、Auth0 は post-login [Actions](/docs/ja-jp/customize/actions) をトリガーします。これにより、ユーザー、アプリ、使用された認証要素などに関するトランザクションの詳細が、[post-login event object](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object) で公開されます。post-login event object 内では、`event.transaction.requested_authorization_details` プロパティに、前のステップで受信した認可リクエストの詳細が含まれます。
+
+[post-login event object](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-event-object) を使用して、そのトランザクションをどのように進めるかを決定します。たとえば、トランザクションの詳細を外部のリスクエンジンに送信し、リスクレベルを評価したうえで、次のコードサンプルに示すように、sms を使用した step-up authentication を要求するかどうかを判断できます。
+
+```js lines expandable
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.transaction?.requested_authorization_details.some(e => e.type === 'money_transfer')) {
+      const axios = require('axios');
+
+      //リスク評価エンジンへの接続情報
+      const risk_url = 'https://risk.example.org/score';
+      const risk_options = {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      };
+
+      const tx_data = {
+        email: event.user.email,
+        authorization_details: event.transaction?.requested_authorization_details
+      };
+
+      //操作の詳細をリスク評価エンジンに送信
+      var risk = await axios.post(risk_url, tx_data, risk_options);
+
+      //リスクの高い操作の場合はプッシュ通知で承認
+      if (risk.data.score >= 2) {
+        api.authentication.challengeWith({ type: 'push-notification', options: {otpFallback: false}});
+
+      }
+    }
+};
+```
+
+<div id="challenge-the-user-to-get-transaction-details-approval">
+  ### ユーザーにトランザクションの詳細の承認を求める
+</div>
+
+ユーザーに登録済みの認証要素、セッションですでに満たされている認証要素、または独自の方針に応じて、使用する認証要素をカスタマイズできます。また、ユーザーが選べる代替手段を提示することもできます。詳しくは、[New Universal Login で MFA の選択をカスタマイズする](/docs/ja-jp/secure/multi-factor-authentication/customize-mfa/customize-mfa-selection-universal-login)を参照してください。
+
+さらに、SMS、Email、WebAuthn では、Auth0 がユーザーに表示する同意画面をカスタマイズして、authorization&#95;details やその他のトランザクションの詳細から表示したい情報を示すことができます。詳しくは、[Rich Authorization Requests を設定する](/docs/ja-jp/get-started/apis/configure-rich-authorization-requests)を参照してください。プッシュ通知にはこれは該当しません。トランザクションの詳細をエンドユーザーに表示するのはモバイルアプリケーションであるためです。
+
+以下のセクションでは、トランザクション認可用に設定できるさまざまな認証要素について説明します。
+
+<div id="push-notifications">
+  #### プッシュ通知
+</div>
+
+Auth0 が利用側デバイス (例: トランザクションの発生元であるノートパソコン) で多要素認証 (MFA) の待機画面をユーザーに表示している間に、登録済みのモバイルデバイスへプッシュ通知を送信します。
+
+<Frame>![](/docs/images/cdy7uua7fh8z/4mEJTT4VsAAAb6I0HhJI6r/851fe5ff489bfc9e5aaa2c52b4644f2c/Mobile_Push_-_English.png)</Frame>
+
+プッシュ通知では、モバイルアプリケーションがトランザクションの詳細をユーザーに表示し、明示的な承認を求める役割を担います。プッシュ通知をトリガーする際に、`otpFallback: false` オプションを追加すると、OTP を手動入力するフォールバック手段を無効にできます。
+
+ユーザーに `authorization_details` を表示するには、モバイルアプリケーションが `txlnkid` パラメーターからそれを取得する必要があります。[Auth0 Guardian SDK](/docs/ja-jp/secure/multi-factor-authentication/auth0-guardian) は、`txlnkid` パラメーターをテナントからモバイルアプリケーションへ、プッシュ通知を通じて渡します。
+
+モバイルアプリケーションが Guardian SDK 経由でプッシュ通知を受信すると、Auth0 Consent API から、`authorization_details` を含む同意の詳細を取得できます。
+
+<Tabs>
+  <Tab title="iOS">
+    ```swift lines
+    let device: AuthenticationDevice = // 登録時に取得したオブジェクト
+    if let consentId = notification.transactionLinkingId {
+        Guardian
+            .consent(forDomain: {yourTenantDomain}, device: device)
+            .fetch(consentId: consentId, notificationToken: notification.transactionToken)
+            .start{result in
+                switch result {
+                case .success(let payload):
+                    let authorizationDetails = payload.requestedDetails.authorizationDetails
+                case .failure(let cause):
+                    // 問題が発生しました
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Android">
+    ```kotlin lines
+    if (notification.getTransctionLinkingId() != null) {
+        guardian
+          .fetchConsent(notification, enrollment)
+          .start(new Callback<Enrollment> {
+            @Override
+            void onSuccess(RichConsent consentDetails) {
+              List<Map<String, Object>> authorizationDetails = consentDetails
+                    .getRequestedDetails()
+                    .getAuthorizationDetails();
+            }
+
+            @Override
+            void onFailure(Throwable exception) {
+              if (exception instanceof GuardianException) {
+                GuardianException guardianException = (GuardianException) exception;
+                if (guardianException.isResourceNotFound()) {
+                  // トランザクションに関連付けられた同意はありません
+                }
+              }
+              // 問題が発生しました
+            }
+          });
+    }
+    ```
+  </Tab>
+</Tabs>
+
+post-login Action から `api.authentication.challengeWith()` の前に `api.multifactor.enable()` を呼び出すことで、このデバイスを記憶するオプションをなくし、すべてのトランザクションでユーザーにプッシュチャレンジの確認を必須にできます。詳しくは、[Action Triggers: post-login - API object](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger/post-login-api-object) を参照してください。
+
+ユーザーが操作を承認または拒否すると、モバイルアプリケーションは MFA challenge を許可または拒否できます。トランザクションは **操作を完了する** フェーズに進みます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  プッシュ通知を開いたユーザーの本人確認を行うために、モバイルアプリケーションに生体認証を追加できます。詳しくは、[MFA 向けに Device Biometrics を使用して WebAuthn を設定する](/docs/ja-jp/secure/multi-factor-authentication/fido-authentication-with-webauthn/configure-webauthn-device-biometrics-for-mfa) を参照してください。
+</Callout>
+
+<div id="sms-email-or-webauthn">
+  #### SMS、Email、または WebAuthn
+</div>
+
+ユーザーへのチャレンジに使用する認証要素として、電話、メール、または WebAuthn を設定することもできます。これらの認証要素では、Auth0 は対応する MFA 待機画面をユーザーに表示します。ユーザーが MFA 待機画面でチャレンジを完了すると、Auth0 は明示的な承認を求めるために、トランザクションの詳細をユーザーに表示します。承認ステップを正しく機能させるには、[Rich Authorization Requests を設定する](/docs/ja-jp/get-started/apis/configure-rich-authorization-requests) 必要があることに注意してください。
+
+電話の認証要素では、Auth0 は SMS または音声通話でユーザーに確認コードを送信します。次のスクリーンショットは、Auth0 が SMS でコードを送信した後の MFA 待機画面を示しています。
+
+<Frame>![](/docs/images/cdy7uua7fh8z/kYn2A0p2jTY5CUn1FsjVf/b926a1689ee9722e6b902e433a77223b/Phone_Challenge_-_English.png)</Frame>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Actions では、`api.authentication.challengeWith` の前に `api.multifactor.enable('any', { allowRememberBrowser: false })` を呼び出すことで、「このデバイスを記憶する」オプションを無効にし、すべてのトランザクションでユーザーにプッシュチャレンジの確認を必須にできます。
+</Callout>
+
+その後、ユーザーは確認コードが記載された SMS を受信します。
+
+ユーザーが MFA 待機画面に確認コードを入力すると、Auth0 は同意画面にトランザクションの詳細を表示します。ユーザーがトランザクションの詳細を承認または拒否すると、トランザクションは [操作を完了する](#complete-the-operation) フェーズに進みます。
+
+Email と WebAuthn では、同じトランザクション承認フローが使われ、MFA 待機画面と明示的な承認画面もほぼ同様です。
+
+<Warning>
+  PSD2 では、[メールは Strong Customer Authentication の有効な認証要素ではありません](https://www.eba.europa.eu/sites/default/documents/files/documents/10180/2622242/4bf4e536-69a5-44a5-a685-de42e292ef78/EBA%20Opinion%20on%20SCA%20elements%20under%20PSD2%20.pdf)。PSD2 に準拠するには、ユーザーへのチャレンジに別の認証要素を使用することをお勧めします。
+</Warning>
+
+<div id="no-challenge">
+  #### チャレンジなし
+</div>
+
+第2の認証要素でユーザーに確認を求めない場合、Auth0 は同意画面を表示し、トランザクションの詳細に明示的に同意してもらいます。
+
+<div id="complete-the-operation">
+  ### 操作を完了する
+</div>
+
+操作を完了するには、Auth0 は標準の[認可コードフロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow)に従います。トランザクションが承認されると、ユーザーのブラウザーは認可コードとともにアプリケーションにリダイレクトされ、その認可コードは次に、[JSON Web Encryption](/docs/ja-jp/secure/tokens/access-tokens/json-web-encryption) を使用して暗号化された <Tooltip tip="アクセストークン: API へのアクセスに使用される認可資格情報で、不透明な文字列または JWT の形式をとります。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=access+token">アクセストークン</Tooltip> と交換されます。アクセストークンには、最初に渡した `authorization_details` が含まれます。次のコードサンプルは、復号したアクセストークンの内容を示しています。
+
+```json lines
+{
+ "iss": "https://my_tenant.auth0.com/",
+ "sub": "auth0|me",
+ "aud": "https://myapi.zewobnak.com",
+ "iat": 1683661385,
+ "exp": 1683747785,
+ "azp": "my_client",
+ "transaction_linking_id": "ce4842e8-2894-418a-b1f9-39a330cd4911",
+ "authorization_details": [
+   {
+     "type": "money_transfer",
+     "instructedAmount": {
+       "amount": 150,
+       "currency": "USD"
+     },
+     "sourceAccount": "xxxxxxxxxxx1234",
+     "destinationAccount": "xxxxxxxxxxx9876",
+     "beneficiary": "Hanna Herwitz",
+     "subject": "A Lannister Always Pays His Debts",
+   }
+ ]
+}
+```
+
+money transfer を実行する API に アクセストークン を渡します。API は次に、amount、sender、destination などの transaction の詳細を確認するため、アクセストークン の `authorization_details` を検証します。検証が完了すると、money transfer が正常に実行され、承認画面が表示されます。
+
+transaction がいずれかの段階で拒否された場合、ユーザーのブラウザーには `access_denied` エラーコードが表示されます。

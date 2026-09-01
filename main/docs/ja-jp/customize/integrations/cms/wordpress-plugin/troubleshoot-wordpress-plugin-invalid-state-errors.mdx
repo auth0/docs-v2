@@ -1,0 +1,152 @@
+---
+description: Login by Auth0 WordPress Plugin の invalid state エラーのトラブルシューティング
+title: WordPress Plugin の invalid state エラーのトラブルシューティング
+---
+
+[`auth0/wordpress` GitHub repository](https://github.com/auth0/wordpress/releases/tag/3.6.0) で公開されている WordPress Plugin バージョン 3.6.0 で、state のバリデーションを追加しました。このセキュリティ対策により、レスポンスが同じユーザーによって開始された request に対応することを確認し、CSRF 攻撃の軽減に役立てることができます。詳しくは、[OAuth 2.0 の state parameter で攻撃を防ぎ、ユーザーをリダイレクトする](/docs/ja-jp/secure/attack-protection/state-parameters)をお読みください。
+
+<div id="how-state-validation-works">
+  ## state バリデーションの仕組み
+</div>
+
+プラグインは、次の手順で state のバリデーションを行います。
+
+1. Lock のログインフォームが表示されると、Javascript を使ってブラウザーに `auth0_state` Cookie を設定します (`wp-login.php` 上、またはショートコードやウィジェットを使用している場合はその他の任意のページ) 。
+2. その値を Lock の組み込みログインフォームに渡し、認証リクエストとともに送信できるようにします。
+3. Auth0 login が成功すると、その値が変更されないまま `state` URL パラメーターで Auth0 から返されます。
+4. 返された値が、送信されて `auth0_state` Cookie に保存された値と一致するかを検証します。有効であればログインプロセスが続行されます。そうでない場合は処理が停止し、「Invalid state」というエラーメッセージが表示されます。
+5. 有効かどうかにかかわらず、Cookie を削除します。
+6. 有効な場合は、base64 デコードしたオブジェクト内の値を使って、リダイレクトやその他のログインアクションを実行します。
+
+このプロセスは、ログイン中のユーザーにもサイト管理者にも、完全に意識されないはずです。Auth0 server は state の値を検証も要求もせず、そのままコールバック URL に返します。「Invalid state」メッセージが表示される場合は、上記 1 ～ 4 のいずれかの手順が実行されていません。
+
+<div id="common-causes-of-the-invalid-state-error">
+  ## invalid state エラーの一般的な原因
+</div>
+
+以下では、invalid state エラーの一般的な原因と、実施できるトラブルシューティングの手順を紹介します。
+
+<div id="cached-callback-urls">
+  ### キャッシュされたコールバック URL
+</div>
+
+invalid state エラーの最も一般的な原因は、コールバック URL がサーバー上でキャッシュされていることです。
+
+[Auth0 Dashboard &gt; アプリケーション &gt; アプリケーション &gt; 設定](https://manage.auth0.com/#/applications/\{yourClientId}/settings) の **Allowed Callback URLs** フィールドに記載されているすべての URL がサーバーでキャッシュされないように設定し、再度テストしてください。さらに、サイト URL (通常のインストールでは `/index.php`) に Auth0 の URL パラメーターが含まれている場合は、その URL もキャッシュ対象から除外してください。
+
+サーバーの時刻が正しく設定されているかどうかも確認してください。`BeforeValidException` エラーは、トークンが現在時刻より前に生成されたと判断された場合に発生することがあり、サーバー時刻がずれているとこの問題が起こる可能性があります。サーバー時刻は `echo current_time( 'c' )` を使って確認できます。サーバー時刻を変更できない場合は、一時的な回避策として、プラグインを変更して time offset を追加する方法もありますが、本番環境では根本的に修正する必要があります。
+
+それでも問題が解決しない場合は、以下のトラブルシューティング手順に進んでください。
+
+<div id="cached-cookies-and-url-parameters">
+  ### キャッシュされたCookieとURLパラメーター
+</div>
+
+WP-Engine のようなマネージドホストを利用している場合は、追加のサポートを受けるために、そのサポートチームへの問い合わせが必要になることがあります。コールバックURLで必要な Cookie にアクセスできない問題や、ユーザーのログイン後に最終的に表示されるページで認証を確認する際の問題が報告されています。具体的には、以下の項目がキャッシュ除外されるよう依頼してください。
+
+* **Cookie:** `auth0_state`
+* **Cookie:** `auth0_nonce`
+* **Arg/URL パラメーター:** `auth0`
+* **Arg/URL パラメーター:** `code`
+* **Arg/URL パラメーター:** `state`
+* **Arg/URL パラメーター:** `id_token`
+
+<div id="page-refresh-after-error-message">
+  ### エラーメッセージの後にページを再読み込みする
+</div>
+
+別のエラーメッセージ (メール認証 など) が表示された後にページを再読み込みすると、すでに使用された値を再検証しようとするため、invalid state メッセージが表示されます。これは想定内の動作です。
+
+<div id="cookie-names-requirement">
+  ### Cookie 名の要件
+</div>
+
+Pantheon などの一部のホストでは、特定の Cookie 名を使用する必要があります。テーマまたはカスタムプラグインで `auth0_state_cookie_name` フィルターを使用すると、Cookie 名を変更できます。`auth0_state_cookie_name` フィルターの詳細については、[Extend Login by Auth0 WordPress Plugin](/docs/ja-jp/customize/integrations/cms/wordpress-plugin/extend-login-by-auth0) を参照してください。追加情報については、[関連する GitHub issue](https://github.com/auth0/wordpress/issues/494) を確認し、[修正内容](https://github.com/auth0/wordpress/pull/495) も参照してください。
+
+<div id="universal-login-page-and-link-building">
+  ### Universal Login ページとリンクの作成
+</div>
+
+サイトで <Tooltip tip="Universal Login: アプリケーションは、ユーザーのアイデンティティを確認するために、Auth0 の認可サーバーでホストされている Universal Login にリダイレクトされます。" cta="用語集を表示" href="/docs/ja-jp/glossary?term=Universal+Login">Universal Login</Tooltip> ページを使用していて、テーマまたはプラグイン内で自分でリンクを作成している場合は、次の対応が必要です。
+
+* `auth0_state` という名前の Cookie に、ランダムに生成した値を設定する
+* その値を `state` URL パラメーターとして送信する。
+
+または、設定 &gt; Features タブ &gt; Universal Login ページに移動し、login requests を `wp-login.php` ページにリダイレクトすることもできます。そうすると、その Cookie と URL パラメーターは自動的に設定されます。
+
+<div id="visiting-the-callback-url-directly">
+  ### コールバック URL に直接アクセスする
+</div>
+
+コールバック URL (通常は `yourdomain.com/index.php?auth0=1`) に直接アクセスした場合や、認可コードの交換後に再度アクセスした場合は、`invalid state` エラーが表示されることがあります。これは、state がすでに検証され、削除されていることを示しています。
+
+<div id="troubleshoot-invalid-state-errors">
+  ## invalid state エラーのトラブルシューティング
+</div>
+
+以下の手順の一部では、作業中にログインプロセスが中断されます (該当する場合はその旨を記載しています) 。
+
+1. WordPress と Auth0 の両方からログアウトした状態で、テスト対象のログインページにアクセスします。
+2. `auth0_state` Cookie が設定されているか確認します (Chrome では、View &gt; Developer &gt; JavaScript Console &gt; Application tab &gt; 左側の Storage &gt; Cookies &gt; テスト対象のドメイン の順に進み、空でない値を持つ `auth0_state` Cookie を探します) 。
+
+   * この値が設定されていない場合は、JS コンソールにエラーが出ていないか確認し、ブラウザーが Cookie を受け入れられることを確認してください (Cookie がないとログインは動作しません) 。
+   * 値が設定されている場合は、その値をコピーしてページのソースコードを表示します (Chrome では、**View** &gt; **Developer** &gt; **View Source**) 。その値を検索すると、パラメーター `wpAuth0LockGlobal.settings.auth.params.state` に対応する値として表示されるはずです ([サンプル JSON を表示](https://gist.github.com/joshcanhelp/1b8bb990048325eb7214e2b3d7136b78)) 。この値はメモしておいてください (後続の手順で必要になります) 。
+3. そこにその値があり、かつ Lock フォームが正常に読み込まれている場合は、上の最初の一覧の手順 1 と 2 は正しく機能しています。
+4. ログインする前に、テスト用インストールで確認できるよう、[このコードスニペットを `wp-config.php` の先頭に追加](https://gist.github.com/joshcanhelp/ba98f748747c7fd2ecdf54e73c6110f3)してください。**警告**: これにより、テスト対象の WordPress サイトのログインは機能しなくなります。そのため、非本番環境のインストールでのみ使用してください。
+5. 通常どおりログインします。
+6. サイトのコールバック URL にリダイレクトされた後、プロセスは停止します。上の手順 #4 でリンクされている Gist に示されているような出力が表示されるはずです。追加の値がない `Array()` のようなものが表示される場合は、次の 2 つのいずれかが起きている可能性があります。
+
+   * WordPress のコールバック URL がキャッシュされています。ページキャッシュはさまざまな形で発生するため、ここで具体的な手順を示すことはできません。インストールされているキャッシュプラグインを確認してください。通常は何らかの URL 除外機能があります。また、ホスト側で自動的にキャッシュされていて、サポートへの問い合わせが必要な場合もあるため、ホストにも確認してください。
+   * サーバーが Auth0 Cookie を読み取っていません。考えられる解決策については、[関連する GitHub issue を参照](https://github.com/auth0/wordpress/issues/494)し、[その修正を確認](https://github.com/auth0/wordpress/pull/495)してください。
+7. 値が存在する場合は、読み込まれているコールバック URL のレスポンスヘッダーを確認します (Chrome では、View &gt; Developer &gt; JavaScript Console &gt; Network tab の順に進み、500 status の最初の &quot;document&quot; をクリックして &quot;Response Headers&quot; を探します) 。`max-age` が 0 以外の `Cache-Control`、`MISS` 以外の `x-cache`、またはこのページがキャッシュから配信されていることを示すその他の手がかりなど、キャッシュの痕跡がないか確認してください。
+8. また、レスポンスヘッダーで、`set-cookie` に `auth0_state=deleted` のようなディレクティブが含まれていることを確認し、バリデーションプロセスが実行されていることを確かめてください。
+9. URL 内の `state` パラメーターが、上の手順 #3 で Cookie 設定時に記録したものと一致していることを確認してください。
+10. キャッシュの痕跡がない場合は、デバッグ用スニペットを `wp-config.php` から削除し、コールバック URL を再読み込みしてください。再び &quot;Invalid state&quot; メッセージが表示されるはずです。キャッシュに関する変更を行った場合は、最初から最後までログインプロセスを試してください (テスト前に、そのサイトの Cookie とブラウザーキャッシュを必ず削除してください) 。
+
+以下のトラブルシューティング手順では、プラグインに変更を加える必要があり、その間はログインプロセスが機能しなくなります。完了後は元に戻す必要があります。これらの手順は、テストサーバーまたは staging サーバーで実施してください。
+
+11. 次に、state は渡されてきているのに、保存されている値と一致しない理由を確認する必要があります。
+
+12. `lib/WP_Auth0_LoginManager.php` で、保存されている state と返された state の値を出力し、その後でプロセスを停止します。[148 行目](https://github.com/auth0/wp-auth0/blob/master/lib/WP_Auth0_LoginManager.php#L148) の直前に、次を追加します。
+
+```bash wrap lines
+echo '<h1>$_REQUEST</h1>'; var_dump($_REQUEST); echo '<h1>$_COOKIE</h1>'; var_dump($_COOKIE); die('<h1>Done</h1>');
+```
+
+13. もう一度、ログアウトしていることを確認してから、ログインプロセスを完了します。
+
+14. WordPress のコールバック URL にリダイレクトされると、値が出力されるはずです。
+
+15. `$_REQUEST` 内の `state` の値が存在し、`$_COOKIE` 内の `auth0_state` の値と一致しているかを確認します。
+
+* 値が異なる場合は、上記のステップ #3 で記録した元の値と一致している必要があります。これは、処理のどこかで `$_COOKIE` の state 値が変更されたことを意味します。
+
+上記のどの手順でも問題が解決しない場合は、上記の手順の結果をまとめて、[サポートに問い合わせる](https://support.auth0.com/center/s/)か、タグ `wordpress` を付けて [Community に投稿](https://community.auth0.com/tag/wordpress)してください。あわせて、以下も含めてください。
+
+* PHP バージョン
+* WordPress バージョン
+* Auth0 プラグインのバージョン
+* テストに使用したブラウザーと OS
+* ログインフォームのあるページの読み込みから「Invalid state」メッセージが表示されるまでの一連の流れ全体を記録した [HAR ファイル](https://support.auth0.com/center/s/article/generate-and-analyze-har-files-to-troubleshoot-auth0-issues)
+
+  <Warning>
+    HAR ファイルを誰か (Auth0 を含む) と共有する前に、次のような機密データをすべて削除または難読化していることを確認してください。
+
+    * 機密性の高いユーザー情報
+    * 個人を特定できる情報 (PII)
+    * 機密性の高いアプリケーション情報
+
+    詳しくは、Auth0 Support Center の以下の記事を参照してください。
+
+    * [HTTP トレースのサニタイズ](https://support.auth0.com/center/s/article/How-to-Remove-Secrets-from-a-har-File)
+    * [HTTP トレースファイルを自動的にサニタイズする方法](https://support.auth0.com/center/s/article/How-to-Sanitize-a-HTTP-Trace-File-Automatically)
+    * [機密情報を手動でマスキングする方法](https://support.auth0.com/center/s/article/How-to-Manually-Redact-Sensitive-Information)
+    * [HAR ファイルが大きすぎて support case にアップロードできない](https://support.auth0.com/center/s/article/HAR-File-is-too-Large-to-Upload-to-the-Support-Case)
+  </Warning>
+
+<div id="related-posts">
+  ## 関連記事
+</div>
+
+* [Auth0 WordPress のリダイレクト時に発生する「Invalid state」エラー](https://community.auth0.com/t/invalid-state-error-during-auth0-wordpress-redirect/12552/16)  (Auth0 Community)
+* [コールバック URL に直接アクセスしたときに発生する「Invalid state」](https://wordpress.org/support/topic/unable-to-resolve-troubleshooting-with-a-client-grant-for-already-exists/)  (wordpress.org)

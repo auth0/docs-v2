@@ -1,0 +1,263 @@
+---
+description: エンドツーエンドのXAAフローをテストする方法を説明します。
+sidebarTitle: エンドツーエンドテスト
+title: エンドツーエンドテスト
+---
+
+<Warning>
+  Resource App向けのCross App Access (XAA) は**早期アクセス**です。Enterprise、B2B Pro、B2B Essentialをご利用のお客様は、Enterprise Connectionsの機能として利用できます。Freeテナントでも、試用期間中にお試しいただけます。この機能を利用すると、Oktaの[Master Subscription Agreement](https://www.okta.com/legal/?_gl=1*51wq70*_gcl_au*NzczNzM1NjYyLjE3ODE3NzY0MDI.*_ga*MTE3ODU0MTY1Ny4xNzgxNzc2NDAy*_ga_QKMSDV5369*czE3ODQ1NTM3ODckbzgyJGcxJHQxNzg0NTU0NzIxJGo1OCRsMCRoMA..)に記載されている該当のFree Trial条項に同意したものとみなされます。
+</Warning>
+
+XAAフローをテストするには、Requesting AppがエンタープライズIdPからIdentity Assertion Authorization Grant (ID-JAG) を取得し、Auth0でアクセストークンと交換する必要があります。この記事では、ID-JAGを取得する方法 (SAMLまたはOIDC経由) と、それをAuth0の`/token`エンドポイントに送信してAPI用のアクセストークンを取得する方法を説明します。
+
+<div id="obtain-the-id-jag">
+  ## ID-JAG を取得する
+</div>
+
+ID-JAG の取得方法は、Requesting App がエンタープライズ IdP に対して SAML と OIDC のどちらを使用して認証するかによって、2 つに分かれます。
+
+<div id="saml-requesting-app">
+  ### SAML Requesting App
+</div>
+
+まず、IdP テナントを使って Requesting App にログインします。ログインに成功すると、IdP によってブラウザーは SAML レスポンス とともに Requesting App にリダイレクトされます。次に、Requesting App は SAML レスポンス に含まれる SAML アサーション を安全に OIDC `refresh_token` と交換し、その後 `refresh_token` を ID-JAG と交換します。
+
+<div align="center">
+  SAML レスポンス =&gt; SAML Assertion =&gt; refresh&#95;token =&gt; ID-JAG
+</div>
+
+IdP から SAML レスポンス を受け取ったら、SAML library を使用して SAML アサーション を抽出します。以下に SAML レスポンス の例を示します。
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<saml2p:Response Destination="http://localhost:3000/saml/callback" Version="2.0" xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+    <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+        ...
+    </saml2:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        ...
+    </ds:Signature>
+    <saml2p:Status xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+        <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+    </saml2p:Status>
+    <!-- ここからアサーション -->
+    <saml2:Assertion Version="2.0" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+        ...
+    </saml2:Assertion>
+    <!-- ここまでアサーション -->
+</saml2p:Response>
+```
+
+`xmllint` コマンドラインツールを使用して、SAML アサーション を抽出できます。
+
+```bash
+saml_xml=$(printf '%s' "${saml_response}" | base64 -d 2>/dev/null)
+saml_assertion=$(printf '%s' "${saml_xml}" | xmllint --nsclean --xpath "//*[local-name()='Assertion']" - 2>/dev/null)
+subject_token=$(printf '%s' "${saml_assertion}" | base64 | tr -d '\n')
+```
+
+SAML アサーション を OIDC リフレッシュトークンと交換するため、Requesting App は以下のパラメータを指定して、IdP の `/token` エンドポイントに[トークン交換リクエスト](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange)を送信します。
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&subject_token_type=urn:ietf:params:oauth:token-type:saml2
+&requested_token_type=urn:ietf:params:oauth:token-type:refresh_token
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&scope=openid offline_access
+&subject_token={{SAML_ASSERTION_BASE64}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| **パラメータ**               | **説明**                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | グラントタイプ。トークン交換用のグラントタイプ `urn:ietf:params:oauth:grant-type:token-exchange` に設定します。                           |
+| `subject_token_type`    | `subject_token` パラメータで提供するトークンの種類。SAML アサーションを提示することを示すため、`urn:ietf:params:oauth:token-type:saml2` に設定します。  |
+| `requested_token_type`  | クライアントが認可サーバーから受け取るトークンの種類。`urn:ietf:params:oauth:token-type:refresh_token` に設定します。                         |
+| `scope`                 | 固定値。`openid offline_access` に設定します。                                                                         |
+| `subject_token`         | SAML レスポンスから抽出した、Base64 エンコード済みの SAML アサーション。                                                               |
+| `client_id`             | トークン交換リクエストを行う、エンタープライズ IdP 内の Requesting App のクライアント ID。                                                 |
+| `client_secret`         |  (任意) Requesting App が エンタープライズ IdP に対して自身を認証するために使用するクライアントシークレット。                                       |
+| `client_assertion`      |  (任意) Private Key JWT を使用して Requesting App を認証するために使用できるクライアントアサーション。                                       |
+| `client_assertion_type` |  (任意) クライアントアサーションの種類。Private Key JWT の場合は、`urn:ietf:params:oauth:client-assertion-type:jwt-bearer` に設定します。 |
+
+IdP クライアントが confidential の場合、`client_secret` または `client_assertion` のいずれかが Form Post または HTTP ヘッダーで送信されます。そのため、両者は同時に使用できず、任意としてマークされています。
+
+呼び出しが成功すると、JSON レスポンスの `access_token` プロパティに `refresh_token` が返されます。
+
+```json
+{
+  "token_type": "N_A",
+  "expires_in": 2592000,
+  "access_token": "4SsoXJDBgcq0xxxxxxYn2K-p5l_GCdo",
+  "scope": "openid offline_access",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:refresh_token"
+}
+```
+
+`refresh_token` を ID-JAG と交換するには、以下のパラメータを指定して、IdP の `/token` エンドポイントに対して別の[トークン交換リクエスト](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange)を行います。
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&subject_token_type=urn:ietf:params:oauth:token-type:refresh_token
+&audience={{YOUR_AUTH0_TENANT_ISSUER_URL}}
+&scope={{YOUR_AUTH0_API_SCOPE}}
+&subject_token={{REFRESH_TOKEN}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| **パラメータ**               | **説明**                                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | グラントタイプ。トークン交換のグラントタイプである `urn:ietf:params:oauth:grant-type:token-exchange` に設定します。                                              |
+| `requested_token_type`  | クライアントが認可サーバーから受け取るトークンの種類。Identity Assertion Authorization Grant (ID-JAG) である `urn:ietf:params:oauth:token-type:id-jag` に設定します。 |
+| `subject_token_type`    | `subject_token` パラメータで指定するトークンの種類。`urn:ietf:params:oauth:token-type:refresh_token` に設定します。                                       |
+| `audience`              | 最終的なトークンの対象受信者。Auth0 テナントの発行者 URL、またはその URL に認可サーバーがある Resource App に設定します。                                                      |
+| `scope`                 | 任意。クライアントがアクセスする Resource App の API スコープ。認可サーバーが最終的なアクセストークンを発行する際に、これらのスコープが含まれます。                                              |
+| `subject_token`         | SAML アサーションとの交換で取得した `refresh_token`。                                                                                            |
+| `client_id`             | トークン交換リクエストを行う エンタープライズ IdP 内の Requesting App のクライアント ID。                                                                      |
+| `client_secret`         |  (任意) Requesting App が エンタープライズ IdP に対して認証を行うために使用するクライアントシークレット。                                                              |
+| `client_assertion`      |  (任意) Private Key JWT により Requesting App を認証する際に使用できるクライアントアサーション。                                                               |
+| `client_assertion_type` |  (任意) クライアントアサーションの種類。Private Key JWT の場合は、`urn:ietf:params:oauth:client-assertion-type:jwt-bearer` に設定します。                      |
+
+IdP クライアントが confidential の場合、`client_secret` または `client_assertion` のいずれかが Form Post または HTTP ヘッダーで送信されます。そのため、両者は同時に使用できず、任意としてマークされています。
+
+この呼び出しのレスポンスには、`access_token` プロパティ内に ID-JAG が含まれます。
+
+```json
+{
+  "token_type": "N_A",
+  "expires_in": 300,
+  "access_token": "eyJraWQiOiJFeEwySxxxx",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:id-jag"
+}
+```
+
+ID-JAG は、次のような JWT 形式です。
+
+```json
+{
+  "jti": "IDAAG.jrdCpdgazbi52j3UxXT_MqgAUMW2n57EZq8RG0ucRnU",
+  "iss": "https://integrator-4598441.okta.com",
+  "aud": "https://amin.jp.auth0.com/",
+  "iat": 1784620622,
+  "exp": 1784620922,
+  "sub": "00u14j584jskYLAVs698",
+  "email": "test-xaa@example.com",
+  "client_id": "Josz8cBBCWKA6Q7CkhyhYjbKY4hqjXMG",
+  "sub_profile": "user",
+  "scope": "read",
+  "act": {
+    "sub": "wlp15fk3702lJwVLG698",
+    "sub_profile": "ai_agent"
+  },
+  "sub_id": {
+    "format": "saml-nameid",
+    "issuer": "http://www.okta.com/exk15fjrhugHeRpO1698",
+    "nameid": "test-xaa@example.com",
+    "nameid_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+  }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Resource App が SAML アプリケーションの場合、ID-JAG には標準の `sub` クレームに加え、認証済みユーザーの SAML `NameID` の詳細 (`format`、`issuer`、`nameid`、`nameid_format`) を含む `sub_id` クレームも含まれます。
+</Callout>
+
+<div id="oidc-requesting-app">
+  ### OIDC Requesting App
+</div>
+
+まず、IdP テナントを使用して Requesting App にログインします。ログインに成功すると、IdP は認可コードとともにブラウザを Requesting App にリダイレクトします。次に、Requesting App は認可コードを安全に アクセストークン と ID トークンに交換します。
+
+<div align="center">
+  ID トークン =&gt; ID-JAG
+</div>
+
+ID トークンを ID-JAG に交換するため、Requesting App は次のパラメータを指定して、IdP の `/token` エンドポイントに[トークン交換リクエスト](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange)を送信します。
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&subject_token_type=urn:ietf:params:oauth:token-type:id_token
+&audience={{YOUR_AUTH0_TENANT_ISSUER_URL}}
+&scope={{YOUR_AUTH0_API_SCOPE}}
+&subject_token={{IDP_ID_TOKEN}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| **パラメータ**               | **説明**                                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | グラントタイプ。トークン交換用のグラントタイプ `urn:ietf:params:oauth:grant-type:token-exchange` に設定します。                                                |
+| `requested_token_type`  | クライアントが認可サーバーから受け取るトークンの種類。Identity Assertion Authorization Grant (ID-JAG) である `urn:ietf:params:oauth:token-type:id-jag` に設定します。 |
+| `client_assertion_type` |  (任意) クライアントアサーションの種類。Private Key JWT を使用する場合は、`urn:ietf:params:oauth:client-assertion-type:jwt-bearer` に設定します。                  |
+| `subject_token_type`    | `subject_token` パラメータで指定するトークンの種類。XAA では、ID トークンを認可サーバーに提示することを示します。                                                             |
+| `audience`              | 最終トークンの対象受信者。**Auth0 テナントの発行者 URL**、または認可サーバーがその URL にある Resource App に設定します。                                                    |
+| `scope`                 | 任意。クライアントがアクセスする Resource App の API スコープ。認可サーバーは、最終的なアクセストークンを発行する際にこれらのスコープを含めます。                                               |
+| `subject_token`         | クライアントが交換するトークン。XAA では、サブジェクトトークンはユーザーのアイデンティティを証明する「proof」または「assertion」です。IdP がユーザーのアイデンティティを検証するために使用する IdP ID トークンに設定します。    |
+| `client_id`             | トークン交換リクエストを行う、エンタープライズ IdP 内の Requesting App のクライアント ID。                                                                      |
+| `client_secret`         |  (任意) Requesting App が エンタープライズ IdP に対して自身を認証するために使用するクライアントシークレット。                                                            |
+| `client_assertion`      |  (任意) Private Key JWT を使用して Requesting App を認証するために使用するクライアントアサーション。                                                             |
+
+IdP クライアントが confidential の場合、`client_secret` または `client_assertion` のいずれかを Form Post または HTTP ヘッダーで送信します。そのため、これらは相互排他的であり、任意としてマークされています。
+
+<div id="send-id-jag-to-auth0s-token-endpoint">
+  ## ID-JAG を Auth0 の `/token` エンドポイントに送信する
+</div>
+
+Requesting App は ID-JAG を取得した後、[アクセストークンリクエスト](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-access-token-request)を Auth0 テナントの `/token` エンドポイントに送信します。
+
+```bash
+POST https://{{YOUR_AUTH0_TENANT_DOMAIN}}/oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+&client_id={{REQUESTING_APP_CLIENT_ID_IN_AUTH0}}
+&client_secret={{REQUESTING_APP_CLIENT_SECRET_IN_AUTH0}}
+&resource={{AUTH0_API_IDENTIFIER}}
+&assertion={{ID_JAG}}
+```
+
+| **パラメータ**               | **説明**                                                                                                                                                                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | グラントタイプです。認可サーバーに、request の主要な認証情報として JSON Web トークン (JWT) が送信されることを示します。                                                                                                                                                                                          |
+| `client_id`             | API call を行う、Resource App の認可サーバーにおける Requesting App のクライアント ID です。                                                                                                                                                                                               |
+| `assertion`             | アイデンティティアサーションの bearer となる ID-JAG または JSON Web トークン (JWT) です。                                                                                                                                                                                                     |
+| `resource`              |  (任意) Auth0 テナント内のリソースサーバー (API) のリソース識別子です。ID-JAG アサーションに `resource` クレームが含まれている場合、その値がこのパラメータより優先されます。ID-JAG または request body にリソースが指定されていない場合は、テナントの[デフォルトの audience](https://auth0.com/docs/get-started/tenant-settings#api-authorization-settings)が使用されます。 |
+| `client_secret`         |  (任意) API call を行う、Resource App の認可サーバーにおける Requesting App のクライアントシークレットです。                                                                                                                                                                                       |
+| `client_assertion`      |  (任意) Private Key JWT を使用して Requesting App を認証するために使用できるクライアントアサーションです。                                                                                                                                                                                           |
+| `client_assertion_type` |  (任意) クライアントアサーションのタイプです。Private Key JWT の場合は、`urn:ietf:params:oauth:client-assertion-type:jwt-bearer` に設定します。                                                                                                                                                    |
+
+Requesting App が confidential client の場合、`client_secret` または `client_assertion` のいずれかが form post または HTTP ヘッダーで送信されます。そのため、両者は相互排他的であり、任意としてマークされています。
+
+Auth0 認可サーバーは、ユーザーのアイデンティティを確認するために ID-JAG を検証した後、Auth0 テナント内の API 用のアクセストークンを発行します。アクセストークンには、Auth0 テナントで設定されたロールベースのアクセス制御やその他のポリシーで許可された、request した スコープ も含まれます。
+
+Auth0 認可サーバーは、ID-JAG token exchange への応答としてリフレッシュトークンを発行しません。そのため、Requesting App が XAA を介して新しいアクセストークンを取得するには、enterprise IdP から新しい ID-JAG を取得し、該当するアクセス制御を受ける必要があります。
+
+<div id="learn-more">
+  ## 詳しくはこちら
+</div>
+
+XAAフローをテストするには、以下のリソースをご利用ください。
+
+* [Auth0 Cross App Access Inspector](https://github.com/auth0-samples/auth0-cross-app-access-inspector): OktaとAuth0間のXAAフローをテストするためのシンプルなNode.jsアプリケーションです。
+* [XAA.dev](https://xaa.dev/): ブラウザーでCross App Accessをテストできるオンラインsandboxです。

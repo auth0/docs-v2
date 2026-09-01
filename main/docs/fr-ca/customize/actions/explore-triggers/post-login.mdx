@@ -1,0 +1,271 @@
+---
+title: "Post Login"
+description: Découvrez les Actions Post Login, qui s’exécutent après la connexion d’un utilisateur et lorsqu’un Refresh Token est demandé. Elles permettent de contrôler l’accès, d’enrichir les jetons et les profils utilisateur, et d’appliquer des politiques MFA personnalisées.
+---
+
+Le déclencheur `post-login` s’exécute lorsqu’un utilisateur s’authentifie avec succès auprès d’une application dans un tenant Auth0, notamment après une inscription, ou lorsqu’un <Tooltip tip="Refresh Token : jeton utilisé pour obtenir un Access Token renouvelé sans obliger les utilisateurs à se connecter de nouveau." cta="Voir le glossaire" href="/docs/fr-ca/glossary?term=Refresh+Token">Refresh Token</Tooltip> est échangé.
+
+<Frame>![Schéma illustrant le Login Flow des Actions.](/docs/images/cdy7uua7fh8z/2SkfIOm4fFOJ8N0GNJwam8/77230cdb4411b2383751b037fb56fe29/2024-09-30_10-01-42.png)</Frame>
+
+Les Actions de ce flow sont bloquantes (synchrones) : elles s’exécutent dans le cadre du processus du déclencheur et empêchent le reste du pipeline Auth0 de s’exécuter jusqu’à ce que l’Action soit terminée.
+
+<div id="references">
+  ## Références
+</div>
+
+* [Objet Event](/docs/fr-ca/customize/actions/reference/post-login/post-login-event-object) : fournit des renseignements contextuels sur un utilisateur qui se connecte à l’aide d’Auth0.
+* [Objet API](/docs/fr-ca/customize/actions/reference/post-login/post-login-api-object) : fournit des méthodes pour modifier le comportement du flux.
+
+<div id="common-use-cases">
+  ## Cas d’utilisation courants
+</div>
+
+<div id="access-control">
+  ### Contrôle d’accès
+</div>
+
+Vous pouvez utiliser une Action post-login pour mettre en œuvre une logique personnalisée afin de rejeter l’accès d’un utilisateur qui tente d’accéder à une application :
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il ouvre une session.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement du processus de connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.user.email && event.user.email.endsWith("@example.com") && event.client.name === "My SPA") {
+    api.access.deny(`Access to ${event.client.name} is not allowed.`);
+  }
+};
+```
+
+<div id="allow-access-only-on-weekdays-for-a-specific-application">
+  ### Autoriser l’accès à une application précise uniquement les jours de semaine
+</div>
+
+Si vous avez une application à laquelle vous souhaitez limiter l’accès aux jours de semaine, vous pouvez créer l’Action suivante :
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.client.name === "APP_NAME") {
+    const d = new Date().getDay();
+
+    if (d === 0 || d === 6) {
+      api.access.deny("This app is only available during the week.");
+    }
+  }
+};
+```
+
+<div id="deny-access-to-anyone-calling-an-api">
+  ### Rejeter l’accès à toute personne qui appelle une API
+</div>
+
+Supposons que vous souhaitiez rejeter l’accès à tous les utilisateurs qui appellent une API. Vous devez alors rejeter l’accès en fonction de la valeur de l’<Tooltip tip="Audience : identifiant unique du destinataire d’un jeton émis. Nommée aud dans un jeton, sa valeur contient l’ID d’une application (Client ID) pour un ID Token ou d’une API (API Identifier) pour un Access Token." cta="Voir le glossaire" href="/docs/fr-ca/glossary?term=audience">audience</Tooltip> de votre API, que vous trouverez dans le champ **API Audience** de votre API, sous [Dashboard &gt; Applications &gt; APIs](https://manage.auth0.com/#/apis). Pour ce faire, créez l’Action suivante :
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Dans Actions, une API est appelée un serveur de ressources.
+  if (event.resource_server && event.resource_server.identifier === "http://todoapi2.api") {
+    api.access.deny("end_users_not_allowed");
+  }
+};
+```
+
+<div id="add-user-roles-to-id-and-access-tokens">
+  ### Ajouter les rôles utilisateur aux jetons d’ID et d’accès
+</div>
+
+Pour ajouter des rôles utilisateur aux jetons émis par Auth0, utilisez l’objet `event.authorization` ainsi que les méthodes `api.idToken.setCustomClaim` et `api.accessToken.setCustomClaim` :
+
+```javascript lines
+/**
+ * @param {Event} event - Informations sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  const namespace = 'https://my-app.example.com';
+  if (event.authorization) {
+    api.idToken.setCustomClaim(`${namespace}/roles`, event.authorization.roles);
+    api.accessToken.setCustomClaim(`${namespace}/roles`, event.authorization.roles);
+  }
+};
+```
+
+<Note>
+  * Une revendication personnalisée ne peut pas inclure certains termes. Nous recommandons fortement d’utiliser une revendication avec espace de noms sous la forme d’un URI. Pour en savoir plus, consultez [Create Custom Claims](/docs/fr-ca/secure/tokens/json-web-tokens/create-custom-claims).
+  * Le <Tooltip tip="JSON Web Token (JWT) : format standard de jeton ID (et souvent de jeton d’accès) utilisé pour représenter de façon sécurisée des revendications entre deux parties." cta="Voir le glossaire" href="/docs/fr-ca/glossary?term=JWT">JWT</Tooltip> renvoyé à l’application demandeuse est créé et signé à la fin du traitement du déclencheur. Le JWT final signé n’est pas accessible dans une Action.
+</Note>
+
+<div id="enrich-the-user-profile">
+  ### Enrichir le profil utilisateur
+</div>
+
+Auth0 offre un système permettant de stocker des métadonnées dans un [profil utilisateur](/docs/fr-ca/manage-users/user-accounts/user-profiles/normalized-user-profiles). Pour définir `user_metadata` ou `app_metadata` dans le profil d’un utilisateur lors de sa connexion, utilisez les fonctions `api.user.setUserMetadata` ou `api.user.setAppMetadata` :
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  api.user.setUserMetadata("favorite_color", "blue");
+};
+```
+
+Une fois toutes les Actions post-connexion exécutées, le profil utilisateur sera mis à jour en une seule opération. Cette opération est soumise à la limite de débit &quot;Write Users&quot; [rate limit](/docs/fr-ca/troubleshoot/customer-support/operational-policies/rate-limit-policy/management-api-endpoint-rate-limits).
+
+<div id="enforce-custom-mfa-policy">
+  ### Appliquer une politique MFA personnalisée
+</div>
+
+Une Action post-login peut servir à exiger dynamiquement la <Tooltip tip="Authentification multifacteur (MFA) : processus d’authentification des utilisateurs qui utilise un facteur supplémentaire, comme un code par SMS, en plus du nom d’utilisateur et du mot de passe." cta="Voir le glossaire" href="/docs/fr-ca/glossary?term=MFA">MFA</Tooltip> pour un utilisateur selon les besoins de votre application :
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Exiger MFA pour toute personne se connectant depuis l’Amérique du Nord.
+  if (event.request.geoip.continentCode === "NA") {
+    api.multifactor.enable("any");
+  };
+};
+```
+
+Un fournisseur MFA doit être configuré pour activer l’authentification multifacteur lors d’une connexion. Pour en savoir plus, consultez [l’authentification multifacteur](/docs/fr-ca/secure/multi-factor-authentication).
+
+<div id="reduce-friction-with-passkeys">
+  ### Réduire les frictions grâce aux passkeys
+</div>
+
+Une Action post-login peut réduire les frictions en contournant dynamiquement la MFA pour un utilisateur qui s’est authentifié à l’aide d’une passkey :
+
+```javascript lines
+/**
+ * @param {Event} event - Renseignements sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Vérifier si une clé d’accès a été utilisée pour authentifier l’utilisateur
+  const skipMFA = event.authentication?.methods.some(
+    (method) => method.name === "passkey"
+  );
+
+  // Si une clé d’accès a été utilisée, ignorer la MFA
+  if (skipMFA) {
+    api.multifactor.enable("none");
+  }
+};
+```
+
+La connexion doit avoir les passkeys et la MFA activées. Pour en savoir plus, consultez [Passkeys](/docs/fr-ca/authenticate/database-connections/passkeys) et [Multi-Factor Authentication](/docs/fr-ca/secure/multi-factor-authentication).
+
+<div id="redirect-the-user-to-an-external-site">
+  ### Rediriger l’utilisateur vers un site externe
+</div>
+
+À l’instar des [Redirect Rules](/docs/fr-ca/customize/rules/redirect-users), une Action post-login peut être utilisée pour rediriger l’utilisateur vers un site externe. Une fois l’opération terminée, l’utilisateur peut être redirigé vers Auth0 pour poursuivre son login flow. Dans l’exemple ci-dessous, une Redirect Action invite l’utilisateur à indiquer sa couleur préférée :
+
+```javascript lines expandable
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Ignorer la redirection si l’utilisateur a déjà choisi une couleur préférée.
+  if (event.user.user_metadata.favorite_color) {
+    return;
+  }
+
+  const token = api.redirect.encodeToken({
+    secret: event.secrets.MY_SHARED_SECRET,
+    payload: {
+      email: event.user.email,
+    },
+  });
+
+  // Envoyer l’utilisateur vers https://my-app.example.com avec
+  // un paramètre de chaîne de requête `session_token`.
+  api.redirect.sendUserTo("https://my-app.example.com", { 
+    query: { session_token: token }
+  });
+};
+
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  // Une fois l’endpoint /continue appelé, extraire le token signé
+  // et enregistrer la couleur préférée dans les métadonnées utilisateur.
+
+  const payload = api.redirect.validateToken({
+    secret: event.secrets.MY_SHARED_SECRET,
+  });
+
+  api.user.setUserMetadata("favorite_color", payload.favorite_color);
+};
+```
+
+Le pipeline Actions est suspendu pendant la redirection de l’utilisateur. Lorsque l’utilisateur poursuit son processus de connexion à Auth0, le pipeline Actions reprend là où il a été suspendu. Les Actions exécutées avant la redirection ne sont pas exécutées de nouveau.
+
+Pour en savoir plus sur les Actions de redirection, consultez [Redirection avec Actions](/docs/fr-ca/customize/actions/redirect-with-actions).
+
+<div id="modify-scopes-on-an-access-token">
+  ### Modifier les portées d’un jeton d’accès
+</div>
+
+Lorsque vous modifiez les portées associées à un <Tooltip tip="Jeton d’accès : justificatif d’autorisation, sous la forme d’une chaîne opaque ou d’un JWT, utilisé pour accéder à une API." cta="Voir le glossaire" href="/docs/fr-ca/glossary?term=access+token">jeton d’accès</Tooltip>, veillez à respecter les pratiques exemplaires relatives à la spécification de l’audience :
+
+* Vérifiez toujours que l’audience est celle attendue avant d’ajouter des portées.
+* N’utilisez pas d’entrées non fiables pour ajouter des portées.
+
+```javascript lines
+/**
+ * @param {Event} event - Détails sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (event?.resource_server?.identifier === 'https://example.com/api') {
+    api.accessToken.addScope("read:xyz");
+  }
+};
+```
+
+<div id="deny-access-to-specific-ja3ja4-fingerprints">
+  ### Rejeter l’accès en fonction d’empreintes JA3/JA4 précises
+</div>
+
+L’objet `event.security_context` contient les valeurs d’empreinte JA3/JA4 de la transaction en cours :
+
+```javascript lines
+/**
+ * @param {Event} event - Renseignements sur l’utilisateur et le contexte dans lequel il se connecte.
+ * @param {PostLoginAPI} api - Interface dont les méthodes permettent de modifier le comportement de la connexion.
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  const clientJa4 = event?.security_context?.ja4;
+  console.log('[ACTION]', {clientJa4});
+  const badFingerprints = ['t13d1517h2_8daaf6152771_b6f405a00624','t13d1516h2_8daaf6152771_d8a2da3f94cd'];
+  if (clientJa4 && badFingerprints.includes(clientJa4)){
+    api.access.deny('suspicious_tls_fingerprint', 'Your TLS fingerprint has been flagged as suspicious');
+  }
+};
+```
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Gérer les métadonnées utilisateur à l’aide du déclencheur d’action post-login](/docs/fr-ca/manage-users/user-accounts/metadata/manage-user-metadata)
+* [Rediriger avec les Actions](/docs/fr-ca/customize/actions/redirect-with-actions)
+* [Comprendre le fonctionnement des métadonnées dans les profils utilisateur](/docs/fr-ca/manage-users/user-accounts/metadata)

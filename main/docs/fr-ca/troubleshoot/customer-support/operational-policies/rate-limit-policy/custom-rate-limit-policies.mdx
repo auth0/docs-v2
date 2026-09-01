@@ -1,0 +1,483 @@
+---
+title: Politiques personnalisées de limite de débit
+description: Définissez des plafonds de limite de débit par application pour protéger votre tenant contre les applications mal configurées ou défaillantes.
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-ca/ReleaseStageNotice.jsx"
+import { AuthCodeGroup } from "/snippets/fr-ca/AuthCodeGroup.jsx"
+
+<ReleaseStageNotice feature="Politiques personnalisées de limite de débit" stage="ea" terms="true" contact="Auth0 Support" />
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les politiques personnalisées de limite de débit sont offertes dans tous les environnements de cloud public.
+</Callout>
+
+Les politiques personnalisées de limite de débit vous permettent de définir des plafonds de requêtes par application pour les appels de votre tenant à l’[API d’authentification](https://auth0.com/docs/api/authentication). Lorsqu’une application appelle Auth0 (pour demander des jetons, démarrer des flux d’autorisation ou actualiser des identifiants), chaque requête est comptabilisée dans la limite configurée pour cette application. Si une application dépasse son plafond en raison d’un bogue, d’une boucle de tentatives ou d’un comportement inattendu, Auth0 limite son débit avant qu’elle ne puisse consommer la capacité partagée de limite de débit de votre tenant.
+
+Vous pouvez appliquer des politiques personnalisées de limite de débit aux applications de première partie comme aux applications tierces dont vous ne contrôlez pas directement le comportement.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les politiques personnalisées de limite de débit constituent des plafonds de sécurité, et non des mécanismes de répartition de capacité. Elles ne visent pas à répartir uniformément la limite de débit totale de votre tenant entre les applications. Définissez-les assez haut pour que le trafic normal ne les déclenche jamais, mais assez bas pour qu’une application défaillante soit détectée avant d’avoir une incidence sur votre tenant.
+</Callout>
+
+<div id="how-custom-rate-limits-relate-to-tenant-rate-limits">
+  ## Comment les limites de débit personnalisées s’articulent avec les limites de débit du tenant
+</div>
+
+Votre tenant dispose d’une [limite de débit globale d’authentification](/docs/fr-ca/troubleshoot/customer-support/operational-policies/rate-limit-policy) établie selon votre forfait d’abonnement. Les politiques de limite de débit personnalisées ajoutent un plafond *par application*, inférieur à cette limite globale. Les deux niveaux fonctionnent de concert :
+
+* Chaque requête qui réussit la vérification de la limite de débit personnalisée est tout de même comptabilisée dans la limite de débit globale de votre tenant.
+* Si une application dépasse sa limite personnalisée, Auth0 lui renvoie le code HTTP 429. La requête rejetée n’est pas comptabilisée dans la limite de débit globale de votre tenant.
+* Si la limite globale de votre tenant est atteinte en premier, toutes les applications sont limitées, même si elles respectent leurs limites personnalisées.
+
+Les limites de débit personnalisées empêchent des applications individuelles de consommer une part disproportionnée de la capacité globale de votre tenant. Elles n’augmentent pas son débit total.
+
+<div id="how-policy-evaluation-works">
+  ## Fonctionnement de l’évaluation des politiques
+</div>
+
+Auth0 évalue les politiques personnalisées de limite de débit selon une hiérarchie stricte, de la plus spécifique à la plus générale. Le premier niveau correspondant est appliqué, et tous les niveaux plus généraux sont ignorés.
+
+1. **ID client** : Politique ciblant une application précise à l’aide de son ID client. Si une politique correspondante existe, l’évaluation s’arrête ici.
+2. **Groupe** : Profils regroupés (comme les applications tierces ou CIMD) auxquels s’applique une seule limite partagée pour le trafic *combiné* de toutes les applications du groupe. Toutes les applications du groupe utilisent la même politique. Il n’y a aucune répartition par application au sein du groupe. Si l’application appartient à un groupe doté d’une politique, l’évaluation s’arrête ici.
+3. **Globale / Par défaut** : Politique de solution de secours qui s’applique à toute application non couverte par une politique d’ID client ou de groupe. Chaque application dispose de sa propre politique indépendante à la limite configurée. La limite est partagée, mais les politiques ne le sont pas. Cela signifie que chaque application est évaluée séparément selon le même plafond.
+
+Cette hiérarchie protège à la fois contre les applications individuelles qui se comportent mal et les hausses de trafic globales provenant de catégories entières d’applications.
+
+<div id="pooled-counters-group-policies">
+  ### Compteurs communs (Politiques de groupe)
+</div>
+
+Les politiques de groupe utilisent un seul compteur commun pour toutes les applications du groupe. Chaque requête provenant d’un membre du groupe puise dans le même bucket.
+
+Par exemple, si vous créez une politique de groupe appelée « Clients tiers » avec une limite de 100 RPS et que le groupe contient cinq applications, la limite de 100 RPS s’applique à leur trafic combiné. Si une application envoie 90 RPS et que les autres en envoient 5 RPS chacune, le groupe atteint sa limite (90 + 5 + 5 + 5 + 5 = 110 RPS). Auth0 limite les requêtes suivantes provenant de n’importe quelle application du groupe. Aucune allocation par application n’est garantie au sein du groupe.
+
+Si une application tierce nécessite un traitement différent, attribuez-lui une politique d’ID client, qui prévaut sur la limite du groupe.
+
+<div id="third-party-apps-vs-cimd-clients">
+  #### Applications tierces et clients CIMD
+</div>
+
+Bien que les applications enregistrées à l’aide du [ID client Metadata Document (CIMD)](/docs/fr-ca/get-started/auth0-overview/create-applications/register-applications-with-cimd#register-applications-with-cimd) soient techniquement des applications tierces, Auth0 les classe dans un groupe distinct de celui des applications tierces traditionnelles. Il existe donc deux groupes distincts :
+
+* **Applications tierces** (préfixe d’ID client : `tpa_`) : applications tierces traditionnelles, y compris celles créées au moyen de la Management API ou de Dynamic Client Registration (DCR).
+* **Clients CIMD** (préfixe d’ID client : `https://`) : applications créées au moyen de ID client Metadata Document.
+
+Chaque groupe possède son propre compteur commun. Le trafic provenant des clients CIMD n’est pas pris en compte dans la limite du groupe des applications tierces, et vice versa. Vous pouvez déterminer à quel groupe appartient une application grâce au préfixe de son ID client.
+
+<div id="independent-counters-global-default-policies">
+  ### Compteurs indépendants (politiques globales/par défaut)
+</div>
+
+Les politiques globales utilisent des compteurs indépendants. Chaque application possède son propre compteur, évalué en fonction du même plafond configuré. Les applications ne se font pas concurrence pour la capacité.
+
+Par exemple, si vous définissez une politique globale par défaut de 50 RPS : l’application A peut envoyer 50 RPS, l’application B peut envoyer 50 RPS et l’application C peut envoyer 50 RPS, chacune indépendamment. Le fait que l’application A atteigne sa limite n’a aucune incidence sur les applications B ou C. Une application n’est limitée que lorsqu’elle dépasse elle-même 50 RPS.
+
+Utilisez les politiques de groupe lorsque vous devez plafonner la charge *globale* provenant d’une catégorie d’applications (comme des intégrations tierces dont le trafic combiné pourrait surcharger votre tenant). Utilisez la politique globale par défaut lorsque vous avez besoin d’un plafond de sécurité uniforme par application, sans coordination entre elles.
+
+<div id="requests-that-count-toward-custom-rate-limits">
+  ## Requêtes prises en compte dans les limites de débit personnalisées
+</div>
+
+Les politiques de limite de débit personnalisées comptabilisent les requêtes de l’API d’authentification associées au `client_id` d’une application. Auth0 comptabilise une requête lorsque l’application contrôle si elle est effectuée et à quelle fréquence, même si le navigateur de l’utilisateur final est le client HTTP qui l’envoie.
+
+| Endpoint                         | Chemin                 | Notes                                                                                                                                             |
+| -------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Requête de jeton                 | `/oauth/token`         | Requête back-channel provenant de votre serveur d’application.                                                                                    |
+| Requête d’autorisation           | `/authorize`           | L’application construit cette URL et déclenche la redirection. Bien que le navigateur exécute la requête, l’application en contrôle la fréquence. |
+| Requêtes de code d’appareil      | `/oauth/device/code`   | Requête back-channel pour démarrer l’autorisation de l’appareil.                                                                                  |
+| Démarrage Passwordless           | `/passwordless/start`  | Requête back-channel pour lancer une connexion Passwordless.                                                                                      |
+| Vérification Passwordless        | `/passwordless/verify` | Requête back-channel pour vérifier un code Passwordless.                                                                                          |
+| Requêtes d’autorisation poussées | `/oauth/par`           | Requête back-channel pour transmettre les paramètres d’autorisation.                                                                              |
+| Révocation de jeton              | `/oauth/revoke`        | Requête back-channel pour révoquer un jeton.                                                                                                      |
+| Autorisation back-channel (CIBA) | `/bc-authorize`        | Requête back-channel pour lancer un flux d’autorisation CIBA.                                                                                     |
+| Authentification cross-origin    | `/co/authenticate`     | Requête back-channel pour l’authentification cross-origin.                                                                                        |
+| Challenge de passkey             | `/passkey/challenge`   | Requête back-channel pour lancer un challenge d’authentification par passkey.                                                                     |
+| Enregistrement de passkey        | `/passkey/register`    | Requête back-channel pour enregistrer une nouvelle passkey.                                                                                       |
+
+<div id="custom-rate-limit-exclusions">
+  ## Exclusions des limites de débit personnalisées
+</div>
+
+Une fois qu’Auth0 lance un flux d’authentification (après `/authorize`), le navigateur de l’utilisateur final interagit directement avec Auth0 pour terminer la connexion. Ces requêtes suivantes (affichage de la page de connexion, envoi des identifiants, exécution des vérifications MFA) ne sont pas prises en compte dans les limites de débit personnalisées. L’application n’est pas à l’origine de ces requêtes et ne peut en contrôler ni la fréquence ni le moment.
+
+Par exemple, dans un flux de connexion typique :
+
+1. Votre application redirige l’utilisateur vers `/authorize` → **comptabilisée** (votre application en est à l’origine).
+2. Auth0 affiche la page de connexion → **non comptabilisée** (du navigateur vers Auth0, hors du contrôle de votre application).
+3. L’utilisateur envoie ses identifiants → **non comptabilisée**.
+4. L’utilisateur effectue une vérification MFA → **non comptabilisée**.
+5. Auth0 redirige l’utilisateur avec un code d’autorisation → **non comptabilisée**.
+6. Votre application échange le code à `/oauth/token` → **comptabilisée** (votre application en est à l’origine).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Comme les requêtes lancées par le navigateur sont exclues, les politiques de limites de débit personnalisées réduisent, sans toutefois éliminer, le risque d’attaques qui épuisent les limites de débit de l’ensemble du tenant en déclenchant des flux d’authentification complets. Pour vous protéger contre ces types d’attaques, consultez [Protection contre les attaques](/docs/fr-ca/secure/attack-protection).
+</Callout>
+
+<div id="log-only-mode">
+  ## Mode journalisation uniquement
+</div>
+
+Lorsque vous activez le mode journalisation uniquement pour une politique, Auth0 surveille les requêtes par rapport à la limite configurée et génère des événements de journal `api_limit` avec `action: log`, sans toutefois renvoyer de réponses HTTP 429. Le trafic continue de circuler normalement.
+
+Utilisez le mode journalisation uniquement pour :
+
+* Valider qu’une nouvelle limite est adéquatement définie avant de bloquer le trafic.
+* Identifier les applications qui seraient touchées par une modification de politique.
+* Établir des profils de trafic de référence pour une application ou un groupe.
+
+Vous pouvez à tout moment faire passer une politique du mode journalisation uniquement au mode appliqué, ou inversement, sans avoir à la recréer.
+
+<div id="choose-a-rate-limit-value">
+  ## Choisir une valeur de limite de débit
+</div>
+
+La limite appropriée dépend de votre contrôle sur les schémas de trafic de l’application.
+
+<div id="first-party-applications-client-id-policies">
+  ### Applications de première partie (politiques d’ID client)
+</div>
+
+Pour les applications que vous possédez et exploitez, vous pouvez mesurer directement le trafic :
+
+1. Activez le **mode journalisation uniquement** dans la politique.
+2. Observez les tendances des requêtes de l’application pendant 3 à 7 jours.
+3. Examinez les [événements de journal `api_limit`](/docs/fr-ca/deploy-monitor/logs/log-event-type-codes) afin d’identifier les taux de requêtes de pointe.
+4. Fixez la limite à 2 à 3 fois le pic observé. Par exemple, si une application atteint un pic de 10 RPS, fixez sa limite entre 20 et 30 RPS.
+
+Comme vous contrôlez le code de l’application, vous pouvez anticiper l’évolution du trafic et ajuster la limite de manière proactive lorsque vous déployez des changements qui augmentent le volume de requêtes.
+
+<div id="third-party-applications-group-or-global-policies">
+  ### Applications tierces (politiques de groupe ou globales)
+</div>
+
+Pour les applications que vous ne contrôlez pas, comme les intégrations de partenaires, les applications créées par des clients ou les connecteurs du Marketplace, vous ne pouvez pas prévoir les habitudes de trafic à l’avance. Définissez des limites en fonction de ce que votre tenant peut absorber en toute sécurité :
+
+1. Calculez le nombre maximal de RPS que votre tenant peut tolérer d’une seule source sans nuire aux autres applications.
+2. Fixez la limite à ce seuil ou en deçà.
+3. Activez le **mode journalisation uniquement** pour valider la limite par rapport au trafic réel avant de l’appliquer.
+4. Surveillez les événements `api_limit` et ajustez les limites à mesure que les habitudes d’utilisation des applications tierces se dessinent.
+
+Comme vous ne pouvez pas contrôler le moment où les applications tierces modifient leur comportement, considérez ces limites comme des plafonds de protection plutôt que comme des cibles de performance.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  L’objectif est d’établir un plafond que le trafic normal n’atteint jamais. Si une application approche régulièrement de sa limite, celle-ci est trop basse. Augmentez-la et examinez les habitudes de trafic.
+</Callout>
+
+<div id="block-an-application-entirely">
+  ### Bloquer entièrement une application
+</div>
+
+Définir une limite de débit personnalisée à `0` bloque immédiatement toutes les requêtes de l’API d’authentification provenant de cette application, sans consommer de capacité de limite de débit. Utilisez cette option pour mettre hors service une application compromise ou qui présente de graves dysfonctionnements pendant que vous enquêtez.
+
+{/* ## Créer une politique de limite de débit personnalisée
+
+  <Tabs>
+  <Tab title="Application unique">
+
+  Définissez une limite de débit pour une application précise à l’aide de son ID client. Il s’agit du niveau de politique le plus précis et il prévaut sur les politiques de groupe et globales.
+
+  <Steps>
+    <Step title="Accéder aux paramètres de limite de débit">
+
+    Accédez à **Auth0 Dashboard > Sécurité > Limites de débit > Politiques personnalisées** et sélectionnez **Créer une politique**.
+
+    </Step>
+
+    <Step title="Sélectionner le type de politique">
+
+    Choisissez **Application unique** et sélectionnez l’application cible dans la liste déroulante.
+
+    </Step>
+
+    <Step title="Configurer la limite">
+
+    Définissez le plafond de requêtes par seconde. Utilisez une valeur correspondant à deux ou trois fois le débit de pointe prévu de l’application.
+
+    </Step>
+
+    <Step title="Activer le mode journalisation uniquement (recommandé)">
+
+    Activez **Journalisation uniquement** pour observer la politique sans l’appliquer. Surveillez les [événements `api_limit`](/docs/deploy-monitor/logs/log-event-type-codes) pendant 3 à 7 jours avant d’activer son application.
+
+    </Step>
+
+    <Step title="Enregistrer et activer">
+
+    Enregistrez la politique. Si le mode journalisation uniquement est désactivé, elle est appliquée immédiatement.
+
+    </Step>
+  </Steps>
+
+  </Tab>
+
+  <Tab title="Groupe d’applications">
+
+  Définissez une limite de débit partagée pour un groupe d’applications donné. La limite s’applique au trafic *agrégé* de toutes les applications du groupe.
+
+  <Steps>
+    <Step title="Accéder aux paramètres de limite de débit">
+
+    Accédez à **Auth0 Dashboard > Sécurité > Limites de débit > Politiques personnalisées** et sélectionnez **Créer une politique**.
+
+    </Step>
+
+    <Step title="Sélectionner le type de politique">
+
+    Choisissez **Groupe d’applications**, puis sélectionnez un groupe existant ou créez-en un nouveau (par exemple, « Clients tiers »).
+
+    </Step>
+
+    <Step title="Ajouter des applications au groupe">
+
+    Sélectionnez les applications qui appartiennent à ce groupe. Leur trafic combiné est comptabilisé dans un seul bucket partagé.
+
+    </Step>
+
+    <Step title="Configurer la limite">
+
+    Définissez le plafond de requêtes par seconde pour le trafic agrégé du groupe.
+
+    </Step>
+
+    <Step title="Activer le mode journalisation uniquement (recommandé)">
+
+    Activez **Journalisation uniquement** pour observer la politique sans l’appliquer. Surveillez les [événements `api_limit`](/docs/deploy-monitor/logs/log-event-type-codes) pendant 3 à 7 jours.
+
+    </Step>
+
+    <Step title="Enregistrer et activer">
+
+    Enregistrez la politique. Si le mode journalisation uniquement est désactivé, elle est appliquée immédiatement.
+
+    </Step>
+  </Steps>
+
+  </Tab>
+
+  <Tab title="politique globale par défaut">
+
+  Définissez une limite de débit par défaut qui s’applique à toutes les applications non couvertes par une politique d’ID client ou de groupe.
+
+  <Steps>
+    <Step title="Accéder aux paramètres de limite de débit">
+
+    Accédez à **Auth0 Dashboard > Sécurité > Limites de débit > Politiques personnalisées** et sélectionnez **Créer une politique**.
+
+    </Step>
+
+    <Step title="Sélectionner le type de politique">
+
+    Choisissez **Valeur par défaut globale**.
+
+    </Step>
+
+    <Step title="Configurer la limite">
+
+    Définissez le plafond de requêtes par seconde. Cette limite sert de valeur de repli pour toute application sans politique plus précise.
+
+    </Step>
+
+    <Step title="Activer le mode journalisation uniquement (recommandé)">
+
+    Activez **Journalisation uniquement** pour observer la politique sans l’appliquer. Surveillez les [événements `api_limit`](/docs/deploy-monitor/logs/log-event-type-codes) pendant 3 à 7 jours.
+
+    </Step>
+
+    <Step title="Enregistrer et activer">
+
+    Enregistrez la politique. Si le mode journalisation uniquement est désactivé, elle est appliquée immédiatement.
+
+    </Step>
+  </Steps>
+
+  </Tab>
+  </Tabs> */}
+
+<div id="create-a-custom-rate-limit-policy">
+  ## Créer une politique personnalisée de limite de débit
+</div>
+
+Pour créer une politique personnalisée de limite de débit à l’aide de la Management API, envoyez une requête [`POST /api/v2/rate-limit-policies`](/docs/fr-ca/api/management/v2/rate-limit-policies/post-rate-limit-policies) avec un jeton de la Management API doté de la portée `create:rate_limit_policies`.
+
+<Tabs>
+  <Tab title="Une seule application">
+    Définissez une limite de débit pour une application précise à l’aide de son ID client. Il s’agit du niveau de politique le plus précis, qui prévaut sur les politiques de groupe et globales.
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">Vous utilisez Auth0 CLI ? Si ce n&#39;est pas déjà fait, [configurez et authentifiez votre session CLI](/docs/fr-ca/deploy-monitor/auth0-cli) avant d’exécuter cette commande.</Callout>
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"client_id:YOUR_CLIENT_ID","configuration":{"action":"block","limit":50}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "client_id:YOUR_CLIENT_ID",
+          "configuration": {
+            "action": "block",
+            "limit": 50
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+
+    Pour activer le mode journalisation uniquement plutôt que d’appliquer la limite, définissez `action` sur `"log"`. Auth0 comptabilise les requêtes par rapport à la limite et génère des événements de journal `api_limit`, mais ne renvoie pas de réponses HTTP 429.
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"client_id:YOUR_CLIENT_ID","configuration":{"action":"log","limit":50}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "client_id:YOUR_CLIENT_ID",
+          "configuration": {
+            "action": "log",
+            "limit": 50
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+  </Tab>
+
+  <Tab title="Groupe d’applications">
+    Définissez une limite de débit commune pour un groupe d’applications intégré. Cette limite s’applique au trafic cumulé de toutes les applications du groupe. Auth0 prend en charge deux groupes intégrés :
+
+    * **`third_party_clients`** — toutes les [applications tierces](/docs/fr-ca/get-started/applications/third-party-applications) (préfixe du Client ID : `tpa_`)
+    * **`cimd_clients`** — tous les clients CIMD (préfixe du Client ID : `https://`)
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"third_party_clients","configuration":{"action":"block","limit":100}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "third_party_clients",
+          "configuration": {
+            "action": "block",
+            "limit": 100
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+
+    Pour appliquer la politique aux clients CIMD, définissez plutôt `consumer_selector` sur `"cimd_clients"`.
+  </Tab>
+
+  <Tab title="Politique globale par défaut">
+    Définissez une limite de débit par défaut qui s’applique à toute application non couverte par une politique basée sur l’ID client ou le groupe. Chaque application dispose de son propre compteur indépendant, tout en étant soumise au même plafond.
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">Vous utilisez l’Auth0 CLI ? Si ce n’est pas déjà fait, [configurez et authentifiez votre session CLI](/docs/fr-ca/deploy-monitor/auth0-cli) avant d’exécuter cette commande.</Callout>
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"default","configuration":{"action":"block","limit":50}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "default",
+          "configuration": {
+            "action": "block",
+            "limit": 50
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+  </Tab>
+</Tabs>
+
+<div id="monitor-via-logs">
+  ## Surveiller à l’aide des journaux
+</div>
+
+Utilisez les journaux du tenant pour observer l’incidence des politiques personnalisées de limite de débit sur le trafic :
+
+| Événement de journal | Description                                                                                                                                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_limit`          | Déclenché lorsqu’une limite de débit est dépassée. Pour les politiques personnalisées de limite de débit, l’événement de journal comprend le nom de la politique et le `client_id` de l’application concernée. |
+
+Auth0 émet ces événements de journal au plus une fois par minute pour chaque combinaison de politique et d’application. Si une application dépasse continuellement sa limite, vous verrez un événement `api_limit` par minute plutôt qu’un événement pour chaque requête rejetée. Cela empêche le volume de journaux d’augmenter pendant une surcharge prolongée.
+
+Pour afficher ces événements, accédez à **Auth0 Dashboard &gt; Monitoring &gt; Logs** et filtrez par type d’événement. Pour en savoir plus sur les champs des événements de journal, consultez [Codes de type d’événement de journal](/docs/fr-ca/deploy-monitor/logs/log-event-type-codes).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Le type d’événement `api_limit` est utilisé à la fois pour les politiques personnalisées de limite de débit et les limites de débit globales de votre tenant. Pour identifier les événements déclenchés par une politique personnalisée, consultez les détails de l’événement de journal afin d’y trouver le nom de la politique et le `client_id` cible. Les événements liés aux limites de débit globales ne comprennent pas de nom de politique.
+
+  Activez le mode de journalisation uniquement pour les nouvelles politiques afin d’observer leur incidence sans bloquer le trafic. Consultez les journaux après 3 à 7 jours, puis activez l’application de la limite une fois que vous avez confirmé qu’elle est correctement configurée.
+</Callout>
+
+<div id="monitor-via-http-response-headers">
+  ## Surveiller au moyen des en-têtes de réponse HTTP
+</div>
+
+Auth0 renvoie un en-tête de réponse `Auth0-RateLimit` pour toutes les requêtes évaluées par une politique personnalisée de limite de débit. Cet en-tête est propre aux politiques personnalisées de limite de débit et indique l&#39;état actuel du quota de l’application :
+
+```
+Auth0-RateLimit: client;q=10;t=1;r=9
+```
+
+| Paramètre | Description                                                             |
+| --------- | ----------------------------------------------------------------------- |
+| `client`  | L’entité de limite de débit (l’application identifiée par `client_id`). |
+| `q`       | Le quota configuré (requêtes par intervalle).                           |
+| `t`       | L’intervalle de réinitialisation en secondes.                           |
+| `r`       | Le nombre de requêtes restantes dans l’intervalle en cours.             |
+
+Lorsqu’une application dépasse sa limite de débit personnalisée, Auth0 renvoie une réponse HTTP `429 Too Many Requests` avec un en-tête `Retry-After` indiquant le nombre de secondes à attendre avant de réessayer.
+
+Le corps de la réponse contient une erreur JSON :
+
+```json
+{
+  "error": "too_many_requests",
+  "error_description": "Rate limit exceeded."
+}
+```
+
+Pour les requêtes `/authorize`, Auth0 ne renvoie pas de réponse d’erreur JSON, car elles proviennent d’une redirection du navigateur. Auth0 affiche plutôt une page d’erreur directement à l’utilisateur. Si vous activez l’option **Redirect** dans la politique, Auth0 redirige l’utilisateur vers une URL configurée au lieu d’afficher la page d’erreur.
+
+La limitation s’applique uniquement à l’application qui a dépassé sa limite. Les autres applications du même tenant ne sont pas touchées.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les en-têtes `X-RateLimit-*` (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) reflètent la [limite de débit globale](/docs/fr-ca/troubleshoot/customer-support/operational-policies/rate-limit-policy) de votre tenant, et non la limite de la politique personnalisée. Ces en-têtes apparaissent dans les réponses réussies et les réponses soumises à une limitation, mais indiquent toujours la capacité à l’échelle du tenant. Utilisez l’en-tête `Auth0-RateLimit` pour surveiller la consommation du quota de la politique personnalisée.
+</Callout>
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Politique de limite de débit](/docs/fr-ca/troubleshoot/customer-support/operational-policies/rate-limit-policy)
+* [Configurations de limite de débit](/docs/fr-ca/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations)
+* [Cas d’utilisation de la limite de débit](/docs/fr-ca/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-use-cases)
+* [Protection contre les attaques](/docs/fr-ca/secure/attack-protection)

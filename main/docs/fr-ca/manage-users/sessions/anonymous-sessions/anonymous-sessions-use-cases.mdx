@@ -1,0 +1,168 @@
+---
+title: Cas d’utilisation des sessions anonymes
+description: Découvrez des cas d’utilisation de sessions anonymes avec les Actions.
+sidebarTitle: Cas d’utilisation
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-ca/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Sessions anonymes" stage="bêta" terms="true" contact="Soutien Auth0" />
+
+Lorsqu’un utilisateur s’authentifie dans votre application, les sessions anonymes et les [Actions](/docs/fr-ca/customize/actions/actions-overview) vous permettent de transférer les données de sa session anonyme, comme le contenu du panier, les préférences et l’historique de navigation, vers son profil utilisateur authentifié.
+
+Vous pouvez faire référence à l’objet `event.anonymous_session` dans les Actions :
+
+```typescript theme={null}
+{
+  user_id: string;     // ID de l'utilisateur anonyme 
+  session_id: string;  // ID du jeton de session anonyme
+  created_at: number;  // horodatage de création de la session anonyme
+  expires_at: number;  // horodatage d'expiration de la session anonyme
+  metadata: {          // objet de métadonnées de la session anonyme
+    [key: string]: string
+  };
+}
+```
+
+<div id="anonymous-sessions-and-actions-use-cases">
+  ## Cas d’utilisation des sessions anonymes et des Actions
+</div>
+
+<div id="save-anonymous-session-metadata-to-a-new-user">
+  ### Enregistrer les métadonnées de session anonyme dans le profil d’un nouvel utilisateur
+</div>
+
+Vous pouvez utiliser un déclencheur d’Action [`pre-user-registration`](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger) pour copier les métadonnées anonymes dans le profil du nouvel utilisateur lorsqu’il s’inscrit :
+
+```javascript wrap lines
+exports.onExecutePreUserRegistration = async (event, api) => {
+  if (event.anonymous_session) {
+    // Conserver une référence à la session anonyme
+    api.user.setAppMetadata(
+      'linked_anonymous_id',
+      event.anonymous_session.user_id
+    );
+
+    // Migrer les données du panier
+    if (event.anonymous_session.metadata.cart) {
+      api.user.setAppMetadata(
+        'migrated_cart',
+        event.anonymous_session.metadata.cart
+      );
+    }
+
+    // Copier les préférences dans les métadonnées de l'utilisateur
+    if (event.anonymous_session.metadata.preferences) {
+      api.user.setUserMetadata(
+        'preferences',
+        event.anonymous_session.metadata.preferences
+      );
+    }
+  }
+};
+```
+
+<div id="save-anonymous-session-metadata-to-an-existing-user">
+  ### Enregistrer les métadonnées de session anonyme pour un utilisateur existant
+</div>
+
+Vous pouvez utiliser un déclencheur d’Action [`post-login`](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) pour enregistrer des métadonnées anonymes pour les utilisateurs existants lorsqu’ils se connectent :
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.anonymous_session) {
+    // Conserver la référence de la dernière session anonyme
+    api.user.setAppMetadata(
+      'last_anonymous_session',
+      event.anonymous_session.user_id
+    );
+
+    // Ajouter le panier anonyme à l'access token afin que votre API puisse le traiter
+    api.accessToken.setCustomClaim(
+      'anonymous_cart',
+      event.anonymous_session.metadata.cart
+    );
+
+    // Faire le suivi de toutes les sessions liées (facultatif)
+    const linkedSessions =
+      event.user.app_metadata?.linked_sessions || [];
+    if (!linkedSessions.includes(event.anonymous_session.user_id)) {
+      api.user.setAppMetadata('linked_sessions', [
+        ...linkedSessions,
+        event.anonymous_session.user_id,
+      ]);
+    }
+  }
+};
+```
+
+<div id="merge-user-metadata-with-anonymous-metadata">
+  ### Fusionner les métadonnées et anonymes
+</div>
+
+Vous pouvez utiliser un déclencheur d’Action [`post-login`](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) pour fusionner des métadonnées anonymes avec les métadonnées d’un utilisateur existant, par exemple les renseignements sur un panier, lorsqu’il se connecte :
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.anonymous_session?.metadata?.cart) {
+    return; // Aucun panier anonyme à fusionner
+  }
+
+  const anonymousCart = event.anonymous_session.metadata.cart;
+  const existingCart = event.user.app_metadata?.cart || { items: [] };
+
+  // Fusionner les articles du panier en additionnant les quantités des UGS identiques
+  const mergedItems = [...existingCart.items];
+  for (const anonItem of anonymousCart.items) {
+    const existingIndex = mergedItems.findIndex(
+      (item) => item.sku === anonItem.sku
+    );
+    if (existingIndex >= 0) {
+      mergedItems[existingIndex].qty += anonItem.qty;
+    } else {
+      mergedItems.push(anonItem);
+    }
+  }
+
+  api.user.setAppMetadata('cart', { items: mergedItems });
+  api.accessToken.setCustomClaim('cart', { items: mergedItems });
+};
+```
+
+<div id="handle-multiple-anonymous-sessions">
+  ### Gérer plusieurs sessions anonymes
+</div>
+
+Vous pouvez utiliser un déclencheur d’Action [`post-login`](/docs/fr-ca/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) pour gérer les métadonnées des sessions anonymes sur différents appareils lorsque l’utilisateur se connecte :
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.anonymous_session) return;
+
+  const linkedSessions =
+    event.user.app_metadata?.linked_sessions || [];
+
+  // Option 1 : conserver toutes les sessions liées
+  api.user.setAppMetadata('linked_sessions', [
+    ...linkedSessions,
+    {
+      user_id: event.anonymous_session.user_id,
+      linked_at: new Date().toISOString(),
+      device: event.request.user_agent,
+    },
+  ]);
+
+  // Option 2 : ne conserver que la plus récente
+  api.user.setAppMetadata('last_anonymous_session', {
+    user_id: event.anonymous_session.user_id,
+    metadata: event.anonymous_session.metadata,
+  });
+};
+```
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+* [Configurer les sessions anonymes](/docs/fr-ca/manage-users/sessions/anonymous-sessions/configure-anonymous-sessions) Découvrez comment configurer les sessions anonymes.
+* [Sessions anonymes](/docs/fr-ca/manage-users/sessions/anonymous-sessions) Découvrez les sessions anonymes.

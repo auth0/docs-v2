@@ -1,0 +1,136 @@
+---
+title: FAPI 準拠を設定する
+description: 財務グレード API のシナリオでより厳格なセキュリティ要件を適用するために、Auth0 アプリケーションの FAPI 1 または FAPI 2.0 準拠レベルを設定します。
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Highly Regulated Identity 機能を利用するには、Highly Regulated Identity アドオンを含む Enterprise プランが必要です。詳しくは [Auth0 Pricing](https://auth0.com/pricing/) を参照してください。
+</Callout>
+
+お客様が Auth0 テナントを Financial-grade API (FAPI) プロファイルのいずれかに準拠するよう設定できるように、アプリケーションモデルには `compliance_level` プロパティがあり、これに以下の値を設定できます。
+
+* `null` または undefined: 準拠レベルは不要です。これはデフォルトです。
+* `fapi1_adv_mtls_par`: このクライアントを、[mTLS](/docs/ja-jp/get-started/applications/configure-mtls) と [PAR](/docs/ja-jp/get-started/applications/configure-par) を使用する FAPI1 Advanced profile に準拠した動作にしたい場合に指定します。
+* `fapi1_adv_pkj_par`: このクライアントを、[Private Key JWT](/docs/ja-jp/get-started/applications/configure-private-key-jwt) と [PAR](/docs/ja-jp/get-started/applications/configure-par) を使用する FAPI1 Advanced profile に準拠した動作にしたい場合に指定します。
+* `fapi2_sp_pkj_mtls`: このクライアントを、[Private Key JWT](/docs/ja-jp/get-started/applications/configure-private-key-jwt) と [mTLS Token Sender-Constraining](/docs/ja-jp/secure/sender-constraining/mtls-sender-constraining) を使用する FAPI 2.0 Security Profile に準拠した動作にしたい場合に指定します。
+* `fapi2_sp_mtls_mtls`: このクライアントを、[mTLS Client Authentication](/docs/ja-jp/get-started/applications/configure-mtls) と [mTLS Token Sender-Constraining](/docs/ja-jp/secure/sender-constraining/mtls-sender-constraining) を使用する FAPI 2.0 Security Profile に準拠した動作にしたい場合に指定します。
+
+FAPI プロファイルに準拠するには、複数の設定変更が必要です。`compliance_level` を設定すると、認可リクエストと設定の両方が選択した標準に準拠していない限り、認可リクエストは成功しません。
+
+たとえば、`fapi1_adv_pkj_par` と `fapi1_adv_mtls_par` の準拠レベルでは、どちらも PAR が必要です。これらの準拠レベルのいずれかを選択した場合は、`require_pushed_authorization_requests` 設定の値にかかわらず、PAR が必須になります。PAR を使用せずに認可を試みると、次のエラーレスポンスが返されます。
+
+```json lines
+{
+  “error”: “invalid_request”,
+  “error_description”: “Pushed Authorization Requests are required by the configured compliance level” 
+}
+```
+
+場合によっては、準拠レベルを設定すると、Auth0 の動作も変わります。たとえば、`fapi1_adv_pkj_par` と `fapi1_adv_mtls_par` の両方の準拠レベルでは、返される <Tooltip tip="ID トークン: リソースへのアクセスではなく、クライアント自身のための認証情報です。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=ID+token">ID トークン</Tooltip> に、state 値の SHA256 ハッシュを含む `s_hash` クレームが追加されます。これにより、ID トークンをデタッチド署名として利用できます。
+
+次の表は、各準拠レベルで有効になる追加の検証ルールと、Auth0 の動作の変更点をまとめたものです。
+
+| 検証                                                                                              | `fapi1_adv_pkj_par` | `fapi1_adv_mtls_par` | `fapi2_sp_pkj_mtls` | `fapi2_sp_mtls_mtls` |
+| ----------------------------------------------------------------------------------------------- | ------------------- | -------------------- | ------------------- | -------------------- |
+| `/userinfo` の呼び出し時に、URL クエリでアクセストークンを使用できないようにします。代わりに、アクセストークンは Authorization ヘッダーに含める必要があります。 | Y                   | Y                    | Y                   | Y                    |
+| PAR が必要です。                                                                                      | Y                   | Y                    | Y                   | Y                    |
+| S256 チャレンジ方式の PKCE が必要です。                                                                       | Y                   | Y                    | Y                   | Y                    |
+| クライアントで許可されるコールバックにワイルドカードは使用できません。                                                             | Y                   | Y                    | N                   | N                    |
+| JAR の使用を必須にします。                                                                                 | Y                   | Y                    | N                   | N                    |
+| JAR ペイロードが PS256 アルゴリズムで署名されていることを保証します。                                                        | Y                   | Y                    | N                   | N                    |
+| JAR ペイロードに `nbf` クレームが含まれ、その値が過去 60 分以内であることを保証します。                                             | Y                   | Y                    | N                   | N                    |
+| JAR ペイロードに `exp` クレームが含まれ、その値が `nbf` クレームから 60 分以内であることを保証します。                                  | Y                   | Y                    | N                   | N                    |
+| クライアントで `oidc_conformant` プロパティが true に設定されていることを保証します。                                         | Y                   | Y                    | Y                   | Y                    |
+| `x-fapi-*` ヘッダーの使用が必要です。                                                                        | Y                   | Y                    | N                   | N                    |
+| クライアント認証に Private Key JWT を使用する必要があります。                                                         | Y                   | N                    | Y                   | N                    |
+| クライアント認証に mTLS を使用する必要があります。                                                                    | N                   | Y                    | N                   | Y                    |
+| 許可されるレスポンスタイプ。                                                                                  | code `id_token`     | code `id_token`      | code                | code                 |
+| Private Key JWT アサーションで `aud` クレームが発行者と厳密に一致する必要があります。                                          | N                   | N/A                  | Y                   | N/A                  |
+| Pushed Authorization Requests では `redirect_uri` パラメーターが必要です。                                    | N                   | N                    | Y                   | Y                    |
+
+| Auth0 の動作変更                                                                                                     | `fapi1_adv_pkj_par` | `fapi1_adv_mtls_par` | `fapi2_sp_pkj_mtls` | `fapi2_sp_mtls_mtls` |
+| --------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------- | ------------------- | -------------------- |
+| ID トークンに `s_hash` クレームを追加します。                                                                                   | Y                   | Y                    | N                   | N                    |
+| `profile` スコープが要求されると、`update_at` クレームには文字列ではなく OIDC 準拠の Unix タイムスタンプが含まれます。                                    | Y                   | Y                    | Y                   | Y                    |
+| OIDC 準拠のエラーコードのみを返します。場合によっては Auth0 が追加のエラーコードを返すこともありますが、この準拠レベルを有効にすると、Auth0 は OpenID 標準で定義されたエラーコードのみを使用します。 | Y                   | Y                    | Y                   | Y                    |
+| code レスポンスで、発行者を `iss` パラメーターとして返します。                                                                           | N                   | N                    | Y                   | Y                    |
+| 認可コードの最大有効期間を 60 秒に短縮します。                                                                                       | N                   | N                    | Y                   | Y                    |
+
+<div id="configure-fapi-compliance-for-a-client">
+  ## クライアントの FAPI 準拠を設定する
+</div>
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Auth0 Dashboard を使用して設定するには、次の手順に従います。
+
+    1. **Auth0 Dashboard &gt; アプリケーション** に移動します。
+    2. アプリケーションを選択します。
+    3. **Application Settings** タブを選択します。
+    4. **Advanced Settings** セクションを開きます。
+    5. **OAuth** タブで、**FAPI Compliance Enforcement Level** を選択します。
+
+    FAPI 準拠の設定オプションは次のとおりです。
+
+    * **None**: 準拠レベルは不要です。これはデフォルト設定です。
+    * **FAPI 1 Advanced profile using Private Key JWT and PAR**: このクライアントを、[Private Key JWT](/docs/ja-jp/get-started/applications/configure-private-key-jwt) と [PAR](/docs/ja-jp/get-started/applications/configure-par) を使用する FAPI1 Advanced profile に準拠して動作させる場合に選択します。
+    * **FAPI 1 Advanced profile using mTLS and PAR**: このクライアントを、[mTLS](/docs/ja-jp/get-started/applications/configure-mtls) と [PAR](/docs/ja-jp/get-started/applications/configure-par) を使用する FAPI1 Advanced profile に準拠して動作させる場合に選択します。
+    * **FAPI 2.0 Security Profile with Private Key JWT and certificate binding**: このクライアントを、[Private Key JWT Client Authentication](/docs/ja-jp/get-started/applications/configure-private-key-jwt) と [mTLS Token Sender-Constraining](/docs/ja-jp/secure/sender-constraining/mtls-sender-constraining) を使用する FAPI2.0 Security Profile に準拠して動作させる場合に選択します。
+    * **FAPI 2.0 Security Profile with mTLS and certificate binding**: このクライアントを、[mTLS Client Authentication](/docs/ja-jp/get-started/applications/configure-mtls) と [mTLS Token Sender-Constraining](/docs/ja-jp/secure/sender-constraining/mtls-sender-constraining) を使用する FAPI2.0 Security Profile に準拠して動作させる場合に選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    [Management API](https://auth0.com/docs/api/management/v2) を使用して、`POST` または `PATCH` リクエストで `compliance_level` プロパティを設定します。
+
+    <Tabs>
+      <Tab title="Auth0 CLI">
+        <Callout icon="file-lines" color="#0EA5E9" iconType="regular">Auth0 CLI を使用していますか？まだセットアップしていない場合は、このコマンドを実行する前に [CLI セッションをセットアップして認証してください](/docs/ja-jp/deploy-monitor/auth0-cli)。</Callout>
+
+        ```bash
+        auth0 api patch "clients/$client_id" \
+          --data '{
+              "compliance_level": "fapi1_adv_mtls_par"
+          }'
+        ```
+      </Tab>
+
+      <Tab title="cURL">
+        ```bash lines
+        curl --location --request PATCH 'https://{YOUR_DOMAIN}/api/v2/clients/$client_id' \
+          --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}' \
+          --header 'Content-Type: application/json' \
+          --data '{
+            "compliance_level": "fapi1_adv_mtls_par"
+        }'
+        ```
+      </Tab>
+    </Tabs>
+
+    `compliance_level` プロパティを取得するには、`GET` リクエストを使用します。
+
+    <Tabs>
+      <Tab title="Auth0 CLI">
+        ```bash
+        auth0 api get "clients/{YOUR_CLIENT_ID}"
+        ```
+      </Tab>
+
+      <Tab title="cURL">
+        ```bash lines
+        curl --location 'https://{YOUR_DOMAIN}/api/v2/clients/{YOUR_CLIENT_ID} \
+          --header 'Authorization: Bearer {YOUR_MANAGEMENT_API_ACCESS_TOKEN}'
+        ```
+      </Tab>
+    </Tabs>
+
+    FAPI 2.0 準拠では、Pushed Authorization Request の有効期限を 600 秒未満の値に設定でき、デフォルトは 30 秒です。有効期限の値は Management API を使用して設定できます。
+  </Tab>
+</Tabs>
+
+<div id="learn-more">
+  ## 詳細はこちら
+</div>
+
+* [Private Key JWT 認証を設定する](/docs/ja-jp/get-started/applications/configure-private-key-jwt)
+* [Pushed Authorization Requests (PAR) を設定する](/docs/ja-jp/get-started/applications/configure-par)
+* [mTLS 認証を設定する](/docs/ja-jp/get-started/applications/configure-mtls)

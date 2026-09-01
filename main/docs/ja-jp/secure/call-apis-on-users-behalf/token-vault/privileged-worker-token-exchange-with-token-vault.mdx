@@ -1,0 +1,252 @@
+---
+description: アプリケーションに Token Vault へのアクセスを許可し、JWT ベアラートークンをアクセス トークンに交換して外部 API を呼び出せるようにします。
+title: Token Vault を使用した Privileged Worker Token Exchange
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Token Vault を使用した Privileged Worker Token Exchange" stage="ea" contact="Auth0 Support またはテクニカル アカウント マネージャー" />
+
+Token Vault は Privileged Worker Token Exchange をサポートしており、これによりクライアントアプリケーションは署名付き JWT (サブジェクトトークン) を外部プロバイダーのアクセス トークン (要求されたトークン) に交換できます。
+
+通常、ユーザーの認証と認可が正常に完了すると、クライアントアプリケーションは、ユーザーの ID、権限、セッション state を含むユーザー コンテキストを、Token Vault とのトークン交換を実行するためのアクセス トークンまたはリフレッシュトークンとして渡します。サービス間フローでは、バックエンドアプリケーションやサービス ワーカーなどのクライアントアプリケーションがユーザーに代わってリソースにアクセスする必要がある場合がありますが、対話型セッションに「ユーザーが存在しない」ため、クライアントアプリケーションはユーザー コンテキストにアクセスできません。
+
+このようなサービス間のシナリオでは、クライアントアプリケーションは署名付き JWT ベアラートークンを生成し、それをサブジェクトトークンとして使用してトークン交換を実行し、外部 API の呼び出しに必要なトークンを受け取ることができます。つまり、クライアントアプリケーションは、アクティブなユーザー操作やセッションがなくても、ユーザーに代わって処理を実行できます。
+
+Token Vault で Privileged Worker Token Exchange を使用するには、クライアントアプリケーションが高い特権を持つクライアントであり、Token Vault を介して外部プロバイダーからアクセス トークンを要求できる必要があります。また、[Private Key JWT](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) アサーションや [相互 TLS 認証](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-mtls) などの非対称暗号方式を使用して Token Vault に対して認証する必要があります。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+Token Vault で Privileged Worker Token Exchange を使用できるのは、特定の種類のクライアントに限られます。
+
+* クライアントはファーストパーティ クライアントである必要があります。つまり、`is_first_party property` が `true` である必要があります。
+* クライアントは、有効な認証方式を備えたコンフィデンシャルクライアントである必要があります。つまり、`token_endpoint_auth_method` プロパティを `none` に設定してはいけません。
+* クライアントは OIDC 準拠である必要があります。つまり、`oidc_conformant` が `true` である必要があります。
+
+クライアント アプリケーションで Privileged Worker Token Exchange を設定する前に、次を行ってください。
+
+1. クライアント アプリケーションで [Token Vault のグラントタイプを有効にします](/docs/ja-jp/secure/tokens/token-vault/configure-token-vault#configure-application)。
+2. クライアント アプリケーションに [Private Key JWT](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) または [相互 TLS 認証](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-mtls) を設定します。
+
+<div id="configure-client-application">
+  ## クライアントアプリケーションを設定する
+</div>
+
+クライアントアプリケーションの Token Vault への特権アクセスを設定するには、次の作業が必要です。
+
+* サブジェクトトークンとして使用する署名付き JWT を検証するための公開鍵を指定します。
+* クライアントがリクエストを送信できる IP アドレスを制限します。
+* クライアントを、リクエストを許可する接続とスコープに関連付けます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **アプリケーション &gt; アプリケーション** に移動し、対象のアプリケーションを選択します。
+    2. **設定** タブを選択し、**Privileged Worker** セクションまでスクロールして、**Enable Privileged Worker** をオンにします。モーダルで既存の公開鍵資格情報を選択するか、新しい資格情報をアップロードしてから、**保存** を選択します。
+    3. 資格情報を保存したら、**IP Allowlist** フィールドに少なくとも 1 つの IP アドレスまたは CIDR 範囲を入力します。
+    4. **Permissions** で、**Add Permission** を選択します。ウィンドウで **接続** を選択し、この接続でリクエストできる **スコープ** を入力してから、**保存** を選択します。許可する接続ごとに繰り返します。設定できるのは、合計で最大 5 つの権限と 20 個のスコープです。
+    5. **変更を保存** を選択します。
+    6. **Permissions** で参照されている各接続を、このアプリケーション用に有効にします。**Authentication &gt; [接続タイプ]** に移動し、接続を選択して **アプリケーション** タブを開き、対象のアプリケーションに対して接続をオンにします。
+
+    <Frame>![Enable Token Vault トグルと Credential セレクターが表示された Token Vault 設定](/docs/images/token-vault/token_vault_privileged_access_settings.png)</Frame>
+  </Tab>
+
+  <Tab title="Management API">
+    新しいクライアントの作成時に、Token Vault の特権アクセス用公開鍵、IP 許可リスト、およびグラントを設定できます。公開鍵資格情報は、[JAR の設定](/docs/ja-jp/get-started/applications/configure-jar#configure-jwt-secured-authorization-requests-jar)と同様に設定します。
+
+    ```bash lines
+    POST https://{yourDomain}.auth0.com/api/v2/clients
+    Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+    Content-Type: application/json
+    {
+      "name": "My App using Privilege Worker",
+      "grant_types": [
+        "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+      ],
+      "oidc_conformant": true,
+      "is_first_party": true,
+      "jwt_configuration": {
+        "alg": "RS256"
+      },
+      "token_vault_privileged_access": {
+        "credentials": [
+          {
+            "name": "My credential for Token Vault Privileged Access",
+            "credential_type": "public_key",
+            "pem": "<YOUR_PEM_FILE_CONTENT>",
+            "alg": "RS256"
+          }
+        ],
+        "ip_allowlist": [
+          "<YOUR_SERVER_IP_ADDRESS>"
+        ],
+        "grants": [
+          {
+            "connection": "<YOUR_CONNECTION_NAME>",
+            "scopes": ["<YOUR_REQUIRED_SCOPE>"]
+          }
+        ]
+      }
+    }
+    ```
+
+    既存のクライアントについても、Token Vault の特権アクセス用公開鍵、IP 許可リスト、およびグラントを更新できます。
+
+    ```bash lines
+    PATCH https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}
+    Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+    Content-Type: application/json
+    {
+      "token_vault_privileged_access": {
+        "credentials": [{"id": "<YOUR_CREDENTIAL_ID>"}],
+        "ip_allowlist": ["<YOUR_SERVER_IP_ADDRESS>"],
+        "grants": [
+          {
+            "connection": "<YOUR_CONNECTION_NAME>",
+            "scopes": ["<YOUR_REQUIRED_SCOPE>"]
+          }
+        ]
+      }
+    }
+    ```
+
+    資格情報の `id` は、クライアント作成時のレスポンスで返されます。確認する必要がある場合は、GET リクエストで取得します。
+
+    ```bash lines
+    GET https://{yourDomain}.auth0.com/api/v2/clients/{yourClientId}/credentials
+    Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+    ```
+
+    `grants` で参照される各接続についても、このクライアント用に接続を有効にする必要があります。
+
+    ```bash lines
+    PATCH https://{yourDomain}.auth0.com/api/v2/connections/{yourConnectionId}/clients
+    Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>
+    Content-Type: application/json
+    [
+      {
+        "client_id": "<YOUR_CLIENT_ID>",
+        "status": true
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+`ip_allowlist` (Auth0 Dashboard では **IP Allowlist**) は、Privileged Worker の交換リクエストを送信できる IP アドレスを制限します。これにより、クライアント資格情報は既知のサーバー送信元 IP に関連付けられるため、資格情報が漏洩しても任意の IP アドレスから使用することはできません。IPv4 および IPv6 アドレスと CIDR 範囲がサポートされ、最大 10 件まで設定できます。
+
+`grants` (Auth0 Dashboard では**Permissions**) では、クライアントに対して特定の接続セットと、各接続で使用できる特定のスコープセットを指定します。`grants`に記載されていない接続を対象とする Privileged Worker トークン交換リクエストは拒否されます。また、付与されたスコープよりも狭いスコープをリクエストした場合、アイデンティティプロバイダーがダウンスコーピングをサポートしていれば、Token Vault はその狭いスコープに制限されたトークンを返します。サポートしていない場合、付与済みのすべてのスコープを暗黙的に返すのではなく、リクエストは失敗します。設定できる接続は最大 5 件、スコープは全接続の合計で最大 20 件です。前述のとおり、記載する接続はクライアントで有効化されている必要があります。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  クライアント設定の保存に`ip_allowlist`と`grants`は必須ではありませんが、Privileged Worker Token Exchange を機能させるには両方を設定する必要があります。`ip_allowlist`に含まれない IP アドレスからのリクエスト、または`grants`に含まれない接続やスコープに対するリクエストは拒否されます。
+</Callout>
+
+<div id="create-signed-jwt-subject-token">
+  ## 署名付きJWTサブジェクトトークンを作成する
+</div>
+
+[公開鍵を使用してクライアントアプリケーションを設定](#configure-client-application)した後、外部APIのアクセストークンと交換するサブジェクトトークンを作成する必要があります。サブジェクトトークンは、必要なクレームを含むJSON Web トークン (JWT) です。秘密キーで署名されます。
+
+JWTには標準的な形式とクレームがあります。
+
+**ヘッダー**
+
+| **クレーム** | **説明**                              |
+| -------- | ----------------------------------- |
+| `typ`    | 必須。`token-vault-req+jwt`である必要があります。 |
+| `kid`    | 任意。複数の公開鍵を設定している場合にのみ必要です。          |
+
+**ペイロード**
+
+| **クレーム**        | **説明**                                          |
+| --------------- | ----------------------------------------------- |
+| `sub`           | 必須。トークンを取得するユーザーのユーザーID。                        |
+| `aud`           | 必須。テナントのホスト。                                    |
+| `iss`           | 必須。リクエストを行うクライアントID。                            |
+| `iat`           | 必須。発行日時のタイムスタンプ。                                |
+| `exp`           | 任意。有効期限のタイムスタンプ。60秒を超えて古いトークンは、いかなる場合も拒否されます。   |
+| `jti`           | 必須。リプレイ保護のための、このJWTの一意の識別子 (UUID v4推奨) 。        |
+| `audit_context` | 必須。この特権アクセスの業務上の理由を説明する、人間が読みやすい文字列 (1～256文字) 。 |
+| `org_id`        | 任意。リクエストが組織にスコープ設定されている場合の組織ID。                 |
+
+以下はJWTの例です。
+
+```json lines
+{
+    alg: "RS256"  
+    typ: "token-vault-req+jwt"
+}
+.
+{
+    sub: "auth0|000012030101231",
+    aud: "https://{yourDomain}.auth0.com/",
+    iss: "<YOUR_CLIENT_ID>",
+    iat: 1758799540,
+    exp: 1758800540,
+    nbf: 1758799540,
+    jti: "<UNIQUE_JWT_ID>",
+    audit_context: "<REASON_FOR_ACCESS>",
+    org_id: "<YOUR_ORGANIZATION_ID>"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `audit_context` には、個人を特定できる情報 (PII) を含めないでください。この値はテナントログに記録され、管理者やログストリーミングの送信先に表示される場合があります。
+</Callout>
+
+次のコードサンプルは、署名付きJWTサブジェクトトークンを生成するスクリプトです。
+
+```tsx lines
+import * as jwt from 'jsonwebtoken';
+   const privateKey = ‘-----BEGIN RSA PRIVATE KEY-----........’;
+   const subjectToken = jwt.sign(
+     {
+       iss: CLIENT_ID,
+       aud: 'https://' + TENANT_DOMAIN + '/',
+       sub: USER_ID,
+       jti: uuidv4(),
+       audit_context: 'Automated nightly sync for compliance report',
+       // org_id は省略可能です。このリクエストのスコープが組織に設定されている場合に指定します
+       org_id: ORGANIZATION_ID,
+     },
+     privateKey,
+     {
+       algorithm: 'RS256',
+       header: {
+         typ: 'token-vault-req+jwt',
+       },
+     }
+   );
+```
+
+<div id="request-token-for-external-api">
+  ## 外部APIのアクセストークンをリクエストする
+</div>
+
+署名付き JWTを取得したら、外部APIのアクセストークンをリクエストできます。
+
+```bash lines
+curl --request POST 'https://{yourDomain}.auth0.com/oauth/token' \
+--header 'Content-Type: application/json' \
+--data '{
+  "client_id": "<YOUR_CLIENT_ID>",
+  "client_secret": "<YOUR_CLIENT_SECRET>",
+  "subject_token": "<YOUR_SIGNED_JWT_BEARER>",
+  "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "requested_token_type": "http://auth0.com/oauth/token-type/token-vault-access-token",
+  "connection": "google-oauth2"
+}'
+```
+
+| パラメータ                  | 説明                                                                                                                                                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`           | グラントタイプ。Token Vault の場合は、`urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token` に設定します                                                                                                              |
+| `client_id`            | クライアントアプリケーションの ID                                                                                                                                                                                                                |
+| `client_secret`        | クライアントシークレット。**注:** Privileged Worker Token Exchange では、Private Key JWT または mTLS 認証の使用を推奨します。                                                                                                                                     |
+| `subject_token_type`   | サブジェクトトークンのタイプ。Privileged Worker Token Exchange では、JWT (`urn:ietf:params:oauth:token-type:jwt`) に設定します                                                                                                                            |
+| `subject_token`        | ユーザーを識別するために Auth0 Authorization Server が検証する、署名付き JWT ベアラートークン。                                                                                                                                                                  |
+| `requested_token_type` | 要求するトークンタイプ。Privileged Worker Token Exchange では、常に `http://auth0.com/oauth/token-type/token-vault-access-token` に設定する必要があります。                                                                                                     |
+| `connection`           | 接続名です。この場合は `google-oauth2` です。                                                                                                                                                                                                   |
+| `scope`                | <Badge color="yellow">早期アクセス</Badge> (任意) 外部プロバイダーのアクセストークンにリクエストするスコープをスペースで区切ったリスト。リクエストしたスコープは、クライアントでこの接続に対して `token_vault_privileged_access.grants` に設定されているスコープとの共通部分になります。指定しない場合、この接続のグラントに設定されているすべてのスコープを含むトークンが発行されます。 |

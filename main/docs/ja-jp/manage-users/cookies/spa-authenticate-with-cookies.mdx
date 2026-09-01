@@ -1,0 +1,135 @@
+---
+description: バックエンドサーバーを使用して、Cookie でシングルページアプリ（SPA）を認証する方法を説明します。
+title: Cookie を使用したシングルページアプリ（SPA）の認証
+---
+
+import {AuthCodeBlock} from "/snippets/ja-jp/AuthCodeBlock.jsx";
+
+export const codeExample = `ISSUER_BASE_URL="{yourDomain}"
+CLIENT_ID="{yourClientId}"
+BASE_URL="http://localhost:3000"
+APP_SESSION_SECRET="<YOUR SECRET VALUE>"`;
+
+シングルページアプリ (SPA) の保護は難しいことがあります。ただし、SPA が次の条件を満たしている場合は、Cookie を使って認証することで実装を簡素化できます。
+
+* 独自のバックエンド経由でクライアントに配信される。
+* バックエンドと同じドメインを使用している。
+* 認証が必要な API 呼び出しをバックエンドに対して行う。
+
+ここでは、このアプローチの概要と、[Node.js](https://nodejs.org/en/) を使用した実装例を紹介します。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+以下の手順では、トークンがどのように取得され、利用されるかを示します。このアプローチでは、従来の[Authorization Code Flow with Proof Key for Code Exchange](/docs/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce)の代わりに、[Implicit Flow with Form Post](/docs/ja-jp/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post)を使用します。これは、アクセス先が自分自身のリソースである場合、Form Post Response Mode のほうが login をより簡単に実装できるためです。
+
+<Frame>![Cookie を使用して シングルページアプリケーション を認証する仕組み パート 1 の図](/docs/images/cdy7uua7fh8z/7suPpG6SuHuCOFHeFmE21T/1bf0a56fd21f65460cff7fd01b4c93f4/2023-09-22_13-21-34.png)</Frame>
+
+1. ユーザーがブラウザーで保護されたルートにアクセスするか、認証ステップの開始が必要な操作を行います (たとえば Login ボタンをクリックするなど)
+2. ブラウザーのクライアントは、ユーザーが行った操作に応じて、バックエンド上の`/login`ルート、または保護されたルートにリダイレクトされます
+3. バックエンドは、認可サーバーの`/authorize`エンドポイントへのリクエストを作成し、ブラウザーのクライアントをそこへリダイレクトします
+4. ユーザーは、認可サーバーが提示する方法で認証を求められます
+5. 認可サーバーは、URL エンコードされたフォーム POST として、トークンをリダイレクトURIに送信します。バックエンドは、ボディーデータを解析することでそれらのトークンを取得できます。
+
+この時点で、ユーザーは認証されており、バックエンドは必要なトークンを保持しています。これで、クライアント側でこの状態を表す Cookie を作成できます。その後、クライアントブラウザーは SPA を提供するルートにリダイレクトされ、同時に認証 Cookie も受け取ります。
+
+以後、AJAX 呼び出しで API 呼び出しが行われるたびに、この Cookie がクライアントとバックエンドの間でやり取りされます。各リクエストで、バックエンドは Cookie がまだ有効かどうかを検証し、有効であればリクエストの処理を続行します。
+
+<Frame>![Cookie を使用して シングルページアプリケーション を認証する仕組み パート 2 の図](/docs/images/cdy7uua7fh8z/6SCp9KwQkwJV7L26TOuxIO/d625575a43d00a00fcf17c7310ac2bc8/2023-09-22_13-21-50.png)</Frame>
+
+<div id="invalid-or-missing-cookies">
+  ### 無効または欠落しているCookie
+</div>
+
+この方法を実装する際は、認証Cookieが無効な場合や存在しない場合への対応が必要です。クライアントからバックエンドへのAPI呼び出しはバックグラウンドで行われるため、ユーザーに再認証が必要であることを示すサーバーからの応答は、クライアント側で処理しなければなりません。
+
+次のサンプルアプリケーションでは、このケースを、API呼び出しの結果が302 Redirectになった場合にユーザーに再認証を促すという単純な方法で処理しています。302が発生するのは、Cookieのバリデーションに失敗すると、サーバーが<Tooltip tip="認可サーバー: ユーザーのアクセス範囲の境界を定義することに寄与する集約サーバーです。たとえば、認可サーバーは、ユーザーが利用できるデータ、タスク、機能を制御できます。" cta="用語集を表示" href="/docs/ja-jp/glossary?term=authorization+server">認可サーバー</Tooltip>の認可エンドポイントへリダイレクトしようとし、その応答をクライアントに返すためです。
+
+<div id="example">
+  ## 例
+</div>
+
+このサンプルアプリケーションでは、Node.js と Express を使用して、上記の概念を実演します。
+
+<div id="prerequisites">
+  ### 前提条件
+</div>
+
+* この手順を進めるには、[最新バージョンの Node](https://nodejs.org/en/download/) がインストールされていることを確認してください。
+* Node をインストールしたら、[ソースコードをダウンロードまたはクローン](https://github.com/auth0-blog/spa-cookie-demo/) して、ターミナルでプロジェクトフォルダを開いてください。
+
+  ```bash lines
+  # SSH を使用してチュートリアルのリポジトリをクローンします
+  git clone git@github.com:auth0-blog/spa-cookie-demo
+  # ... または、HTTPS を使用する場合:
+  git clone https://github.com/auth0-blog/spa-cookie-demo.git
+  # プロジェクトのディレクトリに移動します
+  cd spa-cookie-demo
+  ```
+* `master` ブランチは、認証を追加する前のアプリケーションの状態を表します。アプリケーションの最終版を参照したい場合は、`with-oidc` ブランチをチェックアウトしてください。
+  `git checkout with-oidc`
+
+<div id="initialize-the-nodejs-app">
+  ### Node.jsアプリを初期化する
+</div>
+
+ターミナルで `npm install` を実行し、アプリケーションの依存関係をインストールします。アプリケーションを実行するには、`npm run dev` を実行します。これにより Express サーバーが起動します。ブラウザーで [http://localhost:3000](http://localhost:3000/) にアクセスすると、アプリケーションを表示できます。
+
+開発サーバーでは `nodemon` を使用しているため、ファイルの変更を検出すると自動的に再起動します。
+
+<div id="explore-the-application">
+  ### アプリケーションを試す
+</div>
+
+[http://localhost:3000](http://localhost:3000/) でアプリケーションを開いた状態で、**Call API** ボタンをクリックします。画面にメッセージが表示されます。
+
+<Frame>![Cookie を使用した SPA Authentication のアプリケーション画面](/docs/images/cdy7uua7fh8z/7JhdgzFLig2xcDle7ziiGp/c1db6272d20d4a291ba90a6968460109/image3.png)</Frame>
+
+ログインしていなくても API を呼び出せたことに注目してください。これを修正するために、API を呼び出す前にユーザーの認証を必須にするミドルウェアを追加しましょう。
+
+<div id="set-up-environment">
+  ### 環境を設定する
+</div>
+
+アプリケーションで認証を機能させるには、`express-openid-connect` にいくつかの環境変数が必要です。このアプリケーションでは、これらの変数を `.env` ファイルで指定できます。プロジェクトのルートディレクトリに `.env` ファイルを作成し、次の内容を設定します。
+
+```shell .env lines
+ISSUER_BASE_URL="<YOUR OIDC URL>"
+CLIENT_ID="<YOUR OIDC CLIENT ID>"
+BASE_URL="http://localhost:3000"
+APP_SESSION_SECRET="<YOUR SECRET VALUE>"
+```
+
+<div id="set-up-app-in-auth0">
+  ### Auth0 でアプリを設定する
+</div>
+
+1. [Auth0 Dashboard &gt; アプリケーション &gt; アプリケーション](https://manage.auth0.com/#/applications) に移動し、**Create Application** をクリックします。
+2. 新しいアプリケーションに名前を付け、**従来型Webアプリケーション** を選択して、**Create** をクリックします。
+3. 新しいアプリの **設定** で、**Allowed Callback URLs** に `http:/localhost:3000/callback` を追加します。
+4. **Allowed Logout URLs** に `http:/localhost:3000` を追加します。
+5. **変更を保存** をクリックします。
+6. [Auth0 Dashboard &gt; Authentication &gt; Social](https://manage.auth0.com/#/connections/social) に移動し、いくつかのソーシャル接続を設定します。**接続** タブの **アプリケーション** オプションで、それらをこのアプリで有効にします。この例では、ユーザー名/パスワードのデータベース接続、Facebook、Google、X を使用します。
+7. **設定** 画面で、上部にあるドメインと Client ID を控えておきます。
+8. アプリケーションで設定する必要がある値が 2 つあります。`.env` ファイルをもう一度開き、これらの値を設定します。
+
+   <AuthCodeBlock children={codeExample} language="shell" filename=".env" />
+
+<div id="run-the-app">
+  ### アプリを実行する
+</div>
+
+1. サーバーと環境の設定が完了したら、アプリケーションを開いているブラウザーウィンドウを探します。ブラウザーを閉じてサーバーも停止している場合は、アプリケーションを再起動するためにターミナルで次を実行します。
+   `npm run dev`
+2. ブラウザーで `http://localhost:3000` を開きます。見た目はこれまでと同じですが、今回は **Call API** ボタンをクリックすると、ユーザーがログインしていないという警告が表示されます。また、API 呼び出しが拒否されるため、以前のように &quot;Hello, World&quot; メッセージは表示されません。
+3. **Log in now** をクリックしてログインします。認証が完了するとアプリに戻り、ログイン状態が反映された UI が表示されます。再度 **Call API** ボタンを押してサーバーに API 呼び出しを行うと、今度は正常に動作します。
+4. ページ上部の **Profile** リンクをクリックすると、ID トークンから取得したユーザー情報が表示されます。
+
+<div id="learn-more">
+  ## 詳細はこちら
+</div>
+
+* [Implicit Flow with Form Post](/docs/ja-jp/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post)
+* [セキュリティ](/docs/ja-jp/secure)
+* [SameSite Cookie 属性の変更](/docs/ja-jp/manage-users/cookies/samesite-cookie-attribute-changes)
