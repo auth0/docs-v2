@@ -196,9 +196,8 @@ function setupThemeWatcher() {
 function main() {
   overrideHistoryMethods();
 
-  // Scan on route change
   routeChangeHandler = () => {
-    setTimeout(scanAndMount, 500);
+    setTimeout(scanAndMount, 1000);
   };
   addRouteChangeListener(routeChangeHandler);
 

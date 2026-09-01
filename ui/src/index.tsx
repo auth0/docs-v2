@@ -6,7 +6,6 @@ import './index.css';
 import { NavActions } from '@/components';
 import { initFeedbackListeners } from '@/lib/feedback';
 import { overrideHistoryMethods } from '@/lib/history';
-import { initOneTrust } from '@/lib/one-trust';
 import { initSentry } from '@/lib/sentry';
 import { initRootStore } from '@/stores';
 import { addResizeObserver } from '@/lib/resize-observer';
@@ -35,9 +34,6 @@ async function main() {
     // Minimal mode is active, do not mount the custom UI changes
     return;
   }
-
-  // Initialize one-trust for cookie-consent management
-  initOneTrust();
 
   // Initialize sentry for error tracking and monitoring
   initSentry();

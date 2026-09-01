@@ -1,55 +1,55 @@
 export const getSsoProviderEditMock = () => {
   const mockProvider = {
-    id: "test-provider-id",
-    name: "Provider Name",
+    id: 'test-provider-id',
+    name: 'Provider Name',
     is_enabled: true,
-    strategy: "waad" as const,
+    strategy: 'waad' as const,
     options: {},
   };
 
-  // Mock provisioning config and SCIM tokens
   const mockProvisioningConfig = {
-    scim_url: "https://scim.example.com",
-    scim_token: "mock-scim-token",
-    status: "active",
-    last_synced: "2024-06-01T12:00:00Z",
+    scim_url: 'https://scim.example.com',
+    scim_token: 'mock-scim-token',
+    status: 'active',
+    last_synced: '2024-06-01T12:00:00Z',
   };
 
   const mockScimTokens = [
     {
-      id: "token-1",
-      value: "scim-token-1",
-      created_at: "2024-06-01T12:00:00Z",
+      token_id: 'token-1',
+      scopes: ['scim'],
+      created_at: '2024-06-01T12:00:00Z',
     },
     {
-      id: "token-2",
-      value: "scim-token-2",
-      created_at: "2024-06-02T12:00:00Z",
+      token_id: 'token-2',
+      scopes: ['scim'],
+      created_at: '2024-06-02T12:00:00Z',
     },
   ];
 
   const mockLogic = {
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
-    activeTab: "sso",
+    activeTab: 'sso',
     schema: undefined,
     readOnly: true,
-    providerId: "mock-provider-id",
+    providerId: 'mock-provider-id',
     domains: undefined,
     hideHeader: false,
     currentStyles: { variables: {}, classes: {} },
     provider: mockProvider,
     organization: {
-      name: "Org",
+      name: 'Org',
       branding: {
         colors: {
-          primary: "",
-          page_background: "",
+          primary: '',
+          page_background: '',
         },
         logo_url: undefined,
       },
     },
     isLoading: false,
     isUpdating: false,
+    isEnabling: false,
     isDeleting: false,
     isRemoving: false,
     idpConfig: {
@@ -66,7 +66,7 @@ export const getSsoProviderEditMock = () => {
           provisioning_methods: [],
           enabled_features: [],
         },
-        "google-apps": {
+        'google-apps': {
           provisioning_methods: [],
           enabled_features: [],
         },
@@ -118,19 +118,21 @@ export const getSsoProviderEditMock = () => {
     },
     deleteProvisioningAction: async () => {
       mockLogic.provisioningConfig = undefined;
-      return true;
     },
-    listScimTokens: async () => mockScimTokens,
+    listScimTokens: async () => ({ scim_tokens: mockScimTokens }),
     createScimTokenAction: async () => {
-      mockLogic.scimTokens.push({
-        id: `token-${mockLogic.scimTokens.length + 1}`,
-        value: `scim-token-${mockLogic.scimTokens.length + 1}`,
-        created_at: new Date().toISOString(),
-      });
+      const token = {
+        token_id: `token-${mockLogic.scimTokens.length + 1}`,
+        scopes: ['scim'],
+        created_at: '2024-06-03T12:00:00Z',
+      };
+      mockLogic.scimTokens.push(token);
+      return { ...token, token: `scim-secret-${token.token_id}` };
     },
-    deleteScimTokenAction: async (id: string) => {
-      mockLogic.scimTokens = mockLogic.scimTokens.filter((t) => t.id !== id);
-      return true;
+    deleteScimTokenAction: async (idpScimTokenId: string) => {
+      mockLogic.scimTokens = mockLogic.scimTokens.filter(
+        (t) => t.token_id !== idpScimTokenId,
+      );
     },
     syncSsoAttributes: async () => {},
     syncProvisioningAttributes: async () => {},
@@ -139,7 +141,6 @@ export const getSsoProviderEditMock = () => {
     handleToggleProvider: async () => {
       mockLogic.provider.is_enabled = !mockLogic.provider.is_enabled;
     },
-    // Add mock fetchProvisioning to avoid real API calls
     fetchProvisioning: async () => {
       mockLogic.provisioningConfig = mockProvisioningConfig;
       return mockProvisioningConfig;
