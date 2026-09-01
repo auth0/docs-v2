@@ -1,0 +1,202 @@
+---
+title: "Experiment Center et l’intégration d’Auth0 à ACUL"
+description: "Comment lire le contexte de l’expérience dans les écrans d’Auth0 Custom Universal Login (ACUL) et ajuster le rendu selon la variation."
+sidebarTitle: Intégration ACUL
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-ca/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="beta" terms="true" contact="Auth0 Support" />
+
+Lorsqu’une expérience est active et qu’une variation est attribuée, Experiment Center injecte un objet `ExperimentContext` dans votre composant [ACUL](/docs/fr-ca/customize/login-pages/advanced-customizations) sous le nom d’`experiment`.
+
+<Warning>
+  Pendant la bêta, Experiment Center fonctionne uniquement sur les tenants de développement. Les tenants de production ne sont pas pris en charge.
+</Warning>
+
+L’injection se produit uniquement sur les écrans pour lesquels vous avez activé cette option. Vous l’activez écran par écran en ajoutant `"experiment"` au tableau `context_configuration` de cet écran.
+
+Pour qu’un écran reçoive le contexte de l’expérience, effectuez une requête `PATCH` vers le point de terminaison [`/api/v2/prompts/{prompt}/screen/{screen}/rendering`](/docs/fr-ca/api/management/v2/prompts/patch-rendering).
+
+```json Example
+    "context_configuration": ["experiment"]
+```
+
+Remplacez `{prompt}` par le nom du prompt (par exemple, `login`) et `{screen}` par le nom de l’écran (par exemple, `login`).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  La résolution de l’expérience et l’enrichissement du journal du tenant s’exécutent toujours, qu’un écran ait fait l’objet d’une activation explicite ou non. L’activation explicite détermine uniquement si les propriétés `experiment` sont transmises à votre composant ACUL. Il s’agit d’une mesure de minimisation des données : n’activez pas explicitement les écrans qui n’ont pas besoin du contexte de l’expérience.
+</Callout>
+
+<div id="the-experiment-context-shape">
+  ## La structure du contexte de l’expérience
+</div>
+
+Lorsqu’un écran a été explicitement activé et qu’une expérience est en cours, vous pouvez accéder au contexte de l’expérience dans `window.universal_login_context.experiment`.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Pendant la période Bêta d’Experiment Center, le SDK ACUL n’ajoute pas automatiquement la propriété `experiment` et celle-ci doit être définie à l’aide de `window.universal_login_context.experiment`.
+</Callout>
+
+```typescript
+const experiment = window.universal_login_context.experiment;
+```
+
+La structure du contexte de l’expérience est :
+
+```typescript
+interface ExperimentContext {
+  experiment_id: string;   // L'ID d'expérience actif
+  variation_id: string;    // L'ID de variation attribué
+  config: {                // Configuration fusionnée : baseline + overrides
+    [paramName: string]: { value: unknown };
+  };
+  is_control: boolean;     // True lorsqu'il s'agit de la variation témoin
+}
+```
+
+Lorsqu’aucune expérience n’est active (ou lorsque la fonctionnalité n’est pas activée pour le tenant), `experiment` est `null`.
+
+Le paramètre `config` contient la configuration complète fusionnée pour la variation attribuée. Experiment Center prend les paramètres de référence du feature flag et y fusionne les surcharges de la variation attribuée. Chaque paramètre défini dans le feature flag a toujours une valeur dans `config`.
+
+Par exemple, si votre feature flag a un paramètre `button_label` avec une valeur de référence de `"Sign in"` et que la variation attribuée la remplace par `"Continue"`, alors `config.button_label.value` est `"Continue"`.
+Pour la variation témoin (sans surcharge), `config.button_label.value` est `"Sign in"`.
+
+<div id="read-a-parameter-value">
+  ## Lire la valeur d’un paramètre
+</div>
+
+Vous pouvez accéder aux valeurs des paramètres à l’aide de `config[paramName].value` :
+
+```typescript
+const experiment = window.universal_login_context.experiment;
+const label = experiment?.config?.button_label?.value;
+```
+
+Utilisez le chaînage optionnel (`?.`) partout. La prop `experiment` est `undefined` lorsqu’aucune expérience n’est active.
+
+<div id="use-is_control">
+  ## Utiliser is_control
+</div>
+
+Le paramètre `is_control` est `true` lorsque l’utilisateur fait partie du groupe témoin (il a reçu la version de référence, sans aucune surcharge appliquée). Utilisez-le lorsque vous devez repérer les utilisateurs qui ont vu l’expérience non modifiée, ou si vous voulez ignorer le traitement optionnel pour les utilisateurs du groupe témoin.
+
+```typescript
+if (!experiment?.is_control) {
+  // S'exécute uniquement pour les utilisateurs du traitement
+  trackExperimentImpression(experiment.experiment_id, experiment.variation_id);
+}
+```
+
+Pour le rendu conditionnel, vérifiez directement la valeur du paramètre (`config.my_param.value`) plutôt que `is_control`.
+Les vérifications fondées sur les paramètres sont plus faciles à lire et fonctionnent correctement, même si vous changez plus tard la variation utilisée comme contrôle statistique dans une autre expérience.
+
+<div id="example-copy-variant-experiment">
+  ## Exemple : expérience sur les variantes de libellé
+</div>
+
+Cet exemple présente un feature flag avec deux variations qui modifient le libellé d’un bouton. Le témoin utilise le libellé standard ; le traitement utilise une version de rechange.
+
+**Paramètres du feature flag :**
+
+```json
+{
+  "button_label": {
+    "type": "string",
+    "value": "Sign in",
+    "description": "Label for the primary login button"
+  }
+}
+```
+
+**Variation témoin :** aucune surcharge (hérite de `button_label: "Sign in"`)
+
+**Variation de traitement :**
+
+```json
+{
+  "overrides": {
+    "button_label": { "value": "Continue to your account" }
+  }
+}
+```
+
+**Composant ACUL qui lit le paramètre :**
+
+```typescript
+// LoginScreen.tsx
+export default function LoginScreen({...props }) {
+  // config a toujours une valeur — aucune solution de secours nécessaire
+  const experiment = window.universal_login_context.experiment;
+  const buttonLabel = experiment?.config?.button_label?.value ?? "Sign in";
+
+  return (
+    <div>
+      <h1>Welcome back</h1>
+      <form onSubmit={props.onSubmit}>
+        <input type="email" name="email" placeholder="Email" />
+        <input type="password" name="password" placeholder="Password" />
+        <button type="submit">{buttonLabel}</button>
+      </form>
+    </div>
+  );
+}
+```
+
+La solution de secours `?? "Sign in"` à la dernière ligne gère le cas où aucune expérimentation n’est active (auquel cas `experiment` vaut `undefined` et `config?.button_label?.value` renvoie `undefined`). Si vous préférez, vous pouvez utiliser une vérification distincte de `null` :
+
+```typescript
+const buttonLabel = experiment
+  ? experiment.config.button_label.value
+  : "Sign in"; // Aucune expérience active ; utiliser la valeur par défaut
+```
+
+<div id="example-boolean-feature-rollout">
+  ## Exemple : déploiement progressif d’une fonctionnalité booléenne
+</div>
+
+Cet exemple utilise un paramètre booléen pour afficher ou non un nouvel élément de l’interface utilisateur.
+
+```typescript
+// PostLoginScreen.tsx
+export default function PostLoginScreen({...props }) {
+  const experiment = window.universal_login_context.experiment;
+  const showPasskeyBanner = experiment?.config?.show_passkey_banner?.value === true;
+
+  return (
+    <div>
+      <p>You're signed in.</p>
+      {showPasskeyBanner && (
+        <div className="banner">
+          <p>Set up a passkey for faster sign-in next time.</p>
+          <button onClick={props.onEnrollPasskey}>Set up passkey</button>
+          <button onClick={props.onDismiss}>Not now</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+Le test `=== true` (plutôt qu’un simple test de vérité) est intentionnel : il garantit que la bannière ne s’affiche que lorsque le paramètre vaut explicitement `true`, et non lorsque `experiment` est `undefined` ou que `config` n’est pas défini.
+
+<div id="troubleshoot">
+  ## Dépannage
+</div>
+
+La propriété `experiment` est `undefined` dans trois situations :
+
+1. Aucune expérience n’est actuellement active pour le tenant
+2. L’écran n’a pas été explicitement activé au moyen de `context_configuration`
+3. Experiment Center n’est pas activé pour le tenant
+
+Considérez toujours que `experiment` peut être `undefined`. La méthode la plus sûre :
+
+```typescript
+const experiment = window.universal_login_context.experiment;
+const myParam = experiment?.config?.my_param?.value;
+// myParam est indéfini lorsqu'aucune expérience n'est active
+// Utilisez une valeur par défaut : myParam ?? "your-default"
+```
+
+Ne présumez jamais que la propriété `experiment` est présente. Le code qui suppose que `experiment` est définie produira des erreurs lorsqu’aucune expérience n’est en cours, ce qui est le cas la plupart du temps.

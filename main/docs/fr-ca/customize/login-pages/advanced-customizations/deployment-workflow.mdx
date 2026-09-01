@@ -1,0 +1,107 @@
+---
+description: Déployez un projet Auth0 Advanced Customizations for Universal Login en production en téléversant le lot généré sur votre CDN et en mettant à jour la configuration de chaque écran dans Auth0.
+title: Flux de travail de déploiement ACUL
+---
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Pour suivre ce flux de travail, assurez-vous d’avoir :
+
+  * Un tenant de développement Auth0 configuré avec [Universal Login](docs/authenticate/login/auth0-universal-login) et un [domaine personnalisé](/docs/fr-ca/customize/custom-domains).
+  * Une [application propriétaire](/docs/fr-ca/get-started/auth0-overview/create-applications#create-applications) Auth0
+  * [Identifier First Authentication](/docs/fr-ca/authenticate/login/auth0-universal-login/identifier-first) activé dans votre tenant Auth0.
+  * Un compte AWS avec les autorisations nécessaires pour créer des rôles IAM, des buckets S3 et configurer CloudFront
+  * Un dépôt GitHub contenant vos écrans de connexion personnalisés
+</Callout>
+
+Le flux de travail de déploiement en production d’ACUL génère et déploie vos écrans ACUL, puis configure votre tenant pour les utiliser. Il utilise GitHub Actions pour :
+
+* Générer vos lots de ressources d’écran
+  * Le flux de travail lit le fichier [config/deploy&#95;config.yml](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/deploy_config.yml) afin de déterminer quels écrans sont marqués pour le déploiement.
+  * Si des cibles de déploiement sont trouvées, le flux de travail génère vos ressources ACUL à l’aide de Vite en compilant le code dans le répertoire `/dist`.
+  * Téléverser vos ressources vers AWS S3
+    * Le flux de travail s’authentifie de façon sécurisée auprès d’AWS à l’aide d’[OpenID Connect (OIDC)](docs/authenticate/protocols/openid-connect-protocol).
+    * Il téléverse le contenu du répertoire `/dist` vers votre bucket S3.
+  * Configurer votre tenant Auth0
+    * Le flux de travail utilise [Auth0 CLI](https://auth0.github.io/auth0-cli/) avec une application M2M pour configurer les écrans dans votre tenant.
+    * Il associe chaque écran à l’écran Auth0 approprié à l’aide du fichier [config/screen-to-prompt-mapping.js](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/screen-to-prompt-mapping.js).
+    * Il met à jour les paramètres de personnalisation des écrans Auth0 pour qu’ils pointent vers vos ressources sur le CDN CloudFront.
+
+Une fois la configuration terminée, un `git push` vers la branche `main` de votre projet lance le flux de travail GitHub.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Pour consulter un exemple complet du flux de travail de déploiement en production d’ACUL, lisez [ACUL GITHUB ACTIONS](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/GITHUB_ACTIONS.md) sur GitHub.
+</Callout>
+
+<div id="1-auth0-configuration">
+  ### 1. Configuration d’Auth0
+</div>
+
+Créez une application [Machine to Machine](/docs/fr-ca/get-started/auth0-overview/create-applications/machine-to-machine-apps) pour accorder les permissions nécessaires au flux de travail GitHub afin de mettre à jour les paramètres de votre tenant.
+
+1. Accédez à [Auth0 Dashboard &gt; Applications](https://manage.auth0.com/#/applications).
+2. Sélectionnez **Create Application**.
+3. Sélectionnez **Machine to Machine Applications**.
+4. Sous **Name**, ajoutez un nom explicite, par exemple : `GitHub ACUL Deployment`.
+5. Sélectionnez **Create**.
+6. Sous **Authorize Machine to Machine Application**, sélectionnez **Auth0 Management API**.
+7. Sélectionnez les permissions suivantes :
+   * `read:branding`
+   * `update:branding`
+   * `read:prompts`
+   * `update:prompts`
+   * `read:custom_domains`
+8. Sélectionnez **Authorize**.
+9. Accédez à l’onglet **Settings** et notez :
+   * `Domain`
+   * `Client ID`
+   * `Client Secret`
+
+<div id="2-upload-and-serve-your-assets-with-amazon-web-services">
+  ### 2. Téléversez et diffusez vos ressources avec Amazon Web Services
+</div>
+
+Pour téléverser et diffuser vos ressources, vous devez disposer d’un bucket AWS S3 et configurer CloudFront comme CDN.
+
+* **Créez un bucket AWS S3**. Bloquez tout accès public pour que ce bucket demeure privé. Ce bucket privé contient vos ressources.
+* **Configurez une distribution CloudFront**. Ce CDN diffuse vos ressources de façon sécurisée. Il doit être configuré de manière à utiliser votre bucket AWS S3 comme `Origin`, au moyen d’Origin Access Control (OAC).
+
+<div id="3-create-an-aws-iam-role-for-github-action">
+  ### 3. Créez un rôle AWS IAM pour GitHub Actions
+</div>
+
+Créez un **rôle IAM** dans AWS afin de permettre à GitHub Actions de téléverser des fichiers vers AWS S3.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  * Ce rôle IAM doit utiliser Web Identity (OIDC) et faire confiance à `token.actions.githubusercontent.com`.
+  * Le rôle doit avoir une stratégie accordant les autorisations `s3:PutObject`, `s3:DeleteObject` et `s3:ListBucket` sur votre bucket S3.
+</Callout>
+
+<div id="4-configure-your-github-repository">
+  ### 4. Configurer votre dépôt GitHub
+</div>
+
+Pour configurer votre dépôt GitHub :
+
+1. Accédez à **GitHub &gt; Paramètres**.
+2. Sélectionnez **Secrets et variables**, puis **Actions**.
+3. Sélectionnez **Nouveau secret du dépôt**.
+
+Ajoutez les secrets du dépôt suivants :
+
+* `AWS_S3_ARN` : l’ARN du rôle IAM que vous avez créé.
+  * `S3_BUCKET_NAME` : le nom de votre bucket S3.
+  * `AWS_REGION` : la région où se trouve votre bucket S3. Par exemple, `us-east-1`.
+  * `S3_CDN_URL` : le nom de domaine de votre distribution CloudFront. N’ajoutez pas de barre oblique à la fin. Par exemple, https://d1234abcdef.cloudfront.net.
+  * `AUTH0_DOMAIN` : le domaine de votre tenant Auth0.
+  * `AUTH0_CLIENT_ID` : le Client ID de votre application M2M.
+  * `AUTH0_CLIENT_SECRET` : le Client Secret de votre application M2M.
+
+<div id="5-configure-your-deployment">
+  ### 5. Configurer votre déploiement
+</div>
+
+Vous pouvez choisir quels écrans seront déployés en modifiant les fichiers de configuration situés dans le répertoire `.github/config/` :
+
+* [`config/deploy_config.yml`](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/deploy_config.yml) : Votre panneau de contrôle principal. Définissez un écran à `true` pour le déployer ou à `false` pour l’ignorer.
+* [`config/screen-to-prompt-mapping.js`](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/screen-to-prompt-mapping.js) : Fait la correspondance entre les noms de répertoire internes de vos écrans. Exemple : `mfa-sms-challenge` correspond au nom officiel du prompt Auth0 `mfa-sms`.
+* [`config/context-configuration.js`](https://github.com/auth0-samples/auth0-acul-samples/blob/6cb4dcc43defd1a9cf586da9307d7d2348e696ae/react/.github/config/context-configuration.js) : Définit les données de contexte Auth0. Exemple : les paramètres de l’image de marque doivent être mis à la disposition de vos écrans personnalisés.

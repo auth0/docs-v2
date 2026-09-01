@@ -1,0 +1,210 @@
+---
+title: カスタムデータベース接続を作成する方法
+sidebarTitle: カスタムデータベース接続を作成する
+description: カスタムデータベース接続を作成して、独自の外部ユーザーストアを Auth0 の IdP として使用します。
+validatedOn: 2026-07-27
+---
+
+独自の外部ユーザーストアがある場合は、それを Auth0 の <Tooltip tip="Identity Provider (IdP): デジタルアイデンティティを保存および管理するサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=identity+provider">アイデンティティプロバイダー</Tooltip> として使用して、ユーザーを認証できます。
+
+そのためには、まずカスタムデータベース接続を作成して Auth0 を外部ユーザーストアに接続し、次に Auth0 とユーザーストアの連携方法を定義するデータベースアクションスクリプトを作成します。以下の一般的なデータベース向けに、データベースアクションスクリプトのテンプレートを提供しています。
+
+* MongoDB
+* MySQL
+* PostgreSQL
+* Microsoft SQL Server
+* ASP.NET Identity
+* Basic Auth を使用してアクセスする Web サービス
+
+これらのテンプレートは変更できるほか、独自のテンプレートを一から作成して、あらゆる種類の外部ユーザーストアに接続することもできます。
+
+<div id="instructions">
+  ## 手順
+</div>
+
+<Steps titleSize="h3">
+  <Step title="前提条件">
+    * 外部ユーザーストアは、Auth0&#39;s のサーバーから到達可能である必要があります。ファイアウォールの内側にある場合は、[Auth0&#39;s のアウトバウンド IP アドレス](/docs/ja-jp/secure/security-guidance/data-security/allowlist)からの受信トラフィックを許可してください。
+
+    * 外部ユーザーストアには、`id`、`nickname`、`email`、`password` などの[正規化されたユーザープロファイル属性](/docs/ja-jp/manage-users/user-accounts/user-profiles/normalized-user-profile-schema)を保存するための適切なフィールドが必要です。
+
+    * データベースアクションスクリプトから返される `id` (または `user_id`) の値は、Auth0 がこの値を使用して[ユーザーを識別する](/docs/ja-jp/manage-users/user-accounts/identify-users)ため、すべてのカスタムデータベース接続で一意である必要があります。
+
+      複数のカスタムデータベース接続を使用する際にユーザー ID の重複を避けるため、`id` の値の先頭に接続名 (空白を除く) を付けることをおすすめします。
+  </Step>
+
+  <Step title="カスタムデータベース接続を作成する">
+    [**Auth0 Dashboard &gt; Authentication &gt; Database**](https://manage.auth0.com/#/connections/database)で、**+ Create DB Connection** を選択します。[**New Database Connection** ページ](https://manage.auth0.com/#/connections/database/new)で、以下の設定を入力します。
+
+    * 次の条件を満たす名前を入力します。
+
+      * 英数字とダッシュのみを使用する。
+      * 英数字で始まり、英数字で終わる。
+      * 35文字以内である。
+
+    * ユーザー識別子として、1つ以上の[属性](/docs/ja-jp/authenticate/database-connections/activate-and-configure-attributes-for-flexible-identifiers)を選択します。
+
+    * [パスワード](/docs/ja-jp/authenticate/database-connections/flexible-password-policy)や[パスキー](/docs/ja-jp/authenticate/database-connections/passkeys)など、1つ以上の認証方法を選択します。
+
+    * **Use my own database** トグルを有効にします。
+
+    完了したら、**Create** を選択します。Auth0 によりデータベース接続が作成され、その設定ページにリダイレクトされます。
+  </Step>
+
+  <Step title="データベースアクションスクリプトを作成する">
+    カスタムデータベース接続を作成したら、ログイン、サインアップ、メール検証、パスワードリセット、ユーザー削除などの機能で Auth0 が外部ユーザーストアとどのように連携するかを定義するため、[データベースアクションスクリプト](/docs/ja-jp/authenticate/database-connections/custom-db/custom-database-connections-scripts)を作成する必要があります。
+
+    少なくとも、[Login スクリプト](/docs/ja-jp/authenticate/database-connections/custom-db/templates/login)を実装する必要があります。
+
+    1. データベース接続のページで、**Custom Database** タブを選択します。
+
+    2. **Database Action Scripts** セクションで、**Login** を選択します。
+
+    3. 提供されている関数シグネチャを使用して独自のデータベースアクションスクリプトを作成するか、**Load Template** ドロップダウンメニューからテンプレートを選択して開始します。
+
+       <Accordion title="MySQL Login アクションスクリプトの例">
+         たとえば、MySQL Login アクションスクリプトテンプレートは次のようになります。
+
+         ```js expandable Login database action script template for MySQL
+         function login(identifierValue, password, callback) {
+           const mysql = require('mysql');
+           const bcrypt = require('bcrypt');
+
+           const connection = mysql.createConnection({
+             host: 'localhost',
+             user: 'me',
+             password: 'secret',
+             database: 'mydb'
+           });
+
+           connection.connect();
+
+           const query = 'SELECT id, nickname, email, password FROM users WHERE email = ?';
+
+           connection.query(query, [ identifierValue ], function(err, results) {
+             if (err) return callback(err);
+             if (results.length === 0) return callback(new WrongUsernameOrPasswordError(identifierValue));
+             const user = results[0];
+
+             bcrypt.compare(password, user.password, function(err, isValid) {
+               if (err || !isValid) return callback(err || new WrongUsernameOrPasswordError(identifierValue));
+
+               callback(null, {
+                 user_id: user.id.toString(),
+                 nickname: user.nickname,
+                 email: user.email
+               });
+             });
+           });
+         }
+         ```
+
+         この例では、データベースに適切な列を含む `users` テーブルがあることを前提としています。スクリプトはデータベースに接続し、クエリを使用して `email == user.email` に一致する最初のユーザーを取得し、`bcrypt.compare` で入力されたパスワードを検証します。成功した場合は、ユーザープロファイル情報 (`id`、`nickname`、`email` を含む) を含むオブジェクトを返します。
+       </Accordion>
+
+    すべてのデータベースアクションスクリプトでは、完了直前に (暗黙的に、または `return` ステートメントで明示的に) Auth0 提供の [`callback` 関数](/docs/ja-jp/authenticate/database-connections/custom-db/custom-database-connections-scripts#callback)を必ず1回だけ呼び出す必要があります。
+  </Step>
+
+  <Step title="設定パラメータを追加（任意）">
+    **Database Action Scripts** の下にある **Configuration Parameters** セクションでは、すべてのデータベースアクションスクリプトでグローバル `configuration` オブジェクトから使用できる値を保存できます。
+
+    値は暗号化されるため、設定パラメータには、外部アイデンティティストアへのアクセスに必要な資格情報や API キーなどの機密情報を保存したり、tenant 固有の値を持つ変数を定義したりすることもできます。
+
+    前述の MySQL の例を拡張するには、**Key** `MYSQL_PASSWORD` を追加し、**Value** に MySQL のパスワードを設定します。この設定パラメータを使用して接続できます。
+
+    ```javascript MySQL connection configuration parameter example
+    const connection = mysql.createConnection({
+        host: 'localhost',
+        user: 'me',
+        password: 'secret', // [!code --]
+        password : configuration.MYSQL_PASSWORD, // [!code ++]
+        database: 'mydb'
+    });
+    ```
+
+    `configuration` オブジェクトは読み取り専用として扱い、アクションスクリプトでの値のハードコーディングを避けるために使用してください。
+  </Step>
+
+  <Step title="データベースアクションスクリプトをテストして保存する">
+    1. データベースのアクションスクリプトをテストするには、コードブロックの上にある**保存して試す**を選択します。
+
+    2. 表示される**ログインスクリプトを試す**ウィンドウで、テストに使用するユーザー資格情報を入力します。
+
+       <Frame>![ログインスクリプトを試すウィンドウ。](/docs/images/cdy7uua7fh8z/8uBGZhHYZwOcO19ljJNNp/ccd69d84fdbdff90dc779a6b1ea8a6fd/db-connection-try-login-script.png)</Frame>
+
+    3. **試す**を選択してランタイムセレクターを開きます。スクリプトの実行に使用するランタイムを選択します。
+
+       <Tip>
+         [テナント設定でデフォルトのNodeJSランタイムを変更](/docs/ja-jp/get-started/tenant-settings#extensibility)できます。
+       </Tip>
+
+    完了したら、**ログインスクリプトを試す**ウィンドウを閉じ、**保存**を選択してスクリプトを保存します。
+  </Step>
+</Steps>
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+<div id="enable-automatic-migration">
+  ### 自動移行を有効にする
+</div>
+
+外部ユーザーストアを引き続き IdP として使用できます。代わりに Auth0 のユーザーストアに移行する場合は、[ユーザーを Auth0 に段階的に移行](/docs/ja-jp/manage-users/user-migration/configure-automatic-migration-from-your-database)できます (*trickle* 移行または *lazy* 移行と呼ばれることもあります) 。
+
+<div id="enable-organization-context">
+  ### 組織コンテキストを有効にする
+</div>
+
+[Organizations](/docs/ja-jp/manage-users/organizations) でカスタムデータベース接続を使用している場合は、[`context` オブジェクト](/docs/ja-jp/authenticate/database-connections/custom-db/custom-database-connections-scripts#context-object)を有効にすることで、`id`、`name`、`metadata` などの組織の詳細をデータベースアクションスクリプトで利用できるようになります。
+
+これにより、組織データを含む追加の `context` 引数がカスタムデータベーススクリプトに渡されます。たとえば、ユーザーが組織のログインプロンプトで認証されると、この引数がログインデータベースアクションスクリプトに渡されます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `context` オブジェクトは、一度有効にすると無効にできません。
+</Callout>
+
+まず、`context` オブジェクトを有効にします。
+
+1. [Auth0 Dashboard &gt; Authentication &gt; Database](https://manage.auth0.com/dashboard/us/#/connections/database/) に移動し、データベース接続を選択します。
+
+2. **Custom Database** タブを選択します。
+
+3. **Context object in database scripts** の横にある **Enable** を選択します。
+
+4. 開いた **Are you absolutely sure?** ウィンドウで、**Confirm** を選択します。
+
+次に、データベースアクションスクリプトに `context` オブジェクトを追加します。このパラメータは、`callback` パラメータの直前に配置します。たとえば、Login スクリプトの関数シグネチャは次のようになります。
+
+```js Original Login script function signature
+function login(email, password, callback) { ... }
+```
+
+```js Login script function signature with the context object
+function login(email, password, context, callback) { ... }
+```
+
+`context` オブジェクトには、次の形式で組織データが含まれます。
+
+```json lines
+{
+    "organization": {
+        "display_name": "My Organization",
+        "id": "org_XXXXXX",
+        "metadata": {
+            "example": "value"
+        },
+        "name": "my-organization"
+    }
+}
+```
+
+組織コンテキスト付きでイベントがトリガーされると、対応するデータは、常に空の `context` オブジェクトが渡される [Delete スクリプト](/docs/ja-jp/authenticate/database-connections/custom-db/templates/delete) を除く、すべてのデータベースアクションスクリプトで利用できます。
+
+<div id="limits-and-considerations">
+  ## 制限事項と考慮事項
+</div>
+
+* Auth0 は、カスタムデータベースから渡されるユーザー名とパスワードの組み合わせをサニタイズまたは検証しません。
+
+* データベースアクションスクリプトには、Auth0 の [Rate Limit Policy](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy) が適用されます。

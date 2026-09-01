@@ -1,0 +1,157 @@
+---
+description: Décrit comment lier des comptes d’utilisateur dans une application web traditionnelle à l’aide de code côté serveur, à partir d’un exemple concret.
+title: 'Liaison de comptes d’utilisateur : mise en œuvre côté serveur'
+---
+
+Auth0 prend en charge la liaison de comptes d’utilisateur provenant de divers <Tooltip tip="Fournisseur d’identité (IdP) : service qui stocke et gère les identités numériques." cta="Voir le glossaire" href="/docs/fr-ca/glossary?term=identity+providers">fournisseurs d’identité</Tooltip>. Vous pouvez utiliser du code côté serveur pour lier des comptes dans une application web traditionnelle, en impliquant l’utilisateur et en lui demandant son autorisation avant de continuer. Votre code authentifiera les utilisateurs, puis recherchera et identifiera les comptes associés à leurs adresses courriel. Votre application invitera ensuite l’utilisateur à lier ses comptes en s’authentifiant avec les identifiants du compte cible, puis procédera à la liaison.
+
+Vous trouverez le code source complet de cet exemple d’application [sur GitHub](https://github.com/auth0-samples/auth0-link-accounts-sample/tree/master/RegularWebApp).
+
+1. Connectez l’utilisateur à votre application.<br />
+
+   L’utilisateur s’authentifie auprès de votre application à l’aide de [Universal Login](/docs/fr-ca/authenticate/login/auth0-universal-login). Pour en savoir plus, consultez le [Quickstart d’application Web traditionnelle](/docs/fr-ca/quickstart/webapp) pour demander un jeton pour l’audience de l’Auth0 Management API (audience=`https://{yourDomain}/api/v2/`).
+
+2. Recherchez les utilisateurs qui ont la même adresse courriel.<br />
+
+   Vous pouvez obtenir le profil de l’utilisateur et la liste des utilisateurs associés à la même adresse courriel vérifiée.
+
+   ```javascript lines expandable
+   router.get("/", async (req, res) => {
+     const { sub, email_verified } = req.openid.user;
+     //récupérer le profil utilisateur contenant les propriétés user_metadata et app_metadata
+     try {
+       let getUsersWithSameVerifiedEmail = [];
+       const getUserProfile = auth0Client.getUser(sub);
+       if (email_verified)
+         // la liaison de comptes n'est proposée qu'avec une adresse courriel vérifiée
+         getUsersWithSameVerifiedEmail = auth0Client.getUsersWithSameVerifiedEmail(
+           req.openid.user
+         );
+
+       const [user, suggestedUsers] = await Promise.all([
+         getUserProfile,
+         getUsersWithSameVerifiedEmail,
+       ]);
+
+       const flashError = clear(req);
+       res.render("user", {
+         user,
+         suggestedUsers,
+         wrongAccountError: flashError && flashError === Errors.WrongAccount,
+       });
+     } catch (err) {
+       debug("GET /user[s] failed: %o", err);
+       res.render("error", err);
+     }
+   });
+   ```
+
+   Pour obtenir la liste de tous les dossiers d’utilisateur associés à la même adresse courriel, votre application effectue une requête vers le [point de terminaison Get Users By Email de l’API de gestion Auth0](https://auth0.com/docs/api/v2#!/users-by-email/get_users_by_email) au moyen d’un [jeton d’accès à l’API de gestion](/docs/fr-ca/secure/tokens/access-tokens/management-api-access-tokens) doté de la portée `read:users`.
+
+   ```javascript lines
+   const request = require('request');
+   class Auth0Client {
+   ...
+   async getUsersWithSameVerifiedEmail({ sub, email }) {
+     return await this.request({
+       url: `${process.env.ISSUER_BASE_URL}/api/v2/users-by-email?email=${email}`,
+     });
+   }
+   ```
+
+3. Demandez à l’utilisateur d’associer des comptes.
+
+   1. Si Auth0 renvoie un ou plusieurs enregistrements avec des adresses courriel correspondantes, l’utilisateur verra la liste accompagnée du message suivant l’invitant à faire la liaison des comptes.
+   2. Si l’utilisateur souhaite lier un compte en particulier, il peut cliquer sur **Lier** à côté du compte approprié.
+
+      <Frame>![Exemple d’application avec page de liaison de comptes côté serveur](/docs/images/cdy7uua7fh8z/7unQjUtxTZUc4tRFOxhaP3/050fb853d2b3be37795ce88b8a60ffed/account-linking-webapp-small__1_.png)</Frame>
+
+4. Lorsque l’utilisateur clique sur **Lier**, votre application lui demandera de s’authentifier avec le compte cible, puis procédera à la liaison des comptes.
+
+   <Warning>
+     Pour conserver et fusionner le `user_metadata` du compte secondaire, vous devez le récupérer et l’intégrer aux métadonnées du compte principal avant d’effectuer la requête vers le endpoint d’API. Une fois les comptes liés, les métadonnées du compte secondaire sont supprimées.
+
+     Lorsque vous lancez la liaison de comptes, vous pouvez choisir quelle identité sera utilisée comme compte principal et laquelle comme compte secondaire. Ce choix dépend de l’ensemble d’attributs que vous souhaitez conserver dans le profil principal.
+   </Warning>
+
+   L’extrait de code suivant montre comment vérifier et fusionner les métadonnées :
+
+   ```javascript lines expandable
+   async function accountLink(req, res, next) {
+   const {
+     linking: { targetUserId },
+   } = req.appSession;
+   const { sub: authenticatedTargetUserId } = req.openidTokens.claims();
+   if (authenticatedTargetUserId !== targetUserId) {
+     debug(
+       "Skipping account linking as the authenticated user(%s)  is different than target linking user (%s)",
+       authenticatedTargetUserId,
+       targetUserId
+     );
+     set(req, Errors.WrongAccount);
+     return next();
+   }
+
+   debug(
+     "User %s succesfully authenticated. Account linking with %s... ",
+     authenticatedTargetUserId,
+     targetUserId
+   );
+   const { id_token: targetIdToken } = req.openidTokens;
+   const { sub: primaryUserId } = req.appSession.claims;
+
+   try {
+     await mergeMetadata(primaryUserId, authenticatedTargetUserId);
+     await auth0Client.linkAccounts(primaryUserId, targetIdToken);
+     debug("Accounts linked.");
+   } catch (err) {
+     debug("Linking failed %o", err);
+   } finally {
+     next();
+   }
+   }
+   ```
+
+5. Votre application envoie une requête au [point de terminaison permettant d’associer un compte d’utilisateur](https://auth0.com/docs/api/v2#!/Users/post_identities) de l’API de gestion Auth0 à l’aide d’un [jeton d’accès à l’API de gestion](/docs/fr-ca/secure/tokens/access-tokens/management-api-access-tokens) avec la portée `update:users`.
+
+<div id="metadata-merge-example">
+  ## Exemple de fusion des métadonnées
+</div>
+
+L’exemple suivant montre explicitement comment les `user_metadata` et `app_metadata` du compte secondaire sont fusionnés au compte principal à l’aide du [Node.js Auth0 SDK for API V2](https://github.com/auth0/node-auth0).
+
+```javascript lines expandable
+/*
+ * Fusionne récursivement user_metadata et app_metadata de l'utilisateur secondaire dans l'utilisateur principal.
+ * Les données de l'utilisateur principal ont la prépondérance.
+ * Les champs de type tableau sont joints.
+ */
+async function mergeMetadata(primaryUserId, secondaryUserId) {
+  // charger les deux utilisateurs avec leurs métadonnées.
+  const [primaryUser, secondaryUser] = await Promise.all(
+    [primaryUserId, secondaryUserId].map((uid) => auth0Client.getUser(uid))
+  );
+
+  const customizerCallback = function (objectValue, sourceValue) {
+    if (_.isArray(objectValue)) {
+      return sourceValue.concat(objectValue);
+    }
+  };
+  const mergedUserMetadata = _.merge(
+    {},
+    secondaryUser.user_metadata,
+    primaryUser.user_metadata,
+    customizerCallback
+  );
+  const mergedAppMetadata = _.merge(
+    {},
+    secondaryUser.app_metadata,
+    primaryUser.app_metadata,
+    customizerCallback
+  );
+  await auth0Client.updateUser(primaryUserId, {
+    user_metadata: mergedUserMetadata,
+    app_metadata: mergedAppMetadata,
+  });
+}
+```

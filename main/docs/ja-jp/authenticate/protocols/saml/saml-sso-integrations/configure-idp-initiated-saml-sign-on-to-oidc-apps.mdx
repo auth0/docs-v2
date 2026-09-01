@@ -1,0 +1,147 @@
+---
+description: OIDCアプリケーションでIDプロバイダー開始のサインオンをサポートするように、Auth0のSAML接続を設定する方法を説明します。
+title: OIDCアプリへのIdP開始SAMLサインオンを設定する
+---
+
+Auth0 には、アプリケーション向けに、<Tooltip tip="Identity Provider (IdP): Service that stores and manages digital identities." cta="用語集を見る" href="/docs/ja-jp/glossary?term=Identity+Provider">IDプロバイダー</Tooltip> (IdP) 開始の <Tooltip tip="Identity Provider (IdP): Service that stores and manages digital identities." cta="用語集を見る" href="/docs/ja-jp/glossary?term=SAML">SAML</Tooltip> レスポンスを <Tooltip tip="Security Assertion Markup Language (SAML): Standardized protocol allowing two parties to exchange authentication information without a password." cta="用語集を見る" href="/docs/ja-jp/glossary?term=OpenID">OpenID</Tooltip> Connect (OIDC) レスポンスに変換する方法が用意されています。
+
+OIDCプロトコルはIdP開始の認証フローをサポートしていませんが、この方法を使えば、[Implicit Flow with Form Post](/docs/ja-jp/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post) を利用して、IdP開始の認証フローをシミュレートできます。
+
+<Warning>
+  ログインフローはIdPではなくOIDCアプリケーション側で開始することを強くおすすめします。詳しくは、[Configure SAML Identity Provider-Initiated Single Sign-On](/docs/ja-jp/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on) を参照してください。
+</Warning>
+
+この方法を実装するには、次の作業が必要です。
+
+* アプリケーションにカスタムログインルートハンドラーを追加します。
+* SAML 接続を次のように更新します。
+
+  1. 受信したIdP開始のSAMLレスポンスを受け入れる。
+  2. サービスプロバイダー開始の認証リクエストを送信するデフォルトのアプリケーションにリダイレクトする。
+
+<div id="how-it-works">
+  ## 仕組み
+</div>
+
+<Frame>![Identity Provider 開始の SAML サインインから OIDC アプリケーションへのフロー図](/docs/images/cdy7uua7fh8z/5vinAB4pSSwaKDgliTkAhh/0c5822149426b986bbcc851d07666187/idp-provider-init-saml-sign-in0.png)</Frame>
+
+1. ユーザーが SAML IdP のログイン エンドポイントにアクセスします。
+2. SAML IdP がログインページを返します。
+3. ユーザーが SAML IdP に資格情報を送信します。
+4. SAML IdP はユーザーのセッションを作成し、Form Post と SAML レスポンスを含む HTML ページを返します。
+5. ページは HTTP `POST` 呼び出しによって、SAML レスポンスを Auth0 テナントに自動送信します。
+6. Auth0 テナントは、ID トークンを URL フラグメントとして付与し、ユーザーのブラウザーを OIDC アプリケーションのカスタム ログイン ルート ハンドラーにリダイレクトします。
+7. ブラウザーは、`connection` パラメーターと ID トークンを付けて、OIDC アプリケーションのカスタム ログイン ルート ハンドラーを呼び出します。
+8. OIDC アプリケーションは ID トークンを無視し、`connection` パラメーターを解析してセッション用の `state` パラメーターを作成した後、ユーザーのブラウザーを Auth0 テナントの `/authorize` エンドポイントにリダイレクトします。
+9. ブラウザーは、指定された `connection` パラメーターと `state` パラメーターを付けて、Auth0 テナントの `/authorize` エンドポイントを呼び出します。
+10. Auth0 テナントは SAML ログイン リクエストを生成し、ユーザーのブラウザーを SAML IdP のログイン エンドポイントにリダイレクトします。
+11. ブラウザーは SAML ログイン リクエストを SAML IdP のログイン エンドポイントに送信します。
+12. SAML IdP はユーザーのセッションを見つけると、Form Post と SAML レスポンスを含む HTML ページを返します。
+13. ページは HTTP `POST` 呼び出しによって、SAML レスポンスを Auth0 テナントに自動送信します。
+14. Auth0 テナントは、ユーザーのブラウザーをアプリケーションのログイン ルート ハンドラーにリダイレクトします。
+15. ブラウザーは、指定された `state` パラメーターと ID トークンを付けて、アプリケーションのログイン ルート ハンドラーを呼び出します。
+16. OIDC アプリケーションは `state` パラメーターを検証し、ID トークンを解析して、ユーザーのアプリケーションセッションを作成します。
+
+<div id="create-the-custom-login-route-handler">
+  ## カスタムログインルートハンドラーを作成する
+</div>
+
+カスタムログインルートハンドラーは、アプリケーションのログインメソッドを呼び出します。このハンドラーは `connection` パラメーターを受け取り、それを Auth0 テナントに送信する認証リクエストに含める必要があります。
+
+カスタムログインルートハンドラーは、標準のログインルートハンドラーとは別のエンドポイントに関連付けることをおすすめします。たとえば、標準のログインルートハンドラーが `/login` エンドポイントに関連付けられている場合は、カスタムログインルートハンドラーを `/startlogin` エンドポイントに関連付けることができます。
+
+<Warning>
+  認証の処理に Auth0 SDK を使用していない場合は、CSRF 攻撃から保護するために、アプリケーションのログインメソッドが `/authorize` エンドポイントに `state` パラメーター値を渡し、IDプロバイダーからのレスポンスに含まれる `state` パラメーターを検証するようにする必要があります。詳しくは、[OAuth 2.0 の state パラメータで攻撃を防ぎ、ユーザーをリダイレクトする](/docs/ja-jp/secure/attack-protection/state-parameters)を参照してください。
+</Warning>
+
+<div id="example">
+  ### 例
+</div>
+
+[Auth0 Single Page App SDK](/docs/ja-jp/libraries/auth0-single-page-app-sdk) を使用している場合は、カスタムログインルートハンドラーを追加し、次のように `login` メソッドを更新して `connection` パラメーターに対応させることができます。
+
+```javascript lines expandable
+const router = {
+  "/": () => showContent("content-home"),
+  "/profile": () =>
+    requireAuth(() => showContent("content-profile"), "/profile"),
+  "/login": () => login(),
+  "/startlogin": () => startlogin()
+};
+
+//IdP-Initiated コールバックからログインを開始する新しいメソッド
+const startlogin = async () => {
+  console.log(window.location.href)
+  let myURL = new URL(window.location.href);
+  let conn = myURL.searchParams.get("connection");
+  return  login(null, conn);
+}
+
+/**
+ * 認証フローを開始する
+ */
+const login = async (targetUrl, connection) => {
+  try {
+    console.log("Logging in", targetUrl);
+
+    const options = {
+      redirect_uri: window.location.origin,
+    };
+
+    if (connection) {
+      options.connection = connection;
+    }
+
+    if (targetUrl) {
+      options.appState = { targetUrl };
+    }
+
+    await auth0.loginWithRedirect(options);
+  } catch (err) {
+    console.log("Log in failed", err);
+  }
+};
+```
+
+<div id="create-the-query-string">
+  ## クエリ文字列を作成する
+</div>
+
+クエリ文字列には `redirect_uri` パラメーターが含まれます。このパラメーターの値は URL エンコードする必要があり、次の要素で構成されます。
+
+1. カスタムログインルートハンドラーに対応するアプリケーションのエンドポイント。
+2. SAML 接続名を値として指定した `connection` パラメーター。
+
+<div id="example">
+  ### 例
+</div>
+
+アプリケーションのエンドポイントが `https://exampleco.com/startlogin` で、SAML接続の名前が `my-saml-connection` の場合、クエリ文字列は `redirect_uri=https%3A%2F%2Fexampleco.com%2Fstartlogin%3Fconnection%3Dmy-saml-connection` になります。
+
+<div id="configure-the-application">
+  ## アプリケーションを設定する
+</div>
+
+1. [Auth0 Dashboard &gt; アプリケーション &gt; アプリケーション](https://manage.auth0.com/#/applications) に移動します。
+2. Auth0 で OIDC アプリケーションを表す新しいアプリケーションを作成します。
+3. **Allowed Callback URLs** を更新し、カスタムログインルートハンドラーに関連付けられたアプリケーションのエンドポイントを追加します。
+
+<div id="configure-the-connection">
+  ## 接続を設定する
+</div>
+
+1. [Auth0 Dashboard &gt; Authentication &gt; Enterprise &gt; SAML](https://manage.auth0.com/#/connections/enterprise/samlp) に移動します。
+2. 新しい SAML 接続を作成します。
+3. **IdP-Initiated SSO** ビューに切り替えます。
+4. **Accept Requests** を選択します。
+5. **Default Application** で、先ほど作成したアプリケーションを選択します。
+6. **Response Protocol** で **OpenID Connect** を選択します。
+7. **クエリ文字列** に、先ほど作成したクエリ文字列を入力します。
+
+<div id="learn-more">
+  ## 詳しく見る
+</div>
+
+* [アプリを SAML IDプロバイダーに接続する](/docs/ja-jp/authenticate/identity-providers/enterprise-identity-providers/saml)
+* [SAML IDプロバイダー起点のシングルサインオンを設定する](/docs/ja-jp/authenticate/protocols/saml/saml-sso-integrations/identity-provider-initiated-single-sign-on)
+* [SAML IDプロバイダーからユーザーをログアウトする](/docs/ja-jp/authenticate/login/logout/log-users-out-of-saml-idps)

@@ -1,0 +1,517 @@
+---
+description: SPA + API アーキテクチャシナリオにおける SPA の Angular 2 実装
+title: SPA Angular 2 実装（SPAs + API）
+---
+
+このドキュメントは SPA + API アーキテクチャシナリオ の一部であり、Angular 2 で SPA を実装する方法を説明します。実装されているソリューションの詳細については、このシナリオを参照してください。
+
+SPA の Angular 2 実装の完全なソースコードは、[この GitHub リポジトリ](https://github.com/auth0-samples/auth0-pnp-exampleco-timesheets/tree/master/timesheets-spa/angular)で確認できます。
+
+<div id="step-1-configuration">
+  ## ステップ 1. 設定
+</div>
+
+アプリケーションには、いくつかの設定情報が必要です。残りの実装に進む前に、各種設定値を含む `AuthConfig` インターフェースを作成してください。このインターフェースは `auth0-variables.ts` というファイルに配置します。
+
+```ts lines
+interface AuthConfig {
+  clientID: string;
+  domain: string;
+  callbackURL: string;
+  apiUrl: string;
+}
+
+export const AUTH_CONFIG: AuthConfig = {
+  clientID: '',
+  domain: '',
+  callbackURL: 'http://localhost:4200/callback',
+  apiUrl: ''
+};
+```
+
+<div id="step-2-authorize-the-user">
+  ## ステップ 2. ユーザーを認証する
+</div>
+
+<div id="create-an-authorization-service">
+  ### 認証サービスを作成する
+</div>
+
+ユーザー認証に必要な処理を管理し、連携させる最も適切な方法は、再利用可能なサービスを作成することです。サービスを用意しておけば、アプリケーション全体からそのメソッドを呼び出せるようになります。サービス内では、[auth0.js](/docs/ja-jp/libraries/auth0js) の `WebAuth` オブジェクトのインスタンスを作成できます。
+
+```jsx lines expandable
+import { Injectable } from '@angular/core';
+import { AUTH_CONFIG } from './auth0-variables';
+import { Router } from '@angular/router';
+import 'rxjs/add/operator/filter';
+import auth0 from 'auth0-js';
+
+@Injectable()
+export class AuthService {
+
+  userProfile: any;
+  requestedScopes: string = 'openid profile read:timesheets create:timesheets';
+
+  auth0 = new auth0.WebAuth({
+    clientID: AUTH_CONFIG.clientID,
+    domain: AUTH_CONFIG.domain,
+    responseType: 'token id_token',
+    audience: AUTH_CONFIG.apiUrl,
+    redirectUri: AUTH_CONFIG.callbackURL,
+    scope: this.requestedScopes
+  });
+
+  constructor(public router: Router) {}
+
+  public login(): void {
+    this.auth0.authorize();
+  }
+
+  public handleAuthentication(): void {
+    this.auth0.parseHash((err, authResult) => {
+      if (authResult && authResult.accessToken && authResult.idToken) {
+        window.location.hash = '';
+        this.setSession(authResult);
+        this.router.navigate(['/home']);
+      } else if (err) {
+        this.router.navigate(['/home']);
+        console.log(err);
+        alert('Error: <%= "${err.error}" %>. Check the console for further details.');
+      }
+    });
+  }
+
+  private setSession(authResult): void {
+    // アクセストークンの有効期限を設定する
+    const expiresAt = JSON.stringify((authResult.expiresIn * 1000) + new Date().getTime());
+
+    // authResult の scope パラメータに値がある場合は、
+    // それを使用してユーザーのセッションにスコープを設定する。ない場合は
+    // リクエストされたスコープを使用する。スコープがリクエストされていない場合は、
+    // 空に設定する
+    const scopes = authResult.scope || this.requestedScopes || '';
+
+    localStorage.setItem('access_token', authResult.accessToken);
+    localStorage.setItem('id_token', authResult.idToken);
+    localStorage.setItem('expires_at', expiresAt);
+    localStorage.setItem('scopes', JSON.stringify(scopes));
+  }
+
+  public logout(): void {
+    // localStorage からトークンと有効期限を削除する
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('id_token');
+    localStorage.removeItem('expires_at');
+    localStorage.removeItem('scopes');
+    // ホームルートに戻る
+    this.router.navigate(['/']);
+  }
+
+  public isAuthenticated(): boolean {
+    // 現在時刻がアクセストークンの有効期限を
+    // 過ぎているかどうかを確認する
+    const expiresAt = JSON.parse(localStorage.getItem('expires_at'));
+    return new Date().getTime() < expiresAt;
+  }
+
+  public userHasScopes(scopes: Array<string>): boolean {
+    const grantedScopes = JSON.parse(localStorage.getItem('scopes')).split(' ');
+    return scopes.every(scope => grantedScopes.includes(scope));
+  }
+}
+```
+
+このサービスには、認証を処理するためのメソッドがいくつか用意されています。
+
+* **login**: auth0.js の `authorize` を呼び出し、<Tooltip tip="Universal Login: Auth0 の Authorization Server でホストされる Universal Login にアプリケーションをリダイレクトし、ユーザーの本人確認を行います。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Universal+Login">Universal Login</Tooltip> を開始します
+* **handleAuthentication**: URL ハッシュ内の認証結果を確認し、auth0.js の `parseHash` メソッドで処理します
+* **setSession**: ユーザーの <Tooltip tip="Access Token: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可クレデンシャル。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Access+Token">アクセストークン</Tooltip>、<Tooltip tip="Access Token: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可クレデンシャル。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=ID+Token">ID トークン</Tooltip>、およびアクセストークンの有効期限が切れる時刻を設定します
+* **logout**: ブラウザストレージからユーザーのトークンを削除します
+  isAuthenticated: アクセストークンの有効期限が切れているかどうかを確認します
+
+<div id="process-the-authentication-result">
+  ### 認証結果を処理する
+</div>
+
+ユーザーが Universal Login で認証され、その後アプリケーションにリダイレクトされると、認証情報は URL のハッシュフラグメントに含まれます。`AuthService` の `handleAuthentication` メソッドは、このハッシュを処理します。
+
+ユーザーのリダイレクト後にアプリが最初に読み込まれたときに認証ハッシュフラグメントを処理できるよう、アプリのルートコンポーネントで `handleAuthentication` を呼び出します。
+
+```javascript lines
+// src/app/app.component.ts
+
+import { Component } from '@angular/core';
+import { AuthService } from './auth/auth.service';
+
+@Component({
+  selector: 'app-root',
+  templateUrl: './app.component.html',
+  styleUrls: ['./app.component.css']
+})
+
+export class AppComponent {
+
+  constructor(public auth: AuthService) {
+    auth.handleAuthentication();
+  }
+}
+```
+
+<div id="add-the-callback-component">
+  ### Callback コンポーネントを追加する
+</div>
+
+Universal Login を使用すると、ユーザーはいったんアプリケーションを離れ、Auth0 がホストするページへ移動します。認証に成功すると、ユーザーはアプリケーションに戻り、そこでクライアント側のセッションが設定されます。
+
+ユーザーの戻り先はアプリケーション内の任意の URL にできますが、認証成功後にユーザーを戻す共通の場所として、専用のコールバックルートを作成することをおすすめします。コールバックルートを 1 つにしておくことには、主に次の 2 つの利点があります。
+
+* 複数の (場合によっては不明な) コールバック URL を許可リストに追加する必要がなくなります
+* アプリケーションがユーザーのクライアント側セッションを設定している間、読み込み中の表示を出す場所として使えます
+
+`CallbackComponent` という名前のコンポーネントを作成し、読み込み中の表示を追加します。
+
+```jsx lines
+<!-- app/callback/callback.html -->
+
+<div class="loading">
+  <img src="/assets/loading.svg" alt="loading">
+</div>
+```
+
+この例では、`assets` ディレクトリに何らかのローディングスピナーが用意されていることを前提としています。実際の動作については、ダウンロード可能なサンプルをご覧ください。
+
+認証後、ユーザーは短時間 ` /callback` ルートに遷移し、その間はローディングインジケーターが表示されます。この間にクライアント側のセッションが設定され、完了後に ` /home` ルートへリダイレクトされます。
+
+<div id="step-3-get-the-user-profile">
+  ## ステップ 3. ユーザープロファイルを取得する
+</div>
+
+<Card title="トークンから情報を抽出する">
+  このセクションでは、アクセストークンと[/userinfo エンドポイント](https://auth0.com/docs/api/authentication#get-user-info)を使用してユーザー情報を取得する方法を説明します。あるいは、ID トークンを[ライブラリを使用して](https://jwt.io/#libraries-io)デコードするだけでもかまいません (必ず先に検証してください) 。どちらも同じ結果になります。追加のユーザー情報が必要な場合は、[Management API](https://auth0.com/docs/api/management/v2#!/Users/get_users_by_id)の使用を検討してください。
+</Card>
+
+ユーザープロファイルを取得するには、既存の`AuthService`クラスを更新します。`getProfile`関数を追加し、ローカルストレージからユーザーのアクセストークンを取り出して、`userInfo`関数を呼び出し、ユーザー情報を取得します。
+
+```javascript lines
+// AuthServiceクラスの既存コードは、簡潔さのためこのコードサンプルでは省略しています
+@Injectable()
+export class AuthService {
+  public getProfile(cb): void {
+    const accessToken = localStorage.getItem('access_token');
+    if (!accessToken) {
+      throw new Error('Access Token must exist to fetch profile');
+    }
+
+    const self = this;
+    this.auth0.client.userInfo(accessToken, (err, profile) => {
+      if (profile) {
+        self.userProfile = profile;
+      }
+      cb(err, profile);
+    });
+  }
+}
+```
+
+これで、ユーザー情報を取得して表示したい任意のサービスから、この関数を簡単に呼び出せるようになりました。
+
+たとえば、ユーザーのプロフィール情報を表示する新しいコンポーネントを作成できます。
+
+```jsx lines
+import { Component, OnInit } from '@angular/core';
+import { AuthService } from './../auth/auth.service';
+
+@Component({
+  selector: 'app-profile',
+  templateUrl: './profile.component.html',
+  styleUrls: ['./profile.component.css']
+})
+export class ProfileComponent implements OnInit {
+
+  profile: any;
+
+  constructor(public auth: AuthService) { }
+
+  ngOnInit() {
+    if (this.auth.userProfile) {
+      this.profile = this.auth.userProfile;
+    } else {
+      this.auth.getProfile((err, profile) => {
+        this.profile = profile;
+      });
+    }
+  }
+}
+```
+
+このコンポーネントのテンプレートは次のとおりです。
+
+```jsx lines
+<div class="panel panel-default profile-area">
+  <div class="panel-heading">
+    <h3>Profile</h3>
+  </div>
+  <div class="panel-body">
+    <img src="{{profile?.picture}}" class="avatar" alt="avatar">
+    <div>
+      <label><i class="glyphicon glyphicon-user"></i> Nickname</label>
+      <h3 class="nickname">{{ profile?.nickname }}</h3>
+    </div>
+    <pre class="full-profile">{{ profile | json }}</pre>
+  </div>
+</div>
+```
+
+<div id="step-4-display-ui-elements-conditionally-based-on-scope">
+  ## ステップ 4. Scope に基づいて UI 要素を条件付きで表示する
+</div>
+
+認可プロセスの中で、ユーザーに実際に付与されたスコープはすでにローカルストレージに保存されています。`authResult` で返される `scope` が空でない場合、最初に要求したものとは異なるスコープのセットがユーザーに発行されたことを意味します。そのため、ユーザーに付与されたスコープを判断するには `authResult.scope` を使用する必要があります。
+
+`authResult` で返される `scope` が空の場合は、要求したスコープがすべてユーザーに付与されたことを意味します。したがって、ユーザーに付与されたスコープを判断するには、要求したスコープを使用できます。
+
+以下は、その確認を行うために先ほど `setSession` 関数に書いたコードです。
+
+```jsx lines
+private setSession(authResult): void {
+  // アクセストークンの有効期限を設定する
+  const expiresAt = JSON.stringify((authResult.expiresIn * 1000) + new Date().getTime());
+
+  // authResult の `scope` パラメータに値がある場合は、
+  // それを使用してユーザーのセッションにスコープを設定する。ない場合は
+  // リクエストされたスコープを使用する。スコープがリクエストされていない場合は
+  // 空を設定する
+  const scopes = authResult.scope || this.requestedScopes || '';
+
+  localStorage.setItem('access_token', authResult.accessToken);
+  localStorage.setItem('id_token', authResult.idToken);
+  localStorage.setItem('expires_at', expiresAt);
+  localStorage.setItem('scopes', JSON.stringify(scopes));
+  this.scheduleRenewal();
+}
+```
+
+次に、ユーザーに特定のスコープが付与されているかを判定するための関数を、`AuthService`クラスに追加する必要があります:
+
+```jsx lines
+@Injectable()
+export class AuthService {
+  // 簡潔にするため、一部のコードを省略しています
+
+  public userHasScopes(scopes: Array<string>): boolean {
+    const grantedScopes = JSON.parse(localStorage.getItem('scopes')).split(' ');
+    return scopes.every(scope => grantedScopes.includes(scope));
+  }
+}
+```
+
+特定の UI 要素を表示すべきかどうかは、このメソッドを呼び出して判断できます。たとえば、ユーザーが `approve:timesheets` のスコープを持っている場合にのみ、**Approve Timesheets** リンクを表示したいとします。以下のコードでは、そのリンクを表示するかどうかを判断するために、`userHasScopes` 関数の呼び出しを追加している点に注目してください。
+
+```xml lines
+<nav class="navbar navbar-default">
+  <div class="container-fluid">
+    <div class="navbar-header">
+      <a class="navbar-brand" href="#">Timesheet System</a>
+    </div>
+    <div class="navbar-collapse collapse">
+      <ul class="nav navbar-nav">
+        <li><a routerLink="/">Home</a></li>
+        <li><a *ngIf="auth.isAuthenticated()" routerLink="/profile">My Profile</a></li>
+        <li><a *ngIf="auth.isAuthenticated()" routerLink="/timesheets">My Timesheets</a></li>
+        <li><a *ngIf="auth.isAuthenticated() && auth.userHasScopes(['approve:timesheets'])" routerLink="/approval">Approve Timesheets</a></li>
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+        <li><a *ngIf="!auth.isAuthenticated()" href="javascript:void(0)" (click)="auth.login()">Log In</a></li>
+        <li><a *ngIf="auth.isAuthenticated()" href="javascript:void(0)" (click)="auth.logout()">Log Out</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <router-outlet></router-outlet>
+</main>
+```
+
+<div id="protect-a-route">
+  ### ルートを保護する
+</div>
+
+ユーザーに適切なスコープが付与されていない場合はそのルートに遷移できないよう、ルートも保護する必要があります。そのために、新しい`ScopeGuardService`サービスクラスを追加できます。
+
+```jsx lines
+import { Injectable } from '@angular/core';
+import { Router, CanActivate, ActivatedRouteSnapshot } from '@angular/router';
+import { AuthService } from './auth.service';
+
+@Injectable()
+export class ScopeGuardService implements CanActivate {
+
+  constructor(public auth: AuthService, public router: Router) {}
+
+  canActivate(route: ActivatedRouteSnapshot): boolean {
+
+    const scopes = (route.data as any).expectedScopes;
+
+    if (!this.auth.isAuthenticated() || !this.auth.userHasScopes(scopes)) {
+      this.router.navigate(['']);
+      return false;
+    }
+    return true;
+  }
+
+}
+```
+
+そして、ルートを設定するときにそれを使って、そのルートを有効にできるかどうかを判断します。以下の`approval`ルートの定義では、新しい `ScopeGuardService` が使われている点に注目してください。
+
+```javascript lines
+// app.routes.ts
+
+import { Routes, CanActivate } from '@angular/router';
+import { HomeComponent } from './home/home.component';
+import { ProfileComponent } from './profile/profile.component';
+import { CallbackComponent } from './callback/callback.component';
+import { AuthGuardService as AuthGuard } from './auth/auth-guard.service';
+import { ScopeGuardService as ScopeGuard } from './auth/scope-guard.service';
+import { TimesheetListComponent } from './timesheet-list/timesheet-list.component';
+import { TimesheetAddComponent } from './timesheet-add/timesheet-add.component';
+import { ApprovalComponent } from './approval/approval.component';
+
+export const ROUTES: Routes = [
+  { path: '', component: HomeComponent },
+  { path: 'profile', component: ProfileComponent, canActivate: [AuthGuard] },
+  { path: 'callback', component: CallbackComponent },
+  { path: 'timesheets/add', component: TimesheetAddComponent, canActivate: [AuthGuard] },
+  { path: 'timesheets', component: TimesheetListComponent, canActivate: [AuthGuard] },
+  { path: 'approval', component: ApprovalComponent, canActivate: [ScopeGuard], data: { expectedScopes: ['approve:timesheets']} },
+  { path: '**', redirectTo: '' }
+];
+```
+
+<div id="step-5-call-the-api">
+  ## ステップ 5. API を呼び出す
+</div>
+
+[angular2-jwt](https://github.com/auth0/angular2-jwt) モジュールを使用すると、API へのリクエストに <Tooltip tip="JSON Web Token (JWT): 2者間でクレームを安全にやり取りするために使用される標準的な ID トークン形式（多くの場合、アクセストークンの形式でもあります）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=JSON+Web+Tokens">JSON Web Tokens</Tooltip> を自動的に付与できます。これは、Angular の `Http` クラスをラップした `AuthHttp` クラスを提供することで実現されます。
+
+`angular2-jwt` をインストールします:
+
+```bash lines
+# npmでインストール
+npm install --save angular2-jwt
+
+# yarnでインストール
+yarn add angular2-jwt
+```
+
+`angular2-jwt` 用の設定値を含むファクトリー関数を作成し、それをアプリケーションの `@NgModule` の `providers` 配列に追加します。このファクトリー関数には、ローカルストレージから `access_token` を取得する `tokenGetter` 関数を含める必要があります。
+
+```jsx lines
+import { Http, RequestOptions } from '@angular/http';
+import { AuthHttp, AuthConfig } from 'angular2-jwt';
+
+export function authHttpServiceFactory(http: Http, options: RequestOptions) {
+  return new AuthHttp(new AuthConfig({
+    tokenGetter: (() => localStorage.getItem('access_token'))
+  }), http, options);
+}
+
+@NgModule({
+  declarations: [...],
+  imports: [...],
+  providers: [
+    AuthService,
+    {
+      provide: AuthHttp,
+      useFactory: authHttpServiceFactory,
+      deps: [Http, RequestOptions]
+    }
+  ],
+  bootstrap: [...]
+})
+```
+
+`angular2-jwt` の設定が完了したら、アプリケーション内のどこからでも `AuthHttp` クラスを使って API に安全にアクセスできます。そのためには、必要なコンポーネントまたはサービスに `AuthHttp` を注入し、Angular の通常の `Http` クラスと同じように使用します。
+
+```jsx lines
+import { Injectable } from '@angular/core';
+import { Http } from '@angular/http';
+import { AuthHttp } from 'angular2-jwt';
+import 'rxjs/add/operator/map';
+import { NewTimesheetModel } from '../models/new-timesheet-model';
+
+@Injectable()
+export class TimesheetsService {
+
+  constructor(public authHttp: AuthHttp) { }
+
+  addTimesheet(model: NewTimesheetModel) {
+    return this.authHttp.post('http://localhost:8080/timesheets', JSON.stringify(model));
+  }
+
+  getAllTimesheets() {
+    return this.authHttp.get('http://localhost:8080/timesheets')
+      .map(res => res.json())
+  }
+}
+```
+
+<div id="step-6-renew-the-access-token">
+  ## ステップ 6. アクセストークン を更新する
+</div>
+
+ユーザーの アクセストークン を更新するには、Angular SPA 側を更新する必要があります。auth0.js の `checkSession` メソッドを呼び出すメソッドを `AuthService` に追加します。更新に成功したら、既存の `setSession` メソッドを使って新しいトークンをローカルストレージに保存します。
+
+```ts lines
+public renewToken() {
+  this.auth0.checkSession({
+    audience: AUTH_CONFIG.apiUrl
+  }, (err, result) => {
+    if (!err) {
+      this.setSession(result);
+    }
+  });
+}
+```
+
+`AuthService` クラスに、認証をサイレントに更新するタイミングを設定する `scheduleRenewal` というメソッドを追加します。以下のサンプルでは、実際にトークンの有効期限が切れる 30 秒前に実行されるように設定されています。また、Observable の購読を解除する `unscheduleRenewal` というメソッドも追加します。
+
+```ts lines expandable
+public scheduleRenewal() {
+  if (!this.isAuthenticated()) return;
+
+  const expiresAt = JSON.parse(window.localStorage.getItem('expires_at'));
+
+  const source = Observable.of(expiresAt).flatMap(
+    expiresAt => {
+
+      const now = Date.now();
+
+      // タイマーの遅延を使用して
+      // 適切なタイミングでリフレッシュを実行する
+      var refreshAt = expiresAt - (1000 * 30); // 有効期限の30秒前にリフレッシュする
+      return Observable.timer(Math.max(1, refreshAt - now));
+    });
+
+  // 上記の遅延時間が経過したら、
+  // 新しいJWTを取得して
+  // 追加のリフレッシュをスケジュールする
+  this.refreshSubscription = source.subscribe(() => {
+    this.renewToken();
+  });
+}
+
+public unscheduleRenewal() {
+  if (!this.refreshSubscription) return;
+  this.refreshSubscription.unsubscribe();
+}
+```
+
+最後に、スケジュールされた更新を開始する必要があります。これは、ページの読み込み時に実行される `AppComponent` 内で `scheduleRenewal` を呼び出すことで行えます。これは、ユーザーが明示的にログインした場合でも、サイレント認証が行われた場合でも、認証フローのたびに実行されます。
+
+<Info>
+  ### リフレッシュトークンのローテーション
+
+  近年、ブラウザーのユーザープライバシー保護機能の強化により、サードパーティ Cookie へアクセスできなくなり、ユーザー体験に悪影響を及ぼしています。Auth0 では、[Refresh Token Rotation](/docs/ja-jp/secure/tokens/refresh-tokens/refresh-token-rotation) の利用を推奨しています。これにより、SPA でリフレッシュトークンを安全に使用できるようになり、ITP のようなブラウザーのプライバシー技術によって UX が損なわれることなく、エンドユーザーはリソースにシームレスにアクセスできます。
+</Info>

@@ -1,0 +1,483 @@
+---
+title: カスタムレート制限ポリシー
+description: 設定ミスや異常な動作をするアプリケーションからテナントを保護するため、アプリケーションごとにレート制限の上限を設定します。
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx"
+import { AuthCodeGroup } from "/snippets/ja-jp/AuthCodeGroup.jsx"
+
+<ReleaseStageNotice feature="カスタムレート制限ポリシー" stage="ea" terms="true" contact="Auth0 Support" />
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  カスタムレート制限ポリシーは、すべてのパブリッククラウド環境で利用できます。
+</Callout>
+
+カスタムレート制限ポリシーを使用すると、テナントから[Authentication API](https://auth0.com/docs/api/authentication)へ行う呼び出しについて、アプリケーションごとのリクエスト上限を設定できます。アプリケーションがAuth0を呼び出すたびに (トークンのリクエスト、認可フローの開始、資格情報の更新など) 、そのリクエストはアプリケーションに設定された上限にカウントされます。バグ、再試行ループ、予期しない動作によってアプリケーションが上限を超えた場合、テナントの共有レート制限容量を消費する前に、Auth0がそのアプリケーションをスロットリングします。
+
+カスタムレート制限ポリシーは、ファーストパーティアプリケーションと、動作を直接制御できないサードパーティアプリケーションの両方に適用できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  カスタムレート制限ポリシーは、安全のための上限であり、容量を分割するものではありません。テナント全体のレート制限の割り当てをアプリケーション間で均等に分配することを目的としたものではありません。通常のトラフィックでは上限に達しない程度に高く設定しつつ、問題のあるアプリケーションがテナントに影響を及ぼす前に制限される程度に低く設定してください。
+</Callout>
+
+<div id="how-custom-rate-limits-relate-to-tenant-rate-limits">
+  ## カスタムレート制限とテナントのレート制限の関係
+</div>
+
+テナントには、サブスクリプションプランに応じた[グローバル認証レート制限](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy)があります。カスタムレート制限ポリシーは、このグローバル制限より低い、*アプリケーションごと*の上限を設定します。この2つの制限は連携して機能します。
+
+* カスタムレート制限のチェックを通過したすべてのリクエストは、テナントのグローバルレート制限にもカウントされます。
+* アプリケーションがカスタム制限を超えると、Auth0 はそのアプリケーションに HTTP 429 を返します。拒否されたリクエストは、テナントのグローバルレート制限にはカウントされません。
+* テナントのグローバル制限に先に達すると、個々のアプリケーションがカスタム制限内に収まっているかどうかにかかわらず、すべてのアプリケーションがスロットリングされます。
+
+カスタムレート制限により、個々のアプリケーションがグローバルな処理能力を不釣り合いに消費するのを防ぎ、テナントを保護できます。テナント全体のスループットが増えるわけではありません。
+
+<div id="how-policy-evaluation-works">
+  ## ポリシー評価の仕組み
+</div>
+
+Auth0 では、カスタムレート制限ポリシーを最も具体的なものから最も一般的なものへと、厳格な階層に従って評価します。最初に一致したレベルが適用され、それより広い範囲のレベルはすべてスキップされます。
+
+1. **クライアント ID**: クライアント ID によって特定のアプリケーションを対象とするポリシーです。一致するポリシーが存在する場合、評価はここで終了します。
+2. **グループ**: グループ化されたプロファイル (サードパーティアプリケーションや CIMD など) に対し、グループ内のすべてのアプリケーションからの*合計*トラフィックに単一の共有制限を適用します。グループ内のすべてのアプリケーションは同じポリシーを共有します。グループ内ではアプリケーションごとに制限が分割されることはありません。アプリケーションがポリシーを持つグループに属している場合、評価はここで終了します。
+3. **グローバル / デフォルト**: クライアント ID またはグループのポリシーの対象外となるすべてのアプリケーションに適用されるフォールバックポリシーです。各アプリケーションには、設定された制限に基づく独立したポリシーが適用されます。制限値は共通ですが、ポリシーは共有されません。つまり、各アプリケーションは同じ上限に対して個別に評価されます。
+
+この階層により、個々の不適切に動作するアプリケーションと、アプリケーション群全体からのトラフィック急増の両方を防ぐことができます。
+
+<div id="pooled-counters-group-policies">
+  ### 共有カウンター (グループポリシー)
+</div>
+
+グループポリシーでは、グループ内のすべてのアプリケーションで単一の共有カウンターを使用します。グループメンバーからのすべてのリクエストは、同じバケットを消費します。
+
+たとえば、100 RPS の制限を持つ「Third-Party Clients」というグループポリシーを作成し、そのグループに5つのアプリケーションが含まれている場合、100 RPS の制限はそれらの合計トラフィックに適用されます。1つのアプリケーションが90 RPSを送信し、他のアプリケーションがそれぞれ5 RPSを送信すると、グループは制限を超過します (90 + 5 + 5 + 5 + 5 = 110 RPS) 。Auth0 は、グループ内のいずれかのアプリケーションからの後続のリクエストをスロットリングします。グループ内のアプリケーションごとの割り当ては保証されません。
+
+1つのサードパーティアプリケーションに異なる扱いが必要な場合は、グループ制限よりも優先されるクライアント ID ポリシーを割り当ててください。
+
+<div id="third-party-apps-vs-cimd-clients">
+  #### サードパーティアプリケーションとCIMDクライアント
+</div>
+
+[Client ID Metadata Document (CIMD)](/docs/ja-jp/get-started/auth0-overview/create-applications/register-applications-with-cimd#register-applications-with-cimd) を使用して登録されたアプリケーションは技術的にはサードパーティアプリケーションに該当しますが、Auth0では従来のサードパーティアプリケーションとは別のグループとして扱われます。つまり、次の2つの異なるグループバケットが存在します。
+
+* **サードパーティアプリケーション** (クライアント IDの接頭辞: `tpa_`) ：Management APIまたはDynamic Client Registration (DCR) を使用して作成されたものを含む、従来のサードパーティアプリケーション。
+* **CIMDクライアント** (クライアント IDの接頭辞: `https://`) ：Client ID Metadata Documentを通じて作成されたアプリケーション。
+
+各グループには、それぞれ専用の共有カウンターがあります。CIMDクライアントからのトラフィックはサードパーティアプリケーションのグループ制限にはカウントされず、その逆も同様です。アプリケーションがどのグループに属するかは、クライアント IDの接頭辞で確認できます。
+
+<div id="independent-counters-global-default-policies">
+  ### 独立したカウンター (グローバル／デフォルトポリシー)
+</div>
+
+グローバルポリシーでは、カウンターがアプリケーションごとに独立しています。各アプリケーションには、同じ設定上限に対して評価される個別のカウンターがあります。アプリケーション間で容量を取り合うことはありません。
+
+たとえば、グローバルデフォルトポリシーを 50 RPS に設定した場合、アプリケーション A、アプリケーション B、アプリケーション C はそれぞれ独立して 50 RPS を送信できます。アプリケーション A が上限に達しても、アプリケーション B や C には影響しません。各アプリケーションは、個別に 50 RPS を超えた場合にのみスロットリングされます。
+
+アプリケーションのグループ全体からの*合計*負荷に上限を設ける必要がある場合 (たとえば、合計トラフィックによってテナントに過剰な負荷がかかる可能性があるサードパーティ連携など) は、グループポリシーを使用します。アプリケーション間で調整することなく、アプリケーションごとに一律の安全上限を設ける必要がある場合は、グローバルデフォルトを使用します。
+
+<div id="requests-that-count-toward-custom-rate-limits">
+  ## カスタムレート制限の対象となるリクエスト
+</div>
+
+カスタムレート制限ポリシーでは、アプリケーションの `client_id` に紐付く Authentication API リクエストがカウントされます。エンドユーザーのブラウザーがリクエストを送信する HTTP クライアントであっても、そのリクエストを発生させるかどうかや頻度をアプリケーションが制御している場合、Auth0 はそのリクエストをカウントします。
+
+| エンドポイント           | パス                     | 注記                                                                          |
+| ----------------- | ---------------------- | --------------------------------------------------------------------------- |
+| トークンリクエスト         | `/oauth/token`         | アプリケーションサーバーからのバックチャネル呼び出し。                                                 |
+| 認可リクエスト           | `/authorize`           | アプリケーションがこの URL を構築し、リダイレクトを開始します。リクエスト自体はブラウザーが実行しますが、その頻度はアプリケーションが制御します。 |
+| デバイスコードリクエスト      | `/oauth/device/code`   | デバイス認可を開始するバックチャネル呼び出し。                                                     |
+| パスワードレス開始         | `/passwordless/start`  | パスワードレスログインを開始するバックチャネル呼び出し。                                                |
+| パスワードレス検証         | `/passwordless/verify` | パスワードレスコードを検証するバックチャネル呼び出し。                                                 |
+| プッシュ型認可リクエスト      | `/oauth/par`           | 認可パラメータをプッシュするバックチャネル呼び出し。                                                  |
+| トークンの取り消し         | `/oauth/revoke`        | トークンを取り消すバックチャネル呼び出し。                                                       |
+| バックチャネル認可 (CIBA)  | `/bc-authorize`        | CIBA 認可フローを開始するバックチャネル呼び出し。                                                 |
+| クロスオリジン認証         | `/co/authenticate`     | クロスオリジン認証のためのバックチャネル呼び出し。                                                   |
+| パスキーチャレンジ         | `/passkey/challenge`   | パスキー認証チャレンジを開始するバックチャネル呼び出し。                                                |
+| パスキー登録            | `/passkey/register`    | 新しいパスキーを登録するバックチャネル呼び出し。                                                    |
+
+<div id="custom-rate-limit-exclusions">
+  ## カスタムレート制限の除外
+</div>
+
+Auth0 が認証フローを開始した後 (`/authorize` の後) 、エンドユーザーのブラウザは Auth0 と直接通信してログインを完了します。こうした後続のリクエスト (ログインページのレンダリング、資格情報の送信、MFA チャレンジの完了) は、カスタムレート制限の対象にはなりません。アプリケーションはこれらのリクエストを開始するものではなく、その頻度やタイミングを制御することもできません。
+
+たとえば、一般的なログインフローは次のとおりです。
+
+1. アプリケーションがユーザーを `/authorize` にリダイレクトする → **カウントされる** (アプリが開始するため) 。
+2. Auth0 がログインページをレンダリングする → **カウントされない** (ブラウザから Auth0 へのリクエストであり、アプリでは制御できないため) 。
+3. ユーザーが資格情報を送信する → **カウントされない**。
+4. ユーザーが MFA チャレンジを完了する → **カウントされない**。
+5. Auth0 が認可コードとともにリダイレクトする → **カウントされない**。
+6. アプリケーションが `/oauth/token` でコードを交換する → **カウントされる** (アプリが開始するため) 。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  ブラウザから開始されるリクエストは除外されるため、カスタムレート制限ポリシーにより、完全な認証フローをトリガーしてテナント全体のレート制限を使い果たす攻撃のリスクは低減されますが、完全になくなるわけではありません。このような攻撃パターンへの対策については、[攻撃対策](/docs/ja-jp/secure/attack-protection)を参照してください。
+</Callout>
+
+<div id="log-only-mode">
+  ## ログのみモード
+</div>
+
+ポリシーでログのみモードを有効にすると、Auth0 は設定された上限に対するリクエストを追跡し、`action: log` を含む `api_limit` ログイベントを出力します。ただし、HTTP 429 レスポンスは実際には返されません。トラフィックは通常どおり流れ続けます。
+
+ログのみモードは、次の用途に使用します。
+
+* トラフィックをブロックする前に、新しい上限が適切に設定されていることを検証する。
+* ポリシーの変更による影響を受けるアプリケーションを特定する。
+* アプリケーションまたはグループのベースラインとなるトラフィックパターンを把握する。
+
+ポリシーは再作成せずに、いつでもログのみモードと強制モードを切り替えられます。
+
+<div id="choose-a-rate-limit-value">
+  ## レート制限値を選択する
+</div>
+
+適切な制限値は、アプリケーションのトラフィックパターンを制御できるかどうかに応じて決定します。
+
+<div id="first-party-applications-client-id-policies">
+  ### ファーストパーティアプリケーション (クライアント ID ポリシー)
+</div>
+
+自社で所有・運用するアプリケーションでは、トラフィックを直接測定できます。
+
+1. ポリシーで**ログのみモード**を有効にします。
+2. アプリケーションのリクエストパターンを3～7日間観察します。
+3. [`api_limit`ログイベント](/docs/ja-jp/deploy-monitor/logs/log-event-type-codes)を確認し、リクエストレートのピークを特定します。
+4. 観測されたピークの2～3倍に制限を設定します。たとえば、アプリケーションのピークが10 RPSの場合は、制限を20～30 RPSに設定します。
+
+アプリケーションコードを管理できるため、トラフィックの増加を予測し、リクエスト量が増える変更をデプロイする際に、あらかじめ制限を調整できます。
+
+<div id="third-party-applications-group-or-global-policies">
+  ### サードパーティアプリケーション (グループポリシーまたはグローバルポリシー)
+</div>
+
+パートナー連携、顧客が構築したアプリ、マーケットプレイスコネクターなど、自身で制御できないアプリケーションでは、トラフィックパターンを事前に予測できません。テナントが安全に処理できる範囲に基づいて制限を設定してください。
+
+1. 他のアプリケーションに影響を与えずに、単一の送信元からテナントが許容できる最大 RPS を算出します。
+2. 制限をそのしきい値以下に設定します。
+3. 適用前に実際のトラフィックで制限を検証するため、**ログのみモード**を有効にします。
+4. `api_limit` イベントを監視し、サードパーティの利用パターンが明らかになったら調整します。
+
+サードパーティアプリケーションがいつ動作を変更するかは制御できないため、これらの制限はパフォーマンス目標ではなく、保護のための上限として扱ってください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  目標とすべき上限は、通常のトラフィックが決して到達しない値です。アプリケーションが恒常的に制限値に近づく場合は、制限が低すぎます。制限を引き上げ、トラフィックパターンを調査してください。
+</Callout>
+
+<div id="block-an-application-entirely">
+  ### アプリケーションを完全にブロックする
+</div>
+
+カスタムレート制限を `0` に設定すると、レート制限の容量を消費することなく、そのアプリケーションからのすべての Authentication API リクエストが直ちにブロックされます。調査中に、侵害されたアプリケーションや重大な問題を引き起こしているアプリケーションを停止するために使用します。
+
+{/* ## カスタムレート制限ポリシーを作成する
+
+  <Tabs>
+  <Tab title="単一のアプリケーション">
+
+  クライアント ID を指定して、特定のアプリケーション1つにレート制限を設定します。これは最も具体的なポリシーレベルであり、グループポリシーおよびグローバルポリシーよりも優先されます。
+
+  <Steps>
+    <Step title="レート制限設定に移動する">
+
+    **Auth0 Dashboard &gt; Security &gt; Rate Limits &gt; Custom Policies** に移動し、**Create Policy** を選択します。
+
+    </Step>
+
+    <Step title="ポリシータイプを選択する">
+
+    **Single Application** を選択し、ドロップダウンから対象のアプリケーションを選択します。
+
+    </Step>
+
+    <Step title="制限を設定する">
+
+    1秒あたりのリクエスト数の上限を設定します。アプリケーションの想定ピークレートの2～3倍を目安に設定してください。
+
+    </Step>
+
+    <Step title="ログのみモードを有効にする（推奨）">
+
+    **Log Only** をオンにすると、ポリシーを強制適用せずに動作を確認できます。[`api_limit` イベント](/docs/deploy-monitor/logs/log-event-type-codes) を3～7日間監視してください。
+
+    </Step>
+
+    <Step title="保存して有効化する">
+
+    ポリシーを保存します。ログのみモードが無効になっている場合、直ちに強制適用が開始されます。
+
+    </Step>
+  </Steps>
+
+  </Tab>
+
+  <Tab title="アプリケーショングループ">
+
+  名前を付けたアプリケーショングループに共有のレート制限を設定します。この制限は、グループ内のすべてのアプリケーションからの*合計*トラフィックに適用されます。
+
+  <Steps>
+    <Step title="レート制限設定に移動する">
+
+    **Auth0 Dashboard &gt; Security &gt; Rate Limits &gt; Custom Policies** に移動し、**Create Policy** を選択します。
+
+    </Step>
+
+    <Step title="ポリシータイプを選択する">
+
+    **Application Group** を選択し、既存のグループを選択するか、新しいグループを作成します (例: 「サードパーティクライアント」) 。
+
+    </Step>
+
+    <Step title="グループにアプリケーションを追加する">
+
+    このグループに属するアプリケーションを選択します。これらの合計トラフィックが、1つの共有バケットに対してカウントされます。
+
+    </Step>
+
+    <Step title="制限を設定する">
+
+    グループの合計トラフィックに対する1秒あたりのリクエスト数の上限を設定します。
+
+    </Step>
+
+    <Step title="ログのみモードを有効にする（推奨）">
+
+    **Log Only** をオンにすると、強制適用せずに動作を確認できます。[`api_limit` イベント](/docs/deploy-monitor/logs/log-event-type-codes) を3～7日間監視してください。
+
+    </Step>
+
+    <Step title="保存して有効化する">
+
+    ポリシーを保存します。ログのみモードが無効になっている場合、直ちに強制適用が開始されます。
+
+    </Step>
+  </Steps>
+
+  </Tab>
+
+  <Tab title="グローバルデフォルト">
+
+  クライアント ID またはグループポリシーの対象外となるすべてのアプリケーションに適用されるデフォルトのレート制限を設定します。
+
+  <Steps>
+    <Step title="レート制限設定に移動する">
+
+    **Auth0 Dashboard &gt; Security &gt; Rate Limits &gt; Custom Policies** に移動し、**Create Policy** を選択します。
+
+    </Step>
+
+    <Step title="ポリシータイプを選択する">
+
+    **Global Default** を選択します。
+
+    </Step>
+
+    <Step title="制限を設定する">
+
+    1秒あたりのリクエスト数の上限を設定します。より具体的なポリシーがないアプリケーションすべてに適用される包括的な制限として機能します。
+
+    </Step>
+
+    <Step title="ログのみモードを有効にする（推奨）">
+
+    **Log Only** をオンにすると、強制適用せずに動作を確認できます。[`api_limit` イベント](/docs/deploy-monitor/logs/log-event-type-codes) を3～7日間監視してください。
+
+    </Step>
+
+    <Step title="保存して有効化する">
+
+    ポリシーを保存します。ログのみモードが無効になっている場合、直ちに強制適用が開始されます。
+
+    </Step>
+  </Steps>
+
+  </Tab>
+  </Tabs> */}
+
+<div id="create-a-custom-rate-limit-policy">
+  ## カスタムレート制限ポリシーを作成する
+</div>
+
+Management API を使用してカスタムレート制限ポリシーを作成するには、`create:rate_limit_policies` スコープを持つ Management API トークンで [`POST /api/v2/rate-limit-policies`](/docs/ja-jp/api/management/v2/rate-limit-policies/post-rate-limit-policies) を呼び出します。
+
+<Tabs>
+  <Tab title="単一のアプリケーション">
+    特定のアプリケーションに対して、Client ID を指定してRate Limitを設定します。これは最も具体的なポリシーレベルであり、グループポリシーおよびグローバルポリシーよりも優先されます。
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">Auth0 CLIを使用していますか？まだセットアップしていない場合は、このコマンドを実行する前に[CLIセッションをセットアップして認証](/docs/ja-jp/deploy-monitor/auth0-cli)してください。</Callout>
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"client_id:YOUR_CLIENT_ID","configuration":{"action":"block","limit":50}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "client_id:YOUR_CLIENT_ID",
+          "configuration": {
+            "action": "block",
+            "limit": 50
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+
+    制限を適用せずログのみを記録するモードを有効にするには、`action`を`"log"`に設定します。Auth0は制限に対するリクエスト数を追跡し、`api_limit`ログイベントを出力しますが、HTTP 429レスポンスは返しません。
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"client_id:YOUR_CLIENT_ID","configuration":{"action":"log","limit":50}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "client_id:YOUR_CLIENT_ID",
+          "configuration": {
+            "action": "log",
+            "limit": 50
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+  </Tab>
+
+  <Tab title="アプリケーショングループ">
+    組み込みアプリケーショングループに共有のレート制限を設定します。この制限は、グループ内のすべてのアプリケーションからの合計トラフィックに適用されます。Auth0 では、次の2つの組み込みグループをサポートしています。
+
+    * **`third_party_clients`** — すべての[サードパーティアプリケーション](/docs/ja-jp/get-started/applications/third-party-applications) (Client ID のプレフィックス: `tpa_`)
+    * **`cimd_clients`** — すべての CIMD クライアント (Client ID のプレフィックス: `https://`)
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"third_party_clients","configuration":{"action":"block","limit":100}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "third_party_clients",
+          "configuration": {
+            "action": "block",
+            "limit": 100
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+
+    このポリシーを CIMD クライアントに適用するには、`consumer_selector` を `"cimd_clients"` に設定します。
+  </Tab>
+
+  <Tab title="グローバルデフォルト">
+    Client ID またはグループポリシーの対象になっていないすべてのアプリケーションに適用されるデフォルトのレート制限を設定します。各アプリケーションには、同じ上限に対して独立したカウンターが割り当てられます。
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">Auth0 CLI を使用していますか？まだ設定していない場合は、このコマンドを実行する前に[CLI セッションを設定して認証](/docs/ja-jp/deploy-monitor/auth0-cli)してください。</Callout>
+
+    <AuthCodeGroup>
+      ```bash Auth0 CLI
+      auth0 api post "rate-limit-policies" \
+        --data '{"resource":"oauth_authentication_api","consumer":"client","consumer_selector":"default","configuration":{"action":"block","limit":50}}'
+      ```
+
+      ```bash cURL
+      curl --request POST \
+        --url 'https://YOUR_AUTH0_DOMAIN/api/v2/rate-limit-policies' \
+        --header 'authorization: Bearer YOUR_MGMT_API_TOKEN' \
+        --header 'content-type: application/json' \
+        --data '{
+          "resource": "oauth_authentication_api",
+          "consumer": "client",
+          "consumer_selector": "default",
+          "configuration": {
+            "action": "block",
+            "limit": 50
+          }
+        }'
+      ```
+    </AuthCodeGroup>
+  </Tab>
+</Tabs>
+
+<div id="monitor-via-logs">
+  ## ログによる監視
+</div>
+
+テナントログを使用して、カスタムレート制限ポリシーがトラフィックに与える影響を監視します。
+
+| ログイベント      | 説明                                                                                     |
+| ----------- | -------------------------------------------------------------------------------------- |
+| `api_limit` | レート制限を超過するとトリガーされます。カスタムレート制限ポリシーの場合、ログイベントにはポリシー名と影響を受けるアプリケーションの `client_id` が含まれます。 |
+
+Auth0 は、ポリシーとアプリケーションの組み合わせごとに、これらのログイベントを 1 分間に最大 1 回出力します。アプリケーションが継続的に制限を超過した場合、拒否されたリクエストごとではなく、1 分ごとに 1 件の `api_limit` イベントが表示されます。これにより、過負荷が継続している間にログ量が増え続けるのを防ぎます。
+
+これらのイベントを表示するには、**Auth0 Dashboard &gt; Monitoring &gt; Logs** に移動し、イベントタイプでフィルタリングします。ログイベントのフィールドの詳細については、[ログイベントタイプコード](/docs/ja-jp/deploy-monitor/logs/log-event-type-codes)を参照してください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `api_limit` イベントタイプは、カスタムレート制限ポリシーとテナントのグローバルレート制限で共通して使用されます。カスタムポリシーによってトリガーされたイベントを特定するには、ログイベントの詳細でポリシー名と対象の `client_id` を確認してください。グローバルレート制限イベントにはポリシー名は含まれません。
+
+  新しいポリシーではログのみモードを有効にして、トラフィックをブロックせずに影響を確認します。3～7 日後にログを確認し、制限が適切に設定されていることを確認してから強制適用に切り替えてください。
+</Callout>
+
+<div id="monitor-via-http-response-headers">
+  ## HTTP 応答ヘッダーでの監視
+</div>
+
+Auth0 は、カスタムレート制限ポリシーの対象となるすべてのリクエストに対して、`Auth0-RateLimit` 応答ヘッダーを返します。このヘッダーはカスタムレート制限ポリシー専用であり、アプリケーションの現在のクォータのステータスを示します。
+
+```
+Auth0-RateLimit: client;q=10;t=1;r=9
+```
+
+| パラメータ    | 説明                                                |
+| -------- | ------------------------------------------------- |
+| `client` | レート制限 のエンティティ (`client_id` で識別されるアプリケーション) 。 |
+| `q`      | 設定されているクォータ (間隔あたりのリクエスト数) 。                      |
+| `t`      | 秒単位のリセット間隔。                                       |
+| `r`      | 現在の間隔で利用可能な残りのリクエスト数。                             |
+
+アプリケーションがカスタム レート制限 を超過すると、Auth0 は再試行までに待機する秒数を示す `Retry-After` header を含む HTTP `429 Too Many Requests` 応答を返します。
+
+response body には JSON 形式のエラーが含まれます。
+
+```json
+{
+  "error": "too_many_requests",
+  "error_description": "Rate limit exceeded."
+}
+```
+
+`/authorize` リクエストはブラウザーのリダイレクトによって開始されるため、Auth0 は JSON 形式のエラー応答を返しません。代わりに、エラーページをユーザーに直接表示します。ポリシーで **Redirect** オプションを有効にすると、エラーページを表示する代わりに、設定済みの URL にユーザーをリダイレクトします。
+
+スロットリングは、制限を超過したアプリケーションにのみ適用されます。同じテナント内の他のアプリケーションには影響しません。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `X-RateLimit-*` ヘッダー (`X-RateLimit-Limit`、`X-RateLimit-Remaining`、`X-RateLimit-Reset`) は、カスタムポリシーの制限ではなく、テナント&#39;s [グローバルレート制限](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy)を反映します。これらのヘッダーは、成功した応答とスロットリングされた応答の両方に含まれますが、常にテナントレベル のキャパシティを報告します。カスタムポリシーのクォータ消費量を監視するには、`Auth0-RateLimit` ヘッダーを使用してください。
+</Callout>
+
+<div id="learn-more">
+  ## 詳しく見る
+</div>
+
+* [Rate Limit Policy](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy)
+* [レート制限の構成](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-configurations)
+* [Rate Limit Use Cases](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy/rate-limit-use-cases)
+* [攻撃対策](/docs/ja-jp/secure/attack-protection)

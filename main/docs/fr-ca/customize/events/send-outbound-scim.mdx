@@ -1,0 +1,274 @@
+---
+title: Synchroniser les modifications apportées aux utilisateurs au moyen de requêtes SCIM sortantes avec Event Streams
+sidebarTitle: Envoyer des requêtes SCIM sortantes
+description: Synchronisez votre application SCIM en aval et vos utilisateurs Auth0 sans middleware grâce à Event Streams et aux Actions.
+---
+
+Avec les flux d’événements et les Actions Auth0, vous pouvez maintenir une application en aval approvisionnée avec vos utilisateurs Auth0 sans déployer votre propre middleware.
+
+Utilisez une Action Event Stream pour les requêtes SCIM sortantes lorsque vous souhaitez :
+
+* Approvisionner les utilisateurs Auth0 dans une application conforme à SCIM lors de leur création.
+
+* Maintenir à jour les attributs de profil dans l’application en aval lorsque les utilisateurs sont modifiés dans Auth0.
+
+* Désactiver ou supprimer des utilisateurs dans l’application en aval lorsqu’ils sont bloqués ou supprimés dans Auth0.
+
+* Approvisionner un serveur SCIM sans exécuter votre propre écouteur de webhook.
+
+<div id="implementation-overview">
+  ## Vue d’ensemble de la mise en œuvre
+</div>
+
+Cette mise en œuvre utilise un flux d’événements avec notre [modèle d’Action de provisionnement sortant d’utilisateurs SCIM 2.0](https://github.com/auth0/opensource-marketplace/blob/main/templates/outbound-scim-EVENT_STREAM/code.js).
+
+Auth0 publie un événement chaque fois qu’un profil utilisateur est créé, mis à jour ou supprimé. Le flux d’événements transmet cet événement à l’Action, qui envoie une requête SCIM 2.0 correspondante au serveur que vous configurez.
+
+L’Action établit une corrélation entre chaque utilisateur Auth0 et sa ressource SCIM à l’aide de l’attribut SCIM `externalId` ([RFC 7643](https://datatracker.ietf.org/doc/html/rfc7643)), qui permet à un client de stocker son propre identifiant dans une ressource SCIM. L’Action définit `externalId` sur le `user_id` Auth0, qui demeure stable malgré les modifications du profil. Cela permet à l’Action de trouver la bonne ressource SCIM même après la mise à jour d’un nom ou d’une adresse courriel.
+
+| Événement Auth0                                  | Requête SCIM                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`user.created`](/docs/fr-ca/events/user/user.created) | `POST /Users` pour créer la ressource SCIM.                                                                                                                                                                                                               |
+| [`user.updated`](/docs/fr-ca/events/user/user.updated) | `GET /Users?filter=externalId eq \"...\"` pour trouver la ressource, puis `PUT /Users/{id}` pour la remplacer (ou `PATCH /Users/{id}`, s’il est configuré).                                                                                                 |
+| [`user.deleted`](/docs/fr-ca/events/user/user.deleted) | `DELETE /Users?filter=externalId eq \"...\"` pour trouver la ressource, puis `DELETE /Users/{id}` pour la supprimer. Le serveur SCIM détermine si un `DELETE` correspond à une suppression définitive, à un marqueur de suppression ou à une désactivation. |
+
+L’Action considère les réponses du serveur SCIM comme la source de vérité pour la corrélation. Elle valide donc la conformité de chaque réponse réussie (2xx) au protocole SCIM 2.0 et n’agit qu’en fonction de résultats valides.
+
+<div id="error-handling">
+  ### Gestion des erreurs
+</div>
+
+Lorsqu’une Action génère une erreur, la livraison est marquée comme ayant échoué et [Auth0 réessaie automatiquement l’événement ayant échoué](/docs/fr-ca/customize/events/event-testing-observability-and-failure-recovery#recovery). Une fois toutes les tentatives épuisées, l’événement est placé dans la file d’attente de lettres mortes, où il peut être inspecté et relivré.
+
+Comme cette Action génère des erreurs en cas de réponses non valides et d’erreurs SCIM terminales, ces synchronisations ayant échoué sont visibles par les nouvelles tentatives et dans la file d’attente de lettres mortes. Une modification qui ne génère jamais d’événement livré n’est pas visible de cette façon.
+
+<div id="limits">
+  ### Limites
+</div>
+
+* Cette Action synchronise les profils utilisateur et ne prend pas en charge le provisionnement des groupes.
+
+* Un flux d’événements est associé à une destination Action. Pour cibler plusieurs serveurs SCIM, créez plusieurs flux d’événements et Actions.
+
+<div id="instructions">
+  ## Instructions
+</div>
+
+<Steps titleSize="h3">
+  <Step title="Prérequis">
+    Avant de commencer, vous avez besoin de :
+
+    * Un tenant Auth0 avec Events et Actions activés.
+
+    * Un serveur SCIM.
+
+      * Le serveur SCIM doit renvoyer des réponses conformes au [protocole SCIM 2.0 (RFC 7644)](https://datatracker.ietf.org/doc/html/rfc7644), et plus précisément :
+
+        * Une création (`POST /Users`) doit renvoyer une ressource User avec un `id` de type chaîne.
+
+        * Une requête de filtrage (`GET /Users?filter=...`) doit renvoyer un `ListResponse` avec un tableau `Resources`, et chaque ressource renvoyée doit inclure un `id` de type chaîne. Un tableau `Resources` vide est valide et signifie qu’aucune correspondance n’a été trouvée.
+
+        En cas de réponse non valide, l’Action [génère une erreur](#error-handling) qui contient le texte &quot;invalid response shape&quot;.
+
+      * Le serveur SCIM doit prendre en charge un filtre `externalId eq`.
+
+        Si le serveur rejette le filtre `externalId eq`, l’Action utilise plutôt un filtrage sur `userName`, que le mappage d’attributs par défaut définit comme l’adresse courriel de l’utilisateur. Dans ce cas, l’Action ne peut pas suivre les changements d’adresse courriel, car les recherches effectuées avec une adresse courriel mise à jour ne correspondent pas à l’adresse courriel d’origine stockée dans `userName`.
+
+    * Un point de terminaison SCIM 2.0 en aval qui accepte les requêtes `POST`, `GET`, `PUT` et `DELETE` sur `/Users`.
+
+    * Un jeton porteur émis par le serveur SCIM avec l’autorisation de lire, créer, remplacer et supprimer des utilisateurs.
+
+    * Un accès réseau d’Auth0 au serveur SCIM. Si le serveur SCIM restreint le trafic entrant, autorisez les appels provenant des [adresses IP d’Auth0](/docs/fr-ca/secure/security-guidance/data-security/allowlist) pour votre région.
+  </Step>
+
+  <Step title="Commencez à créer le flux d’événements">
+    Dans [**Auth0 Dashboard &gt; Event Streams**](https://manage.auth0.com/#/event-streams), sélectionnez **+ Create Event Stream** pour accéder à la page **New Event Stream**.
+
+    Dans la section **Destinations**, sélectionnez **Auth0 Actions**, puis :
+
+    * Dans la section **Configurations**, saisissez un nom descriptif dans le champ **Stream Name** (par exemple, &quot;Provisionnement SCIM sortant&quot;).
+
+    * Dans la section **Select Events**, sélectionnez `user.created`, `user.deleted` et `user.updated`.
+  </Step>
+
+  <Step title="Configurer les secrets de l’Action">
+    Dans l’**éditeur Actions**, sélectionnez **Secrets** (l’icône de clé) et ajoutez les secrets de votre serveur SCIM :
+
+    <ResponseField name="SCIM_BASE_URL" type="string" required>
+      URL de base du endpoint SCIM 2.0. Par exemple, `https://api.example.com/scim/v2`.
+    </ResponseField>
+
+    <ResponseField name="SCIM_BEARER_TOKEN" type="string" required>
+      Jeton porteur émis par le serveur SCIM.
+    </ResponseField>
+
+    <ResponseField name="SCIM_TIMEOUT_MS" type="integer" default={1500}>
+      Délai d’expiration par requête, en millisecondes.
+    </ResponseField>
+
+    <ResponseField name="SCIM_MAX_RETRIES" type="integer" default={1}>
+      Nombre de nouvelles tentatives en cas d’erreurs HTTP 429, HTTP 5xx ou réseau.
+    </ResponseField>
+
+    <ResponseField name="SCIM_CONNECTION_ALLOWLIST" type="string">
+      Noms des connexions séparés par des virgules. Lorsqu’elle est définie, l’Action traite uniquement les événements provenant de ces connexions.
+    </ResponseField>
+
+    Les paramètres de transport par défaut respectent le budget d’exécution du flux d’événements. Event Relay applique un budget d’exécution effectif d’environ 10 secondes, plus restrictif que la limite de 20 secondes des Actions. Le délai d’expiration par défaut de 1 500 millisecondes, avec une nouvelle tentative, permet au flux de recherche et d’écriture de respecter ce budget. Augmenter l’une ou l’autre de ces valeurs risque de le dépasser.
+  </Step>
+
+  <Step title="Ajoutez le modèle d’Action et personnalisez le mappage d’attributs">
+    Dans **Actions Editor**, copiez et collez le [modèle d’Action de provisionnement sortant des utilisateurs SCIM 2.0](https://raw.githubusercontent.com/auth0/opensource-marketplace/refs/heads/main/templates/outbound-scim-EVENT_STREAM/code.js).
+
+    La fonction `buildScimUser()` du modèle mappe le profil utilisateur Auth0 vers la ressource utilisateur SCIM. Le mappage par défaut génère un utilisateur SCIM 2.0 de base avec les champs suivants :
+
+    | Attribut SCIM                               | Source Auth0          |
+    | ------------------------------------------- | --------------------- |
+    | `externalId`                                | `user_id`             |
+    | `active`                                    | Inverse de `blocked`  |
+    | `userName`                                  | `email`               |
+    | Adresse courriel professionnelle principale | `email`               |
+    | `name.givenName`                            | `given_name`          |
+    | `name.familyName`                           | `family_name`         |
+    | `name.formatted`                            | `name`                |
+    | `displayName`                               | `name`                |
+    | `nickName`                                  | `nickname`            |
+    | Téléphone professionnel (facultatif)        | `user_metadata.phone` |
+
+    Vous pouvez modifier la fonction `buildScimUser()` en fonction du mappage attendu par votre serveur SCIM.
+
+    <Warning>
+      Si un utilisateur Auth0 ne possède pas la propriété mappée à l’attribut SCIM `userName`, l’Action ignore la création et les mises à jour pour cet utilisateur, puis consigne un avertissement.
+    </Warning>
+
+    De plus, la fonction `buildScimUser()` contient un bloc commenté pour l’extension utilisateur Enterprise SCIM. Vous pouvez décommenter les champs pris en charge par votre serveur et ajuster les chemins d’accès aux métadonnées Auth0 pour votre tenant.
+  </Step>
+
+  <Step title="Personnaliser le comportement des mises à jour des utilisateurs (facultatif)" id="update-behavior">
+    La fonction `onUserUpdated()` du modèle d’Action comprend des blocs commentés proposant des comportements facultatifs pour les mises à jour de profil utilisateur. Activez-les uniquement si votre serveur SCIM l’exige :
+
+    * Configurez `PATCH` au lieu de `PUT` si votre serveur SCIM n’accepte pas les requêtes `PUT`. Par exemple, Inbound SCIM de Microsoft Entra ID omet l’autorisation `put:users` de son jeton par défaut et n’accepte que `PATCH`.
+
+    * Activez les upserts (créations d’utilisateurs manquants lors des mises à jour) si vous ne provisionnez pas les utilisateurs Auth0 existants dans votre serveur SCIM avant d’activer le flux d’événements, ou si votre serveur SCIM peut, dans certaines circonstances légitimes, ne pas recevoir d’événements de création d’utilisateurs.
+
+    <AccordionGroup>
+      <Accordion title="Configurer PATCH au lieu de PUT">
+        Par défaut, lors des mises à jour de profil utilisateur, l’Action remplace l’intégralité de la ressource SCIM avec `PUT /Users/{id}`. Un événement `user.updated` contient le profil utilisateur complet, sans liste des champs modifiés; un remplacement complet constitue donc la mise à jour la plus précise.
+
+        Pour configurer `PATCH` au lieu de `PUT` pour les mises à jour d’utilisateurs, dans `onUserUpdated()`, repérez le commentaire `OPTIONAL: PATCH instead of PUT`, puis définissez la méthode et le corps de la mise à jour :
+
+        ```js
+        const updateMethod = 'PATCH';
+        const updateBody = {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+            Operations: [{ op: 'replace', value: scimUser }],
+        };
+        ```
+
+        `PATCH` met à jour les attributs présents dans le corps SCIM mappé, mais contrairement à `PUT`, les attributs omis du corps peuvent conserver leurs valeurs actuelles dans le système en aval. Si vous souhaitez qu’un champ Auth0 supprimé efface la valeur en aval, ajoutez une gestion explicite de la suppression ou des valeurs `null` prise en charge par votre serveur SCIM.
+
+        De plus, cette requête omet l’attribut `path`, car `path` est facultatif pour les opérations de remplacement. Toutefois, certains serveurs SCIM exigent un `path` pour chaque opération. Pour ces serveurs, envoyez une opération par attribut et utilisez le chemin qualifié par schéma pour tout attribut d’extension.
+      </Accordion>
+
+      <Accordion title="Activer les upserts">
+        Par défaut, lorsqu’un événement `user.updated` se produit pour un utilisateur qui n’existe pas dans le serveur SCIM, l’Action ignore la mise à jour et consigne un avertissement dans les logs. Ce comportement par défaut suppose que le serveur SCIM a déjà traité l’événement `user.created` précédent; un utilisateur manquant signale donc un problème.
+
+        Pour activer les upserts, dans `onUserUpdated()`, repérez le commentaire `OPTIONAL UPSERT` et remplacez l’omission de la mise à jour et la journalisation par la ligne suivante :
+
+        ```js
+        return createRemoteUser(config, scimUser, 'created-from-update');
+        ```
+
+        Ainsi, l’Action envoie une seule requête `POST /Users` pour créer l’utilisateur au lieu d’ignorer la mise à jour. Le corps SCIM mappé contient déjà le profil complet; l’Action n’a donc besoin d’aucune requête de suivi.
+      </Accordion>
+    </AccordionGroup>
+  </Step>
+
+  <Step title="Tester le mappage en local">
+    Avant de déployer, vous pouvez [effectuer un test unitaire de l’Action](/docs/fr-ca/customize/actions/test-actions) à l’aide d’un événement simulé et d’une requête SCIM simulée. Auth0 présente Jest à cette fin, mais vous pouvez utiliser toute bibliothèque de tests.
+
+    Le test Jest suivant confirme qu’un événement `user.created` envoie une requête `POST /Users` avec un jeton du porteur :
+
+    ```js expandable
+    const { onExecuteEventStream } = require("./code");
+
+    test("user.created sends POST /Users with a bearer token", async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            status: 201,
+            json: async () => ({ id: "scim-123" }),
+        });
+
+        const event = {
+            message: {
+                type: "user.created",
+                id: "evt_1",
+                data: { object: { user_id: "auth0|abc", email: "user@example.com" } },
+            },
+            secrets: {
+                SCIM_BASE_URL: "https://api.example.com/scim/v2",
+                SCIM_BEARER_TOKEN: "test-token",
+            },
+        };
+
+        await onExecuteEventStream(event, {});
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            "https://api.example.com/scim/v2/Users",
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({ Authorization: "Bearer test-token" }),
+            })
+        );
+    });
+    ```
+
+    Pour le développement à l’extérieur du Auth0 Dashboard, vous pouvez ajouter des indications de type à l’aide du package `@auth0/actions` :
+
+    ```js
+    /**
+     * @typedef {import('@auth0/actions/event-stream/v1').Event} Event
+     * @typedef {import('@auth0/actions/event-stream/v1').EventStreamAPI} EventStreamAPI
+     *
+     * @param {Event} event
+     * @param {EventStreamAPI} api
+     */
+    exports.onExecuteEventStream = async (event, api) => {
+        // ...
+    };
+    ```
+
+    Référencez les types de déclencheur Event Stream dans JSDoc afin que le fichier reste en JavaScript pur et n’ajoute aucune dépendance à l’exécution.
+  </Step>
+
+  <Step title="Synchroniser les utilisateurs existants (recommandé)">
+    Avant d’activer le flux d’événements, nous recommandons d’effectuer une synchronisation ponctuelle des utilisateurs Auth0 existants avec votre serveur SCIM. Le flux d’événements ne peut réagir qu’aux événements utilisateur transmis après son activation. Cette synchronisation ponctuelle permet donc de maintenir à jour votre serveur SCIM en aval et d’éviter les échecs de corrélation lors de la mise à jour ou de la suppression d’utilisateurs existants.
+
+    Pour synchroniser les utilisateurs Auth0 existants avec votre serveur SCIM :
+
+    1. **Obtenez tous les utilisateurs Auth0 existants.** Utilisez votre processus habituel d’exportation des utilisateurs ou la Management API, et incluez toutes les connexions que vous souhaitez synchroniser.
+
+    2. **Rapprochez les utilisateurs SCIM existants des utilisateurs Auth0.** Si le serveur SCIM contient déjà des utilisateurs, associez-les aux utilisateurs Auth0 à l’aide d’un identifiant fiable (comme l’adresse courriel), puis mettez à jour chaque ressource afin que son `externalId` soit le `user_id` Auth0. Ne créez pas de doublons.
+
+    3. **Ajoutez les utilisateurs SCIM manquants.** Pour chaque utilisateur Auth0 non associé, envoyez une requête de création SCIM en utilisant le même corps et le même mappage d’attributs définis dans l’Action.
+
+    4. **Vérifiez la configuration de référence.** Vérifiez un échantillon d’utilisateurs, le nombre total d’utilisateurs, les utilisateurs bloqués et les changements d’adresse courriel dans le serveur SCIM.
+
+    Activer le flux d’événements sans d’abord effectuer une synchronisation ponctuelle met graduellement à jour les utilisateurs de votre serveur SCIM, au fil des événements. Dans cette situation, vous devez [configurer les upserts](#update-behavior) dans l’Action afin de créer les utilisateurs manquants lors des événements de mise à jour.
+  </Step>
+
+  <Step title="Enregistrer et déployer">
+    Sélectionnez **Enregistrer le brouillon**, puis **Déployer**.
+
+    L’Action est maintenant associée à votre Event Stream et s’exécute chaque fois qu’un événement auquel vous êtes abonné est déclenché.
+  </Step>
+</Steps>
+
+<div id="event-considerations">
+  ## Considérations relatives aux événements
+</div>
+
+* **Liaison de comptes** : Lorsque vous liez deux utilisateurs Auth0, Auth0 envoie un événement `user.deleted` pour le compte secondaire et un événement `user.updated` pour le compte principal. L’Action supprime donc l’utilisateur secondaire du serveur SCIM et met à jour l’utilisateur principal. La dissociation restaure l’utilisateur secondaire.
+
+  Pour conserver les comptes liés sur le serveur SCIM, limitez les connexions synchronisées à l’aide de `SCIM_CONNECTION_ALLOWLIST`.
+
+* **Réactivation après un blocage par force brute** : Contrairement aux [blocages effectués par l’administrateur du tenant](/docs/fr-ca/manage-users/user-accounts/block-and-unblock-users), qui envoient un événement `user.updated`, les [blocages liés à la protection contre les attaques par force brute](/docs/fr-ca/secure/attack-protection/brute-force-protection) expirent automatiquement sans déclencher d’événement. L’Action ne met donc pas à jour le serveur SCIM avant la prochaine modification du profil.

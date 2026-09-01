@@ -1,0 +1,169 @@
+---
+title: Database Action Scripts のベストプラクティス
+sidebarTitle: ベストプラクティス
+description: カスタムデータベースアクションスクリプト使用時のパフォーマンスと信頼性に関する推奨事項をご確認ください。
+---
+
+<div id="secure-access-to-your-external-user-store">
+  ## 外部ユーザーストアへのアクセスを保護する
+</div>
+
+カスタムデータベース接続を使用する場合、Auth0 がユーザーストアに接続できるよう、そのためのインターフェースを提供する必要があります。
+
+ユーザーストアをインターネット経由で広くアクセス可能にする方法では、大きなリスクが生じます。たとえば、SQL などのデータベース用インターフェースは多くの機能を公開するため、誰でも利用できるようにすると、[最小権限の原則](https://en.wikipedia.org/wiki/Principle_of_least_privilege)に違反します。
+
+<div id="provide-access-with-a-protected-api">
+  ### 保護された API を介してアクセスを提供する
+</div>
+
+ユーザーの読み取りやパスワード変更など、カスタムデータベース接続で必要なユーザー管理機能のみを実行する、保護されたエンドポイントを限定的に持つ API を介してアクセスを提供することをお勧めします。
+
+この API を <Tooltip tip="アクセストークン: 不透明な文字列または JWT 形式で API へのアクセスに使用される認可資格情報。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=access+token">アクセストークン</Tooltip>で保護すると、アクションスクリプト内からクライアントクレデンシャルズグラントフローを使用できます。さらに、パフォーマンス向上のため、トークンを `global` オブジェクトにキャッシュして再利用できます。
+
+外部ユーザーストアで利用可能な API がある場合、または独自に実装する場合は、Auth0 を通じて [API を登録](/docs/ja-jp/get-started/auth0-overview/set-up-apis)し、[Action を作成](/docs/ja-jp/manage-users/access-control/sample-use-cases-actions-with-authorization#deny-access-to-anyone-calling-an-api)して、エンドユーザーからのアクセスを制限できます。
+
+デフォルトでは、認証に成功し、適切な <Tooltip tip="Audience: 発行されたトークンの対象者を一意に識別する値。トークン内では aud という名前で、ID トークンの場合はアプリケーション（クライアント ID）の ID、アクセストークンの場合は API（API 識別子）の ID が値に含まれます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=audience">audience</Tooltip>を含めれば、Auth0 は任意の API 向けのトークンを発行できます。アクセストークンの割り当てを制限してユーザーストアの API へのアクセスを制限することで、特定のクライアント資格情報を使用した場合にのみアクセスを許可し、不正使用を防止できます。これにより、悪意のある第三者が `/authorize` へのリダイレクトを傍受して API の audience を追加する、といったさまざまな攻撃シナリオを軽減できます。
+
+外部ユーザーストアで利用可能な API がなく、実装も現実的でない場合でも、アクションスクリプトを記述して[直接通信](#restrict-network-access)できます。
+
+<div id="restrict-network-access">
+  ### ネットワークアクセスを制限する
+</div>
+
+Auth0 からの受信トラフィックを許可するため、[Auth0 のアウトバウンド IP アドレス](/docs/ja-jp/secure/security-guidance/data-security/allowlist)を含む IP AllowList を使用して、外部ユーザーストアへのアクセスを制限することをお勧めします。
+
+Auth0 のアウトバウンド IP アドレスは、該当する Region 内のすべての Auth0 テナントで共有されるため、このような AllowList をユーザーストアへのアクセスを保護する唯一の手段として使用しないことをお勧めします。代わりに、AllowList は複数のセキュリティ対策の一つとして使用してください。
+
+<div id="time-out-async-and-external-calls">
+  ## 非同期処理と外部呼び出しのタイムアウト
+</div>
+
+アクションスクリプト内で外部サービスまたは API を呼び出す場合は、適切な時間でタイムアウトするように関数を設定し、外部サービスまたは API に接続できない場合はエラーを返します。
+
+<AccordionGroup>
+  <Accordion title="Promise オブジェクトの例">
+    この例では、ネットワークからリソースを取得して Promise オブジェクトを返す組み込みの JavaScript `fetch` メソッドを、[promise chains](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises#chaining) を使用して記述しています。
+
+    ```javascript lines expandable
+    async function login(userNameOrEmail, password, callback) {
+      try {
+        const apiEndpoint = 'https://example.com/api/authenticate';
+        
+        const options = {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email: userNameOrEmail,
+            password: password // HTTPS 経由で平文を送信。API で検証する
+          })
+        };
+
+        const response = await fetch(apiEndpoint, options);
+
+        if (!response.ok) {
+          return callback(new Error(`HTTP error! Status: ${response.status}`));
+        }
+
+        const result = await response.json();
+
+        if (result.err) {
+          return callback(new Error(`Error authenticating user: ${result.err}`));
+        }
+
+        const profile = {
+          email: result.profileData.email,
+          username: result.profileData.username
+        };
+
+        return callback(null, profile);
+      } catch (err) {
+        return callback(err);
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="非同期関数の例">
+    この例では、ネットワークからリソースを取得して Promise オブジェクトを返す組み込みの JavaScript `fetch` メソッドを、[async functions](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function) を使用して記述しています。
+
+    ```js lines expandable
+    ⏺ async function login(userNameOrEmail, password, callback) {
+        try {
+          const apiEndpoint = 'https://example.com/api/authenticate';
+          const options = {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              email: userNameOrEmail,
+              password: password
+            })
+          };
+
+          const response = await fetch(apiEndpoint, options);
+      
+          if (!response.ok) {
+            return callback(new Error(`HTTP error! Status: ${response.status}`));
+          }
+
+          const result = await response.json();
+      
+          if (result.err) {
+            return callback(new Error(`Error authenticating user: ${result.err}`));
+          }
+
+          const profile = {
+            email: result.profileData.email,
+            username: result.profileData.username
+          };
+
+          return callback(null, profile);
+        } catch (err) {
+          return callback(err);
+        }
+      }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+カスタムデータベースアクションスクリプトからエラーを返すには、[ `callback` 関数](/docs/ja-jp/authenticate/database-connections/custom-db/custom-database-connections-scripts#callback) にエラーを渡します。トラブルシューティングやデバッグに役立つよう、内容がわかりやすいエラーメッセージを使用することをおすすめします。
+
+<div id="avoid-anonymous-functions">
+  ## 無名関数を避ける
+</div>
+
+アクションスクリプトは[無名関数](https://developer.mozilla.org/en-US/docs/Glossary/IIFE)として実装できますが、無名関数を使用すると、[エラー発生時](./error-handling)のデバッグでコールスタックを読み取りにくくなる可能性があるため、名前付き関数を使用することをお勧めします。
+
+<div id="retrieve-identity-provider-tokens">
+  ## アイデンティティプロバイダーのトークンを取得する
+</div>
+
+`user` オブジェクトが `access_token` および `refresh_token` プロパティを返す場合、Auth0 はこれらを他の種類のユーザー情報とは異なる方法で処理します。Auth0 はこれらを `user` オブジェクトの `identities` プロパティに保存します。
+
+```json lines
+{
+	"email": "you@example.com",
+	"updated_at": "2019-03-15T15:56:44.577Z",
+	"user_id": "auth0|some_unique_id",
+	"nickname": "a_nick_name",
+	"identities": [ 
+		{
+			"user_id": "some_unique_id",
+			"access_token": "e1b5.................92ba",
+			"refresh_token": "a90c.................620b",
+			"provider": "auth0", 
+			"connection": "custom_db_name",
+			"isSocial": false 
+		}
+  ], 
+  "created_at": "2019-03-15T15:56:44.577Z",
+  "last_ip": "192.168.1.1",
+  "last_login": "2019-03-15T15:56:44.576Z",
+  "logins_count": 3
+}
+```
+
+Auth0 <Tooltip tip="Management API: お客様が管理タスクを実行できるようにする製品。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Management+API">Management API</Tooltip> を使用してこれらのプロパティのいずれかを取得するには、[アクセストークンをリクエストする](/docs/ja-jp/secure/tokens/access-tokens/management-api-access-tokens/get-management-api-access-tokens-for-production)際に `read:user_idp_tokens` スコープを含めます。

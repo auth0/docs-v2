@@ -1,0 +1,272 @@
+---
+description: 暗号化されたトークンバインディングを使用して、OIDC および Okta のエンタープライズ接続を保護する方法を学びます。
+title: Demonstrating Proof-of-Possession (DPoP) を使用したエンタープライズ接続の設定
+---
+
+Demonstrating Proof-of-Possession (DPoP) は、[OAuth 2.0 のフレームワーク拡張](https://datatracker.ietf.org/doc/draft-ietf-oauth-dpop/)です。DPoP プロトコルと、送信者制約付きトークンにどのように使用されるかについて詳しくは、[Demonstrating Proof-of-Possession (DPoP)](/docs/ja-jp/secure/sender-constraining) を参照してください。アイデンティティプロバイダー (IdP) として Okta または OpenID Connect (OIDC) を使用し、それらを Auth0 でエンタープライズ接続として設定している場合は、DPoP を有効にして設定することで、IdP からのアクセストークンを暗号キーにバインドできます。DPoP を使用すると、トークンのリプレイ攻撃を防止できるほか、[Interoperability Profiling for Secure Identity in the Enterprise (IPSIE) OIDC](https://openid.net/specs/ipsie-openid-connect-sl1-profile-1_0.html) Security Level 1 や [Financial-grade API (FAPI) 2.0](https://openid.net/specs/fapi-security-profile-2_0-final.html) などのコンプライアンス要件への準拠にも役立ちます。
+
+<Card title="始める前に">
+  Auth0 で DPoP を有効にする前に、次の点を確認してください。
+
+  * アップストリームのアイデンティティプロバイダーが、仕様 [RFC-9449](https://www.rfc-editor.org/rfc/rfc9449.html) に準拠した DPoP をサポートしている必要があります。
+  * 既存の OIDC または Okta のエンタープライズ接続があるか、新たに作成できる必要があります。Auth0 でエンタープライズ接続を作成する方法については、[Enterprise Connections](/docs/ja-jp/authenticate/enterprise-connections) を参照してください。
+  * 接続は、[Token Vault](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/configure-token-vault) を使用するように設定されていてはなりません。
+  * 接続では、Proof Key for Code Exchange (PKCE) を使用する [認可コードフロー + PKCE](docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce#authorization-code-flow-with-proof-key-for-code-exchange-pkce) を使用する必要があります。アイデンティティプロバイダーが PKCE をサポートしている場合、これはアップストリームで有効になります。
+  * 接続のタイプは `back_channel` である必要があります。
+</Card>
+
+<div id="verify-upstream-idp-support">
+  ## 接続先の IdP のサポートを確認する
+</div>
+
+DPoP がサポートされているかどうかを確認するには、IdP の OIDC ディスカバリー ドキュメントを確認します:
+
+```curl
+curl https://YOUR_IDP_DOMAIN/.well-known/openid-configuration
+```
+
+レスポンス内で、DPoP 対応の値 `dpop_signing_alg_values_supported` を探します。
+
+**例**
+
+```
+{
+  "dpop_signing_alg_values_supported": ["ES256", "ES384", "Ed25519", "ES512", "RS256"] 
+},
+```
+
+<div id="choose-a-signing-algorithm">
+  ## 署名アルゴリズムを選択する
+</div>
+
+DPoP を設定する前に、次の中からサポート対象の[署名アルゴリズム](/docs/ja-jp/get-started/applications/signing-algorithms)を選択してください。
+
+| **アルゴリズム** | **説明**                        | **使用する場合**                                    |
+| ---------- | ----------------------------- | --------------------------------------------- |
+| ES256      | P-256 曲線と SHA-256 を使用する ECDSA | アイデンティティプロバイダーが ES256 をサポートしている場合。            |
+| ES384      | P-384 曲線と SHA-384 を使用する ECDSA | アイデンティティプロバイダーで ES384 が必要な場合。                 |
+| ES512      | P-521 曲線と SHA-512 を使用する ECDSA | アイデンティティプロバイダーで ES512 が必要な場合。                 |
+| Ed25519    | Curve25519 を使用する EdDSA        | コンプライアンス要件により、アイデンティティプロバイダーで Ed25519 が必要な場合。 |
+
+アイデンティティプロバイダーで別のアルゴリズムが明示的に要求されていない限り、ES256 を選択してください。
+
+<div id="enable-dpop">
+  ## DPoP を有効にする
+</div>
+
+DPoP を有効にしてアルゴリズムを選択するには、Auth0 Dashboard または Management API を使用します。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Auth0 Dashboard では、次の手順で行います。
+
+    1. **[Authentication &gt; Enterprise](https://manage.auth0.com/dashboard/#/connections/enterprise/)** に移動し、設定する接続を選択します。
+    2. **資格情報** タブを選択します。
+    3. **Enable Demonstrating Proof of Possession (DPoP)** のチェックボックスをオンにします。
+    4. DPoP の Signing Algorithms の下にあるメニューで、使用するアルゴリズムを選択します。
+       <Frame>![DPoP を有効にしてアルゴリズムを選択する](/docs/images/cdy7uua7fh8z/enable-dpop-dashboard.png)</Frame>
+    5. **Save** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    Management API を使用するには、[Management API access token](/docs/ja-jp/secure/tokens/access-tokens/management-api-access-tokens) を取得する必要があります。
+
+    `options` オブジェクトに `dpop_signing_alg_values_supported` を指定して、[Update a connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) エンドポイントに `PATCH` リクエストを送信します。
+
+    ```curl
+    PATCH https://YOUR_DOMAIN/api/v2/connections/YOUR_CONNECTION_ID
+    Content-Type: application/json
+    Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN
+
+    {
+      "options": {
+        "dpop_signing_alg": "ES256"
+      }
+    }
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      `options` パラメータを `PATCH` すると、`options` オブジェクト全体が上書きされます。データの欠落やその他の問題を避けるため、`options` を `PATCH` する際は、必要なプロパティをすべて含めてください。
+    </Callout>
+
+    プレースホルダー値を置き換えます。
+
+    * **YOUR&#95;DOMAIN**: Auth0 テナントのドメイン。例: `travel0.us.auth0.com`。
+    * **YOUR&#95;CONNECTION&#95;ID**: OIDC または Okta のエンタープライズ接続の ID。
+    * **YOUR&#95;MANAGEMENT&#95;API&#95;TOKEN**: `update:connections` scope を持つ Management API トークン
+  </Tab>
+</Tabs>
+
+<div id="test-dpop">
+  ## DPoP をテストする
+</div>
+
+DPoP を有効にしたら、ログインフローを開始して設定をテストします。
+
+1. ご利用のアプリケーションを開きます。
+2. 設定済みのエンタープライズ接続を使用してログインフローを開始します。
+3. アップストリームのアイデンティティプロバイダーでログインを完了します。
+4. 確認のため、[**Auth0 Dashboard &gt; Monitoring &gt; Logs**](https://manage.auth0.com/#/logs) に移動し、[Auth0 のログ](/docs/ja-jp/deploy-monitor/logs#logs) を確認します。
+
+成功したトランザクションのログエントリは、次のようになります。
+
+```
+{
+  "type": "s",
+  "description": "Success Login",
+  "details": {
+    "dpop_signing_alg": "ES256",
+    "idp_token_type": "dpop",
+    "upstream_userinfo_fetch": {
+      "status": "SUCCESS",
+      "dpop_bound": true
+    }
+   }
+}
+```
+
+`dpop_signing_alg` と `idp_token_type: "dpop"` の値は、Auth0 が設定されたアルゴリズムを使用して DPoP proof を送信し、IdP が DPoP にバインドされたトークンを発行したことを示しています。`upstream_userinfo_fetch` オブジェクトは、[User Information](https://auth0.com/docs/api/authentication/user-profile/get-user-info) エンドポイントが呼び出された場合にのみ存在します。`dpop_bound` フィールドは、`/userinfo` エンドポイントへの `GET` リクエストが正常に DPoP にバインドされた場合にのみ存在します。
+
+<div id="disable-dpop">
+  ## DPoP を無効にする
+</div>
+
+Auth0 Dashboard または Management API を使用して DPoP を無効にできます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. [**Authentication &gt; Enterprise**](https://manage.auth0.com/dashboard/#/connections/enterprise/) に移動し、設定する接続を選択します。
+    2. **資格情報** タブを選択します。
+    3. **Enable Demonstrating Proof of Possession (DPoP)** チェックボックスをオフにします。
+    4. **Save** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    DPoP を無効にするには、接続の設定から `dpop_signing_alg` プロパティを削除します。
+
+    ```curl
+    PATCH https://YOUR_DOMAIN/api/v2/connections/YOUR_CONNECTION_ID
+    Content-Type: application/json
+    Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN
+
+    {
+      "options": {
+
+      }
+    }
+    ```
+
+    <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+      `options` パラメータに `PATCH` すると、`options` オブジェクト全体が上書きされます。データの欠落やその他の問題を避けるため、`options` に `PATCH` する際は、必要なプロパティがすべて含まれていることを確認してください。
+    </Callout>
+  </Tab>
+</Tabs>
+
+<div id="troubleshoot">
+  ## トラブルシューティング
+</div>
+
+OIDC および Okta のエンタープライズ接続に関する DPoP 設定の問題を診断して解決するには、以下の推奨事項を確認してください。
+
+<div id="check-auth0-configuration">
+  ### Auth0 の設定を確認する
+</div>
+
+トラブルシューティングを開始する前に、Auth0 で DPoP の設定を確認してください。
+
+1. [**Auth0 Dashboard &gt; Authentication &gt; Enterprise**](https://manage.auth0.com/#/connections/enterprise) に移動します。
+2. Okta または OIDC の接続を選択します。
+3. **Advanced Settings &gt; Grant Types** に移動し、その接続が Token Vault で**設定されていない**ことを確認します。Token Vault が選択されていないことを確認してください。
+4. Management API の [Update a connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) エンドポイントを使用して、`dpop_signing_alg` 設定を確認します。
+
+```curl
+GET https://YOUR_DOMAIN/api/v2/connections/YOUR_CONNECTION_ID
+Authorization: Bearer YOUR_MANAGEMENT_API_TOKEN
+```
+
+`dpop_signing_alg` のレスポンスで、次の点を確認してください。
+
+* アルゴリズムがサポート対象の値、**ES256**、**ES384**、**ES512**、**Ed25519** のいずれかであることを確認します。
+* 接続で、[認可コードフロー + PKCE](/docs/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) を使用したバックチャネルのトークン交換が使われていることを確認します。[Implicit Flow](/docs/ja-jp/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post) のようなフロントチャネル通信では DPoP はサポートされておらず、接続でフロントチャネルが使われている場合は自動的に無効になります。
+
+<div id="dpop-fields-missing-in-tenant-logs">
+  #### テナントログに DPoP フィールドが表示されない
+</div>
+
+エンタープライズ接続の Auth0 の成功 (`s`) または失敗 (`f`) のログに `dpop_signing_alg` または `idp_token_type` フィールドが含まれていない場合、原因として次のいずれかが考えられます。
+
+* DPoP が設定されていません。上記の説明に従って、Management API の [Update a connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) エンドポイントを使用し、接続の `options` object で `dpop_signing_alg` が設定されていることを確認してください。
+* サポートされていないアルゴリズムです。Auth0 は ES256、ES384、ES512、Ed25519 をサポートしています。`dpop_signing_alg` にサポート対象外の値 (たとえば RS256) が設定されている場合、DPoP はエラーなしで無効化されます。エラーはログにも記録されません。接続を更新して、ES256、ES384、ES512、または Ed25519 を使用してください。
+* フロントチャネル接続です。DPoP では、接続タイプとして `back_channel` token exchange が必要です。[グラントタイプを更新して](/docs/ja-jp/get-started/applications/update-grant-types#update-grant-types)、認可コードフローや認可コードフロー + PKCE などの バックチャネル フローに変更する必要がある場合があります。
+
+<div id="authentication-fails-after-enabling-dpop">
+  ### DPoP を有効にした後に認証が失敗する
+</div>
+
+Okta または OIDC のエンタープライズ接続で DPoP を有効にした後、ユーザーが認証を完了できない場合は、以下のトラブルシューティング方法を確認してください。
+
+テナントログには、`dpop_signing_alg` を含む失敗 (`f`) イベントが次のように表示されるはずです。
+
+```bash
+{
+  "type": "f",
+  "description": "Failed Login",
+  "details": {
+    "error": "dpop_signing_alg"
+  }
+}
+```
+
+この失敗には `idp_token_type` が含まれていない点に注意してください。これは、Auth0 が IdP から token を受け取っていないためです。
+
+<div id="identity-provider-rejects-dpop-proof">
+  #### アイデンティティプロバイダーが DPoP proof を拒否する
+</div>
+
+IdP が、トークン交換中に Auth0 から送信される DPoP proof を明示的に拒否することがあります。IdP が `invalid_dpop_proof` エラーを返し、その結果、認証が失敗する場合があります。
+
+IdP が DPoP をサポートしていることと、設定したアルゴリズム (ES256、ES384、ES512、または Ed25519) がサポート対象の一覧に含まれていることを確認してください。これは、IdP の OpenID Connect ディスカバリードキュメントにアクセスすると確認できます。
+
+```curl
+curl https://YOUR_IDP_DOMAIN/.well-known/openid-configuration
+```
+
+IdP のレスポンスで、`dpop_signing_alg_values_supported` を確認してください。このフィールドがない場合、IdP は DPoP をサポートしていない可能性があります。このフィールドに Auth0 がサポートしていない algorithms しか含まれていない場合 (たとえば RS256 のみ) 、この接続では DPoP を使用できません。この接続で DPoP を無効にするか、ES256、ES384、ES512、または Ed25519 をサポートするよう IdP に問い合わせてください。
+
+<div id="token-exchange-fails-for-a-non-dpop-reason">
+  #### DPoP 以外の理由でトークン交換が失敗する
+</div>
+
+`dpop_signing_alg` を含む失敗ログが見つかっても、必ずしも DPoP が原因で失敗したとは限りません。Auth0 では、DPoP が設定されていると、根本原因が DPoP と無関係な場合でも、すべての失敗ログに DPoP のメタデータが付加されます。たとえば、期限切れの認可コードや無効なクライアント資格情報が原因で、認証が失敗することがあります。
+
+実際の原因を特定するには、失敗ログ内のエラーの説明を確認してください。DPoP に起因しない一般的なエラーには、`invalid_grant`、`invalid_client`、ID トークン署名の検証失敗などがあります。
+
+<div id="dpop-key-generation-fails">
+  #### DPoP キーの生成に失敗する
+</div>
+
+Auth0 は DPoP proof ごとに一時的なキーペアを生成します。キーの生成に失敗すると、トークン リクエストが送信される前に認証に失敗します。これは一時的なサーバー側の問題です。ユーザーに、認証を再試行するよう案内してください。
+
+<div id="idp-token-binding">
+  #### IdP トークンのバインド
+</div>
+
+ユーザーの認証は成功しているものの、Auth0 テナントログに `"idp_token_type": "bearer"` と表示される場合は、Auth0 が DPoP proof を送信していても、IdP がトークンを DPoP にバインドしていない可能性があります。RFC-9449 によれば、これは準拠した動作です。IdP は DPoP にバインドされたトークンを発行するかどうかを完全に制御しており、次のような理由でトークンをバインドしないことがあります。
+
+* IdP のポリシーで、要求されたリソースまたはアプリケーションに対して DPoP が必須とされていない。
+* IdP は proof をエラーなく受け入れていても、DPoP をサポートしていない。
+* IdP が DPoP proof の処理中に内部的な問題を起こした。
+
+Auth0 はこれを「downgrade」イベントとして追跡します。認証は標準的な Bearer トークンで正常に完了します。
+
+コンプライアンス上 DPoP にバインドされたトークンが必要な場合は、トークンがバインドされていない理由を確認するため、IdP に問い合わせることをお勧めします。Auth0 は、アイデンティティプロバイダーのトークン応答に対して DPoP バインディングを強制することはできません。
+
+<div id="dpop-nonce-handling">
+  #### DPoP nonce の処理
+</div>
+
+一部の IdP では、[§8 の DPoP proof](https://www.rfc-editor.org/rfc/rfc9449.html#name-authorization-server-provid) に従って `nonce` が必要です。IdP が `DPoP-Nonce` レスポンスヘッダーを付けて HTTP `400` を返した場合、Auth0 は提供された nonce を使ってトークンリクエストを自動的に再試行します。これは透過的に処理されるため、テナントログには失敗として表示されません。
+
+`use_dpop_nonce` エラーコードは、Auth0 と IdP の間で使われる内部的なプロトコルシグナルです。問題が発生していることを示すものではありません。失敗したログエントリの理由として `use_dpop_nonce` が表示されることはありません。nonce を使った再試行でも失敗した場合 (たとえば、2 回目の試行でアイデンティティプロバイダーが `invalid_dpop_proof` を返した場合) は、最終的なエラーが失敗ログに表示されます。
+
+nonce を必要とするアイデンティティプロバイダーを使用する接続で認証の失敗が繰り返し発生する場合は、Auth0 とアイデンティティプロバイダー間のネットワーク接続を確認してください。nonce のやり取りではトークンエンドポイントとの間で 2 回の往復通信が必要になるため、ネットワークタイムアウトの影響を受けやすくなります。

@@ -1,0 +1,181 @@
+---
+title: 企業間 (B2B) のプロビジョニング
+sidebarTitle: プロビジョニング
+description: B2B IAM 実装におけるユーザープロビジョニングの機能と考慮事項。
+---
+
+ユーザーの登録方法をどうするかは、早い段階で決めておくべき重要なポイントです。ここでの判断は、その後に必要となる多くの判断にも影響します。私たちの知見では、ユーザーがシステムに追加される方法には一般的ないくつかのパターンがあり、ワークフロー設計を検討する際に押さえておくべき点もあります。
+
+<Tip>
+  Auth0 はさまざまなワークフローをサポートしていますが、サインアップには Auth0 の [Universal Login](/docs/ja-jp/authenticate/login/auth0-universal-login) を使った Web ベースのワークフローが、機能面・セキュリティ面の両方で最適であることから、業界標準としても Auth0 としてもベストプラクティスとされています。
+</Tip>
+
+Auth0 は、さまざまな [identity providers](/docs/ja-jp/authenticate/identity-providers) を介したユーザーのサインアップをサポートしています。サインアップ時には、Auth0 がユーザープロファイルをプロビジョニングし、ユーザーのアカウント情報を格納します。機能やワークフローを検討する際には、考慮すべき点がいくつかあります。
+
+* ユーザーは自社のドメインに追加されるのか、それとも所属組織のドメインに属する、またはそのまま残るのか。
+* ユーザーが自分のドメインに留まる場合、所属先は 1 つの組織だけなのか、それとも複数の組織に所属できるのか。
+* 組織自体をシステム内でどのようにプロビジョニングするのか。
+* Auth0 を ID ストアとして使用すべきか。
+* 独自の (レガシー) ID ストアを Auth0 と併用できるか。
+* ID ストアから Auth0 へユーザー ID をどのように移行するのか。
+* ユーザーは所属組織の <Tooltip tip="Identity Provider (IdP): デジタル ID を保存および管理するサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=identity+provider">identity provider</Tooltip> を使ってサインアップできるか。
+* ユーザーは招待制にするのか、それともセルフ登録を許可するのか。
+
+自社のサービスを他社に提供する際、最初に判断すべきことの 1 つは、ユーザーがどのドメインに属するかを見極めることです。その答えによって、ユーザーをプロビジョニングするためのアプローチは複数考えられます。詳しくは [組織ユーザーのプロビジョニング](#provisioning-organization-users) を参照してください。組織をシステム内でどのように表現するかが決まったら、次は組織自体をどのようにプロビジョニングするかを検討します。詳しくは [組織のプロビジョニング](#provisioning-organizations) を参照してください。
+
+Auth0 には、ユーザー認証情報を安全に保存できる ID ストレージが標準で用意されています。詳しくは [Self Sign Up](#self-sign-up) を参照してください。すでにレガシー ID ストアがあり、その管理を Auth0 に移したい場合は、[User Migration](#user-migration) 機能でそれを実現するための複数の選択肢を利用できます。
+
+一方、レガシー ID ストアを維持しなければならない場合、たとえば、まだ移行の準備ができていないアプリケーションや移行できないアプリケーションがある場合は、[ID ストアのプロキシ](#identity-store-proxy) 機能を利用できます。また、顧客に「独自の ID を持ち込む」ことを許可するのも魅力的な選択肢です。実際には、私たちの顧客の多くは当初そこまで対応していませんが、[Social Sign Up](#social-sign-up) 機能を使って提供できます。
+
+<div id="provisioning-organizations">
+  ## 組織のプロビジョニング
+</div>
+
+組織をプロビジョニングする際に必要な作業は、組織がシステム内でどのように扱われているかによって異なります。ここで少し立ち止まり、それらの組織のユーザーがアプリケーションをどのように利用するのかを考えてみるとよいでしょう。IAM システムで組織をどのように設定すべきかを判断するには、[複数組織アーキテクチャ](/docs/ja-jp/get-started/architecture-scenarios/multiple-organization-architecture)を参照してください。
+
+組織をプロビジョニングする際は、次の点を考慮する必要があります。
+
+* 自身のアプリケーション設定やデータベースに組織を追加する必要があります
+* Auth0 の設定を変更する必要があります。これには、次の一部またはすべての作業が含まれます。
+
+  * まれなケースでは、その組織専用の一意のテナントを作成する
+  * Auth0 テナントに新しい Organization を作成する
+  * その Organization 用に新しいデータベース接続を追加する (組織ごとにユーザーを分離している場合)
+  * 既存の共有データベース接続をその Organization で有効にする (ユーザーを共有している場合)
+  * この Organization 用のエンタープライズ接続を追加し、その Organization で有効にする
+
+    * これには、その組織がレガシー組織でない場合、既存の設定を更新するか、Auth0 テナント向けの設定を追加するために、その組織と連携することも含まれます。
+  * その組織の管理者をプロビジョニングする
+* ミスを防ぐために、新しい組織を簡単にプロビジョニングできるよう、[組織管理者ポータル](#organization-admin-portal)を作成するとよいでしょう。
+* Organization 向けのセルフサインアップポータルを作成することもできます。これにより、顧客自身が組織を作成できるようになります。これは [組織管理者ポータル](#organization-admin-portal) の一部として組み込むこともできます。
+
+<div id="organization-admin-portal">
+  ### 組織管理者ポータル
+</div>
+
+組織管理者ポータルは、管理者が組織の作成、変更、削除を行えるようにするためのポータルです。これらの管理者は、自社の従業員である場合もあれば、顧客側の管理者である場合もあります。必要な作業は、自社システム側と Auth0 テナント の両方で複数発生します。このポータルは、データストアや設定にアクセスする必要があるため、自社システム内に用意することになるでしょう。一方で、Auth0 は [Auth0 Management API](https://auth0.com/docs/api/management/v2) を提供しているため、自社システムで変更を作成するのと同時に、Auth0 テナント に対する変更も反映できます。
+
+新しい組織を作成する方法には、大きく分けて 2 つの主要なアプローチがあります。どちらを選ぶかは、新しい組織のデプロイにどれくらい時間がかかっても許容できるかに大きく左右されます。
+
+* **Auth0 テナント へのライブ更新**: 新しい組織をリアルタイムで作成したい場合は、Auth0 の <Tooltip tip="Management API: 顧客が管理タスクを実行できるようにする製品。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Management+API">Management API</Tooltip> を使って、Auth0 テナント に直接変更を加える方法が適しているでしょう。これにより、変更をリアルタイムで反映でき、新しい組織の追加もすぐに有効になります。特に、組織向けのセルフサインアップを提供している場合は、このアプローチが適しているかもしれません。
+
+<Warning>
+  ライブ更新には、いくつか注意すべき点があります。問題を避けるため、直列に実行しなければならない操作があります。たとえば、接続でクライアントを有効化する操作や、アプリケーションにコールバック URL を追加する操作です。Management API で、一覧全体を取得して新しい値を追加したうえで一覧全体を再送信する必要がある操作は、並列実行した 2 つの処理がどちらかの値を上書きしてしまうのを防ぐため、直列に実行する必要があります。
+</Warning>
+
+* **リポジトリを変更して再デプロイする**: [CI/CD パイプライン](/docs/ja-jp/get-started/architecture-scenarios/business-to-business/deployment)の一部として Deploy CLI (またはカスタム CLI) を活用している場合は、変更をリポジトリに直接プッシュしてから、新しいデプロイを開始するほうがよいかもしれません。こちらは少し時間がかかる場合がありますが、バージョン履歴を管理しやすく、以前のバージョンを再デプロイして変更を元に戻せるという利点があります。組織に必要な項目だけを管理する専用のリポジトリを分けておけば、他の共通コンポーネントを再デプロイせずに済み、誤りを招くリスクも減らせるでしょう。
+
+<div id="user-migration">
+  ## ユーザー移行
+</div>
+
+Auth0 は、[ユーザープロファイル](/docs/ja-jp/get-started/architecture-scenarios/business-to-business/profile-management) をホストできるだけでなく、独自のレガシー ID ストアを [プロキシ](#identity-store-proxy) したり、Auth0 がホストする安全な代替ストアを提供したりすることもできます。これら 2 つの機能はいずれも、Auth0 の [Database Connections](/docs/ja-jp/authenticate/database-connections) を使用して実現されます。レガシー ID ストアの代替として Auth0 を使用する場合、[migrate users](/docs/ja-jp/manage-users/user-migration) を、一括移行でまとめて行うことも、自動移行で段階的に進めることもできます。
+
+<Tip>
+  多くのお客様は、ユーザー移行を 2 段階で進めています。まず自動移行を使ってできるだけ多くのユーザーを移行し、その後、残ったユーザーに対して一括移行を行います。詳しくは [User Migration Scenarios](/docs/ja-jp/manage-users/user-migration/user-migration-scenarios) をご覧ください。
+</Tip>
+
+自動移行が推奨されます。ユーザーを 1 人ずつ移行でき、ほとんどの場合、既存のパスワードもそのまま維持できるためです。一括移行については、ごく単純なケースを除き、[User Import/Export extension](/docs/ja-jp/manage-users/user-migration/user-import-export-extension) ではなく [Management API](https://auth0.com/docs/api/management/v2#!/Jobs/post_users_imports) を使用することをおすすめします。Management API の方が、柔軟性と制御性に優れているためです。
+
+一括移行では通常、**移行完了後にユーザーは一度パスワードをリセットする必要があります**。ただし、レガシー ID ストア内のパスワードが、サポート対象のいずれかのアルゴリズムでハッシュ化されて保存されている場合は例外です。この場合は、アルゴリズムや使用されているソルトラウンド数によっては、一括移行を利用して、プロセスの一環として **ユーザーパスワードを維持できる** ことがあります。詳しくは [Bulk Import Database Schema Examples](/docs/ja-jp/manage-users/user-migration/bulk-user-import-database-schema-and-examples) をご覧ください。
+
+<Warning>
+  ハッシュ化されたパスワードをインポートするには、移行元の ID ストアで次のいずれかのアルゴリズムの標準的な実装が使用されている必要があります: argon2, bcrypt, hmac, ldap, md4, md5, sha1, sha256, sha512, pbkdf2, and scrypt.
+</Warning>
+
+<Tip>
+  Management API の呼び出しには [Auth0 Rate Limiting policy](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy) が適用されます。この点を考慮する必要があります。また、そのため Auth0 では通常、API を直接呼び出すのではなく、開発環境に適した [Auth0 SDK](/docs/ja-jp/libraries) を使用することを推奨しています。
+</Tip>
+
+<div id="identity-store-proxy">
+  ### ID ストアのプロキシ
+</div>
+
+Auth0 の Database Connection は、既存の (レガシー) ID ストアをプロキシするように設定することもできます。独自のレガシーストアで管理しているユーザー ID を維持する必要がある場合、たとえば Auth0 に移行できない業務上きわめて重要なアプリケーションが 1 つ以上あり、それらの ID へのアクセスを引き続き必要とする場合でも、Auth0 と簡単に統合できます。詳しくは、[Authenticate Users Using Your Database](/docs/ja-jp/authenticate/database-connections/custom-db) を参照してください。
+
+<div id="provisioning-organization-users">
+  ## 組織ユーザーのプロビジョニング
+</div>
+
+組織は、貴社のビジネス顧客またはパートナーのいずれか1つに直接対応するものとします。取引先となる各企業やパートナーには、ログインするユーザーがいます。ここでは、こうしたエンドユーザーを「組織ユーザー」と呼びます。組織ユーザーの保存方法には、2つの異なるアプローチがあります。
+
+* **組織ごとに分離する**: すべてのユーザーは、必ず1つの組織のみに属します。そのユーザーが複数の組織に属することは想定されておらず、たとえ複数の組織に関わる場合でも、別の組織では別個の「ID」を持つのが自然です。たとえば、2つの異なる店舗でパートタイム勤務をしている小売店の従業員は、両方の店舗が同じSaaSアプリケーションを使用していても、店舗ごとに別々のログイン情報を持ちます。詳細については、[Provisioning users isolated to the organization](#provisioning-users-isolated-to-the-organization)を参照してください。
+* **組織間で共有する**: この場合、ユーザーは貴社で認証情報を作成するか、自分の組織の認証情報を使って、アプリケーションの他の組織向けインスタンスにアクセスできます。簡単に言うと、1人のユーザーがアプリケーションの複数の組織のインスタンスにアクセスする権限を持つ場合があるということです。ユーザーは、同じ認証情報でアプリケーションの両方のインスタンスにアクセスできると認識します。たとえば、複数のクリニックと契約している医師は、同じ認証情報を使ってそれぞれのクリニックにサインインできる必要がある場合があります。詳細については、[Provisioning users shared between organizations](#provisioning-users-shared-between-organizations)を参照してください。
+
+<div id="provisioning-users-isolated-to-the-organization">
+  ### 組織ごとに分離されたユーザーのプロビジョニング
+</div>
+
+ユーザーを組織ごとに分離すると、組織間に明確な境界を設けられます。どのユーザーも複数の組織にアクセスする必要がない場合 (または、複数のアカウントを作成させたい場合) は、この方法が有力な選択肢になります。
+
+これらのユーザーは、IdP レベルでプロビジョニングする必要があります。各組織は、そのための独自の IdP を持つことになります。この IdP は、次の 3 つの形態のいずれかです。
+
+* **Your Auth0 テナント が IdP である場合**: メインのテナント内で、この組織専用の Database 接続を使用します。
+* **組織が独自の IdP を持ち込む場合**: その組織向けにエンタープライズ接続を設定します。
+* **複数の IdP を持つ組織**: 複数のエンタープライズ接続や Social 接続を有効にし、さらに 1 つの Database 接続を持つこともあります。ユーザーが自分の組織を選択してログインしようとすると、その組織で有効になっているすべての接続の中から選択できます。
+
+出発点としては、IdP として Auth0 を使用することをおすすめします。[ユーザー招待ワークフロー](/docs/ja-jp/manage-users/organizations/configure-organizations/invite-members) を簡単に実装できるからです。ほかの招待フローと比べて特別なのは、ユーザーを作成する人が事前に組織を選択しなければならないか、あるいはシステム側で、招待する側のユーザーの組織に合わせて組織を固定する必要がある点だけです (その組織にのみ所属する組織管理者がいる場合) 。
+
+<Tip>
+  [Organizations Feature](/docs/ja-jp/manage-users/organizations) を利用できる場合は、ログインシステムを大幅に簡素化でき、将来にわたって保守や拡張がしやすくなります。詳しくは、[複数組織アーキテクチャ](/docs/ja-jp/get-started/architecture-scenarios/multiple-organization-architecture) を参照してください。
+</Tip>
+
+<div id="provisioning-users-shared-between-organizations">
+  ### 組織間で共有されるユーザーのプロビジョニング
+</div>
+
+組織間でユーザーを共有する場合は、アクセスを認可する方法が必要です。認証時にはユーザーがどの組織に属する可能性があるか分からないため、通常はユーザーを単一のドメインに保存し、[組織のメンバー](/docs/ja-jp/manage-users/organizations/configure-organizations/assign-members)として追加することで、そのユーザーがアクセスできる組織を判断することを推奨します。そのため、プロビジョニングは多くの場合、単一のデータベース接続に対するユーザー招待ワークフローから始め、その後 Management API を使用して組織に追加します。さらに、ユーザーが組織を切り替えられるようにする必要がある場合は、Management API を使用して、ユーザーが[所属している組織](/docs/ja-jp/manage-users/organizations/configure-organizations/retrieve-user-membership)を取得できます。
+
+<div id="deprovisioning-limitations">
+  ### デプロビジョニングの制限
+</div>
+
+Auth0 は、`prompt=login` で強制しない限り、Auth0 にアクティブな <Tooltip tip="シングルサインオン（SSO）: ユーザーが 1 つのアプリケーションにログインすると、そのユーザーを自動的に他のアプリケーションにもログインさせるサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=SSO">SSO</Tooltip> セッションがある場合、上流の IdP とは通信しません。顧客組織のいずれかがそれらのユーザーのログアウトを管理できない場合、ユーザーはデプロビジョニング後も引き続きアクセスできてしまう可能性があります。IdP によっては、Auth0 がその API 用のトークンを取得できる場合、[ルール](/docs/ja-jp/customize/rules) で IdP にユーザー情報をリクエストし、そのユーザーが引き続きアクセス権を持つべきかどうかをポーリングで確認できます。この機能がない場合は、API 呼び出しまたは UI を通じて、顧客組織があなたのシステム内のユーザーをブロックまたはデプロビジョニングできるようにする手段を提供する必要があります。
+
+<div id="user-invite">
+  ## ユーザー招待
+</div>
+
+多くの B2B のシナリオでは、アプリケーションへのアクセスを許可されるのは特定のユーザーに限られます。そのため、ユーザーがサインアップし、その後で管理者が承認する方式よりも、管理者があらかじめユーザーアカウントを作成するほうが簡単なことがよくあります。また、ユーザーが一元管理されたシステムに追加される際に、この作成処理を自動化できる場合も少なくありません。
+
+[ユーザーの招待](/docs/ja-jp/customize/email/send-email-invitations-for-application-signup)を行う主体としては、次の 3 つが考えられます。
+
+* あなたの会社の管理者が、各 organization のユーザーを作成する。
+* 各 organization の管理者が、ユーザー作成を担当する。
+* ユーザー作成を担う別のシステムが存在し、そのシステムが Auth0 にユーザーを作成する。<Tooltip tip="Audience: 発行されたトークンの audience を表す一意の識別子。トークン内では aud という名前で示され、その値には ID トークンの場合はアプリケーション（Client ID）の ID が、アクセストークンの場合は API（API Identifier）の ID が含まれます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=audience">audience</Tooltip> に関係なく、手法はほぼ同じです。あとは、アプリケーションに適した認可モデルを使うだけです。
+
+ユーザー招待の推奨される方法は、[Organizations Feature](/docs/ja-jp/manage-users/organizations/configure-organizations/invite-members) を使用することです。Organizations Feature をユーザー招待の実装に**使用しておらず**、独自に構築している場合は、各ユーザーを `user.email_verified` パラメーターに `false` を設定し、ランダムな一時パスワードを指定して作成することが重要です。生成されたパスワードは Auth0 のみが知るべきであり、外部システムに保存したり、ユーザーに渡したりしては**いけません**。その後、[Management API](https://auth0.com/docs/api/management/v2#!/Tickets/post_password_change) を使用して、パスワード再設定用リンクを含むメールをユーザーに送信します。必要であれば、これが招待によるサインアップフローの一部であることが伝わるように、Auth0 のメールテンプレートを変更することもできます。これにより、そのメールアドレスが作成対象のユーザー本人のものであり、かつパスワードを知っているのがユーザー本人だけであることを確実にできます。
+
+<Warning>
+  OIDC の基本原則の 1 つは、ユーザー本人以外は誰もそのパスワードを知ってはならないということです。招待フローを実装する場合は、バックエンドシステムでランダムなパスワードを生成し、すぐに破棄したうえで、ユーザーが一度もログインする前にパスワードを再設定できるようにしてください。一時パスワードを作成して、初回ログイン用としてユーザーに渡してはいけません。
+</Warning>
+
+<div id="enterprise-sign-up">
+  ## Enterprise サインアップ
+</div>
+
+Enterprise サインアップは、[enterprise login](/docs/ja-jp/get-started/architecture-scenarios/business-to-business/authentication) によるサインインと同義です。厳密な意味で両者に違いはなく、ユーザーの [profile](/docs/ja-jp/get-started/architecture-scenarios/business-to-business/profile-management) は enterprise login の初回実行時に自動的に作成されます。
+
+<Tip>
+  顧客が自社の IdP を使えるようにする大きな利点の 1 つは、顧客向けの管理機能をこちらで構築しなくても、顧客自身が自社の IdP 設定内でユーザーを管理し、ロールやアクセス権を割り当てられることです。そうした顧客ごとのマッピングを整理しておけば、これをはるかに簡単に進められます。
+</Tip>
+
+<Warning>
+  マッピングだけでは不十分で、システム内に何らかのメタデータを保持する必要がある場合は、Auth0 がユーザーを作成するのは、そのユーザーが初めてシステムにログインしたときである点に注意してください。したがって、初期情報を別の場所から取得するために ルール extensibility を使用するか、メタデータを追加できるようになる前に、ユーザーに最初のログインをしてもらう必要があります。
+</Warning>
+
+<div id="project-planning-guide">
+  ## プロジェクト計画ガイド
+</div>
+
+推奨する戦略の詳細を確認できるよう、ダウンロードして参照できるPDF形式の計画ガイドをご用意しています。
+
+[B2B IAM プロジェクト計画ガイド](https://assets.ctfassets.net/cdy7uua7fh8z/63F0WOPJdVzsPMxV1Xvp8x/7a329487c5e890d8e820f6a48983b46a/B2B_Project_Planning.pdf)
+
+<div id="multiple-organization-architecture-multitenancy">
+  ## 複数組織アーキテクチャ (マルチテナンシー)
+</div>
+
+多くのB2Bプラットフォームでは、顧客組織ごとに何らかの分離やブランディングを実装しており、その結果、Identity and Access Management (IAM) システムが複雑になることがあります。これに当てはまる場合は、このような環境向けのガイダンスやベストプラクティスをぜひご確認ください。
+
+[複数組織アーキテクチャ](/docs/ja-jp/get-started/architecture-scenarios/multiple-organization-architecture)

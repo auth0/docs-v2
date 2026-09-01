@@ -1,0 +1,275 @@
+---
+description: ルールを使ってユーザーをリダイレクトし、認証フローをカスタマイズする方法を学びます。カスタマイズの例としては、MFA、プライバシーポリシーへの同意、ユーザーデータの収集などがあります。
+title: ルール内からユーザーをリダイレクトする
+---
+
+import {AuthCodeBlock} from "/snippets/ja-jp/AuthCodeBlock.jsx";
+
+<Warning>
+  Rules と Hooks のサポート終了 (EOL) 日は **2026年11月18日** です。また、**2023年10月16日** 以降に作成された新しいテナントでは、これらはすでに利用できません。Hooks が有効な既存のテナントは、サポート終了日まで Hooks 製品を引き続き利用できます。
+
+  Auth0 を拡張するには、Actions の使用を強くおすすめします。Actions では、豊富な型情報、インラインドキュメント、公開 `npm` パッケージを利用でき、拡張性をさらに高める外部連携も可能です。Actions でできることの詳細については、[Understand How Auth0 Actions Work](/docs/ja-jp/customize/actions/actions-overview) をご覧ください。
+
+  移行を支援するために、[Rules から Actions への移行](/docs/ja-jp/customize/actions/migrate/migrate-from-rules-to-actions) と [Hooks から Actions への移行](/docs/ja-jp/customize/actions/migrate/migrate-from-hooks-to-actions) のガイドを提供しています。また、機能比較、[Actions のデモ](https://www.youtube.com/watch?v=UesFSY1klrI)、そのほか移行に役立つリソースをまとめた専用ページ [Move to Actions](https://auth0.com/platform/extensibility/movetoactions) も用意しています。
+
+  Rules と Hooks の非推奨化について詳しくは、ブログ記事 [Preparing for Rules and Hooks End of Life](https://auth0.com/blog/preparing-for-rules-and-hooks-end-of-life/) をご覧ください。
+</Warning>
+
+認証トランザクションが完了する前にユーザーをリダイレクトするには、[Auth0 Rules](/docs/ja-jp/customize/rules) を使用できます。これにより、標準のログインフォームだけでは完結しない、追加のユーザー操作を必要とするカスタム認証フローを実装できます。リダイレクトルールは、Auth0 でカスタム <Tooltip tip="多要素認証（MFA）: ユーザー名とパスワードに加えて、SMS で送信されるコードなどの要素を用いるユーザー認証プロセスです。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Multi-factor+Authentication">多要素認証</Tooltip> (MFA) を行うためによく使われますが、次のような用途にも使用できます。
+
+* カスタムのプライバシーポリシーへの同意、利用規約、およびデータ開示フォーム。
+* 追加で必要なプロフィールデータを一度だけ安全に収集すること。
+* リモートの Active Directory ユーザーがパスワードを変更できるようにすること。
+* 不明な場所からログインした場合に、追加の確認をユーザーに求めること。
+* 初回登録時に提供された情報に加えて、ユーザーに関する情報をさらに収集すること。
+
+1 回の認証フローでユーザーをリダイレクトできるのは **一度だけ** です。あるルールでユーザーをリダイレクトした場合、後で 2 つ目のルールを実行して、そのユーザーを再度リダイレクトすることは **できません**。
+
+詳しくは、[Auth0 における多要素認証](/docs/ja-jp/secure/multi-factor-authentication) をご覧ください。
+
+<div id="start-redirect-and-resume-authentication">
+  ## リダイレクトを開始し、認証を再開する
+</div>
+
+`context.redirect` プロパティを次のように設定します。
+
+```javascript lines
+function (user, context, callback) {
+  context.redirect = {
+    url: "https://example.com/foo"
+  };
+  return callback(null, user, context);
+}
+```
+
+すべてのルールの実行が完了すると、Auth0 は `context.redirect.url` プロパティで指定された URL にユーザーをリダイレクトします。さらに、Auth0 はその URL に `state` パラメータも付与します。例:
+
+```http lines
+https://example.com/foo?state=abc123
+```
+
+リダイレクト URL では、`state` パラメーターを取得し、認証トランザクションを再開するために Auth0 に返送する必要があります。state は不透明な値で、[クロスサイト・リクエスト・フォージェリ (CSRF) 攻撃](/docs/ja-jp/secure/security-guidance/prevent-threats#cross-site-request-forgery)を防ぐために使用されます。
+
+リダイレクト後は、ユーザーを `/continue` エンドポイントにリダイレクトし、受け取った `state` パラメーターを URL に含めて認証を再開します。元の `state` を `/continue` エンドポイントに返送しないと、Auth0 はログイントランザクションのコンテキストを失い、ユーザーは `invalid_request` エラーによりログインできなくなります。
+
+たとえば、次のようになります。
+
+export const codeExample1 = `https://{yourDomain}/continue?state={originalState}`;
+
+<AuthCodeBlock children={codeExample1} language="http" />
+
+<Tooltip tip="カスタムドメイン: 固有の名前（バニティ名）を持つサードパーティドメイン。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=custom+domain">カスタムドメイン</Tooltip>を使用している場合：
+
+```http lines
+https://{yourAuth0CustomDomain}/continue?state={originalState}
+```
+
+`THE_ORIGINAL_STATE` は、Auth0 が生成し、リダイレクト URL に送信した値です。たとえば、ルールで `https://example.com/foo` にリダイレクトした場合、Auth0 は `https://example.com/foo?state=abc123` のようなリダイレクト URL を使用します。つまり、`abc123` が `THE_ORIGINAL_STATE` です。認証トランザクションを再開するには、次の URL にリダイレクトします。
+
+export const codeExample2 = `https://{yourDomain}/continue?state=abc123`;
+
+<AuthCodeBlock children={codeExample2} language="http" />
+
+ユーザーが`/continue`エンドポイントにリダイレクトされた場合:
+
+* **すべてのルールが再度実行されます**。ただし、認証を続行できるよう、`context.redirect`は無視されます。
+* ユーザーオブジェクトへの変更は、`/continue`エンドポイントを呼び出す前のリダイレクト中に行われます。たとえば、Auth0 <Tooltip tip="顧客が管理タスクを実行できるようにするための製品であるManagement API。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Management+API">Management API</Tooltip> を通じて行った更新は、トランザクションの続行後に反映されます。
+
+<div id="validate-resumed-login">
+  ## 再開されたログインの確認
+</div>
+
+ユーザーが開始したログインと再開されたログインフローを区別するには、`context.protocol` プロパティを確認してください。
+
+```javascript lines
+function (user, context, callback) {
+    if (context.protocol === "redirect-callback") {
+        // ユーザーは /continue エンドポイントにリダイレクトされました
+    } else {
+        // ユーザーは直接ログインしています
+    }
+}
+```
+
+<div id="force-password-change-example">
+  ## パスワード変更を強制する例
+</div>
+
+特定の条件下では、ユーザーにパスワードの変更を必須にしたい場合があります。その場合は、次のように動作するルールを作成できます。
+
+1. ユーザーがログインを試みますが、パスワードを変更する必要があります。
+2. ユーザーは、クエリ文字列に JWT が付与されたアプリケーション固有のページへリダイレクトされます。この JWT によって、このユーザーのパスワードだけを変更できることが保証されます。また、この JWT はアプリケーション側で**必ず検証する必要があります**。
+3. ユーザーは、アプリケーション固有のページでパスワードを変更します。このとき、アプリケーションは [Auth0 Management API](https://auth0.com/docs/api/management/v2/users/patch-users-by-id) を呼び出します。
+4. ユーザーが正常にパスワードを変更したら、アプリケーションは検証済みかつデコード済みの JWT から `authorize_again` claim を取り出し、その URL にユーザーをリダイレクトして、新しいパスワードでサインインできるようにします。
+
+```javascript lines expandable
+function(user, context, callback) {
+   /*
+   * 前提条件:
+   * 1. `mustChangePassword` 関数を実装する
+   * 2. 以下の設定変数を設定する:
+   *    - CLIENT_ID
+   *    - CLIENT_SECRET
+   *    - ISSUER
+   */
+
+  const url = require('url@0.10.3');
+  const req = context.request;
+
+  function mustChangePassword() {
+    // TODO: 関数を実装する
+    return true;
+  }
+
+  if (mustChangePassword()) {
+    // ユーザーがログインを開始し、パスワードの変更が強制される
+    // 改ざん防止のため、ユーザー情報とクエリパラメータをJWTに含めて送信する
+    function createToken(clientId, clientSecret, issuer, user) {
+      const options = {
+        expiresInMinutes: 5,
+        audience: clientId,
+        issuer: issuer
+      };
+      return jwt.sign(user, clientSecret, options);
+    }
+
+    const token = createToken(
+      configuration.CLIENT_ID,
+      configuration.CLIENT_SECRET,
+      configuration.ISSUER,
+      {
+        sub: user.user_id,
+        email: user.email,
+        authorize_again: url.format({
+          protocol: 'https',
+          hostname: auth0.com,
+          pathname: '/authorize',
+          query: req.query
+        })
+      }
+    );
+
+    context.redirect = {
+      url: `https://example.com/change-pw?token=${token}`
+    };
+  }
+
+  return callback(null, user, context);
+}
+```
+
+<div id="where-to-store-data">
+  ## データの保存先
+</div>
+
+Auth0 のプロファイルに過剰なデータを保存しないよう注意してください。これらのデータは、認証と認可のために使用することを想定しています。Auth0 のメタデータ機能や検索機能は、マーケティング調査や、検索や更新が高頻度で発生するその他の用途向けには設計されていません。この目的で Auth0 を使用すると、システムのスケーラビリティやパフォーマンスに問題が生じる可能性があります。より適切な方法は、データは外部システムに保存し、必要に応じてバックエンドシステムがそのデータを取得できるよう、Auth0 には参照先 (ユーザー ID) のみを保存することです。シンプルなルールとして、保存するのは、トークンに追加したり、意思決定に使ったりするためにルールで使用する予定のある項目だけにしてください。
+
+<div id="security-considerations">
+  ## セキュリティに関する考慮事項
+</div>
+
+フロントチャネルで情報をやり取りすると、<Tooltip tip="Bad Actors：危害を加える意図をもって、ビジネスや環境に脅威をもたらす存在（個人または集団）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=bad+actors">悪意のある主体</Tooltip>による攻撃対象領域が広がります。これは、ルール内で何らかの対応が必要な場合 (たとえば、`UnauthorizedError` を使って認可の試行を拒否する場合) に限って行うべきです。
+
+一方、Auth0 に直接応答してアクセスを制限するための指示を返す必要がある場合 (CAPTCHA チェックやカスタム MFA を実装している場合) は、その処理に必要な要件が満たされたことを Auth0 に安全に伝える手段が必要です。同様に、リダイレクト先のアプリケーションに情報を渡す必要がある場合も、受け渡した情報が改ざんされていないことを安全に保証する方法が必要です。
+
+<div id="ensure-app-is-logging-into-the-same-user">
+  ### アプリが同じユーザーにログインしていることを確認する
+</div>
+
+アプリケーションはユーザーを Auth0 テナントにリダイレクトして戻すため、ユーザーに関するあらゆるデータは、アプリケーションに返される<Tooltip tip="IDトークン: リソースへのアクセスではなく、クライアント自身のための認証情報。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=ID+token">IDトークン</Tooltip>を通じて取得できます。ただし、途中で何らかの改ざんが行われていないことを確認するために、アプリケーションがリダイレクト元と同じユーザーにログインしていることを確認したい場合があります。そのため、通常はリクエストとあわせてトークンも送信することになります。
+
+アプリに送信するトークンは、次の要件を満たす必要があります。
+
+| トークン要素      | 説明                                                                                                                                                                                                                                                                                                                                            |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`       | ユーザーの Auth0 `user_id`。                                                                                                                                                                                                                                                                                                                        |
+| `iss`       | ルール自体を識別する識別子。                                                                                                                                                                                                                                                                                                                                |
+| `aud`       | リダイレクト先のアプリケーション。                                                                                                                                                                                                                                                                                                                             |
+| `jti`       | 確認用としてユーザーオブジェクトに保存される、ランダムに生成された文字列 (ルールコード内で `user.jti = uuid.v4();` を設定し、その後作成するトークンに `jti` として追加します) 。`/continue` が呼び出されてルールが再実行される際にも、`user.jti` は引き続き設定されたままです。これは仕様に沿っています。                                                                                                                                                            |
+| `exp`       | トークンの再利用を防ぐため、できるだけ短くする必要があります。                                                                                                                                                                                                                                                                                                               |
+| `other`     | 渡す必要があるその他のカスタムクレーム情報。                                                                                                                                                                                                                                                                                                                        |
+| `signature` | アプリケーションにシークレットを安全に保存できる場所があるなら、HS256 署名を使用できます。これによりソリューションの複雑さを大幅に抑えられます。また、返されるトークンにも署名が必要になるため、これはこのソリューションの前提条件でもあります。RS256 を使用することもできますが、その場合は証明書の作成と、有効期限が切れた際の更新が必要です。ルールに直接情報を返さないのであれば、この中間アプリに SPA を使用でき、その場合はアプリケーションで情報を保存しなくて済むよう、RS256 のほうが望ましいかもしれません。その場合は、イントロスペクションエンドポイントまたは公開 JWKS エンドポイントのいずれかを通じて、トークンを検証する方法が必要になります。 |
+
+<Warning>
+  このトークンは **Bearer トークン** として扱っては**いけません**。これはアプリケーション内で使用するための署名付き情報です。アプリケーションは引き続き、ユーザーを認証するために Auth0 へリダイレクトして戻す必要があります。
+</Warning>
+
+<div id="pass-information-back-to-the-rule">
+  ### ルールに情報を返す
+</div>
+
+ほとんどの場合、ルールからアプリケーションに情報を渡したい場合でも、その情報は必要に応じてアプリケーション側で安全に保存できるはずです。たとえば Auth0 のアプリメタデータやユーザーメタデータを更新したい場合でも、Management API を使って実行できます。ユーザーを `/continue` エンドポイントへリダイレクトして戻す前に完了していれば、ユーザー情報は更新されます。ルール自体が情報を受け取る必要があり、かつその情報がそのサインインセッションにだけ関係する場合にのみ、情報をルールに返すべきです。
+
+`/continue` エンドポイントに情報を返す際、渡すトークンは次の要件を満たしている必要があります。
+
+| Token Element | Description                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sub`         | ユーザーの Auth0 `user_id`。                                                                                                                                                   |
+| `iss`         | リダイレクト先のアプリケーション。                                                                                                                                                        |
+| `aud`         | ルール自体を識別するための何らかの識別子。                                                                                                                                                    |
+| `jti`         | アプリケーションに渡したトークンに保存されたものと同じ JTI (注: `user.jti` と一致しない場合は失敗する必要があります) 。                                                                                                   |
+| `exp`         | トークンの再利用を防ぐため、できるだけ短くする必要があります。                                                                                                                                          |
+| `other`       | 渡す必要があるその他のカスタムclaim情報。                                                                                                                                                  |
+| `signature`   | アプリケーションにシークレットを安全に保管できる場所があることを前提に、HS256 署名を使用できます。これによりソリューションの複雑さを大幅に減らせます。また、返されるトークンにも署名が必要になるため、これはこのソリューションの要件です。RS256 を使うこともできますが、証明書の作成と、証明書の有効期限が切れた際の更新が必要です。 |
+
+送信には POST を使用し、クエリパラメータとして渡すのではなく、`context.request.body.token` (または同様の場所) から取得するようにしてください。これは認証の form-post メソッドに似ています。
+
+`/continue` エンドポイントに情報を返さない場合は、有効期限が十分に短く、リプレイ攻撃がほぼ不可能である場合を除き、JTI を denylist に追加することを検討してください。
+
+<div id="restrictions-and-limitations">
+  ## 制約と制限
+</div>
+
+Redirect Rules は、以下では機能しません。
+
+* [Resource Owner エンドポイント](https://auth0.com/docs/api/authentication/reference#resource-owner)
+* [パスワード交換](/docs/ja-jp/get-started/authentication-and-authorization-flow/resource-owner-password-flow)
+* [リフレッシュトークン 交換](/docs/ja-jp/secure/tokens/refresh-tokens)
+
+上記のケースは、`context.protocol` を確認することで判別できます。
+
+* パスワード交換の場合: `context.protocol === 'oauth2-password'`
+* <Tooltip tip="リフレッシュトークン: ユーザーに再度ログインを求めることなく、新しいアクセストークンを取得するために使用されるトークン。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Refresh+Token">リフレッシュトークン</Tooltip> 交換の場合: `context.protocol === 'oauth2-refresh-token'`
+* <Tooltip tip="Resource Owner: 保護されたリソースへのアクセスを許可できる主体（ユーザーやアプリケーションなど）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Resource+Owner">Resource Owner</Tooltip> ログインの場合: `context.protocol === 'oauth2-resource-owner'`
+
+<div id="session-timeout">
+  ### セッションタイムアウト
+</div>
+
+リダイレクトルールのセッションは通常 3 日間有効です。ただし、**Login Session Management** の設定でそれより短いタイムアウトを設定している場合は、この限りではありません。これらの設定は、[テナントの詳細設定](https://manage.auth0.com/#/tenant/advanced) で確認できます。
+
+<div id="resource-owner-endpoint">
+  ### Resource Owner エンドポイント
+</div>
+
+Resource Owner Password Grant で `/oauth/token` を直接呼び出す場合、リダイレクトルールは使用できません。そもそもユーザーはリダイレクトフローに入っていないため、ルール内でユーザーをリダイレクトすることはできません。`context.redirect` を設定しようとすると、`interaction_required` エラーでログイン試行が失敗します。
+
+<div id="flows-where-promptnone">
+  ### `prompt=none` を使用するフロー
+</div>
+
+`prompt=none` の目的は、ユーザーに入力を求める必要がある状況を一切発生させないことにあるため、どのようなリダイレクトでも `error=interaction_required` が返されます。
+
+ルールは認証セッションが作成された後に実行されるため、特定の条件下でトークンへのアクセスをブロックしようとするリダイレクトルール (カスタム MFA、ログイン時の CAPTCHA など) がある場合は、`prompt=none` を使用できません。
+
+また、トークンへのアクセスをブロックするリダイレクトフローを作成しても、`prompt=none` の場合にリダイレクトルールを回避できないようにすることはできません。失敗した後でも、ユーザーは再度 `prompt=none` を付けて呼び出すだけでトークンを取得できてしまうためです。これは、最初の時点でルールが失敗していても、認証セッション自体はすでに作成されているからです。
+
+<div id="refresh-tokens">
+  ### リフレッシュトークン
+</div>
+
+リフレッシュトークンの使用には `/oauth/token` へのバックチャネル呼び出しが必要なため、`context.redirect` を設定すると、これも失敗します。
+
+ログインに関する制限が実際に適用されたことを安全に検証するのは困難です。context には一貫したセッション ID が存在しないため、「このユーザーは MFA チャレンジを通過した」といったセッション関連の情報を収集する用途には使えません。したがって、`prompt=none` はまったく使用できません。
+
+ルールで `context.redirect` が設定されている場合に `prompt=none` が渡されると、認可は `error=interaction_required` で失敗します。しかし、ルールが失敗してもユーザーのセッション自体は作成されるため、ユーザーがすべての `context.redirect` チャレンジを通過したと信頼することはできません。そのため、トークン取得の手段として `prompt=none` を使用することはできません。
+
+このケースでは、リフレッシュトークンの生成時にそれらのチャレンジが必須であれば、ユーザーがチャレンジを通過したことを確実に確認できるため、リフレッシュトークンのみを使用することを推奨します。
+
+<div id="learn-more">
+  ## 詳細はこちら
+</div>
+
+* [ユーザーのリダイレクト](/docs/ja-jp/authenticate/login/redirect-users-after-login)
+* [プログレッシブプロファイリングの仕組みを理解する](/docs/ja-jp/manage-users/user-accounts/user-profiles/progressive-profiling)
+* [代替ログアウトでユーザーをリダイレクトする](/docs/ja-jp/authenticate/login/logout/redirect-users-after-logout)

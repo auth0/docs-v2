@@ -1,0 +1,168 @@
+---
+title: 匿名セッションのユースケース
+description: Actions を使用した匿名セッションのユースケースを紹介します。
+sidebarTitle: ユースケース
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Anonymous Sessions" stage="beta" terms="true" contact="Auth0 Support" />
+
+ユーザーがアプリケーションで認証されると、匿名セッションと[Actions](/docs/ja-jp/customize/actions/actions-overview)を使用して、ショッピングカートの内容、設定、閲覧履歴などの匿名セッションデータを認証済みユーザーのユーザープロファイルに移行できます。
+
+Actions では、`event.anonymous_session` オブジェクトを参照できます。
+
+```typescript theme={null}
+{
+  user_id: string;     // 匿名ユーザーのID
+  session_id: string;  // 匿名セッショントークンのID
+  created_at: number;  // 匿名セッションの作成日時のタイムスタンプ
+  expires_at: number;  // 匿名セッションの有効期限のタイムスタンプ
+  metadata: {          // 匿名セッションのメタデータオブジェクト
+    [key: string]: string
+  };
+}
+```
+
+<div id="anonymous-sessions-and-actions-use-cases">
+  ## 匿名セッションとActionsのユースケース
+</div>
+
+<div id="save-anonymous-session-metadata-to-a-new-user">
+  ### 匿名セッションのメタデータを新規ユーザーに保存する
+</div>
+
+ユーザーがサインアップする際に、[`pre-user-registration`](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger) Action トリガーを使用して、匿名メタデータを新しいユーザープロファイルにコピーできます。
+
+```javascript wrap lines
+exports.onExecutePreUserRegistration = async (event, api) => {
+  if (event.anonymous_session) {
+    // 匿名セッションへの参照を保存
+    api.user.setAppMetadata(
+      'linked_anonymous_id',
+      event.anonymous_session.user_id
+    );
+
+    // カートデータを移行
+    if (event.anonymous_session.metadata.cart) {
+      api.user.setAppMetadata(
+        'migrated_cart',
+        event.anonymous_session.metadata.cart
+      );
+    }
+
+    // 設定をユーザーメタデータにコピー
+    if (event.anonymous_session.metadata.preferences) {
+      api.user.setUserMetadata(
+        'preferences',
+        event.anonymous_session.metadata.preferences
+      );
+    }
+  }
+};
+```
+
+<div id="save-anonymous-session-metadata-to-an-existing-user">
+  ### 匿名セッションのメタデータを既存ユーザーに保存する
+</div>
+
+ユーザーのログイン時に、[`post-login`](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) Action トリガーを使用して、匿名メタデータを既存ユーザーに保存できます。
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.anonymous_session) {
+    // 最後の匿名セッションへの参照を保存する
+    api.user.setAppMetadata(
+      'last_anonymous_session',
+      event.anonymous_session.user_id
+    );
+
+    // APIで処理できるように、匿名カートをaccess tokenに追加する
+    api.accessToken.setCustomClaim(
+      'anonymous_cart',
+      event.anonymous_session.metadata.cart
+    );
+
+    // リンクされたすべてのセッションを追跡する（任意）
+    const linkedSessions =
+      event.user.app_metadata?.linked_sessions || [];
+    if (!linkedSessions.includes(event.anonymous_session.user_id)) {
+      api.user.setAppMetadata('linked_sessions', [
+        ...linkedSessions,
+        event.anonymous_session.user_id,
+      ]);
+    }
+  }
+};
+```
+
+<div id="merge-user-metadata-with-anonymous-metadata">
+  ### ユーザーメタデータに匿名メタデータを統合する
+</div>
+
+ユーザーがログインした際に、[`post-login`](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) Action トリガーを使用して、カート情報などの匿名メタデータを既存のユーザーメタデータに統合できます。
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.anonymous_session?.metadata?.cart) {
+    return; // マージ対象の匿名カートがない
+  }
+
+  const anonymousCart = event.anonymous_session.metadata.cart;
+  const existingCart = event.user.app_metadata?.cart || { items: [] };
+
+  // カート内の商品をマージし、SKUが一致する場合は数量を合算する
+  const mergedItems = [...existingCart.items];
+  for (const anonItem of anonymousCart.items) {
+    const existingIndex = mergedItems.findIndex(
+      (item) => item.sku === anonItem.sku
+    );
+    if (existingIndex >= 0) {
+      mergedItems[existingIndex].qty += anonItem.qty;
+    } else {
+      mergedItems.push(anonItem);
+    }
+  }
+
+  api.user.setAppMetadata('cart', { items: mergedItems });
+  api.accessToken.setCustomClaim('cart', { items: mergedItems });
+};
+```
+
+<div id="handle-multiple-anonymous-sessions">
+  ### 複数の匿名セッションを処理する
+</div>
+
+ユーザーのログイン時に、[`post-login`](/docs/ja-jp/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) Action トリガーを使用して、異なるデバイスの匿名セッションのメタデータを管理できます。
+
+```javascript wrap lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.anonymous_session) return;
+
+  const linkedSessions =
+    event.user.app_metadata?.linked_sessions || [];
+
+  // オプション1: リンクされたセッションをすべて保持する
+  api.user.setAppMetadata('linked_sessions', [
+    ...linkedSessions,
+    {
+      user_id: event.anonymous_session.user_id,
+      linked_at: new Date().toISOString(),
+      device: event.request.user_agent,
+    },
+  ]);
+
+  // オプション2: 最新のもののみを保持する
+  api.user.setAppMetadata('last_anonymous_session', {
+    user_id: event.anonymous_session.user_id,
+    metadata: event.anonymous_session.metadata,
+  });
+};
+```
+
+<div id="learn-more">
+  ## 詳細
+</div>
+
+* [匿名セッションを設定する](/docs/ja-jp/manage-users/sessions/anonymous-sessions/configure-anonymous-sessions) 匿名セッションの設定方法を確認します。
+* [匿名セッション](/docs/ja-jp/manage-users/sessions/anonymous-sessions) 匿名セッションについて確認します。

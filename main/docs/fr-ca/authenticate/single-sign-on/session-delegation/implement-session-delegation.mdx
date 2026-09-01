@@ -1,0 +1,136 @@
+---
+title: Mettre en œuvre la délégation de session
+description: Découvrez le modèle de sécurité de la délégation de session ainsi que les requêtes, redirections et la gestion des jetons nécessaires à sa mise en œuvre de bout en bout.
+---
+
+Après avoir [configuré les deux applications](/docs/fr-ca/authenticate/single-sign-on/session-delegation/configure-session-delegation), implémentez la logique de délégation de session qui envoie les requêtes, redirige le navigateur pour échanger le jeton de transfert de session et traite les jetons obtenus.
+
+Pour une présentation complète du flux de délégation de session, consultez le cas d’utilisation [Un agent de soutien accède à une application web au nom d’un utilisateur final](/docs/fr-ca/authenticate/custom-token-exchange/cte-example-use-cases#use-case-support-agent-accessing-a-web-application-on-behalf-of-an-end-user).
+
+<div id="security-model">
+  ## Modèle de sécurité
+</div>
+
+Une session déléguée est établie au moyen de la même logique d’Action [d’échange de jeton personnalisé](/docs/fr-ca/authenticate/custom-token-exchange) que vous contrôlez pour tous les autres échanges de jetons. Auth0 ne décide pas à votre place qui est autorisé à agir au nom de qui. Votre Action est responsable d’autoriser la délégation avant d’appeler `setActor()`.
+
+La délégation de session comprend plusieurs mécanismes de sécurité, de la configuration au comportement à l’exécution :
+
+* Les deux applications doivent être explicitement configurées à cette fin : l’application requérante doit être un client confidentiel capable de créer un jeton de transfert de session, et l’application cible doit explicitement activer `allow_delegated_access`. Pour en savoir plus sur la configuration des applications requérante et cible, consultez [Configurer la délégation de session](/docs/fr-ca/authenticate/single-sign-on/session-delegation/configure-session-delegation).
+* Le jeton de transfert de session doit être échangé à partir de la même adresse IP que celle utilisée pour le demander par l’application requérante. Pour en savoir plus, consultez la note sur la liaison d’adresse IP sous [Échanger le jeton de transfert de session](#redeem-the-session-transfer-token).
+* L’identité de l’acteur est enregistrée dans la session (`session.actor`) et est accessible à vos [Actions](/docs/fr-ca/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#actions) ainsi que dans les [journaux du locataire](/docs/fr-ca/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#monitoring), sous la forme de l’objet acteur transmis à `setActor()`.
+* La session est éphémère et de courte durée. Pour en savoir plus, consultez [Comportement de la session](/docs/fr-ca/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#session-behavior).
+* Aucun jeton d’actualisation n’est émis, aucun écran MFA, de consentement ou d’inscription n’est autorisé, et les sessions actives existantes bloquent l’accès délégué afin de limiter la durée pendant laquelle une session déléguée peut survivre à une session légitime ou interagir avec elle.
+* Les sessions déléguées génèrent des types d’événements dédiés dans les journaux du locataire, distincts des connexions habituelles, afin que vous puissiez les auditer séparément.
+
+<div id="get-a-session-transfer-token">
+  ## Obtenir un jeton de transfert de session
+</div>
+
+Votre application demande un jeton de transfert de session de la même manière qu’elle demande n’importe quel jeton d’accès d’échange de jeton personnalisé, en définissant `audience` sur `urn:YOUR_AUTH0_TENANT_DOMAIN:session_transfer`. Consultez l’[API d’authentification](/docs/fr-ca/api/authentication/custom-token-exchange/get-token) pour la liste complète des paramètres :
+
+```bash lines
+curl --request POST \
+  --url 'https://{yourDomain}/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data grant_type='urn:ietf:params:oauth:grant-type:token-exchange' \
+  --data audience='urn:YOUR_AUTH0_TENANT_DOMAIN:session_transfer' \
+  --data subject_token_type='{yourSubjectTokenType}' \
+  --data subject_token='{signedJwtIdentifyingTheEndUser}' \
+  --data actor_token_type='urn:ietf:params:oauth:token-type:id_token' \
+  --data actor_token='{theAgentsAuth0IdToken}' \
+  --data client_id='{yourClientId}' \
+  --data client_secret='{yourClientSecret}'
+```
+
+```json lines
+{
+  "access_token": "{sessionTransferToken}",
+  "issued_token_type": "urn:auth0:params:oauth:token-type:session_transfer_token",
+  "expires_in": 60
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Un jeton de transfert de session a une courte durée de vie, comme un code d’autorisation. Échangez-le rapidement après son émission plutôt que de le conserver pour une utilisation ultérieure.
+</Callout>
+
+Votre Action d’échange de jeton personnalisé est chargée de ce qui suit :
+
+1. **Détecter la requête de délégation de session** en vérifiant si l’audience demandée se termine par `:session_transfer`.
+2. **Autoriser l’acteur pour l’utilisateur cible précis** identifié par `subject_token`. Cette opération créera une session au nom de cet utilisateur et est plus sensible que l’octroi d’un accès limité à une API.
+3. **Appeler `setUserByConnection()` avec la connexion acceptée par l’application cible.** Le jeton de transfert de session est limité à la connexion sélectionnée par votre Action. Consultez [Accessibilité de l’application cible](#troubleshooting-a-failed-redemption) pour en savoir plus sur l’importance de cette étape et sur la façon de sélectionner la bonne connexion.
+4. **Appeler `setActor()`** pour consigner l’acteur. Cette étape est obligatoire. Si vous l’omettez lors de la demande d’un jeton de transfert de session, une erreur `400` est renvoyée.
+
+Consultez l’[exemple de code d’Action](/docs/fr-ca/authenticate/custom-token-exchange/cte-example-use-cases#use-case-support-agent-accessing-a-web-application-on-behalf-of-an-end-user).
+
+<div id="redeem-the-session-transfer-token">
+  ## Échanger le jeton de transfert de session
+</div>
+
+La manière dont votre application transmet le jeton de transfert de session à l’application cible dépend de votre mise en œuvre, mais l’approche recommandée consiste à rediriger le navigateur de l’acteur vers l’`initiate_login_uri` de l’application cible, avec le jeton en tant que paramètre de requête :
+
+```
+https://your-target-app.example.com/initiate-login?session_transfer_token={sessionTransferToken}
+```
+
+Si la connexion doit s’effectuer dans le contexte d’une [organisation](/docs/fr-ca/manage-users/organizations), transmettez également `organization` comme paramètre de requête :
+
+```
+https://your-target-app.example.com/initiate-login?session_transfer_token={sessionTransferToken}&organization={orgId}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Aucun écran interactif de sélection d’organisation n’est autorisé durant une session déléguée; `organization` doit donc être transmis explicitement, plutôt que de s’appuyer sur un écran affiché au moment du login. La connexion sélectionnée par votre Action au moyen de `setUserByConnection()` doit aussi être liée à cette organisation, comme c’est le cas pour un login d’organisation normal (non délégué).
+</Callout>
+
+La route `initiate_login_uri` de votre application cible doit transmettre les deux paramètres dans son propre appel au endpoint `/authorize` d’Auth0. Auth0 valide ensuite le jeton de transfert de session. S’il est valide, Auth0 établit une session déléguée éphémère pour l’utilisateur sujet, en enregistrant l’acteur dans son context. Aucune autre interaction de l’utilisateur n’est requise.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Le jeton de transfert de session doit être échangé depuis la même adresse IP que celle utilisée pour l’obtenir auprès de l’application requérante. Si le serveur backend de votre application requérante effectue la requête de token exchange, transmettez l’adresse IP réelle de l’acteur au moyen du header `auth0-forwarded-for`, puisqu’il s’agira de l’adresse IP associée à la redirection du navigateur vers le endpoint `/authorize`.
+</Callout>
+
+`event.session.actor` est disponible dans les [Actions post-login](/docs/fr-ca/customize/actions/explore-triggers/post-login) une fois la session déléguée établie; il contient l’object acteur exact transmis à `setActor()` lors de l’émission du jeton de transfert de session.
+
+<div id="handle-the-resulting-tokens">
+  ## Traiter les jetons obtenus
+</div>
+
+L’application cible exécute le flux Authorization Code standard et reçoit un jeton ID et un jeton d’accès, qui contiennent tous deux une revendication `act` identifiant la délégation :
+
+```json lines
+{
+  "sub": "auth0|end_user_id",
+  "act": {
+    "sub": "auth0|support_agent_id",
+    "sub_profile": "human",
+    "role": "support"
+  }
+}
+```
+
+Examinez la claim `act` pour déterminer si une session est déléguée et appliquez tout traitement particulier requis par votre application, par exemple en restreignant les opérations sensibles ou en consignant une entrée dans la piste d’audit :
+
+```javascript lines
+const { act } = jwt.decode(id_token);
+if (act) {
+  // act.sub identifie l’acteur (l’agent de soutien); sub identifie l’utilisateur final
+  auditLog.record({ delegated: true, actorSub: act.sub });
+}
+```
+
+Les serveurs d’API en aval doivent effectuer la même vérification de la revendication `act` dans le jeton d’accès qu’ils reçoivent, indépendamment de ce que fait l’application cible elle-même.
+
+<div id="troubleshooting-a-failed-redemption">
+  ## Dépannage d’un échange ayant échoué
+</div>
+
+Si le jeton de transfert de session ne s’échange pas contre une session comme prévu :
+
+1. **Votre Action détecte-t-elle qu’il s’agit d’une requête de délégation de session avant d’appliquer sa politique d’autorisation ?** Vérifiez si l’audience demandée se termine par `:session_transfer` (`event.resource_server.identifier`). Une Action qui ne distingue pas la délégation de session d’une simple délégation d’accès à une API pourrait autoriser ou rejeter les mauvaises requêtes.
+2. **L’utilisateur sujet est-il accessible par l’intermédiaire de la connexion sélectionnée par votre Action ?** Le jeton de transfert de session est limité à la connexion définie par votre Action au moyen de `setUserByConnection()`, ou à la connexion principale de l’utilisateur si vous utilisez plutôt `setUserById()`. L’application cible ne peut échanger le jeton que si cette connexion précise est activée pour elle, et non simplement parce que l’utilisateur sujet appartient aussi à une autre connexion autorisée pour l’application cible.
+3. **L’application qui appelle l’échange de jeton personnalisé a-t-elle elle-même accès à cette même connexion ?** Il s’agit d’un paramètre de l’application appelante (celle de l’acteur), distinct de l’application cible, qu’il est facile d’oublier.
+4. **Le client cible a-t-il `allow_delegated_access: true`, et `session_transfer.allowed_authentication_methods` inclut-il `query` ?** Si `allow_delegated_access` n’est pas défini, Auth0 affiche une page de connexion normale au lieu de renvoyer une erreur. `query` est requis, puisque le jeton est transmis comme paramètre de requête et non dans un cookie. Consultez [Configurer l’application Web cible](/docs/fr-ca/authenticate/single-sign-on/session-delegation/configure-session-delegation#configure-the-target-web-application).
+5. **Si vous transmettez une `organization`, est-elle explicitement incluse, et la connexion sélectionnée par votre Action est-elle liée à cette organisation ?** Aucun sélecteur d’organisation interactif n’est autorisé pendant une session déléguée ; une `organization` absente ou non correspondante entraîne donc un échec au lieu d’afficher une invite.
+6. **Votre route `initiate_login_uri` (ou votre assistant du SDK) transmet-elle réellement les paramètres de requête `session_transfer_token` et `organization` jusqu’à `/authorize` ?** Certains assistants de connexion du SDK ne transmettent pas les paramètres de requête arbitraires par défaut — vérifiez que le vôtre le fait.
+7. **Existe-t-il déjà une session Auth0 active pour ce navigateur et ce domaine ?** Toute session existante — celle de l’utilisateur sujet ou une session déléguée antérieure pour un autre utilisateur — bloque l’établissement d’une nouvelle session déléguée. Cela se produit généralement lorsque les applications initiatrice et cible partagent le même domaine Auth0 et, par conséquent, le même cookie de session du navigateur. Donnez à l’application cible son propre [domaine personnalisé](/docs/fr-ca/customize/custom-domains), distinct du domaine de l’application initiatrice, afin que chacune dispose d’un cookie distinct. Sans domaine personnalisé, vous pouvez aussi demander à l’agent de soutien de copier l’`initiate_login_uri` de l’application cible, avec le jeton joint, dans une fenêtre de navigation privée ou incognito ouverte séparément. Pour la même raison, un agent doit se déconnecter d’une session déléguée avant d’en établir une autre pour un autre utilisateur.
+8. **Le jeton a-t-il été échangé depuis une adresse IP différente de celle utilisée pour le demander ?** La liaison à l’appareil l’empêche — consultez la remarque sur la liaison IP ci-dessus.

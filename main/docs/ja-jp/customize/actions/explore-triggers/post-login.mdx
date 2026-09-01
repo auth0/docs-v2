@@ -1,0 +1,271 @@
+---
+title: "Post Login"
+description: ユーザーのログイン後、およびリフレッシュトークンが要求されたときに実行されるPost Login Actionsについて説明します。アクセスの制御、トークンとユーザープロファイルの拡充、カスタムMFAポリシーの適用に使用できます。
+---
+
+`post-login`トリガーは、サインアップ後の認証を含め、ユーザーがAuth0 テナント内のアプリケーションに対して正常に認証されたとき、および<Tooltip tip="リフレッシュトークン: ユーザーに再度ログインを求めることなく、新しいアクセストークンを取得するために使用するトークンです。" cta="用語集を表示" href="/docs/ja-jp/glossary?term=Refresh+Token">リフレッシュトークン</Tooltip>が交換されたときに実行されます。
+
+<Frame>![Actionsのログインフローを示す図。](/docs/images/cdy7uua7fh8z/2SkfIOm4fFOJ8N0GNJwam8/77230cdb4411b2383751b037fb56fe29/2024-09-30_10-01-42.png)</Frame>
+
+このフローのActionsはブロッキング (同期) であり、トリガーの処理の一部として実行されます。Actionが完了するまで、Auth0 パイプラインの残りの処理は実行されません。
+
+<div id="references">
+  ## 参考資料
+</div>
+
+* [イベントオブジェクト](/docs/ja-jp/customize/actions/reference/post-login/post-login-event-object): Auth0 経由でログインするユーザーに関するコンテキスト情報を提供します。
+* [API object](/docs/ja-jp/customize/actions/reference/post-login/post-login-api-object): フローの動作を変更するためのメソッドを提供します。
+
+<div id="common-use-cases">
+  ## 一般的なユースケース
+</div>
+
+<div id="access-control">
+  ### アクセス制御
+</div>
+
+post-login Action を使用すると、アプリケーションにアクセスしようとするユーザーのアクセスを拒否するカスタムロジックを実装できます。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーとログイン時のコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログインの動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.user.email && event.user.email.endsWith("@example.com") && event.client.name === "My SPA") {
+    api.access.deny(`Access to ${event.client.name} is not allowed.`);
+  }
+};
+```
+
+<div id="allow-access-only-on-weekdays-for-a-specific-application">
+  ### 特定のアプリケーションへのアクセスを平日のみに制限する
+</div>
+
+特定のアプリケーションへのアクセスを平日のみに制限するには、次のActionを作成します。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーに関する情報と、ログイン時のコンテキスト。
+ * @param {PostLoginAPI} api - ログインの動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.client.name === "APP_NAME") {
+    const d = new Date().getDay();
+
+    if (d === 0 || d === 6) {
+      api.access.deny("This app is only available during the week.");
+    }
+  }
+};
+```
+
+<div id="deny-access-to-anyone-calling-an-api">
+  ### API を呼び出すすべてのユーザーのアクセスを拒否する
+</div>
+
+API を呼び出すすべてのユーザーのアクセスを拒否する場合について考えてみましょう。そのためには、API の <Tooltip tip="Audience: 発行されたトークンの対象者を一意に識別する値。トークン内では aud という名前で、ID トークンの場合はアプリケーション（Client ID）の ID、アクセストークンの場合は API（API 識別子）の ID が値に含まれます。" cta="用語集を表示" href="/docs/ja-jp/glossary?term=audience">audience</Tooltip> 値に基づいてアクセスを拒否する必要があります。この値は、[Dashboard &gt; Applications &gt; APIs](https://manage.auth0.com/#/apis) にある API の **API Audience** フィールドで確認できます。これを行うには、次の Action を作成します。
+
+```javascript lines
+/**
+ * @param {Event} event - ログインするユーザーとそのコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログインの動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // Actions では、API はリソースサーバーと呼ばれます。
+  if (event.resource_server && event.resource_server.identifier === "http://todoapi2.api") {
+    api.access.deny("end_users_not_allowed");
+  }
+};
+```
+
+<div id="add-user-roles-to-id-and-access-tokens">
+  ### ID トークンとアクセストークンにユーザーロールを追加する
+</div>
+
+Auth0 が発行するトークンにユーザーロールを追加するには、`event.authorization` オブジェクトと `api.idToken.setCustomClaim` および `api.accessToken.setCustomClaim` メソッドを使用します。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーと、そのログイン時のコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログインの動作を変更するために使用できるメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  const namespace = 'https://my-app.example.com';
+  if (event.authorization) {
+    api.idToken.setCustomClaim(`${namespace}/roles`, event.authorization.roles);
+    api.accessToken.setCustomClaim(`${namespace}/roles`, event.authorization.roles);
+  }
+};
+```
+
+<Note>
+  * カスタムクレームには使用できないタームがあり、URI 形式の名前空間付きクレームを使用することを強く推奨します。詳細については、[カスタムクレームの作成](/docs/ja-jp/secure/tokens/json-web-tokens/create-custom-claims)を参照してください。
+  * リクエスト元のアプリケーションに返される <Tooltip tip="JSON Web トークン（JWT）：2 者間でクレームを安全に表現するために使用される標準の ID トークン形式（多くの場合、アクセストークン形式としても使用）。" cta="用語集を表示" href="/docs/ja-jp/glossary?term=JWT">JWT</Tooltip> は、トリガーの処理の最後に生成・署名されます。最終的に署名された JWT には、Action 内からアクセスできません。
+</Note>
+
+<div id="enrich-the-user-profile">
+  ### ユーザープロファイルを拡張する
+</div>
+
+Auth0 では、[ユーザープロファイル](/docs/ja-jp/manage-users/user-accounts/user-profiles/normalized-user-profiles) にメタデータを保存できます。ログイン時にユーザーのプロファイルに `user_metadata` または `app_metadata` を設定するには、`api.user.setUserMetadata` または `api.user.setAppMetadata` 関数を使用します。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーと、ログイン時のコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログイン時の動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  api.user.setUserMetadata("favorite_color", "blue");
+};
+```
+
+すべての post-login Actions の実行後、Actions はユーザープロファイルを1回の操作で更新します。この操作には「Write Users」の[レート制限](/docs/ja-jp/troubleshoot/customer-support/operational-policies/rate-limit-policy/management-api-endpoint-rate-limits)が適用されます。
+
+<div id="enforce-custom-mfa-policy">
+  ### カスタムMFAポリシーを適用する
+</div>
+
+post-login Action を使用すると、アプリケーションのニーズに応じて、ユーザーに<Tooltip tip="多要素認証（MFA）：SMSで送信されるコードなど、ユーザー名とパスワードに加えて認証要素を使用するユーザー認証プロセス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=MFA">MFA</Tooltip>を動的に要求できます。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーおよびログインが行われるコンテキストに関する詳細情報。
+ * @param {PostLoginAPI} api - ログインの動作を変更するメソッドを備えたインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // 北米からログインするすべてのユーザーにMFAを要求する。
+  if (event.request.geoip.continentCode === "NA") {
+    api.multifactor.enable("any");
+  };
+};
+```
+
+ログイン時にMFAを有効にするには、MFAプロバイダーを設定する必要があります。詳しくは、[多要素認証](/docs/ja-jp/secure/multi-factor-authentication)をご覧ください。
+
+<div id="reduce-friction-with-passkeys">
+  ### パスキーで手間を軽減する
+</div>
+
+post-login Action を使用すると、パスキーで認証したユーザーに対して MFA を動的にスキップし、手間を軽減できます。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーとログイン時のコンテキストに関する詳細情報。
+ * @param {PostLoginAPI} api - ログインの動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // パスキーを使用して認証したかどうかを確認
+  const skipMFA = event.authentication?.methods.some(
+    (method) => method.name === "passkey"
+  );
+
+  // パスキーを使用した場合はMFAをスキップ
+  if (skipMFA) {
+    api.multifactor.enable("none");
+  }
+};
+```
+
+この接続では、パスキーとMFAを有効にする必要があります。詳しくは、[パスキー](/docs/ja-jp/authenticate/database-connections/passkeys)および[多要素認証](/docs/ja-jp/secure/multi-factor-authentication)をご覧ください。
+
+<div id="redirect-the-user-to-an-external-site">
+  ### ユーザーを外部サイトにリダイレクトする
+</div>
+
+[Redirect Rules](/docs/ja-jp/customize/rules/redirect-users)と同様に、post-login Actionを使用してユーザーを外部サイトに誘導できます。完了後、ユーザーはAuth0にリダイレクトされ、ログインフローを続行できます。以下の例では、Redirect Actionを使用して、ユーザーに好きな色を入力するよう促します。
+
+```javascript lines expandable
+/**
+ * @param {Event} event - ログインするユーザーと、そのコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログイン時の動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  // ユーザーがすでに好きな色を選択している場合は、リダイレクトを行いません。
+  if (event.user.user_metadata.favorite_color) {
+    return;
+  }
+
+  const token = api.redirect.encodeToken({
+    secret: event.secrets.MY_SHARED_SECRET,
+    payload: {
+      email: event.user.email,
+    },
+  });
+
+  // ユーザーを https://my-app.example.com にリダイレクトし、
+  // `session_token` クエリ文字列パラメーターを付加します。
+  api.redirect.sendUserTo("https://my-app.example.com", { 
+    query: { session_token: token }
+  });
+};
+
+/**
+ * @param {Event} event - ログインするユーザーと、そのコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログイン時の動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onContinuePostLogin = async (event, api) => {
+  // /continue エンドポイントが呼び出されたら、署名付きトークンを復号し、
+  // 好きな色をユーザーメタデータとして保存します。
+
+  const payload = api.redirect.validateToken({
+    secret: event.secrets.MY_SHARED_SECRET,
+  });
+
+  api.user.setUserMetadata("favorite_color", payload.favorite_color);
+};
+```
+
+ユーザーがリダイレクトされている間、Actions パイプラインは中断されます。ユーザーが Auth0 のログインプロセスを続行すると、Actions パイプラインは中断された箇所から再開されます。リダイレクト前に実行された Actions は、再度実行されません。
+
+Redirect Actions の詳細については、[Actions を使用したリダイレクト](/docs/ja-jp/customize/actions/redirect-with-actions) を参照してください。
+
+<div id="modify-scopes-on-an-access-token">
+  ### access token の scopes を変更する
+</div>
+
+<Tooltip tip="Access Token: API へのアクセスに使用する、opaque な文字列または JWT 形式の Authorization credential。" cta="用語集を表示" href="/docs/ja-jp/glossary?term=access+token">access token</Tooltip> に関連付けられた scopes を変更する際は、audience の指定に関するベストプラクティスに従ってください。
+
+* scopes を追加する前に、想定どおりの audience であることを必ず確認してください。
+* scopes を追加する際は、信頼できない入力を使用しないでください。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーと、ユーザーがログインしている際のコンテキストに関する詳細。
+ * @param {PostLoginAPI} api - ログインの動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  if (event?.resource_server?.identifier === 'https://example.com/api') {
+    api.accessToken.addScope("read:xyz");
+  }
+};
+```
+
+<div id="deny-access-to-specific-ja3ja4-fingerprints">
+  ### 特定のJA3/JA4フィンガープリントからのアクセスを拒否する
+</div>
+
+`event.security_context`オブジェクトには、現在のトランザクションのJA3/JA4フィンガープリント値が含まれます。
+
+```javascript lines
+/**
+ * @param {Event} event - ユーザーに関する情報と、そのログイン時のコンテキスト。
+ * @param {PostLoginAPI} api - ログインの動作を変更するためのメソッドを提供するインターフェース。
+ */
+exports.onExecutePostLogin = async (event, api) => {
+  const clientJa4 = event?.security_context?.ja4;
+  console.log('[ACTION]', {clientJa4});
+  const badFingerprints = ['t13d1517h2_8daaf6152771_b6f405a00624','t13d1516h2_8daaf6152771_d8a2da3f94cd'];
+  if (clientJa4 && badFingerprints.includes(clientJa4)){
+    api.access.deny('suspicious_tls_fingerprint', 'Your TLS fingerprint has been flagged as suspicious');
+  }
+};
+```
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [post-login Action トリガーでユーザーメタデータを管理する](/docs/ja-jp/manage-users/user-accounts/metadata/manage-user-metadata)
+* [Actions を使用したリダイレクト](/docs/ja-jp/customize/actions/redirect-with-actions)
+* [ユーザープロファイルにおけるメタデータの仕組み](/docs/ja-jp/manage-users/user-accounts/metadata)

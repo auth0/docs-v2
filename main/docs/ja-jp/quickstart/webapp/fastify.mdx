@@ -1,0 +1,863 @@
+---
+title: Fastifyアプリケーションにログイン機能を追加
+sidebarTitle: Fastify
+description: このガイドでは、Auth0 Fastify SDK を使用して、Fastify の Web アプリケーションに Auth0 を統合し、認証を追加して、ユーザープロファイル情報を表示する方法を説明します。
+mode: wide
+---
+
+import {CreateInteractiveApp} from "/snippets/ja-jp/recipe.jsx";
+import {AuthCodeBlock} from "/snippets/ja-jp/AuthCodeBlock.jsx";
+
+import {HowToSchema} from "/snippets/ja-jp/HowToSchema.jsx";
+
+<HowToSchema />
+
+export function generateRandomString(length) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  return Array.from({length}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+export const localEnvSnippet = `AUTH0_DOMAIN={yourDomain}
+AUTH0_CLIENT_ID={yourClientId}
+AUTH0_CLIENT_SECRET={yourClientSecret}
+SESSION_SECRET=${generateRandomString(64)}
+APP_BASE_URL=http://localhost:3000`;
+
+<Accordion title="AI を使って Auth0 を統合" icon="microchip-ai" iconType="solid" defaultOpen>
+  Claude Code、Cursor、GitHub Copilot などの AI コーディングアシスタントを使っている場合は、[agent skills](https://agentskills.io/home) を使って、数分で Auth0 の認証を自動的に追加できます。
+
+  **インストール:**
+
+  ```bash
+  npx skills add auth0/agent-skills --skill auth0
+  ```
+
+  **次に、AI アシスタントにこう依頼します:**
+
+  ```text
+  Add Auth0 authentication to my Fastify app
+  ```
+
+  AI アシスタントが、Auth0 アプリケーションの作成、資格情報の取得、`@auth0/auth0-fastify` のインストール、プラグインの設定、必要なルートやビューの作成まで自動的に行います。[agent skills の完全なドキュメント →](/docs/ja-jp/quickstart/agent-skills)
+</Accordion>
+
+<Note>
+  **前提条件:** 始める前に、以下がインストールされていることを確認してください。
+
+  * **[Node.js](https://nodejs.org/en/download)** 20 LTS 以降
+  * **[npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm)** 10 以上、または **[yarn](https://classic.yarnpkg.com/lang/en/docs/install/)** 1.22 以上、または **[pnpm](https://pnpm.io/installation)** 8 以上
+
+  インストールを確認するには: `node --version && npm --version`
+
+  **Fastify のバージョン互換性:** このクイックスタートは **Fastify 5.x** 以降に対応しています。
+</Note>
+
+<div id="get-started">
+  ## はじめる
+</div>
+
+このクイックスタートでは、FastifyアプリケーションにAuth0の認証を追加する方法を紹介します。Auth0 Fastify SDKを使って、ログイン、ログアウト、ユーザープロファイルの機能を備えた安全なWebアプリケーションを構築します。
+
+<Steps>
+  <Step title="新しいプロジェクトを作成する" stepNumber={1}>
+    Fastifyアプリケーション用の新しいディレクトリを作成し、Node.jsプロジェクトを初期化します。
+
+    ```shellscript
+    mkdir auth0-fastify && cd auth0-fastify
+    ```
+
+    プロジェクトを初期化する
+
+    ```shellscript
+    npm init -y
+    ```
+
+    プロジェクト構成を作成する
+
+    ```shellscript
+    touch server.js .env
+    ```
+  </Step>
+
+  <Step title="Auth0 Fastify SDKをインストールする" stepNumber={2}>
+    必要な依存関係をインストールする
+
+    ```shellscript
+    npm install @auth0/auth0-fastify fastify dotenv @fastify/view ejs
+    ```
+
+    <Info>
+      サーバーサイドレンダリングには、`ejs` と `@fastify/view` を使用しています。Fastify がサポートしている任意のテンプレートエンジンを使用できます。
+    </Info>
+
+    `package.json` を更新して、start スクリプトを追加します:
+
+    ```json package.json
+    {
+      "name": "auth0-fastify",
+      "version": "1.0.0",
+      "type": "module",
+      "main": "server.js",
+      "scripts": {
+        "start": "node server.js",
+        "dev": "node --watch server.js"
+      },
+      "dependencies": {
+        "@auth0/auth0-fastify": "^1.2.0",
+        "@fastify/view": "^10.0.0",
+        "dotenv": "^16.3.1",
+        "ejs": "^3.1.9",
+        "fastify": "^5.0.0"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Auth0 Appを設定する" stepNumber={3}>
+    次に、Auth0 テナントで新しいアプリケーションを作成し、環境変数をプロジェクトに追加します。
+
+    Auth0 アプリの設定方法は 3 つあります。Quick Setup ツール (推奨) を使う方法、CLI コマンドを実行する方法、または Auth0 Dashboard から手動で設定する方法です。
+
+    <Tabs>
+      <Tab title="Quick Setup（推奨）">
+        Auth0 App を作成し、適切な設定値があらかじめ入力された `.env` ファイルをコピーします。
+
+        <CreateInteractiveApp placeholderText="Fastify" appType="regular_web" allowedCallbackUrls={["http://localhost:3000/auth/callback"]} allowedLogoutUrls={["http://localhost:3000"]} />
+
+        <AuthCodeBlock children={localEnvSnippet} language="shellscript" filename=".env" />
+      </Tab>
+
+      <Tab title="CLI">
+        プロジェクトのルートディレクトリで次のコマンドを実行し、Auth0 アプリを作成して `.env` ファイルを生成します。
+
+        <CodeGroup>
+          ```shellscript Mac
+          # Auth0 CLI をインストールします（まだインストールしていない場合）
+          brew tap auth0/auth0-cli && brew install auth0
+
+          # Auth0 アプリを設定し、.env ファイルを生成します
+          auth0 qs setup --app --type regular --framework fastify --name "My Fastify App" --port 3000
+          ```
+
+          ```powershell Windows
+          # Auth0 CLI をインストールします（まだインストールしていない場合）
+          scoop bucket add auth0 https://github.com/auth0/scoop-auth0-cli.git
+          scoop install auth0
+
+          # Auth0 アプリを設定し、.env ファイルを生成します
+          auth0 qs setup --app --type regular --framework fastify --name "My Fastify App" --port 3000
+          ```
+        </CodeGroup>
+
+        <Note>
+          このコマンドでは次の処理が行われます。
+
+          1. 認証済みかどうかを確認します (必要に応じて login を求められます)
+          2. `http://localhost:3000` 用に設定された Auth0 の Regular Web Application を作成します
+          3. `AUTH0_DOMAIN`、`AUTH0_CLIENT_ID`、`AUTH0_CLIENT_SECRET`、`SESSION_SECRET`、`APP_BASE_URL` を含む `.env` ファイルを生成します
+        </Note>
+      </Tab>
+
+      <Tab title="Auth0 Dashboard">
+        1. [Auth0 Dashboard](https://manage.auth0.com/dashboard/) に移動します
+        2. **アプリケーション** → **Create Application** に移動します
+        3. アプリケーション名を入力します (例: &quot;My Fastify App&quot;)
+        4. **従来型Webアプリケーション** を選択し、**Create** をクリックします
+        5. **設定** タブで、以下を設定します。
+
+        | 設定                    | 値                                     |
+        | --------------------- | ------------------------------------- |
+        | Allowed Callback URLs | `http://localhost:3000/auth/callback` |
+        | Allowed Logout URLs   | `http://localhost:3000`               |
+
+        6. 下にスクロールして **Save Changes** をクリックします
+        7. **Basic Information** セクションから **Domain**、**Client ID**、**Client Secret** の値をコピーします
+
+        以下の値を使って `.env` ファイルを作成します。
+
+        ```bash .env
+        AUTH0_DOMAIN=YOUR_AUTH0_DOMAIN
+        AUTH0_CLIENT_ID=YOUR_CLIENT_ID
+        AUTH0_CLIENT_SECRET=YOUR_CLIENT_SECRET
+        SESSION_SECRET=use-a-long-random-string-at-least-64-characters
+        APP_BASE_URL=http://localhost:3000
+        ```
+
+        <Warning>
+          `YOUR_AUTH0_DOMAIN` は Auth0 テナントのドメイン (例: `dev-abc123.us.auth0.com`) に、`YOUR_CLIENT_ID` はアプリケーションの Client ID に、`YOUR_CLIENT_SECRET` は dashboard のアプリケーションの Client Secret に置き換えてください。
+        </Warning>
+
+        セッション暗号化用の安全な secret を生成します。
+
+        ```bash
+        openssl rand -hex 64
+        ```
+
+        出力をコピーし、`.env` ファイルの `SESSION_SECRET` の値として使用します。
+      </Tab>
+    </Tabs>
+
+    <Tip>
+      `.env` ファイルが存在することを確認します: `cat .env` (Mac/Linux) または `type .env` (Windows)
+    </Tip>
+  </Step>
+
+  <Step title="Auth0プラグインを設定する" stepNumber={4}>
+    Fastify サーバーを作成し、Auth0プラグインを登録します。
+
+    ```javascript server.js {1-4,7-8,11-18,21-22} lines
+    import 'dotenv/config';
+    import Fastify from 'fastify';
+    import fastifyView from '@fastify/view';
+    import fastifyAuth0 from '@auth0/auth0-fastify';
+    import ejs from 'ejs';
+
+    const fastify = Fastify({ logger: true });
+    const port = process.env.PORT || 3000;
+
+    // ビューエンジンを登録する
+    await fastify.register(fastifyView, {
+      engine: { ejs },
+      root: './views',
+    });
+
+    // Auth0プラグインを登録する
+    await fastify.register(fastifyAuth0, {
+      domain: process.env.AUTH0_DOMAIN,
+      clientId: process.env.AUTH0_CLIENT_ID,
+      clientSecret: process.env.AUTH0_CLIENT_SECRET,
+      appBaseUrl: process.env.APP_BASE_URL,
+      sessionSecret: process.env.SESSION_SECRET,
+    });
+
+    // サーバーを起動する
+    fastify.listen({ port }, (err) => {
+      if (err) {
+        fastify.log.error(err);
+        process.exit(1);
+      }
+      fastify.log.info(`Server running at http://localhost:${port}`);
+    });
+    ```
+
+    **この設定でできること:**
+
+    * HTML テンプレートをレンダリングするためのビューエンジンを登録します
+    * 資格情報を使用して Auth0 プラグインを設定します
+    * `/auth/login`、`/auth/logout`、`/auth/callback` のルートを自動的に作成します
+    * 暗号化された Cookie を使ったセッション管理を行います
+  </Step>
+
+  <Step title="ビューテンプレートを作成" stepNumber={5}>
+    `views` ディレクトリを作成し、テンプレートファイルを追加します：
+
+    ```shellscript Mac/Linux
+    mkdir views && touch views/home.ejs views/profile.ejs
+    ```
+
+    ```powershell Windows
+    New-Item -ItemType Directory -Path views
+    New-Item -ItemType File -Path views/home.ejs
+    New-Item -ItemType File -Path views/profile.ejs
+    ```
+
+    ホームページのテンプレートを作成します：
+
+    ```html views/home.ejs expandable lines
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Auth0 Fastify Quickstart</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          margin: 0;
+          padding: 2rem;
+          min-height: 100vh;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+        }
+        .container {
+          background: white;
+          border-radius: 20px;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+          padding: 3rem;
+          max-width: 500px;
+          width: 100%;
+          text-align: center;
+        }
+        h1 {
+          color: #2d3748;
+          font-size: 2.5rem;
+          margin-bottom: 1rem;
+        }
+        .status {
+          padding: 1rem;
+          border-radius: 10px;
+          margin: 1.5rem 0;
+          font-size: 1.1rem;
+        }
+        .logged-in {
+          background: #d4edda;
+          color: #155724;
+        }
+        .logged-out {
+          background: #f8d7da;
+          color: #721c24;
+        }
+        .button {
+          display: inline-block;
+          padding: 1rem 2rem;
+          margin: 0.5rem;
+          border-radius: 10px;
+          text-decoration: none;
+          font-weight: 600;
+          transition: all 0.3s;
+        }
+        .button-primary {
+          background: #667eea;
+          color: white;
+        }
+        .button-primary:hover {
+          background: #5568d3;
+          transform: translateY(-2px);
+        }
+        .button-secondary {
+          background: #e53e3e;
+          color: white;
+        }
+        .button-secondary:hover {
+          background: #c53030;
+          transform: translateY(-2px);
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>🚀 Auth0 Fastify</h1>
+        <div class="status <%= isAuthenticated ? 'logged-in' : 'logged-out' %>">
+          <%= isAuthenticated ? '✓ You are logged in' : '✗ You are logged out' %>
+        </div>
+        <div>
+          <% if (isAuthenticated) { %>
+            <a href="/profile" class="button button-primary">View Profile</a>
+            <a href="/auth/logout" class="button button-secondary">Logout</a>
+          <% } else { %>
+            <a href="/auth/login" class="button button-primary">Login</a>
+          <% } %>
+        </div>
+      </div>
+    </body>
+    </html>
+    ```
+
+    プロファイルページのテンプレートを作成します：
+
+    ```html views/profile.ejs expandable lines
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Profile - Auth0 Fastify</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          margin: 0;
+          padding: 2rem;
+          min-height: 100vh;
+        }
+        .container {
+          background: white;
+          border-radius: 20px;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+          padding: 3rem;
+          max-width: 700px;
+          margin: 0 auto;
+        }
+        h1 {
+          color: #2d3748;
+          margin-bottom: 2rem;
+        }
+        .profile-card {
+          display: flex;
+          align-items: center;
+          gap: 2rem;
+          padding: 2rem;
+          background: #f7fafc;
+          border-radius: 15px;
+          margin-bottom: 2rem;
+        }
+        .profile-picture {
+          width: 100px;
+          height: 100px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 3px solid #667eea;
+        }
+        .profile-info h2 {
+          margin: 0 0 0.5rem 0;
+          color: #2d3748;
+        }
+        .profile-info p {
+          margin: 0;
+          color: #718096;
+        }
+        .user-data {
+          background: #f7fafc;
+          padding: 1.5rem;
+          border-radius: 10px;
+          overflow-x: auto;
+        }
+        pre {
+          margin: 0;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+        .button {
+          display: inline-block;
+          padding: 0.75rem 1.5rem;
+          margin-right: 1rem;
+          border-radius: 10px;
+          text-decoration: none;
+          font-weight: 600;
+          transition: all 0.3s;
+        }
+        .button-primary {
+          background: #667eea;
+          color: white;
+        }
+        .button-primary:hover {
+          background: #5568d3;
+        }
+        .button-secondary {
+          background: #e53e3e;
+          color: white;
+        }
+        .button-secondary:hover {
+          background: #c53030;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>User Profile</h1>
+        <div class="profile-card">
+          <img src="<%= user.picture || 'https://via.placeholder.com/100' %>" alt="Profile" class="profile-picture">
+          <div class="profile-info">
+            <h2><%= user.name || user.nickname || 'User' %></h2>
+            <p><strong>Email:</strong> <%= user.email || 'N/A' %></p>
+          </div>
+        </div>
+        <h3>Full User Object</h3>
+        <div class="user-data">
+          <pre><%= JSON.stringify(user, null, 2) %></pre>
+        </div>
+        <div style="margin-top: 2rem;">
+          <a href="/" class="button button-primary">← Back to Home</a>
+          <a href="/auth/logout" class="button button-secondary">Logout</a>
+        </div>
+      </div>
+    </body>
+    </html>
+    ```
+  </Step>
+
+  <Step title="ルートを作成" stepNumber={6}>
+    `server.js` ファイルにルートを追加します:
+
+    ```javascript server.js expandable lines
+    import 'dotenv/config';
+    import Fastify from 'fastify';
+    import fastifyView from '@fastify/view';
+    import fastifyAuth0 from '@auth0/auth0-fastify';
+    import ejs from 'ejs';
+
+    const fastify = Fastify({ logger: true });
+    const port = process.env.PORT || 3000;
+
+    // ビューエンジンを登録する
+    await fastify.register(fastifyView, {
+      engine: { ejs },
+      root: './views',
+    });
+
+    // Auth0プラグインを登録する
+    await fastify.register(fastifyAuth0, {
+      domain: process.env.AUTH0_DOMAIN,
+      clientId: process.env.AUTH0_CLIENT_ID,
+      clientSecret: process.env.AUTH0_CLIENT_SECRET,
+      appBaseUrl: process.env.APP_BASE_URL,
+      sessionSecret: process.env.SESSION_SECRET,
+    });
+
+    // ホームルート - 公開
+    fastify.get('/', async (request, reply) => {
+      const session = await fastify.auth0Client.getSession({ request, reply });
+      return reply.view('views/home.ejs', {
+        isAuthenticated: !!session,
+      });
+    });
+
+    // プロファイルルート - 保護済み
+    fastify.get('/profile', {
+      preHandler: async (request, reply) => {
+        const session = await fastify.auth0Client.getSession({ request, reply });
+        if (!session) {
+          return reply.redirect('/auth/login');
+        }
+      }
+    }, async (request, reply) => {
+      const user = await fastify.auth0Client.getUser({ request, reply });
+      return reply.view('views/profile.ejs', { user });
+    });
+
+    // サーバーを起動する
+    fastify.listen({ port }, (err) => {
+      if (err) {
+        fastify.log.error(err);
+        process.exit(1);
+      }
+      fastify.log.info(`Server running at http://localhost:${port}`);
+    });
+    ```
+
+    **要点:**
+
+    * ホームルートでは認証状態を確認し、その結果をテンプレートに渡します
+    * プロファイルルートでは、ルートを保護するために `preHandler` を使用します
+    * `getSession()` は、認証済みであればユーザーのセッションを返し、未認証の場合は null を返します
+    * `getUser()` は、認証済みユーザーのプロファイル情報を返します
+  </Step>
+
+  <Step title="アプリを実行する" stepNumber={7}>
+    開発サーバーを起動します。
+
+    ```shellscript
+    npm run dev
+    ```
+
+    ブラウザで [http://localhost:3000](http://localhost:3000) を開きます。
+
+    <Info>
+      Node.js 20 以降では、`--watch` フラグを使うと、ファイルの変更時にサーバーが自動的に再起動します。
+    </Info>
+  </Step>
+</Steps>
+
+<Check>
+  **チェックポイント**
+
+  これで、Auth0 のログインページが完全に機能するようになっているはずです。次のように動作します。
+
+  1. &quot;Login&quot; をクリック - Auth0 の Universal Login ページにリダイレクトされます
+  2. 認証を完了 - アプリにリダイレクトされます
+  3. &quot;/profile&quot; にアクセス - ユーザー情報が表示されます
+  4. &quot;Logout&quot; をクリック - アプリと Auth0 の両方からログアウトします
+</Check>
+
+***
+
+<div id="advanced-usage">
+  ## 高度な使い方
+</div>
+
+<Accordion title="アクセストークンを使用して保護されたAPIを呼び出す">
+  アクセストークンが必要な外部APIを呼び出すには、SDKで `audience` を設定します。
+
+  ```javascript server.js
+  await fastify.register(fastifyAuth0, {
+    domain: process.env.AUTH0_DOMAIN,
+    clientId: process.env.AUTH0_CLIENT_ID,
+    clientSecret: process.env.AUTH0_CLIENT_SECRET,
+    appBaseUrl: process.env.APP_BASE_URL,
+    sessionSecret: process.env.SESSION_SECRET,
+    audience: process.env.AUTH0_AUDIENCE, // これを追加
+  });
+  ```
+
+  `.env` ファイルに次を追加します。
+
+  ```bash .env
+  AUTH0_AUDIENCE=https://your-api.example.com
+  ```
+
+  次に、アクセストークンを取得して使用します。
+
+  ```javascript server.js
+  fastify.get('/api-data', {
+    preHandler: async (request, reply) => {
+      const session = await fastify.auth0Client.getSession({ request, reply });
+      if (!session) {
+        return reply.redirect('/auth/login');
+      }
+    }
+  }, async (request, reply) => {
+    try {
+      const { accessToken } = await fastify.auth0Client.getAccessToken({ request, reply });
+
+      // 保護されたAPIを呼び出す
+      const response = await fetch('https://your-api.example.com/data', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      fastify.log.error('API call failed:', error);
+      return reply.status(500).send({ error: 'Failed to fetch data' });
+    }
+  });
+  ```
+</Accordion>
+
+<Accordion title="カスタムルートパス">
+  デフォルトでは、Auth0 のルートは `/auth/*` にマウントされます。自動マウントを無効にして、カスタムルートを作成することもできます。
+
+  ```javascript server.js
+  await fastify.register(fastifyAuth0, {
+    domain: process.env.AUTH0_DOMAIN,
+    clientId: process.env.AUTH0_CLIENT_ID,
+    clientSecret: process.env.AUTH0_CLIENT_SECRET,
+    appBaseUrl: process.env.APP_BASE_URL,
+    sessionSecret: process.env.SESSION_SECRET,
+    mountRoutes: false, // 自動マウントを無効化
+  });
+
+  // カスタムログインルート
+  fastify.get('/custom-login', async (request, reply) => {
+    const authorizationUrl = await fastify.auth0Client.startInteractiveLogin(
+      {
+        authorizationParams: {
+          redirect_uri: `${process.env.APP_BASE_URL}/custom-callback`
+        }
+      },
+      { request, reply }
+    );
+    return reply.redirect(authorizationUrl.href);
+  });
+
+  // カスタムコールバックルート
+  fastify.get('/custom-callback', async (request, reply) => {
+    await fastify.auth0Client.completeInteractiveLogin(
+      new URL(request.url, process.env.APP_BASE_URL),
+      { request, reply }
+    );
+    return reply.redirect('/');
+  });
+
+  // カスタムログアウトルート
+  fastify.get('/custom-logout', async (request, reply) => {
+    const logoutUrl = await fastify.auth0Client.logout(
+      { returnTo: process.env.APP_BASE_URL },
+      { request, reply }
+    );
+    return reply.redirect(logoutUrl.href);
+  });
+  ```
+
+  <Note>
+    カスタムコールバックURLを含めるよう、Auth0 Dashboard の **Allowed Callback URLs** を忘れずに更新してください。
+  </Note>
+</Accordion>
+
+<Accordion title="アカウントリンク">
+  ユーザーが複数の認証プロバイダーを1つのアカウントにリンクできるようにします。
+
+  ```javascript server.js
+  await fastify.register(fastifyAuth0, {
+    domain: process.env.AUTH0_DOMAIN,
+    clientId: process.env.AUTH0_CLIENT_ID,
+    clientSecret: process.env.AUTH0_CLIENT_SECRET,
+    appBaseUrl: process.env.APP_BASE_URL,
+    sessionSecret: process.env.SESSION_SECRET,
+    mountConnectRoutes: true, // アカウントリンク用ルートを有効化
+  });
+  ```
+
+  これにより、次のルートが自動的に作成されます。
+
+  * `/auth/connect` - 新しいプロバイダーをリンク
+  * `/auth/connect/callback` - リンク用コールバックを処理
+  * `/auth/unconnect` - プロバイダーをリンク解除
+  * `/auth/unconnect/callback` - リンク解除用コールバックを処理
+
+  プロファイルページにリンク用のボタンを追加します。
+
+  ```html views/profile.ejs
+  <div>
+    <a href="/auth/connect?connection=google-oauth2">Link Google Account</a>
+    <a href="/auth/unconnect?connection=google-oauth2">Unlink Google Account</a>
+  </div>
+  ```
+</Accordion>
+
+<Accordion title="TypeScript を使う">
+  型安全性を高めるため、プロジェクトを TypeScript に移行します。
+
+  ```bash
+  npm install --save-dev typescript @types/node tsx
+  ```
+
+  `tsconfig.json` を作成します。
+
+  ```json tsconfig.json
+  {
+    "compilerOptions": {
+      "target": "ES2022",
+      "module": "ESNext",
+      "moduleResolution": "node",
+      "esModuleInterop": true,
+      "strict": true,
+      "skipLibCheck": true,
+      "outDir": "./dist"
+    },
+    "include": ["src/**/*"],
+    "exclude": ["node_modules"]
+  }
+  ```
+
+  `server.js` の名前を `server.ts` に変更し、型を追加します。
+
+  ```typescript server.ts
+  import 'dotenv/config';
+  import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
+  import fastifyView from '@fastify/view';
+  import fastifyAuth0 from '@auth0/auth0-fastify';
+  import ejs from 'ejs';
+
+  const fastify = Fastify({ logger: true });
+  const port = process.env.PORT || 3000;
+
+  await fastify.register(fastifyView, {
+    engine: { ejs },
+    root: './views',
+  });
+
+  await fastify.register(fastifyAuth0, {
+    domain: process.env.AUTH0_DOMAIN!,
+    clientId: process.env.AUTH0_CLIENT_ID!,
+    clientSecret: process.env.AUTH0_CLIENT_SECRET!,
+    appBaseUrl: process.env.APP_BASE_URL!,
+    sessionSecret: process.env.SESSION_SECRET!,
+  });
+
+  fastify.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
+    const session = await fastify.auth0Client.getSession({ request, reply });
+    return reply.view('views/home.ejs', {
+      isAuthenticated: !!session,
+    });
+  });
+
+  fastify.listen({ port: Number(port) });
+  ```
+
+  `package.json` を更新します。
+
+  ```json package.json
+  {
+    "scripts": {
+      "dev": "tsx watch server.ts",
+      "build": "tsc",
+      "start": "node dist/server.js"
+    }
+  }
+  ```
+</Accordion>
+
+***
+
+<div id="troubleshooting">
+  ## トラブルシューティング
+</div>
+
+<AccordionGroup>
+  <Accordion title="よくある問題と解決策">
+    ### ログイン後の「Invalid state」エラー
+
+    **問題:** 認証リクエストと コールバック の間で state が一致していません。
+
+    **解決策:**
+
+    1. Cookie が正しく設定されていることを確認してください (ブラウザでブロックされていないこと)
+    2. コールバック URL が Auth0 Dashboard で完全に一致していることを確認してください (`/auth/callback` を含む)
+    3. `SESSION_SECRET` が設定されており、64 文字以上であることを確認してください
+
+    ### 「session is undefined」エラー
+
+    **問題:** セッションデータを取得できません。
+
+    **解決策:** セッションメソッドにアクセスする前に、Auth0 プラグインが登録されていることを確認してください。
+
+    ```javascript
+    // ✅ 正しい順序
+    await fastify.register(fastifyAuth0, { ... });
+    fastify.get('/profile', async (request, reply) => {
+      const session = await fastify.auth0Client.getSession({ request, reply });
+    });
+
+    // ❌ 誤り - プラグインがawaitされていない
+    fastify.register(fastifyAuth0, { ... }); // awaitが不足
+    fastify.get('/profile', async (request, reply) => { ... });
+    ```
+
+    ### コールバック URL の不一致
+
+    **問題:** Auth0 から「Callback URL mismatch」エラーが返されます。
+
+    **解決策:**
+
+    1. Auth0 Dashboard → アプリケーション → あなたのアプリ → 設定 に移動します
+    2. **Allowed Callback URLs** に `http://localhost:3000/auth/callback` を追加します
+    3. URL は完全に一致している必要があります (`/auth/callback` パスを含む)
+
+    ### 環境変数が読み込まれない
+
+    **問題:** 設定値が `undefined` になっています。
+
+    **解決策:**
+
+    1. `import 'dotenv/config'` がエントリーファイルの先頭にあることを確認してください
+    2. `.env` ファイルがルートディレクトリにあることを確認してください
+    3. 変数名にタイプミスがないか確認してください
+
+    ```javascript
+    // デバッグ: 設定値をログに出力（本番環境では削除してください！）
+    console.log('Config check:', {
+      hasDomain: !!process.env.AUTH0_DOMAIN,
+      hasClientID: !!process.env.AUTH0_CLIENT_ID,
+      hasSecret: !!process.env.SESSION_SECRET,
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+***
+
+<div id="next-steps">
+  ## 次のステップ
+</div>
+
+認証が正しく動作するようになったので、次もぜひ確認してみてください。
+
+* **[Fastify API 認証](/docs/ja-jp/quickstart/backend/fastify)** - JWT の検証で API エンドポイントを保護する
+* **[Universal Login をカスタマイズする](https://auth0.com/docs/customize/universal-login-pages)** - ログイン体験をブランドに合わせる
+* **[ソーシャル接続を追加する](https://auth0.com/docs/connections/social)** - Google、GitHub などのソーシャルログインを有効にする
+* **[MFA を実装する](https://auth0.com/docs/secure/multi-factor-authentication)** - 多要素認証を追加する
+
+***
+
+<div id="resources">
+  ## リソース
+</div>
+
+* **[auth0-fastify GitHub](https://github.com/auth0/auth0-fastify)** - ソースコードとサンプル
+* **[Fastify Documentation](https://fastify.dev/)** - Fastify について詳しく知る
+* **[Auth0 Community](https://community.auth0.com/)** - Auth0 Community でサポートを受ける

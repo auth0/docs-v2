@@ -1,0 +1,157 @@
+---
+description: サンプルシナリオを使って、サーバーサイドコードにより従来型の Web アプリケーションでユーザーアカウントをリンクする方法を説明します。
+title: 'ユーザーアカウントのリンク: サーバーサイド実装'
+---
+
+Auth0 は、さまざまな<Tooltip tip="IDプロバイダー（IdP）: デジタルアイデンティティを保存および管理するサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=identity+providers">アイデンティティプロバイダー</Tooltip>のユーザーアカウントのリンクをサポートしています。サーバーサイドコードを使用すれば、従来型の Web アプリケーションでアカウントをリンクできます。この方法では、処理を進める前にユーザーに確認し、許可を得ます。コードはユーザーを認証し、メールアドレスを使ってユーザーを検索して特定します。その後、アプリケーションはユーザーに対象アカウントの資格情報で認証するよう求め、アカウントのリンクを促し、最後にそれらのアカウントをリンクします。
+
+このサンプルアプリケーションの完全なソースコードは、[GitHub](https://github.com/auth0-samples/auth0-link-accounts-sample/tree/master/RegularWebApp) で確認できます。
+
+1. ユーザーをアプリケーションにログインさせます。<br />
+
+   ユーザーは [Universal Login](/docs/ja-jp/authenticate/login/auth0-universal-login) を使用してアプリケーションにログインします。詳しくは、Auth0 Management API の audience (audience=`https://{yourDomain}/api/v2/`) 向けの token を要求する [Regular Web App Quickstart](/docs/ja-jp/quickstart/webapp) をご覧ください。
+
+2. 同じメールアドレスのユーザーを検索します。<br />
+
+   ユーザープロファイルと、同じ確認済みメールアドレスを持つユーザーの一覧を取得できます。
+
+   ```javascript lines expandable
+   router.get("/", async (req, res) => {
+     const { sub, email_verified } = req.openid.user;
+     //user_metadataとapp_metadataプロパティを含むユーザープロファイルを取得する
+     try {
+       let getUsersWithSameVerifiedEmail = [];
+       const getUserProfile = auth0Client.getUser(sub);
+       if (email_verified)
+         // アカウントリンクはメール確認済みの場合のみ提供される
+         getUsersWithSameVerifiedEmail = auth0Client.getUsersWithSameVerifiedEmail(
+           req.openid.user
+         );
+
+       const [user, suggestedUsers] = await Promise.all([
+         getUserProfile,
+         getUsersWithSameVerifiedEmail,
+       ]);
+
+       const flashError = clear(req);
+       res.render("user", {
+         user,
+         suggestedUsers,
+         wrongAccountError: flashError && flashError === Errors.WrongAccount,
+       });
+     } catch (err) {
+       debug("GET /user[s] failed: %o", err);
+       res.render("error", err);
+     }
+   });
+   ```
+
+   同じメールアドレスに紐づくすべてのユーザーレコードの一覧を取得するには、アプリケーションから `read:users` スコープを持つ [Management API Access Token](/docs/ja-jp/secure/tokens/access-tokens/management-api-access-tokens) を使用して、Auth0 Management API の [Get Users By Email エンドポイント](https://auth0.com/docs/api/v2#!/users-by-email/get_users_by_email) を呼び出します。
+
+   ```javascript lines
+   const request = require('request');
+   class Auth0Client {
+   ...
+   async getUsersWithSameVerifiedEmail({ sub, email }) {
+     return await this.request({
+       url: `${process.env.ISSUER_BASE_URL}/api/v2/users-by-email?email=${email}`,
+     });
+   }
+   ```
+
+3. ユーザーにアカウントのリンクを求めます。
+
+   1. Auth0 が一致するメールアドレスを持つレコードを1件以上返した場合、ユーザーにはその一覧とともに、アカウントのリンクを促す次のメッセージが表示されます。
+   2. ユーザーが特定のアカウントをリンクしたい場合は、該当するアカウントの横にある **Link** をクリックできます。
+
+      <Frame>![サーバーサイドのアカウントリンクページを備えたアプリケーションの例](/docs/images/cdy7uua7fh8z/7unQjUtxTZUc4tRFOxhaP3/050fb853d2b3be37795ce88b8a60ffed/account-linking-webapp-small__1_.png)</Frame>
+
+4. ユーザーが**リンク**をクリックすると、アプリケーションはユーザーに対象アカウントでの認証を求め、その後アカウントリンクを行います。
+
+   <Warning>
+     セカンダリアカウントの`user_metadata`を保持して統合するには、APIエンドポイントを呼び出す前に、その`user_metadata`を取得し、プライマリアカウントのメタデータにマージする必要があります。アカウントをリンクすると、セカンダリアカウントのメタデータは破棄されます。
+
+     アカウント リンクを開始する際には、どのIDをプライマリアカウントにし、どのIDをセカンダリアカウントにするかを選択できます。この選択は、プライマリプロファイルに保持したい属性セットによって決まります。
+   </Warning>
+
+   次のコードスニペットは、メタデータを検証してマージする方法を示しています：
+
+   ```javascript lines expandable
+   async function accountLink(req, res, next) {
+   const {
+     linking: { targetUserId },
+   } = req.appSession;
+   const { sub: authenticatedTargetUserId } = req.openidTokens.claims();
+   if (authenticatedTargetUserId !== targetUserId) {
+     debug(
+       "Skipping account linking as the authenticated user(%s)  is different than target linking user (%s)",
+       authenticatedTargetUserId,
+       targetUserId
+     );
+     set(req, Errors.WrongAccount);
+     return next();
+   }
+
+   debug(
+     "User %s succesfully authenticated. Account linking with %s... ",
+     authenticatedTargetUserId,
+     targetUserId
+   );
+   const { id_token: targetIdToken } = req.openidTokens;
+   const { sub: primaryUserId } = req.appSession.claims;
+
+   try {
+     await mergeMetadata(primaryUserId, authenticatedTargetUserId);
+     await auth0Client.linkAccounts(primaryUserId, targetIdToken);
+     debug("Accounts linked.");
+   } catch (err) {
+     debug("Linking failed %o", err);
+   } finally {
+     next();
+   }
+   }
+   ```
+
+5. あなたのアプリケーションは、`update:users` スコープを持つ [Management API アクセストークン](/docs/ja-jp/secure/tokens/access-tokens/management-api-access-tokens) を使用して、Auth0 Management API の [Link a User Account エンドポイント](https://auth0.com/docs/api/v2#!/Users/post_identities) を呼び出します。
+
+<div id="metadata-merge-example">
+  ## メタデータのマージ例
+</div>
+
+次の例では、[API V2 向け Node.js Auth0 SDK](https://github.com/auth0/node-auth0) を使用して、セカンダリアカウントの `user_metadata` と `app_metadata` がプライマリアカウントにどのように明示的にマージされるかを示します。
+
+```javascript lines expandable
+/*
+ * セカンダリユーザーの user_metadata と app_metadata をプライマリユーザーに再帰的にマージします。
+ * プライマリユーザーのデータが優先されます。
+ * 配列フィールドは結合されます。
+ */
+async function mergeMetadata(primaryUserId, secondaryUserId) {
+  // 両方のユーザーをメタデータとともに読み込みます。
+  const [primaryUser, secondaryUser] = await Promise.all(
+    [primaryUserId, secondaryUserId].map((uid) => auth0Client.getUser(uid))
+  );
+
+  const customizerCallback = function (objectValue, sourceValue) {
+    if (_.isArray(objectValue)) {
+      return sourceValue.concat(objectValue);
+    }
+  };
+  const mergedUserMetadata = _.merge(
+    {},
+    secondaryUser.user_metadata,
+    primaryUser.user_metadata,
+    customizerCallback
+  );
+  const mergedAppMetadata = _.merge(
+    {},
+    secondaryUser.app_metadata,
+    primaryUser.app_metadata,
+    customizerCallback
+  );
+  await auth0Client.updateUser(primaryUserId, {
+    user_metadata: mergedUserMetadata,
+    app_metadata: mergedAppMetadata,
+  });
+}
+```

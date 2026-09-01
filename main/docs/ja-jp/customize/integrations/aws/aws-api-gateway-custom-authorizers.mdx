@@ -1,0 +1,511 @@
+---
+description: Auth0 が発行したアクセストークンを受け入れるカスタムオーソライザーを使って、AWS API Gateway を保護する方法。
+title: カスタムオーソライザーを使用して AWS API Gateway のエンドポイントを保護する
+---
+
+import {AuthCodeBlock} from "/snippets/ja-jp/AuthCodeBlock.jsx";
+
+import {AuthCodeGroup} from "/snippets/ja-jp/AuthCodeGroup.jsx";
+
+export const codeExample = `JWKS_URI="https://{yourDomain}/.well-known/jwks.json"
+AUDIENCE="https://your-api-gateway"
+TOKEN_ISSUER="https://{yourDomain}/"
+`;
+
+Auth0 が発行した <Tooltip tip="アクセストークン: API へのアクセスに使用される認可資格情報で、opaque 文字列または JWT の形式を取ります。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=access+tokens">アクセストークン</Tooltip>を受け付けるカスタムオーソライザーを使用して、AWS API Gateway のエンドポイントを保護します。そのためには、API Gateway で API を設定し、API エンドポイントを保護するための AWS Lambda 関数 (カスタムオーソライザーを含む) を作成して設定し、ユーザーが API へのアクセスに必要なアクセストークンを Auth0 から取得できるように <Tooltip tip="認可フロー: OAuth 2.0 フレームワークで指定される認可グラント（またはワークフロー）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=authorization+flow">認可フロー</Tooltip>を実装します。
+
+詳しくは、[AWS API Gateway](https://aws.amazon.com/api-gateway/) にログインしたうえで、[AWS Lambda Overview](https://aws.amazon.com/lambda/) を参照してください。
+
+API Gateway は、Lambda 関数の前段にサービスレイヤーを追加することで Lambda の機能を拡張し、セキュリティの強化、入出力メッセージ変換の管理、スロットリングや監査などの機能を提供します。サーバーレスのアプローチでは、スケールアウトや耐障害性といった課題をコード実行元のコンピュートサービスが担うため、運用負荷を軽減できます。
+
+カスタムオーソライザーは次のことを行います。
+
+* API にアクセスするリクエストの `authorization` header を介してアクセストークンが渡されていることを確認します。
+* JWKS endpoint から取得した公開キーを使用して、アクセストークンの RS256 署名を検証します。
+* アクセストークンに、必要な発行者 `iss` クレームと <Tooltip tip="audience: 発行されたトークンの対象者を一意に識別する値です。トークン内では aud という名前で表され、その値には ID トークンの場合はアプリケーション（Client ID）、アクセストークンの場合は API（API Identifier）の ID が含まれます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=audience">audience</Tooltip> `aud` クレームが含まれていることを確認します。
+
+カスタムオーソライザーを使用するには、次の手順に従います。
+
+1. [Auth0 API を作成する](#create-an-auth0-api)
+2. [AWS API Gateway API をインポートしてデプロイする](#import-and-deploy-the-aws-api-gateway-api)
+3. [カスタムオーソライザーを作成する](#create-the-custom-authorizers)
+4. [カスタムオーソライザーを使用して API を保護する](#secure-the-api-using-custom-authorizers)
+5. [デプロイをテストする](#test-your-deployment)
+
+<Tooltip tip="Signing Algorithm: トークンが改ざんされていないことを保証するために、トークンへデジタル署名する際に使用されるアルゴリズムです。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=signing+algorithms">署名アルゴリズム</Tooltip>の詳細については、[Signing Algorithms](/docs/ja-jp/get-started/applications/signing-algorithms) を参照してください。JWKS の使用方法について詳しくは、[JSON Web Key Sets](/docs/ja-jp/secure/tokens/json-web-tokens/json-web-key-sets) を参照してください。
+
+<div id="how-api-gateway-custom-authorizers-work">
+  ## API Gateway のカスタムオーソライザーの仕組み
+</div>
+
+[Amazon によると](http://docs.aws.amazon.com/apigateway/latest/developerguide/use-custom-authorizer.html)、API Gateway のカスタムオーソライザーとは、「<Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=OAuth">OAuth</Tooltip> や <Tooltip tip="OAuth 2.0: 認可プロトコルとワークフローを定義する認可フレームワーク。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=SAML">SAML</Tooltip> などのベアラートークン認証戦略を使用して API へのアクセスを制御するために、ユーザーが用意する Lambda 関数」です。
+
+誰か (または何らかのプログラム) が API を呼び出そうとするたびに、API Gateway はその API にカスタムオーソライザーが設定されているかどうかを確認します。
+
+**その API にカスタムオーソライザーが設定されている場合**、API Gateway はカスタムオーソライザーを呼び出し、受信したリクエストヘッダーから抽出した認可トークンを渡します。
+
+カスタムオーソライザーを使うと、JWT の検証を含むさまざまな種類の認可戦略を実装し、リクエストを認可する IAM ポリシーを返すことができます。返されたポリシーが無効な場合、または権限が拒否された場合、API 呼び出しは失敗します。
+
+有効なポリシーの場合、API は返されたポリシーをキャッシュし、受信したトークンに関連付けて、現在および以後のリクエストに使用します。ポリシーをキャッシュする時間は設定できます。デフォルト値は `300` 秒で、キャッシュの最大時間は `3600` 秒です (キャッシュを無効にするには、値を 0 に設定することもできます) 。
+
+詳しくは、Amazon Developer&#39;s Guide の [What is Amazon API Gateway?](http://docs.aws.amazon.com/apigateway/latest/developerguide/use-custom-authorizer.html) を参照してください。<Tooltip tip="JSON Web トークン (JWT): 2 者間でクレームを安全に表現するために使われる標準的な ID トークン形式（多くの場合、Access Token の形式でもあります）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=JWT">JWT</Tooltip> の検証について詳しくは、[JSON Web トークン](/docs/ja-jp/secure/tokens/json-web-tokens) の記事をご覧ください。
+
+<div id="prerequisite">
+  ## 前提条件
+</div>
+
+[AWS アカウントを作成](https://portal.aws.amazon.com/gp/aws/developer/registration/index.html)する必要があります。これにより、API Gateway や Lambda をはじめとする AWS の機能を利用できるようになります。新規ユーザーは全員、AWS の無料利用枠を 12 か月間利用できます。
+
+<div id="create-an-auth0-api">
+  ## Auth0 API を作成する
+</div>
+
+認可に成功したアプリケーションが利用する API を設定します。
+
+1. [Auth0 Dashboard &gt; アプリケーション &gt; APIs](https://manage.auth0.com/#/apis) に移動し、**Create API** を選択します。
+2. 以下のフィールドに値を入力し、**Create** を選択します。
+
+   | フィールド             | 説明                                                                                                                                                                |
+   | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | Name              | API のわかりやすい名前です。この名前は Auth0 API の一覧に表示されます。                                                                                                                       |
+   | Identifier        | API の論理識別子です。この識別子は、`https://your-api-gateway` のような URL 形式にすることをおすすめします。                                                                                          |
+   | Signing Algorithm | 発行される[アクセストークン](/docs/ja-jp/glossary?term=access+token)の署名に Auth0 が使用するアルゴリズムです。詳しくは、[Signing Algorithms](/docs/ja-jp/get-started/applications/signing-algorithms) を参照してください。 |
+
+新しく作成した API の詳細を確認するには、**設定**ビューを参照してください。
+
+<Frame>![Auth0 Dashboard - API の作成 - AWS API Gateway](/docs/images/cdy7uua7fh8z/4P1N7SSCXUF1SfyC8SXTiO/28cbee1aea74738b71e87557c2400248/2024-07-08_14-06-28.png)</Frame>
+
+API を作成すると、その API で使用する Machine to Machine Application も作成されます。このアプリケーションは、**Machine to Machine Application** ビューの **Authorized** に表示されます。<Tooltip tip="Client ID: Auth0 が登録済みリソースに付与する識別値。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Client+ID">Client ID</Tooltip> を控えておいてください。このチュートリアルのパート 3 で必要になります。
+
+<div id="import-and-deploy-the-aws-api-gateway-api">
+  ## AWS API Gateway API のインポートとデプロイ
+</div>
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このチュートリアルのこの部分は、[AWS の公式サンプル](http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-api-from-example.html)をもとにしています。詳細な注記や説明については、このサンプルを参照してください。
+</Callout>
+
+このステップでは、次のことを行います。
+
+* API Gateway に API をインポートする
+* API のインポートをテストする
+* フロントエンドアプリケーションから利用できるように API をデプロイする
+* API のデプロイをテストする
+
+<div id="import-and-configure-the-pets-api">
+  ### Pets API をインポートして設定する
+</div>
+
+1. AWS アカウントにログインし、上部のナビゲーションバーにある **Services** ドロップダウンから **API Gateway Console** に移動します。
+2. 以前に API を作成したことがある場合は、API Gateway Console に移動して **Create API** をクリックします。すると、**Create new API** フォームで **Example API** を作成するオプションが表示されます。
+   API Gateway を使って API を一度も作成したことがない場合は、次の画面が表示されます。続行するには **Get Started** をクリックします。
+
+   <Frame>![AWS API Gateway - Get Started](/docs/images/cdy7uua7fh8z/3MX6jO6ZzTqEWNZaWps0j5/4b97df023e694e452d4f34f03d15d21c/aws-pt1-1.png)</Frame>
+
+   API Gateway へようこそ、というポップアップメッセージが表示されます。続行するには **OK** をクリックします。
+3. **Create new API** フォームでは、**Example API** がデフォルトで選択されており、エディター内にサンプル API が定義されていることがわかります。このチュートリアルの残りではこの API を使用するため、**Import** をクリックして API の作成を開始します。
+
+   <Frame>![AWS API Gateway - Example API](/docs/images/cdy7uua7fh8z/8b4yGZNUwCNRYovU203Au/d010702b68635ef7e1864554c3a3826f/aws-pt1-4.png)</Frame>
+
+   完了すると、AWS によって API が作成され、指定したデータが取り込まれたことを示すメッセージが表示されます。この API には、すでにメソッド (`GET` と `POST`) が関連付けられていることに注目してください。リソースツリーでメソッド名をクリックすると、メソッドの詳細を確認したり、設定を変更したり、メソッドの呼び出しをテストしたりできます。
+
+   <Frame>![AWS API Gateway - Resources Tree](/docs/images/cdy7uua7fh8z/1COXG4sI0DNSM4NIMEtma9/9cc6104e234ac25d1098fd92f1183bc1/aws-pt1-5a.png)</Frame>
+
+<div id="test-your-api">
+  ### API をテストする
+</div>
+
+API をテストするには、`/pets` の **POST** をクリックします。すると **Method Execution** ウィンドウが開き、`POST` メソッドの構造と動作の概要が表示されます。
+
+* **Method Request** と **Method Response**: フロントエンドとの API のインターフェース
+* **Integration Request** と **Integration Response**: バックエンドとの API の連携インターフェース
+
+この画面で API をテストできます。
+
+1. **Test** (ページ中央にある **Client** の細い領域に表示されています) をクリックします。`/pets - POST - Method Test` ページに移動するので、ページの一番下までスクロールし、次のスニペットを **Request Body** として入力します。
+
+   ```json lines
+   {"type": "dog", "price": 249.99}
+   ```
+
+   リクエストボディには、データベースに追加するペットの属性と、そのペットの価格を指定します。<Frame>![AWS API Gateway - Request Body](/docs/images/cdy7uua7fh8z/5XKCxyYc5nBCsqln27HVLF/bcd9c16f9e3405fda8cc44f455cb819b/aws-pt1-5d.png)</Frame>
+2. 続けて **Test** をクリックします。テスト結果がページの右側に表示されます。
+
+   <Frame>![AWS API Gateway - Test Results](/docs/images/cdy7uua7fh8z/2cwnpb0irU5DOVKCjcjnil/986f046738bc3b0f79145daa7b86ff3c/aws-pt1-5e.png)</Frame>
+
+<div id="deploy-the-api">
+  ### API をデプロイする
+</div>
+
+先ほど完了したテストは、API Gateway コンソールを使用して実行したものです。別のアプリケーションで API を使用するには、API をステージにデプロイする必要があります。
+
+1. **Actions** メニューから **Deploy API** を選択します。
+2. 次の値を入力し、**Deploy** をクリックします。
+
+   | パラメーター                     | 値                    |
+   | -------------------------- | -------------------- |
+   | **Deployment stage**       | `[New Stage]` を選択します |
+   | **Stage name**             | ステージ名を入力します          |
+   | **Stage description**      | ステージの説明を入力します        |
+   | **Deployment description** | API デプロイの説明を入力します    |
+
+<div id="test-the-deployment">
+  ### デプロイをテストする
+</div>
+
+API のデプロイが正常に完了すると、**Test Stage Editor** にリダイレクトされます。この時点で、API が正しくデプロイされたかどうかをテストできます。
+
+1. **Test Stage Editor** ウィンドウの上部に、**Invoke URL** が表示された青いバナーがあります。これは、API の `GET` エンドポイントを呼び出すための URL です。リンクをクリックして、ブラウザーから `GET / method` リクエストを送信します。すると、次の成功レスポンスが返されるはずです。
+
+   <Frame>![AWS API Gateway - デプロイテストレスポンス](/docs/images/cdy7uua7fh8z/7d8340OcAtOF8GvBtihRBt/958eff065c665682ef53b9eedae77a8e/aws-pt1-8.png)</Frame>
+2. **Stages** ページで、**Test** の下にあるツリーを展開します。`/pets/{petId}` の下の **GET** をクリックします。
+
+   <Frame>![AWS API Gateway - Pet ID を取得](/docs/images/cdy7uua7fh8z/2QzVCjIndpP9EQ4VUxVzZc/5c2afef3f8c83004b35636557c9ec59e/aws-pt1-9.png)</Frame>
+3. ウィンドウ上部の青いバナーに **Invoke URL** が表示されます。末尾の `{petID}` はパス変数を表しています。この変数を `1` に置き換え、ブラウザーで新しい URL にアクセスしてください。次の JSON ペイロードを含む HTTP 200 リクエストを受け取るはずです。
+
+   ```json lines
+   {
+     "id": 1,
+     "type": "dog",
+     "price": 249.99
+   }
+   ```
+
+<div id="create-the-custom-authorizers">
+  ## カスタムオーソライザーを作成する
+</div>
+
+これで、API Gateway で管理される完全に機能する API が用意できたので、この API を保護し、適切な認可を持つユーザーだけが API の背後にあるバックエンドにアクセスできるようにします。
+
+API Gateway のカスタムリクエストオーソライザーを使用すると、OAuth 2.0 や SAML などのベアラートークン認可方式を使って API を認可できます。受信した各リクエストに対して、次の処理が行われます。
+
+1. API Gateway は、適切に設定されたカスタムオーソライザーがあるかどうかを確認します。
+2. API Gateway は、認可トークンを渡してカスタムオーソライザー (Lambda 関数) を呼び出します。
+3. 認可トークンが有効な場合、カスタムオーソライザーは適切な AWS Identity and Access Management (IAM) ポリシーを返します。
+4. API Gateway は、手順 3 で返されたポリシーを使用してリクエストを認可します。
+
+<div id="prepare-the-custom-authorizer">
+  ### カスタムオーソライザーを準備する
+</div>
+
+Auth0 が発行したトークンをサポートする[カスタムオーソライザーのサンプル](https://github.com/auth0-samples/jwt-rsa-aws-custom-authorizer)をダウンロードできます。ダウンロード後は、お使いの環境で動作するようにファイルをカスタマイズする必要があります。
+
+1. 上記でダウンロードしたサンプルファイルを含むフォルダーを任意の場所に解凍し、コマンドラインでそのフォルダーに移動します。
+2. サンプルフォルダー内で `npm install` を実行し、デプロイに必要な Node.js の package をインストールします。AWS では、後の手順でアップロードするバンドルにこれらのファイルが含まれている必要があります。
+3. `.env` ファイルを使用してローカル環境を設定します。`cp .env.sample .env` を使うと、`.env.sample` ファイルを `.env` という名前でコピーできます。次のように変更してください。
+
+   | Parameter          | Value                                                                                                     |
+   | ------------------ | --------------------------------------------------------------------------------------------------------- |
+   | **`TOKEN_ISSUER`** | トークン の issuer です。Auth0 がトークン の issuer である場合は、`https://{yourDomain}/` を使用します。末尾のスラッシュを必ず含めてください。        |
+   | **`JWKS_URI`**     | JWKS endpoint の URL です。Auth0 がトークン の issuer である場合は、`https://{yourDomain}/.well-known/jwks.json` を使用します。 |
+   | **`AUDIENCE`**     | 上記の「Auth0 API を作成する」セクションで作成した API の **identifier** 値です。                                                  |
+
+   例として、設定完了後の `.env` ファイルの内容は次のようになります。
+
+   <AuthCodeBlock children={codeExample} language="shell" />
+
+<div id="test-the-custom-authorizer-locally">
+  ### カスタムオーソライザーをローカルでテストする
+</div>
+
+有効な JWT アクセストークンを取得します。取得方法はいくつかあり、どの方法を選ぶかは、アプリケーションの種類、信頼レベル、または全体的なユーザーエクスペリエンスによって異なります。詳細については、[アクセストークンを取得する](/docs/ja-jp/secure/tokens/access-tokens/get-access-tokens)を参照してください。
+
+1. [Auth0 Dashboard &gt; アプリケーション &gt; APIs](https://manage.auth0.com/#/apis) に移動し、対象の API を選択して **Test** をクリックすると、API 用のテストトークンを取得できます。
+2. トークンを含むローカルの `event.json` ファイルを作成します。サンプルファイルをコピーできます (`cp event.json.sample event.json` を実行) 。`ACCESS_TOKEN` を JWT トークンに、`methodArn` を API の `GET` メソッドに対応する適切な ARN 値に置き換えます。
+
+`methodArn` を取得するには:
+
+1. API Gateway Console で **PetStore** API を開きます。
+2. 左側のナビゲーションで、**Resources** を選択します。
+3. 中央の **Resources** パネルでリソースツリーを展開し、`/pets` の下にある **GET** を選択します。
+4. **Method Request** ボックスに **ARN** が表示されます。
+5. `npm test` を実行してテストします。
+
+このテストでは、lambda-local パッケージを使用して、トークンを使ったカスタムオーソライザーのテストを行います。テストが成功すると、次のような出力が表示されます。
+
+```json lines
+Message
+------
+{
+    "principalId": "C8npTEMVnBrILsBTI91MOh6dfuZbPVAU@clients",
+    "policyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "execute-api:Invoke",
+                "Effect": "Allow",
+                "Resource": "arn:aws:execute-api:us-east-1:1234567890:apiId/stage/method/resourcePath"
+            }
+        ]
+    },
+    "context": {
+        "scope": "FULL_LIST_OF_SCOPES"
+    }
+}
+```
+
+`Effect` の値が `Allow` の場合、authorizer は API Gateway への呼び出しを許可したはずです。
+
+詳細については、NPM の [Lambda-local](https://www.npmjs.com/package/lambda-local) を参照してください。
+
+<div id="create-the-iam-role">
+  ### IAM ロールを作成する
+</div>
+
+IAM ロールには Lambda 関数を呼び出すために必要な権限があります。カスタムオーソライザーの設定を進める前に、API Gateway がアクセスのリクエストを受信するたびにカスタムオーソライザーを呼び出せる IAM ロールを作成する必要があります。
+
+1. AWS にログインし、[IAM Console](https://console.aws.amazon.com/iam) に移動します。左側のナビゲーションで **Roles** を選択します。
+
+2. **Create new role** を選択します。
+
+3. **AWS service** で **AWS Lambda** の行を選択し、**Next: Permissions** を選択します。
+
+4. **Attach permissions policy** 画面で **AWSLambdaRole** を選択します。表示されるフィルターを使うと、オプションの一覧を絞り込めます。**Next: Tags** を選択し、続けて **Next: Review** を選択して先に進みます。
+
+5. **Review** 画面で、`Auth0Integration` などの **Role name** を入力します。その他のフィールドはそのままにします。**Create role** を選択します。
+
+6. AWS がロールを作成すると、IAM の **Roles** ページに戻ります。新しいロールを選択します。
+
+7. 作成したロールの **Summary** ページで、**Trust relationships** ビューを選択します。
+
+8. **Edit trust relationship** を選択し、**Policy Document** フィールドに次の JSON スニペットを入力します。
+
+   ```json lines
+   {
+      "Version": "2012-10-17",
+      "Statement": [
+         {
+            "Effect": "Allow",
+            "Principal": {
+               "Service": [
+                  "apigateway.amazonaws.com",
+                  "lambda.amazonaws.com"
+               ]
+            },
+            "Action": "sts:AssumeRole"
+         }
+      ]
+   }
+   ```
+
+9. **Update Trust Policy** をクリックします。
+
+10. **Summary** ページに戻ります。後で使用するため、**Role ARN** の値をコピーしておきます。
+
+    <Frame>![undefined](/docs/images/cdy7uua7fh8z/1ki5GDOZenh5WRgpbWwzC8/76f415684f08510b4206559032880a59/pt2-10.png)</Frame>
+
+<div id="create-the-lambda-function-and-deploy-the-custom-authorizer">
+  ### Lambda 関数を作成してカスタムオーソライザーをデプロイする
+</div>
+
+環境用のカスタムオーソライザーを設定し、正しく動作することをテストで確認できたら、AWS にデプロイします。
+
+1. `npm run bundle` を実行して、AWS にアップロードできるバンドルを作成します。これにより、AWS Lambda に必要なソース、設定、node modules を含む `custom-authorizer.zip` バンドルが生成されます。
+2. [Lambda コンソール](https://console.aws.amazon.com/lambda) に移動し、**Create function** をクリックします。
+3. **Select blueprint** ページで、空の関数を作成するため **Author from scratch** をクリックします。**Basic information** で、次のパラメーターに値を入力します。
+
+   | Parameter       | Value                                    |
+   | --------------- | ---------------------------------------- |
+   | **Name**        | `jwtRsaCustomAuthorizer` など、Lambda 関数の名前 |
+   | **Description** | Lambda 関数の説明 (任意)                        |
+   | **Runtime**     | `Node.js 10.x` を選択                       |
+4. 続行するには、**Create Function** をクリックします。
+5. 関数の **Configuration** ページで、**Function Code** セクションまで下にスクロールします。
+6. **Code entry type** として **Upload a .ZIP file** を選択します。
+7. **Upload** をクリックし、先ほど作成した `custom-authorizer.zip` バンドルを選択します。
+8. 次に、以下の 3 つの **Environment variables** を作成します。これらの情報は `.env` ファイルの内容と同じです。
+
+   | Parameter          | Value                                                                                          |
+   | ------------------ | ---------------------------------------------------------------------------------------------- |
+   | **`TOKEN_ISSUER`** | トークンの issuer。Auth0 がトークンの issuer の場合は、`https://{yourDomain}/` を使用します                           |
+   | **`JWKS_URI`**     | JWKS エンドポイントの URL。Auth0 がトークンの issuer の場合は、`https://{yourDomain}/.well-known/jwks.json` を使用します |
+   | **`AUDIENCE`**     | 手順 1 で作成した API の **identifier** の値。                                                            |
+9. **Execution role** セクションで **Use an existing role** を選択し、**Existing role** として前に作成した IAM ロールを選択します。
+10. **Basic settings** で、**Timeout** を **30** 秒に設定します。
+11. **Save** をクリックします。
+12. 作成した Lambda 関数をテストするには、右上の **Test** をクリックします。
+13. **Configure test event** フォームに、`event.json` ファイルの内容をコピーします。デフォルトの &quot;Hello World&quot; イベント template を使用できます。
+14. **Create** をクリックします。
+15. テストを選択して **Test** をクリックし、テストを実行します。テストが成功すると、&quot;Execution result: succeeded&quot; と表示されます。出力ウィンドウを展開すると、ローカルでのテスト成功後に表示されたものと同様のメッセージが表示されるはずです。
+
+    <Frame>![undefined](/docs/images/cdy7uua7fh8z/8Xr9yXq8LwOChAbQkDZlJ/0905bbce96f257716a67376f17a0c975/pt2-19.png)</Frame>
+
+<div id="configure-api-gateway-custom-authorizer">
+  ### API Gateway のカスタムオーソライザーを設定する
+</div>
+
+1. API Gateway Console に戻り、先ほど作成した **PetStore** API を開きます。
+2. 左側のナビゲーションで **Authorizers** を開き、**Create New Authorizer** を選択します。次に、以下のパラメーターを設定し、**Create** をクリックします。
+
+   | パラメーター                   | 値                           |
+   | ------------------------ | --------------------------- |
+   | **名前**                   | `jwt-rsa-custom-authorizer` |
+   | **タイプ**                  | **Lambda** を選択              |
+   | **Lambda Region**        | 先ほど作成した Lambda 関数のリージョンを使用  |
+   | **Lambda Function**      | `jwtRsaCustomAuthorizer`    |
+   | **Lambda Invoke Role**   | 上でコピーした IAM ロール ARN         |
+   | **Lambda Event Payload** | **Token** を選択               |
+   | **Token Source**         | `Authorization`             |
+   | **Token Validation**     | `^Bearer [-0-9a-zA-z\.]*$`  |
+   | **TTL (seconds)**        | `3600`                      |
+3. AWS によるオーソライザーの作成が完了し、ページが更新されたら、**Test** をクリックして、前に使用した Auth0 トークン (`Bearer ey...`) を入力し、オーソライザーをテストします。
+   テストが成功すると、次のようなレスポンスが表示されます。
+
+   <Frame>![undefined](/docs/images/cdy7uua7fh8z/5lx86XsQEJtxVikZJ4lC2C/c2a5c24a31b9cb4b6540267828bbd3a2/pt2-26.png)</Frame>
+
+<div id="secure-the-api-using-custom-authorizers">
+  ## カスタムオーソライザーを使用してAPIを保護する
+</div>
+
+API のエンドポイントを保護する方法については、Amazon API Gateway デベロッパーガイドの「[Use API Gateway Lambda Authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html)」を参照してください。
+
+<div id="configure-api-gateway-resources-to-use-the-custom-authorizer">
+  ### カスタムオーソライザーを使用するように API Gateway リソースを設定する
+</div>
+
+1. AWS にログインし、[API Gateway Console](http://console.aws.amazon.com/apigateway) に移動します。
+
+   <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+     カスタムオーソライザーはメソッド単位で設定します。1 つのオーソライザーで複数のメソッドを保護する場合は、メソッドごとに以下の手順を繰り返す必要があります。
+   </Callout>
+2. このチュートリアルのステップ 2 で作成した **PetStore** API を開きます。中央ペインの **Resource** ツリーで、`/pets` リソース配下の **GET** メソッドを選択します。
+
+   <Frame>![undefined](/docs/images/cdy7uua7fh8z/3Z9Gmy20NDr9Hb9Yk0piXF/0c7572fc188e13106d9340562580e5e0/pt3-2.png)</Frame>
+3. **Method Request** を選択します。
+4. **設定** で、**Authorization** の右側にある **pencil** アイコンをクリックし、ステップ 3 で作成したカスタムオーソライザー `jwt-rsa-custom-authorizer` を選択します。
+5. **check mark** アイコンをクリックして、選択内容を保存します。**API Key Required** フィールドが `false` に設定されていることを確認してください。
+
+### APIをデプロイする
+
+変更を公開するには、APIをデプロイします。
+
+1. **Actions** メニューから **Deploy API** を選択します。
+2. 次の値を入力し、**Deploy** をクリックします。
+
+   | パラメーター                     | 値                    |
+   | -------------------------- | -------------------- |
+   | **Deployment stage**       | `[New Stage]` を選択します |
+   | **Stage name**             | ステージ名を入力します          |
+   | **Stage description**      | ステージの説明を入力します        |
+   | **Deployment description** | APIデプロイの説明を入力します     |
+
+正常に完了すると、**Test Stage Editor** にリダイレクトされます。デプロイをテストする際に必要になるため、画面上部の青い帯に表示される **Invoke URL** を控えておいてください。
+
+<div id="test-your-deployment">
+  ## デプロイをテストする
+</div>
+
+デプロイをテストするには、前の手順で控えた **Invoke URL** に `GET` リクエストを送信します。このテストが失敗した場合は、JWT アクセストークンを正しく取得できているか確認してください。
+
+詳しくは、[アクセストークンを取得する](/docs/ja-jp/secure/tokens/access-tokens/get-access-tokens) を参照してください。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url https://%7ByourInvokeUrl%7D/pets
+  ```
+
+  ```csharp C# lines
+  var client = new RestClient("https://%7ByourInvokeUrl%7D/pets");
+  var request = new RestRequest(Method.GET);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://%7ByourInvokeUrl%7D/pets"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse<String> response = Unirest.get("https://%7ByourInvokeUrl%7D/pets")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {method: 'GET', url: 'https://%7ByourInvokeUrl%7D/pets'};
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://%7ByourInvokeUrl%7D/pets",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  conn.request("GET", "%7ByourInvokeUrl%7D/pets")
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://%7ByourInvokeUrl%7D/pets")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+  request = Net::HTTP::Get.new(url)
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>

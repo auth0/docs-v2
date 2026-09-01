@@ -1,0 +1,308 @@
+---
+title: 業務ワークフローをオーケストレーションする
+description: Auth0 で ID の変更が発生した際に、CRM や通知チャネルなど、複数のシステムにまたがる下流の業務ワークフローをトリガーします。
+---
+
+Event Streams と Auth0 Actions を使うと、ID ライフサイクルの変化を、複数のシステムにまたがる自動化された業務ワークフローへとつなげられます。Auth0 でユーザーが作成、更新、または削除されると、Action がサーバーサイドコードを実行し、外部 API を並列に呼び出します。これにより、独自のミドルウェアをデプロイしなくても、完全なパイプラインを構築できます。
+
+このガイドでは、エンドツーエンドの例を使って説明します。企業の ID プロバイダー (IdP) から Auth0 Inbound SCIM 経由でユーザーをプロビジョニングし、その変更内容を単一の Event Stream Action で CRM プラットフォームとチーム通知チャネルに振り分けます。
+
+<div id="why-automate-identity-workflows">
+  ## ID ワークフローを自動化する理由
+</div>
+
+ID を起点とするワークフローの自動化は、次のような場合に役立ちます。
+
+* 新入社員が IdP でプロビジョニングされた時点で、複数の業務アプリケーションにオンボーディングする。
+* ID の変更を、1 回の処理で複数の下流システムに反映する。
+* ユーザーが削除された際に、複数の下流システムにまたがるアクセス権を無効化する。
+* ID ライフサイクル イベントに依存するプロセスから手作業の手順を排除する。
+
+<div id="architecture-overview">
+  ## アーキテクチャの概要
+</div>
+
+このガイドのパイプラインは、次の 4 つのコンポーネントで構成されます。
+
+1. **企業向け IdP (例: Okta)&#x20;**&#x20;— 従業員IDの信頼できる情報源です。
+2. **Auth0 Inbound SCIM** — IdP からプロビジョニングイベントを受け取り、Auth0 でユーザーを作成または更新します。
+3. **Auth0 Action を使用する Event Stream** — ユーザーのライフサイクルイベントを監視し、サーバーサイドコードを実行します。
+4. **複数の外部システム** — 変換後のデータの送信先です。この例では、CRM (HubSpot) とチーム通知チャネル (Slack) を対象としています。
+
+フローは次のとおりです。
+
+1. 管理者が 企業向け IdP 内のアプリケーションにユーザーを割り当てます。
+2. IdP がその変更を SCIM 経由で Auth0 に送信します。
+3. Auth0 がユーザープロファイルを作成または更新し、イベントを発行します。
+4. Event Stream によって、複数の外部 API を呼び出す Action がトリガーされます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  オーケストレーションと[相関付け](/docs/ja-jp/customize/events/correlate-identity-changes)の違いは、連携先システムの数にあります。相関付けでは、1 つのイベントを 1 つの外部レコードに対応付けます。オーケストレーションでは、より大きなワークフローの一部として、1 つのイベントを複数のシステムに振り分けます。
+</Callout>
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+開始する前に、次の項目を用意してください。
+
+* Events が有効化された Auth0 テナント。プランの提供状況について詳しくは、[Event Stream を作成する](/docs/ja-jp/customize/events/create-an-event-stream)をご覧ください。
+* SCIM プロビジョニングをサポートする企業向け IdP (例: Okta、Microsoft Entra ID) 。
+* 該当する接続に対して設定済みの Auth0 Inbound SCIM。詳しくは、[Inbound SCIM](/docs/ja-jp/authenticate/protocols/scim/configure-inbound-scim)をご覧ください。
+* 各外部システムの API 認証情報。この例では、次のものが必要です。
+  * Contacts への書き込みスコープを持つ HubSpot private app のアクセストークン。
+  * 対象チャンネル用の Slack Incoming Webhook URL。
+
+<div id="set-up-scim-provisioning">
+  ## SCIM プロビジョニングを設定する
+</div>
+
+まだ Inbound SCIM を設定していない場合は、以下の手順で IdP を Auth0 に接続します。
+
+<Tabs>
+  <Tab title="Okta">
+    1. Auth0 Dashboard で **Authentication &gt; Enterprise** に移動し、SAML または OIDC のエンタープライズ接続を選択します。
+    2. **Provisioning** タブを選択し、**Inbound SCIM** を有効にします。
+    3. SCIM トークンを生成し、コピーします。
+    4. Okta で、Auth0 とのフェデレーションに使用しているアプリケーションを開きます。
+    5. **Provisioning** タブを選択し、**Configure API Integration** を選択します。
+    6. 統合を有効にし、Auth0 の SCIM エンドポイント URL とトークンを貼り付けて、**Save** を選択します。
+    7. **To App** で、**Create Users**、**Update User Attributes**、**Deactivate Users** を有効にします。
+  </Tab>
+
+  <Tab title="Other IdPs">
+    アウトバウンド SCIM プロビジョニングの設定については、ご利用の IdP のドキュメントを参照してください。必要なものは次のとおりです。
+
+    * エンタープライズ接続の **Provisioning** タブにある Auth0 の SCIM エンドポイント URL
+    * Auth0 Dashboard で生成した SCIM トークン
+  </Tab>
+</Tabs>
+
+設定を保存したら、IdP のアプリケーションにテストユーザーを割り当てます。そのユーザーが Auth0 の **User Management &gt; Users** に表示されることを確認してください。
+
+<div id="create-the-event-stream-action">
+  ## Event Stream Action を作成する
+</div>
+
+SCIM プロビジョニングを有効にすると、Auth0 は `user.created`、`user.updated`、`user.deleted` の各イベントを発行します。次に、これらのイベントを複数の下流システムに振り分ける Auth0 Action を使用して、Event Stream を作成します。
+
+<div id="create-the-event-stream">
+  ### Event Stream を作成する
+</div>
+
+1. **Auth0 Dashboard &gt; Event Streams** に移動します。
+2. **Create Event Stream** を選択します。
+3. ストリームの種類として **Auth0 Actions** を選択します。
+4. わかりやすい名前 (例: `Onboarding Workflow`) を入力します。
+5. `user.created`、`user.updated`、`user.deleted` を購読します。
+
+<div id="write-the-action-handler">
+  ### Action ハンドラーを作成する
+</div>
+
+Action エディタで、各イベントタイプを外部システムへの API 呼び出しにマッピングするハンドラーを記述します。以下の例では、新しいユーザーがプロビジョニングされると、HubSpot CRM の連絡先を作成し、Slack に通知を投稿します。
+
+```javascript wrap lines
+exports.onExecuteEventStream = async (event, api) => {
+    const eventType = event.message.type;
+    const userData = event.message.data.object;
+
+    const HUBSPOT_TOKEN = event.secrets.HUBSPOT_TOKEN;
+    const SLACK_WEBHOOK_URL = event.secrets.SLACK_WEBHOOK_URL;
+
+    switch (eventType) {
+        case "user.created":
+            await onboardUser(userData, HUBSPOT_TOKEN, SLACK_WEBHOOK_URL);
+            break;
+        case "user.updated":
+            await updateCrmContact(userData, HUBSPOT_TOKEN);
+            break;
+        case "user.deleted":
+            await offboardUser(userData, HUBSPOT_TOKEN, SLACK_WEBHOOK_URL);
+            break;
+        default:
+            console.log(`Unhandled event type: ${eventType}`);
+    }
+};
+
+async function onboardUser(userData, hubspotToken, slackWebhookUrl) {
+    const crmResult = await createCrmContact(userData, hubspotToken);
+    await notifySlack(slackWebhookUrl, {
+        text: `New user onboarded: ${userData.email} (CRM contact ${crmResult.id})`
+    });
+}
+
+async function offboardUser(userData, hubspotToken, slackWebhookUrl) {
+    await deleteCrmContact(userData, hubspotToken);
+    await notifySlack(slackWebhookUrl, {
+        text: `User offboarded: ${userData.email}`
+    });
+}
+
+// --- CRM ヘルパー ---
+
+async function createCrmContact(userData, token) {
+    const response = await fetch("https://api.hubapi.com/crm/v3/objects/contacts", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            properties: {
+                email: userData.email,
+                firstname: userData.given_name,
+                lastname: userData.family_name
+            }
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`HubSpot create failed: ${response.status}`);
+    }
+    return response.json();
+}
+
+async function updateCrmContact(userData, token) {
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+    const headers = {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+    };
+
+    const searchResponse = await fetch(`${BASE_URL}/search`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            filterGroups: [{
+                filters: [{
+                    propertyName: "email",
+                    operator: "EQ",
+                    value: userData.email
+                }]
+            }]
+        })
+    });
+
+    const searchResult = await searchResponse.json();
+
+    if (searchResult.total > 0) {
+        const contactId = searchResult.results[0].id;
+        await fetch(`${BASE_URL}/${contactId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+                properties: {
+                    firstname: userData.given_name,
+                    lastname: userData.family_name
+                }
+            })
+        });
+    }
+}
+
+async function deleteCrmContact(userData, token) {
+    const BASE_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+    const headers = {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+    };
+
+    const searchResponse = await fetch(`${BASE_URL}/search`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            filterGroups: [{
+                filters: [{
+                    propertyName: "email",
+                    operator: "EQ",
+                    value: userData.email
+                }]
+            }]
+        })
+    });
+
+    const searchResult = await searchResponse.json();
+
+    if (searchResult.total > 0) {
+        const contactId = searchResult.results[0].id;
+        await fetch(`${BASE_URL}/${contactId}`, {
+            method: "DELETE",
+            headers
+        });
+    }
+}
+
+// --- Slack ヘルパー ---
+
+async function notifySlack(webhookUrl, payload) {
+    const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        console.error(`Slack notification failed: ${response.status}`);
+    }
+}
+```
+
+<div id="handle-partial-failures">
+  ### 部分的な失敗に対処する
+</div>
+
+Action が複数の外部システムを呼び出す場合、ある呼び出しは成功しても、別の呼び出しは失敗することがあります。次のような戦略を検討してください。
+
+* **ログを記録して処理を続行する。** 各外部呼び出しを try-catch ブロックで囲み、1 つのシステムでの障害が原因で他の処理まで止まらないようにします。エラーはログに記録し、あとで手動で対応できるようにします。
+* **べき等な操作で再試行する。** Action がエラーをスローすると、Auth0 はイベントを再試行します。再試行によって重複レコードが作成されないよう、各外部呼び出しがべき等であることを確認してください。
+* **サーキットブレーカーを使用する。** 外部システムで障害が継続的に発生している場合は、遅延の連鎖を避けるため、そのシステムへの呼び出しを打ち切ることを検討してください。
+
+<div id="store-api-keys-as-secrets">
+  ### API キーをシークレットとして保存する
+</div>
+
+1. Action エディタで、**Secrets** (鍵アイコン) を選択します。
+2. `HUBSPOT_TOKEN` という名前のシークレットを追加し、値に HubSpot の private app アクセストークンを設定します。
+3. `SLACK_WEBHOOK_URL` という名前のシークレットを追加し、値に Slack の Incoming Webhook URL を設定します。
+
+シークレットを使うと、認証情報を Action のソースコードに含めずに済みます。詳しくは、[Action Secrets](/docs/ja-jp/customize/actions/write-your-first-action#add-a-secret) をご覧ください。
+
+<div id="save-and-deploy">
+  ### 保存してデプロイ
+</div>
+
+**Save Draft** を選択し、続けて **Deploy** を選択します。これで Action が Event Stream に関連付けられ、サブスクライブしているイベントがトリガーされるたびに実行されます。
+
+<div id="verify-the-pipeline">
+  ## パイプラインを確認する
+</div>
+
+1. 企業向け IdPで、Auth0 に接続されているアプリケーションにテストユーザーを割り当てます。
+2. Auth0 の **User Management &gt; Users** にそのユーザーが表示されることを確認します。
+3. 対応する連絡先が HubSpot に作成され、Slack に通知が投稿されることを確認します。
+4. IdP でユーザー名を更新し、その変更が Auth0 と HubSpot の両方に反映されることを確認します。
+5. IdP でそのユーザーのアプリケーションへの割り当てを解除します。そのユーザーが Auth0 でデプロビジョニングされ、HubSpot の連絡先が削除され、Slack に通知が投稿されることを確認します。
+
+イベントが届かない場合は、Auth0 Dashboard で Event Stream の配信ログを確認してください。詳しくは、[Event Testing, Observability, and Failure Recovery](/docs/ja-jp/customize/events/event-testing-observability-and-failure-recovery) を参照してください。
+
+<div id="extend-the-pattern">
+  ## パターンを拡張する
+</div>
+
+このガイドで紹介しているアーキテクチャは、HubSpot や Slack に限定されるものではありません。REST API を備えた任意のシステムの組み合わせに、同じファンアウトパターンを適用できます。
+
+* **CRM + チケット管理** — Salesforce の連絡先を作成し、Jira でオンボーディング用チケットを起票します。
+* **CRM + 分析** — HubSpot の連絡先を更新し、Segment に `identify` 呼び出しを送信します。
+* **プロビジョニング + 通知** — 社内のプロビジョニングサービスを呼び出し、Microsoft Teams にメッセージを投稿します。
+
+別のシステムを対象にする場合は、適切な API エンドポイントと認証方式に合わせて Action ハンドラーを更新します。
+
+<div id="learn-more">
+  ## 詳細はこちら
+</div>
+
+* [ID の変更を外部システムと関連付ける](/docs/ja-jp/customize/events/correlate-identity-changes)
+* [イベントカタログ](/docs/ja-jp/events)
+* [Event Stream を作成する](/docs/ja-jp/customize/events/create-an-event-stream)
+* [イベントのベストプラクティス](/docs/ja-jp/customize/events/events-best-practices)

@@ -1,0 +1,274 @@
+---
+title: イベントストリームを使用してアウトバウンドSCIMリクエストでユーザーの変更を同期する方法
+sidebarTitle: アウトバウンドSCIMリクエストを送信
+description: イベントストリームとActionsを使用して、ミドルウェアを介さずにダウンストリームのSCIMアプリケーションとAuth0ユーザーを同期します。
+---
+
+イベントストリームとAuth0 Actionsを使用すると、独自のミドルウェアをデプロイすることなく、ダウンストリームアプリケーションにAuth0ユーザーをプロビジョニングできます。
+
+次の場合は、アウトバウンドSCIM用のイベントストリームActionを使用します。
+
+* Auth0ユーザーの作成時に、SCIM準拠のアプリケーションにプロビジョニングする。
+
+* Auth0でユーザーに変更があった際に、ダウンストリームアプリケーションのプロファイル属性を最新の状態に保つ。
+
+* Auth0でユーザーがブロックまたは削除された際に、ダウンストリームアプリケーションのユーザーを無効化または削除する。
+
+* 独自のウェブフックリスナーを実行せずに、SCIMサーバーにプロビジョニングする。
+
+<div id="implementation-overview">
+  ## 実装の概要
+</div>
+
+この実装では、[アウトバウンド SCIM 2.0 ユーザープロビジョニング Action テンプレート](https://github.com/auth0/opensource-marketplace/blob/main/templates/outbound-scim-EVENT_STREAM/code.js)を使用するイベントストリームを利用します。
+
+Auth0 は、ユーザープロファイルが作成、更新、または削除されるたびにイベントを発行します。イベントストリームはそのイベントを Action に配信し、Action は設定したサーバーに対応する SCIM 2.0 リクエストを送信します。
+
+Action は、SCIM `externalId` 属性 ([RFC 7643](https://datatracker.ietf.org/doc/html/rfc7643)) を使用して、各 Auth0 ユーザーと対応する SCIM リソースを関連付けます。この属性により、クライアントは独自の識別子を SCIM リソースに保存できます。Action は `externalId` を、プロファイルの変更後も変わらない Auth0 の `user_id` に設定します。これにより、名前やメールアドレスが更新された後でも、Action は適切な SCIM リソースを見つけられます。
+
+| Auth0 イベント                                       | SCIM リクエスト                                                                                                                                   |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`user.created`](/docs/ja-jp/events/user/user.created) | SCIM リソースを作成するための `POST /Users`。                                                                                                             |
+| [`user.updated`](/docs/ja-jp/events/user/user.updated) | リソースを検索するための `GET /Users?filter=externalId eq "..."`、続いてリソースを置き換えるための `PUT /Users/{id}` (設定されている場合は `PATCH /Users/{id}`) 。                   |
+| [`user.deleted`](/docs/ja-jp/events/user/user.deleted) | リソースを検索するための `DELETE /Users?filter=externalId eq "..."`、続いて削除するための `DELETE /Users/{id}`。`DELETE` が完全削除、墓標、または無効化のいずれを意味するかは、SCIM サーバーが決定します。 |
+
+Action は相関付けにおける信頼できる情報源として SCIM サーバーの応答を扱います。そのため、成功した各応答 (2xx) が SCIM 2.0 プロトコルに準拠していることを検証し、有効な結果に対してのみ処理を行います。
+
+<div id="error-handling">
+  ### エラー処理
+</div>
+
+Action でエラーがスローされると、配信は失敗としてマークされ、[Auth0 によって失敗したイベントが自動的に再試行されます](/docs/ja-jp/customize/events/event-testing-observability-and-failure-recovery#recovery)。再試行回数の上限に達すると、そのイベントは調査および再配信のためにデッドレターキューで利用できるようになります。
+
+この Action は、無効な応答や回復不能な SCIM エラーに対してエラーをスローするため、失敗した同期は再試行とデッドレターキューで確認できます。一度も配信済みイベントを生成しない変更は、この方法では確認できません。
+
+<div id="limits">
+  ### 制限事項
+</div>
+
+* このActionはユーザープロファイルを同期しますが、グループのプロビジョニングには対応していません。
+
+* 1つのイベントストリームは1つのActionのdestinationに紐付けられます。複数のSCIMサーバーを対象にするには、複数のイベントストリームとActionsを作成します。
+
+<div id="instructions">
+  ## 手順
+</div>
+
+<Steps titleSize="h3">
+  <Step title="前提条件">
+    開始する前に、以下が必要です。
+
+    * イベントと Actions が有効な Auth0 テナント。
+
+    * SCIM サーバー。
+
+      * SCIM サーバーは、[SCIM 2.0 プロトコル (RFC 7644) ](https://datatracker.ietf.org/doc/html/rfc7644)に準拠したレスポンスを返す必要があります。具体的には、以下のとおりです。
+
+        * 作成 (`POST /Users`) では、文字列型の `id` を含む User リソースを返す必要があります。
+
+        * フィルタークエリ (`GET /Users?filter=...`) では、`Resources` 配列を含む `ListResponse` を返す必要があり、返される各リソースには文字列型の `id` が含まれている必要があります。空の `Resources` 配列も有効であり、一致するものがないことを意味します。
+
+        レスポンスが無効な場合、Action は &quot;invalid response shape&quot; というテキストを含む[エラーをスローします](#error-handling)。
+
+      * SCIM サーバーは、`externalId eq` フィルターをサポートする必要があります。
+
+        サーバーが `externalId eq` フィルターを拒否する場合、Action は `userName` によるフィルタリングにフォールバックします。デフォルトの属性マッピングでは、`userName` はユーザーのメールアドレスに設定されます。この場合、更新後のメールアドレスで検索しても `userName` に保存されている元のメールアドレスと一致しないため、Action はメールアドレスの変更を追跡できません。
+
+    * `/Users` で `POST`、`GET`、`PUT`、`DELETE` を受け付けるダウンストリーム SCIM 2.0 エンドポイント。
+
+    * ユーザーの読み取り、作成、置換、削除の権限を持つ、SCIM サーバーが発行した bearer token。
+
+    * Auth0 から SCIM サーバーへのネットワークアクセス。SCIM サーバーが受信トラフィックを制限している場合は、ご利用のリージョンに対応する [Auth0 IP アドレス](/docs/ja-jp/secure/security-guidance/data-security/allowlist)からの呼び出しを許可してください。
+  </Step>
+
+  <Step title="イベントストリームの作成を開始する">
+    [**Auth0 Dashboard &gt; イベントストリーム**](https://manage.auth0.com/#/event-streams)で **+ Create Event Stream** を選択し、**New Event Stream** ページに移動します。
+
+    **Destinations** セクションで **Auth0 Actions** を選択し、次の操作を行います。
+
+    * **Configurations** セクションの **Stream Name** に、わかりやすい名前 (例: &quot;アウトバウンド SCIM プロビジョニング&quot;) を入力します。
+
+    * **Select Events** セクションで、`user.created`、`user.deleted`、`user.updated` を選択します。
+  </Step>
+
+  <Step title="Action のシークレットを設定する">
+    **Actions Editor**で**Secrets** (キーアイコン) を選択し、SCIM サーバー用のシークレットを追加します。
+
+    <ResponseField name="SCIM_BASE_URL" type="string" required>
+      SCIM 2.0 エンドポイントのベース URL。例: `https://api.example.com/scim/v2`。
+    </ResponseField>
+
+    <ResponseField name="SCIM_BEARER_TOKEN" type="string" required>
+      SCIM サーバーが発行したベアラートークン。
+    </ResponseField>
+
+    <ResponseField name="SCIM_TIMEOUT_MS" type="integer" default={1500}>
+      リクエストごとのタイムアウト (ミリ秒) 。
+    </ResponseField>
+
+    <ResponseField name="SCIM_MAX_RETRIES" type="integer" default={1}>
+      HTTP 429、HTTP 5xx、ネットワークエラー発生時の再試行回数。
+    </ResponseField>
+
+    <ResponseField name="SCIM_CONNECTION_ALLOWLIST" type="string">
+      接続名をカンマで区切って指定します。設定すると、Action はこれらの接続からのイベントのみを処理します。
+    </ResponseField>
+
+    トランスポートのデフォルト設定は、イベントストリームの実行時間の制約に適しています。Event Relay では実効的な実行時間が約 10 秒に制限されており、Actions の上限である 20 秒よりも厳しくなっています。タイムアウトを 1500 ミリ秒、再試行回数を 1 回とするデフォルト設定により、検索と書き込みのフローをこの時間内に収めることができます。いずれかの値を増やすと、この制限を超えるおそれがあります。
+  </Step>
+
+  <Step title="Actionテンプレートを追加し、属性マッピングをカスタマイズする">
+    **Actions Editor**で、[アウトバウンドSCIM 2.0ユーザープロビジョニングActionテンプレート](https://raw.githubusercontent.com/auth0/opensource-marketplace/refs/heads/main/templates/outbound-scim-EVENT_STREAM/code.js)をコピーして貼り付けます。
+
+    テンプレートの`buildScimUser()`関数は、Auth0ユーザープロファイルをSCIM Userリソースにマッピングします。デフォルトのマッピングでは、次のフィールドを持つ基本的なSCIM 2.0 Userが生成されます。
+
+    | SCIM属性            | Auth0ソース              |
+    | ----------------- | --------------------- |
+    | `externalId`      | `user_id`             |
+    | `active`          | `blocked`の否定          |
+    | `userName`        | `email`               |
+    | 主な勤務先メールアドレス      | `email`               |
+    | `name.givenName`  | `given_name`          |
+    | `name.familyName` | `family_name`         |
+    | `name.formatted`  | `name`                |
+    | `displayName`     | `name`                |
+    | `nickName`        | `nickname`            |
+    | 勤務先電話番号 (任意)      | `user_metadata.phone` |
+
+    `buildScimUser()`関数は、SCIMサーバーが想定するマッピングに合わせて変更できます。
+
+    <Warning>
+      Auth0ユーザーにSCIMの`userName`属性にマッピングされるプロパティがない場合、Actionはそのユーザーの作成および更新をスキップし、警告をログに記録します。
+    </Warning>
+
+    また、`buildScimUser()`関数には、SCIM Enterprise User拡張機能用のコメントアウトされたブロックが含まれています。サーバーでサポートされているフィールドのコメントアウトを解除し、テナントに合わせてAuth0のメタデータパスを調整できます。
+  </Step>
+
+  <Step title="ユーザー更新時の動作をカスタマイズする（任意）" id="update-behavior">
+    Action テンプレートの `onUserUpdated()` 関数には、ユーザープロファイル更新時に利用できるオプトイン動作のコメント付きブロックが含まれています。SCIM サーバーで必要な場合にのみ有効にしてください。
+
+    * SCIM サーバーが `PUT` リクエストを受け付けない場合は、`PUT` ではなく `PATCH` を設定します。たとえば、Microsoft Entra ID の Inbound SCIM では、デフォルトのトークンに `put:users` permission が含まれず、`PATCH` のみを受け付けます。
+
+    * イベントストリームを有効にする前に SCIM サーバーで既存の Auth0 ユーザーをプロビジョニングしない場合、または SCIM サーバーが正当な理由でユーザー作成イベントを見逃す可能性がある場合は、アップサート (更新時に存在しないユーザーを作成) を有効にします。
+
+    <AccordionGroup>
+      <Accordion title="PUT ではなく PATCH を設定する">
+        デフォルトでは、ユーザープロファイルの更新時に、Action は `PUT /Users/{id}` を使用して SCIM リソース全体を置き換えます。`user.updated` イベントには完全なユーザープロファイルが含まれ、変更されたフィールドの一覧は含まれないため、完全置換が最も正確な更新方法です。
+
+        ユーザー更新に `PUT` ではなく `PATCH` を使用するには、`onUserUpdated()` で `OPTIONAL: PATCH instead of PUT` のコメントに従い、更新メソッドと本文を設定します。
+
+        ```js
+        const updateMethod = 'PATCH';
+        const updateBody = {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+            Operations: [{ op: 'replace', value: scimUser }],
+        };
+        ```
+
+        `PATCH` では、マッピングされた SCIM 本文に含まれる属性が更新されますが、`PUT` とは異なり、本文から省略した属性はダウンストリームで現在の値を保持できます。削除された Auth0 フィールドに応じてダウンストリームの値もクリアしたい場合は、SCIM サーバーでサポートされている明示的な削除または null 処理を追加してください。
+
+        また、このリクエストでは、置換操作における `path` 属性は任意であるため、省略しています。ただし、一部の SCIM サーバーではすべての操作に `path` が必要です。そのようなサーバーでは、属性ごとに 1 つの操作を送信し、extension 属性にはスキーマ修飾パスを使用してください。
+      </Accordion>
+
+      <Accordion title="アップサートを有効にする">
+        デフォルトでは、SCIM サーバーに存在しないユーザーに対して `user.updated` イベントが発生すると、Action は更新をスキップして warning をログに記録します。このデフォルトは、SCIM サーバーが先行する `user.created` イベントをすでに処理しているはずであり、ユーザーが見つからない場合は issue が発生していることを示す、という前提に基づいています。
+
+        アップサートを有効にするには、`onUserUpdated()` で `OPTIONAL UPSERT` のコメントに従い、スキップとログ記録の処理を次の行に置き換えます。
+
+        ```js
+        return createRemoteUser(config, scimUser, 'created-from-update');
+        ```
+
+        これにより、Action はスキップする代わりに、ユーザーを作成するための単一の `POST /Users` を送信します。マッピングされた SCIM 本文にはすでに完全なプロファイルが含まれているため、Action で後続のリクエストを送信する必要はありません。
+      </Accordion>
+    </AccordionGroup>
+  </Step>
+
+  <Step title="ローカルでマッピングをテストする">
+    デプロイ前に、モックイベントとスタブ化したSCIM呼び出しを使用して、[Actionをユニットテスト](/docs/ja-jp/customize/actions/test-actions)できます。Auth0ではこの目的でJestを使用していますが、任意のテストライブラリを使用できます。
+
+    次のJestテストは、`user.created`イベントによってベアラートークン付きの`POST /Users`リクエストが送信されることを確認します。
+
+    ```js expandable
+    const { onExecuteEventStream } = require("./code");
+
+    test("user.created sends POST /Users with a bearer token", async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            status: 201,
+            json: async () => ({ id: "scim-123" }),
+        });
+
+        const event = {
+            message: {
+                type: "user.created",
+                id: "evt_1",
+                data: { object: { user_id: "auth0|abc", email: "user@example.com" } },
+            },
+            secrets: {
+                SCIM_BASE_URL: "https://api.example.com/scim/v2",
+                SCIM_BEARER_TOKEN: "test-token",
+            },
+        };
+
+        await onExecuteEventStream(event, {});
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            "https://api.example.com/scim/v2/Users",
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({ Authorization: "Bearer test-token" }),
+            })
+        );
+    });
+    ```
+
+    Auth0 Dashboard 外で開発する場合は、`@auth0/actions` パッケージを使用して型ヒントを追加できます。
+
+    ```js
+    /**
+     * @typedef {import('@auth0/actions/event-stream/v1').Event} Event
+     * @typedef {import('@auth0/actions/event-stream/v1').EventStreamAPI} EventStreamAPI
+     *
+     * @param {Event} event
+     * @param {EventStreamAPI} api
+     */
+    exports.onExecuteEventStream = async (event, api) => {
+        // ...
+    };
+    ```
+
+    JSDoc でイベントストリームのトリガー型を参照することで、ファイルをプレーンな JavaScript のまま保ち、ランタイム依存関係を追加せずに済みます。
+  </Step>
+
+  <Step title="既存のユーザーを同期（推奨）">
+    イベントストリームを有効にする前に、既存のAuth0ユーザーをSCIMサーバーと一度同期することをお勧めします。イベントストリームが処理できるのは、有効化後に配信されたユーザーイベントのみです。この一度限りの同期により、下流のSCIMサーバーを最新の状態に保ち、既存ユーザーが更新または削除された際のcorrelationエラーを防ぐことができます。
+
+    既存のAuth0ユーザーをSCIMサーバーと同期するには、次の手順に従います。
+
+    1. **既存のAuth0ユーザーをすべて取得します。** 通常のユーザーエクスポートまたはManagement APIのワークフローを使用し、同期対象のすべての接続を含めます。
+
+    2. **既存のSCIMユーザーをAuth0ユーザーと照合します。** SCIMサーバーにすでにユーザーが存在する場合は、信頼できるidentifier (メールアドレスなど) を使用してAuth0ユーザーと照合し、各リソースの`externalId`をAuth0の`user_id`に更新します。重複するユーザーを作成しないでください。
+
+    3. **不足しているSCIMユーザーを補完します。** 一致しないAuth0ユーザーごとに、Actionで定義したものと同じBodyおよびattribute mappingを使用して、SCIMの作成リクエストを送信します。
+
+    4. **baselineを確認します。** SCIMサーバーで、サンプルユーザー、合計数、ブロックされたユーザー、メールアドレスの変更を確認します。
+
+    一度限りの同期を行わずにイベントストリームを有効にすると、SCIMサーバー内のユーザーは徐々に (または少しずつ) 更新されます。この場合、更新イベントで不足しているユーザーを作成するには、Actionで[upsertを設定](#update-behavior)する必要があります。
+  </Step>
+
+  <Step title="保存してデプロイ">
+    **Save Draft** を選択し、続けて **Deploy** を選択します。
+
+    これで、Action がイベントストリームに紐付けられ、購読しているイベントが発生するたびに実行されます。
+  </Step>
+</Steps>
+
+<div id="event-considerations">
+  ## イベントに関する考慮事項
+</div>
+
+* **アカウントリンク**: 2 つの Auth0 ユーザーをリンクすると、Auth0 はセカンダリアカウントに対して `user.deleted` イベントを、プライマリアカウントに対して `user.updated` イベントを送信します。そのため、Action は SCIM サーバーからセカンダリユーザーを削除し、プライマリユーザーを更新します。リンクを解除すると、セカンダリユーザーが復元されます。
+
+  SCIM サーバーでリンク済みアカウントを保持するには、`SCIM_CONNECTION_ALLOWLIST` を使用して同期する接続を制限します。
+
+* **総当たり攻撃によるブロック解除後の再アクティブ化**: `user.updated` イベントを送信する[テナント管理者によるブロック](/docs/ja-jp/manage-users/user-accounts/block-and-unblock-users)とは異なり、[総当たり攻撃対策によるブロック](/docs/ja-jp/secure/attack-protection/brute-force-protection)はイベントを発生させることなく自動的に解除されます。そのため、Action は次にプロファイルが変更されるまで SCIM サーバーを更新しません。

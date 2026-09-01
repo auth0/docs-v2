@@ -1,0 +1,164 @@
+---
+description: 移行後も既存ユーザーの認証器アプリ、SMS、メールの認証要素を保持できるよう、ユーザーレコードとともにMFA登録情報をAuth0にインポートします。
+title: ユーザーのMFA認証器登録情報をインポートする
+---
+
+[自動移行](/docs/ja-jp/manage-users/user-migration/configure-automatic-migration-from-your-database)および[一括ユーザーインポート](/docs/ja-jp/manage-users/user-migration/bulk-user-imports)を使用して、ユーザーの<Tooltip tip="多要素認証（MFA）：SMSで送信されるコードなど、ユーザー名とパスワードに加えて別の認証要素を使用するユーザー認証プロセス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=MFA">MFA</Tooltip>登録情報をインポートできます。サポートされる登録タイプは次のとおりです。
+
+* Email: メール認証用。
+* Phone: SMS認証用。
+* OTP: Google Authenticator などの認証アプリで使用するワンタイムパスワード (OTP) 用。
+
+MFA登録情報をインポートすると、移行後にユーザーが再登録する必要がなくなるため、シームレスなユーザー体験を実現できます。
+
+クラシックログインでは、複数の認証要素を持つユーザーによる認証要素の選択はサポートされていません。複数の登録済み認証要素を持つユーザーをインポートする予定がある場合は、[Universal Login](/docs/ja-jp/authenticate/login/auth0-universal-login) の利用を検討してください。
+
+<div id="schema">
+  ## スキーマ
+</div>
+
+このスキーマは、以下2つのワークフローにおけるMFA認証要素に適用されます。
+
+```json lines expandable
+{
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "totp": {
+                "type": "object",
+                "properties": {
+                "secret": {
+                    "type": "string",
+                        "pattern": "^[A-Z2-7]+$",
+                        "description": "The OTP secret is used for MFA authentication with Google Authenticator type apps. It must be supplied in un-padded Base32 encoding, such as: JBTWY3DPEHPK3PNP"
+                    },
+                },
+                "additionalProperties": false,
+                "required": ["secret"],
+            },
+            "phone": {
+                "type": "object",
+                "properties": {
+                "value": {
+                    "type": "string",
+                    "pattern": "^\\+[0-9]{1,15}$",
+                    "description": "The phone number for SMS or Voice MFA. The phone number should include a country code and begin with +, such as: +12125550001"
+                },
+                },
+                "additionalProperties": false,
+                "required": ["value"],
+            },
+            "email": {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "string",
+                        "format": "email",
+                        "description": "The email address for MFA"
+                    },
+                },
+                "additionalProperties": false,
+                "required": ["value"],
+            },
+        },
+        "maxProperties": 1,
+        "additionalProperties": false,
+    },
+    "minItems": 1,
+    "maxItems": 10
+}
+```
+
+<div id="automatic-migration">
+  ## 自動移行
+</div>
+
+MFA の登録情報は、[自動移行](/docs/ja-jp/authenticate/database-connections/custom-db/overview-custom-db-connections#automatic-migration-scenario)中にインポートすることもできます。これは、カスタム DB の [Login スクリプト](/docs/ja-jp/authenticate/database-connections/custom-db/templates/login) の最後でコールバックに渡されるユーザーの `mfa_factors` フィールドに、既存の登録情報を指定することで実現できます。
+
+失敗はテナントログにログイン失敗として表示され、説明 `Unable to import MFA factors` によってほかの失敗と区別できます。例:
+
+```json lines
+{
+  "_id": "5e9df3b29ebabe00571c04a7",
+  "date": "2020-04-20T19:10:42.916Z",
+  "type": "fu",
+  "description": "Unable to import MFA factors.",
+  "connection": "Username-Password-Authentication",
+  "connection_id": "con_mMkvaycgzgCS0p0z",
+  "client_id": "aCbTAJNi5HbsjPJtRpSP6BIoLPOrSj2Cgg",
+  "client_name": "All Applications",
+  "ip": "10.12.13.1",
+  "client_ip": null,
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36",
+  "details": {
+    "error": {
+      "message": "Unable to import MFA factors."
+    }
+  },
+  "user_name": "test@test.io",
+  "strategy": "auth0",
+  "strategy_type": "database"
+}
+```
+
+<div id="bulk-user-import">
+  ## 一括ユーザーインポート
+</div>
+
+1. `users.json` ファイルを準備します。詳しくは[一括ユーザーインポート](/docs/ja-jp/manage-users/user-migration/bulk-user-imports)を参照してください。
+2. 各ユーザーに既存のMFA登録情報を含めます。
+3. 一括ユーザーインポートを開始します。
+4. 最初のリクエストで `upsert` オプションを有効にして、既存ユーザーの認証要素を更新します。
+5. インポートジョブが完了したら、レスポンスにエラーがないか確認します。いずれかのユーザーのMFA認証要素のインポートに失敗した場合は、次のようなエラーが表示されます。
+
+`upsert` オプションを使用すると、既存ユーザーに対するMFA関連以外の更新はすべて、そのユーザーのプロファイルに適用されます。たとえば、次のエラー概要では、ユーザーの `picture` 属性は `http://example.org/jdoe.png` に正常に設定されていますが、Auth0は指定されたMFA認証要素をインポートできませんでした。このような場合は、失敗したユーザーのインポートを再試行しても問題ありません。
+
+```json lines expandable
+[
+  {
+    "user": {
+      "email": "antoinette@contoso.com",
+      "picture": "http://example.org/jdoe.png",
+      "mfa_factors": [
+        {
+          "totp": {
+            "secret": "2PRXZWZAYYDAWCD"
+          }
+        },
+        {
+          "phone": {
+            "value": "+15551112233"
+          }
+        },
+        {
+          "email": {
+            "value": "antoinette@antoinette.biz"
+          }
+        }
+      ]
+    },
+    "errors": [
+      {
+        "code": "MFA_FACTORS_FAILED",
+        "message": "Unable to import factors"
+      }
+    ]
+  }
+]
+```
+
+<div id="recovery-codes">
+  ## リカバリーコード
+</div>
+
+Auth0 では、リカバリーコードをインポートする方法は提供されていません。ユーザーの MFA 認証要素をインポートしても、リカバリーコードは付与されません。
+
+ユーザーにリカバリーコードを提供するには、ユーザーがすでにリカバリーコードを登録しているかどうかを確認し、登録していない場合は [Recovery Code Regeneration endpoint](https://auth0.com/docs/api/management/v2#!/Users/post_recovery_code_regeneration) を使用して新しいコードを生成できます。
+
+<div id="learn-more">
+  ## 詳細はこちら
+</div>
+
+* [データベースからの自動移行を設定する](/docs/ja-jp/manage-users/user-migration/configure-automatic-migration-from-your-database)
+* [一括ユーザーインポート](/docs/ja-jp/manage-users/user-migration/bulk-user-imports)

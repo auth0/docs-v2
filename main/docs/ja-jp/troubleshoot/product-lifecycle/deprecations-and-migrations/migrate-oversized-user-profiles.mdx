@@ -1,0 +1,159 @@
+---
+description: 10KBのサイズ制限の強制適用に先立ち、サイズ超過のAuth0ユーザープロファイルを特定、確認し、移行する方法について説明します。
+title: サイズ超過のユーザープロファイルを移行する
+validatedOn: 2026-08-21
+---
+
+Auth0では、[ユーザープロファイル](/docs/ja-jp/manage-users/user-accounts/user-profiles)データのシリアル化された表現に10KBの制限が導入されました。以前は、ユーザープロファイルデータは基盤となるデータベースエンジンのドキュメントサイズによってのみ制限されていました。
+
+新しい制限による機能への影響を最小限に抑えるため、Auth0はこれに加えて拡張サイズ許容量を設けています。10KBの制限を超えていても拡張許容量内に収まるユーザープロファイルに対する操作は引き続き成功しますが、テナントログに警告が記録されます。現時点では、ユーザープロファイルが10KBを超えた場合に準拠するための十分な時間を確保できるよう、拡張許容量は制限の約10倍と大きく設定されています。
+
+10KBの制限に近い、またはすでに超えているユーザープロファイルを1つ以上持つ既存のテナントには、明示的な制限のない従来の動作を引き続き利用できる移行期間が設けられています。移行期間は**2027年3月4日**に終了します。この日以降のいずれかの時点で、これらのテナントでは10KBの制限と拡張サイズ許容量が強制適用されます。
+
+移行スケジュールの詳細については、[非推奨化と移行](/docs/ja-jp/troubleshoot/product-lifecycle/deprecations-and-migrations)の項目を確認してください。
+
+以下の手順に従って、10KBの制限を超えるユーザープロファイルがあるためにテナントにフラグが設定されているかを確認し、非準拠のユーザープロファイルを確認して、非推奨の動作をオプトアウトします。
+
+<Warning>
+  Private Cloudテナント管理者は、該当するテナントで移行トグルとテナントログが利用可能になるバージョンである`202635`以降の[Private Cloudデプロイ](/docs/ja-jp/deploy-monitor/deploy-private-cloud)であれば、これらの手順に従うことができます。Private Cloudデプロイのバージョンについて詳しくは、[How to Check the Auth0 Private Cloud&#39;s Release Number and Deployment Date](https://support.auth0.com/center/s/article/How-to-check-the-Auth0-private-cloud-s-release-number-and-deployment-date)を参照してください。
+</Warning>
+
+<div id="verify-affected-tenants">
+  ## 影響を受けるテナントを確認する
+</div>
+
+Auth0 Dashboardを使用して、テナントが準拠していないユーザープロファイルを持つとしてフラグ付けされ、移行が必要かどうかを確認します。
+
+1. [Auth0 Dashboard &gt; Tenant Settings &gt; Advanced](https://manage.auth0.com/dashboard/#/tenant/advanced) に移動します。
+2. **Migrations** セクションまでスクロールします。
+3. **Uncapped User Profile Data** トグルを確認します。
+   * トグルが**オン**: テナントは未移行であり、明示的なサイズ制限なしでユーザープロファイルにアクセスできます。**2027年3月4日**の期限までに移行を完了する必要があります。
+   * トグルがない、または**オフ**: テナントでは非推奨の動作はすでに適用されなくなっており、追加の対応は不要です。
+
+<div id="functional-differences-in-unmigrated-tenants">
+  ### 未移行のテナントにおける機能上の違い
+</div>
+
+**Uncapped User Profile Data** 移行トグルが有効なテナントでは、ユーザープロファイルが 10KBの制限と拡張サイズ許容量の両方を超えていても、ユーザーの作成または更新を伴う操作中にサービスでエラーが発生することは**ありません**。テナントを新しい動作に移行した後も、拡張サイズ許容量は引き続き適用されます。
+
+<div id="identify-oversized-user-profiles">
+  ## サイズ超過のユーザープロファイルを特定する
+</div>
+
+関連する `depnote` テナントログを確認し、新しいプロファイルサイズの上限を超えるユーザープロファイルの作成または更新の試行を特定します。これらのテナントログは、新たなログイン試行など、プロファイルの更新が必要となるユーザーアクティビティがある場合にのみ記録されます。したがって、該当するユーザーが非アクティブのままであれば、すでに上限を超えている既存のユーザープロファイルをこれらのログで特定することはできません。
+
+<div id="query-uncapped-user-profile-data-deprecation-logs">
+  ### 上限のないユーザープロファイルデータに関する非推奨化ログの検索
+</div>
+
+この非推奨化に関連するテナントログを検索するには、次のクエリを使用します。テナントログのクエリについて詳しくは、[ログ検索クエリの構文](/docs/ja-jp/deploy-monitor/logs/log-search-query-syntax)を参照してください。
+
+```bash lines
+type:depnote AND description:Uncapped\ User\ Profile\ Data*
+```
+
+クエリ結果を取得したら、`details` オブジェクト内の `user_id` フィールドと `projected_size_bytes` フィールドを確認し、サイズ超過のユーザープロファイルとそのサイズを特定します。`details` オブジェクトの構造や追加のコンテキスト情報は、テナントログをトリガーした基盤となる操作によって若干異なる場合があります。
+
+以下は、サイズ超過のプロファイルを持つエンドユーザーが Universal Login 経由でログインを完了した際にトリガーされたログエントリの例です。簡潔にするため、デフォルトのテナントログフィールドの一部は省略しています。
+
+```json lines
+{
+  "date": "2026-08-12T10:41:05.694Z",
+  "type": "depnote",
+  "description": "Uncapped User Profile Data: This feature is being deprecated. Please see details.feature of this log for more information.",
+  "connection_id": "",
+  "client_id": "Bd5rq9AlKTuOIUCc1JWB5WfmsTmN6iCf",
+  "client_name": "example-app",
+  "ip": "165.85.168.10",
+  "user_agent": "Chrome 153.0.0 / Mac OS X 10.15.7",
+  "details": {
+    "feature": {
+      "projected_size_bytes": "37581",
+      "operation": "users.save",
+      "user_id": "auth0|6a7c4da311eb043fbeed60f3",
+      "id": "allow_oversize_profile",
+      "name": "Uncapped User Profile Data",
+      "description": "User profile data will be limited to 10KB. User profiles above that limit are deprecated."
+    },
+    "path": "/u/login",
+    "method": "POST"
+  },
+  "log_id": "90020260812104105751616000000000000001223372045702376794"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  テナントが新しい動作に移行すると、非推奨化に関連するテナントログは使用されなくなります。ただし、`user_profile_size_exceeded` テナントログタイプを使用すれば、上限を超えるユーザープロファイルの新たな発生を引き続き監視できます。
+</Callout>
+
+<div id="ad-hoc-calculation-of-user-profile-size">
+  ### ユーザープロファイルサイズの概算
+</div>
+
+サービスによる制限チェックは、ユーザープロファイルに関連付けられたシリアル化データの内部表現に基づいて行われます。このシリアル化プロセスには外部には公開されない運用フィールドも含まれるため、外部向けのユーザープロファイルデータだけに基づく概算は、サービスによるチェック結果と異なる場合があります。
+
+それでも、[Get a User](https://auth0.com/docs/api/management/v2/users/get-users-by-id) エンドポイントから返されるユーザープロファイルの JSON 表現に基づく概算は、おおよその値を把握したり、異なる属性セットを持つユーザープロファイルを比較したりする際に役立ちます。これは、システム内にすでに存在するサイズ超過のプロファイルは、制限を超えているかどうかにかかわらず、取得 (`GET`) エンドポイントおよび一括ユーザーエクスポートジョブを通じて引き続き制限なく返されるためです。
+
+<div id="address-the-root-cause-of-oversized-user-profiles">
+  ## サイズ超過のユーザープロファイルの根本原因に対処する
+</div>
+
+フラグが設定されたユーザープロファイルのサイズを縮小するために必要な手順は大きく異なる場合がありますが、一般的には次のいずれかに該当します。
+
+* 認証および認可に使用されないデータをユーザープロファイルから削除する。
+* 認証および認可に必要なデータをユーザープロファイルから別のデータストアに移す。
+
+各シナリオで実行できる具体的なアクションの例を以下に示します。
+
+<div id="prevent-storage-of-unneeded-attributes-from-external-identity-providers">
+  ### 外部アイデンティティプロバイダーから不要な属性が保存されないようにする
+</div>
+
+外部アイデンティティプロバイダーから取得した不要なユーザー属性の保存を防ぐには、[Auth0 User Attributes Deny List](https://auth0.com/docs/secure/security-guidance/data-security/denylist)を使用します。この機能を使用すると、特定の属性をユーザープロファイルに永続保存しないよう明示的にブロックでき、プロファイルを簡潔に保ち、不要なデータの肥大化を回避できます。
+
+拒否リストに追加された属性は、post-loginの拡張でも引き続き利用できるため、ユーザープロファイルのサイズに影響を与えることなく、その情報を使用したり外部データストアに保存したりできます。
+
+<div id="use-extensibility-to-query-additional-business-data-dynamically">
+  ### 拡張を利用して追加のビジネスデータを動的に取得する
+</div>
+
+動的配列のようにサイズが無制限に増え得るデータ構造や、容量の大きいその他のデータは、`user_metadata` や `app_metadata` に直接保存しないでください。代わりに、独自の外部データストアで管理し、Post-Login Action を使用してauthentication中に動的に取得します。
+
+1. Post-Login Action を使用して、ユーザーのauthentication直後にカスタムコードを実行します。
+2. Action 内で、安全なネットワークrequest (たとえば、`axios` またはネイティブの `fetch` を使用) を独自のbackend APIまたはデータベースに対して実行し、必要な属性を取得します。
+3. 取得したデータを使用して、発行するtokenにカスタムクレームを設定したり、認可ロジックで利用したりします。生データはユーザープロファイルに永続化しません。
+
+このパターンにより、アプリケーションは必要なコンテキストデータを引き続き受け取りながら、ユーザープロファイルを10KBの制限に準拠させることができます。詳しくは、[Auth0 Actions](https://auth0.com/docs/customize/actions/write-your-first-action) を参照してください。
+
+<div id="use-enterprise-groups-to-sync-group-information">
+  ### Enterprise Groups を使用してグループ情報を同期する
+</div>
+
+外部アイデンティティプロバイダーのユーザーグループ情報をユーザープロファイルに直接保存する代わりに、SCIM エンドポイントを通じて利用できる [Enterprise Groups](https://auth0.com/docs/authenticate/protocols/scim) を使用して、グループ情報を独立したエンティティとして管理します。この方法でプロビジョニングされたグループは、Auth0 Organizations と併用するほか、カスタムのアクセス制御や認可判断のために post-login Actions で単独で使用することもできます。[複数の方法](https://auth0.com/docs/authenticate/protocols/scim/configure-inbound-scim#group-provisioning-options)で利用できます。
+
+たとえば、この方法を使用すると、[既存の Azure AD 接続](https://auth0.com/docs/authenticate/protocols/scim/inbound-scim-for-older-azure-ad-connections)において、Entra ID (Azure AD) のユーザーグループ情報をユーザープロファイルに直接保存する方法から移行できます。
+
+<div id="opt-out-to-complete-migration">
+  ## 移行を完了するためのオプトアウト
+</div>
+
+サイズ超過のユーザープロファイルの原因に対処し、非推奨の動作に依存しなくなったら、できるだけ早くオプトアウトしてください。これにより、テナントで新しい動作を採用するタイミングを正確に選択でき、移行をより細かく制御できます。
+
+1. [Auth0 Dashboard &gt; Tenant Settings &gt; Advanced](https://manage.auth0.com/dashboard/#/tenant/advanced) に移動します。
+2. **Migrations** で、**Uncapped User Profile Data** をオフにします。
+
+問題が発生した場合は、対処中にトグルを一時的にオンに戻すことで、以前の動作を復元できます。制限チェックの対象になりやすく、ユーザープロファイルが拡張サイズ許容量を超えると失敗する可能性がある操作には、次のものがあります。
+
+* **Management API を介した管理操作**
+  * ユーザーの作成 (`POST /api/v2/users`) 。
+  * ユーザーの更新 (`PATCH /api/v2/users/{id}`) 。
+  * ユーザーの一括インポート (`POST /api/v2/jobs/users-imports`) 。
+* **認証関連の操作**
+  * カスタムデータベーススクリプトが過剰な属性を返すことによる、カスタムデータベース接続経由のユーザーログイン。
+  * アイデンティティプロバイダーが過剰な属性を返すことによる、ソーシャル接続やエンタープライズ接続などの外部アイデンティティプロバイダー経由のユーザーログイン。
+  * 通常のログイン処理の一環として運用属性を更新する必要があるため、プロファイルがすでにサイズ超過している場合の、あらゆる接続タイプ経由のユーザーログイン。
+  * Universal Login、MFA API、または My Account API を介した多要素認証 (MFA) の認証要素の更新。
+  * たとえば post-login Action 内での、拡張の `api` オブジェクトを介したメタデータの更新。
+* **ユーザープロビジョニング操作**
+  * SCIM を介したユーザーリソースの変更リクエスト。
+  * Google Workspace 接続の Directory Sync。

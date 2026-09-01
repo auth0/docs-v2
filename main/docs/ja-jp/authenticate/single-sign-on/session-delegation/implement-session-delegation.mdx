@@ -1,0 +1,136 @@
+---
+title: セッション委譲を実装する
+description: セッション委譲のセキュリティモデルと、エンドツーエンドでの実装に必要なリクエスト、リダイレクト、トークン処理について説明します。
+---
+
+[両方のアプリケーションを設定](/docs/ja-jp/authenticate/single-sign-on/session-delegation/configure-session-delegation)した後、リクエストの送信、Session Transfer Token を引き換えるためのブラウザーのリダイレクト、取得したトークンの処理を行うセッション委譲ロジックを実装します。
+
+セッション委譲フローの詳細な手順については、[エンドユーザーに代わって Web アプリケーションにアクセスするサポートエージェント](/docs/ja-jp/authenticate/custom-token-exchange/cte-example-use-case-support-agent-accessing-a-web-application-on-behalf-of-an-end-user)のユースケースを参照してください。
+
+<div id="security-model">
+  ## セキュリティモデル
+</div>
+
+委譲セッションは、他のすべてのトークン交換と同様に、管理者が制御する[カスタムトークン交換](/docs/ja-jp/authenticate/custom-token-exchange) Action ロジックによって確立されます。誰が誰の代理として行動できるかを、Auth0 が代わりに判断することはありません。`setActor()` を呼び出す前に委譲を認可する責任は、Action にあります。
+
+Session Delegation には、設定からランタイム動作に至るまで、複数のセキュリティガードレールが実装されています。
+
+* この機能を利用するには、両方のアプリケーションを明示的に設定する必要があります。リクエスト元のアプリケーションは Session Transfer Token を作成できる機密クライアントである必要があり、対象アプリケーションでは `allow_delegated_access` を使用して明示的にオプトインする必要があります。リクエスト元および対象アプリケーションの設定方法について詳しくは、[Session Delegation を設定する](/docs/ja-jp/authenticate/single-sign-on/session-delegation/configure-session-delegation)を参照してください。
+* Session Transfer Token は、リクエスト元アプリケーションから要求した際と同じ IP アドレスから引き換える必要があります。詳しくは、[Session Transfer Token を引き換える](#redeem-the-session-transfer-token)の IP バインディングに関する注記を参照してください。
+* アクターのアイデンティティはセッション (`session.actor`) に記録され、`setActor()` に渡されるアクターオブジェクトとして、[Actions](/docs/ja-jp/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#actions)および[テナントログ](/docs/ja-jp/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#monitoring)で利用できます。
+* セッションは一時的なもので、有効期間は短くなっています。詳しくは、[セッションの動作](/docs/ja-jp/authenticate/single-sign-on/session-delegation/session-delegation-behavior-and-monitoring#session-behavior)を参照してください。
+* リフレッシュトークンは発行されず、MFA、同意、登録のプロンプトは許可されません。また、既存のアクティブなセッションが委譲アクセスをブロックするため、委譲セッションが正当なセッションより長く存続したり、正当なセッションとやり取りしたりすることは制限されます。
+* 委譲セッションでは、通常のログインとは異なる専用のテナントログイベントタイプが生成されるため、個別に監査できます。
+
+<div id="get-a-session-transfer-token">
+  ## Session Transfer Token を取得する
+</div>
+
+アプリケーションは、`audience` を `urn:YOUR_AUTH0_TENANT_DOMAIN:session_transfer` に設定し、他のカスタムトークン交換 アクセストークン と同様に Session Transfer Token をリクエストします。すべてのパラメータについては、[Authentication API](/docs/ja-jp/api/authentication/custom-token-exchange/get-token) を参照してください。
+
+```bash lines
+curl --request POST \
+  --url 'https://{yourDomain}/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data grant_type='urn:ietf:params:oauth:grant-type:token-exchange' \
+  --data audience='urn:YOUR_AUTH0_TENANT_DOMAIN:session_transfer' \
+  --data subject_token_type='{yourSubjectTokenType}' \
+  --data subject_token='{signedJwtIdentifyingTheEndUser}' \
+  --data actor_token_type='urn:ietf:params:oauth:token-type:id_token' \
+  --data actor_token='{theAgentsAuth0IdToken}' \
+  --data client_id='{yourClientId}' \
+  --data client_secret='{yourClientSecret}'
+```
+
+```json lines
+{
+  "access_token": "{sessionTransferToken}",
+  "issued_token_type": "urn:auth0:params:oauth:token-type:session_transfer_token",
+  "expires_in": 60
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Session Transfer Tokenは認可コードと同様に短命です。後で使用するために保存するのではなく、発行後すみやかに引き換えてください。
+</Callout>
+
+カスタムトークン交換Actionの責務は次のとおりです。
+
+1. 要求されたaudienceが`:session_transfer`で終わるかを確認して、**セッション委譲リクエストを検出する**。
+2. `subject_token`で識別される特定の対象ユーザーに対して、**アクターを認可する**。これにより、そのユーザーに代わってセッションが作成されます。これは、スコープが設定されたAPIアクセスを付与するよりも機密性の高い操作です。
+3. **対象アプリケーションが受け入れる接続を指定して`setUserByConnection()`を呼び出す。** Session Transfer Tokenには、Actionが選択した接続に対するスコープが設定されます。これが重要な理由と適切な接続を選択する方法の詳細については、[対象アプリケーションの到達可能性](#troubleshooting-a-failed-redemption)を参照してください。
+4. アクターを記録するために**`setActor()`を呼び出す。** これは必須です。Session Transfer Tokenをリクエストする際にこれを省略すると、`400`エラーが返されます。
+
+[Actionコードの例](/docs/ja-jp/authenticate/custom-token-exchange/cte-example-use-cases#use-case-support-agent-accessing-a-web-application-on-behalf-of-an-end-user)を参照してください。
+
+<div id="redeem-the-session-transfer-token">
+  ## Session Transfer Token を使用する
+</div>
+
+アプリケーションから対象のアプリケーションに Session Transfer Token を渡す方法は実装に委ねられますが、推奨される方法は、トークンをクエリパラメータとして付加し、アクターのブラウザーを対象のアプリケーションの `initiate_login_uri` にリダイレクトすることです。
+
+```
+https://your-target-app.example.com/initiate-login?session_transfer_token={sessionTransferToken}
+```
+
+ログインを[組織](/docs/ja-jp/manage-users/organizations)のコンテキストで行う必要がある場合は、`organization` もクエリパラメータとして渡します。
+
+```
+https://your-target-app.example.com/initiate-login?session_transfer_token={sessionTransferToken}&organization={orgId}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  委譲セッション中は対話形式でorganizationを選択するpromptは使用できないため、ログイン時のpromptに頼らず、`organization`を明示的に渡す必要があります。Actionが`setUserByConnection()`で選択した接続も、そのorganizationにリンクされている必要があります。これは通常の (委譲されていない) organizationログインにも適用される要件です。
+</Callout>
+
+ターゲットアプリケーションの `initiate_login_uri` ルートでは、両方のパラメータをAuth0の `/authorize` endpointに対する独自のcallに引き継ぐ必要があります。Auth0はそこでSession Transfer Tokenを検証します。有効であれば、アクターをコンテキストに記録した、subjectユーザーの一時的な委譲セッションを確立します。ユーザーによる追加操作は不要です。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Session Transfer Tokenは、リクエスト元アプリケーションから取得したときと同じIPアドレスから引き換える必要があります。リクエスト元アプリケーションのbackendサーバーがtoken exchangeのcallを行う場合は、`auth0-forwarded-for` headerを使用してアクターの実際のIPアドレスをforwardしてください。このIPアドレスが、`/authorize` endpointへのブラウザーRedirectに関連付けられます。
+</Callout>
+
+委譲セッションが確立されると、[Post-Login Actions](/docs/ja-jp/customize/actions/explore-triggers/post-login)で`event.session.actor`を利用できます。これには、Session Transfer Tokenの発行時に`setActor()`に渡されたアクター objectがそのまま含まれます。
+
+<div id="handle-the-resulting-tokens">
+  ## 取得したトークンを処理する
+</div>
+
+対象のアプリケーションは標準の認可コードフローを完了し、委譲を識別する `act` クレームを含む ID トークンとアクセストークンを受け取ります。
+
+```json lines
+{
+  "sub": "auth0|end_user_id",
+  "act": {
+    "sub": "auth0|support_agent_id",
+    "sub_profile": "human",
+    "role": "support"
+  }
+}
+```
+
+`act` クレームを確認してセッションが委任されていることを検出し、アプリケーションに必要な特別な処理を適用します。たとえば、機密性の高い操作を制限したり、監査証跡にエントリを記録したりします。
+
+```javascript lines
+const { act } = jwt.decode(id_token);
+if (act) {
+  // act.sub は アクター（サポート担当者）を、sub はエンドユーザーを識別します
+  auditLog.record({ delegated: true, actorSub: act.sub });
+}
+```
+
+ダウンストリーム API サーバーは、対象アプリケーション側の処理にかかわらず、受け取ったアクセストークンの `act` クレームについて同じ検証を行う必要があります。
+
+<div id="troubleshooting-a-failed-redemption">
+  ## 引き換えに失敗した場合のトラブルシューティング
+</div>
+
+Session Transfer Token を期待どおりにセッションへ引き換えられない場合:
+
+1. **Action は、authorization policy を適用する前に、これがセッション委譲リクエストであることを検出していますか？** 要求された audience が `:session_transfer` (`event.resource_server.identifier`) で終わっているか確認してください。セッション委譲と通常の API アクセス委譲を区別しない Action では、誤ったリクエストを許可または拒否する可能性があります。
+2. **subject ユーザーは、Action が選択した接続を通じて利用可能ですか？** Session Transfer Token は、Action が `setUserByConnection()` で設定した接続、または `setUserById()` を使用した場合はユーザーのプライマリ接続にスコープが設定されます。対象アプリケーションがトークンを引き換えるには、その特定の接続が対象アプリケーションで有効になっている必要があります。subject ユーザーが、対象アプリケーションで許可されている別の接続にも属しているだけでは不十分です。
+3. **カスタムトークン交換 を呼び出すアプリケーション自体は、その同じ接続にアクセスできますか？** これは対象アプリケーションとは別に、呼び出し元 (アクター) のアプリケーションで設定する項目であり、見落としがちです。
+4. **対象クライアントには `allow_delegated_access: true` が設定され、`session_transfer.allowed_authentication_methods` に `query` が含まれていますか？** `allow_delegated_access` が設定されていない場合、Auth0 はエラーを返すのではなく通常のログインページにフォールバックします。トークンは Cookie ではなくクエリパラメータとして渡されるため、`query` が必要です。[対象 Web アプリケーションを設定する](/docs/ja-jp/authenticate/single-sign-on/session-delegation/configure-session-delegation#configure-the-target-web-application)を参照してください。
+5. **`organization` を渡す場合、明示的に含めており、Action が選択した接続はその organization にリンクされていますか？** 委譲セッション中は対話形式の organization 選択画面は利用できないため、`organization` がない場合や一致しない場合は、選択を促すのではなく失敗します。
+6. **`initiate_login_uri` の route (または SDK ヘルパー) は、`session_transfer_token` と `organization` のクエリパラメータを実際に `/authorize` まで転送していますか？** 一部の SDK ログインヘルパーは、デフォルトでは任意のクエリパラメータを転送しません。使用しているヘルパーが転送することを確認してください。
+7. **そのブラウザーとドメインに、すでにアクティブな Auth0 セッションはありますか？** subject ユーザー自身のセッションや、別のユーザーに対する以前の委譲セッションを含め、既存のセッションがあると新しい委譲セッションはブロックされます。これは通常、開始側と対象のアプリケーションが 1 つの Auth0 ドメイン、ひいては 1 つのブラウザーセッション Cookie を共有していることが原因です。それぞれが別個の Cookie を取得できるよう、対象アプリケーションには開始側アプリケーションのドメインとは異なる専用の[カスタムドメイン](/docs/ja-jp/customize/custom-domains)を設定してください。カスタムドメインがない場合は、サポート担当者がトークンを付加した対象アプリケーションの `initiate_login_uri` を、別途開いたプライベートブラウジングまたはシークレットブラウジングのウィンドウにコピーする方法もあります。同じ理由から、別のユーザーの委譲セッションを確立する前に、担当者は現在の委譲セッションからログアウトする必要があります。
+8. **トークンは、要求時とは異なる IP アドレスから引き換えられましたか？** デバイスバインディングにより拒否されます。上記の IP バインディングに関する注記を参照してください。

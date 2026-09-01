@@ -1,0 +1,263 @@
+---
+description: Découvrez comment tester le flux XAA de bout en bout.
+sidebarTitle: Tests de bout en bout
+title: Tests de bout en bout
+---
+
+<Warning>
+  Cross App Access (XAA) pour l’application de ressources est en **accès anticipé**. Les clients Enterprise, B2B Pro et B2B Essential peuvent l’utiliser dans le cadre des Connexions Enterprise. Vous pouvez également l’essayer pendant la période d’essai sur les tenants Free. En utilisant cette fonctionnalité, vous acceptez les conditions applicables à l’essai gratuit énoncées dans le [Contrat-cadre d’abonnement](https://www.okta.com/legal/?_gl=1*51wq70*_gcl_au*NzczNzM1NjYyLjE3ODE3NzY0MDI.*_ga*MTE3ODU0MTY1Ny4xNzgxNzc2NDAy*_ga_QKMSDV5369*czE3ODQ1NTM3ODckbzgyJGcxJHQxNzg0NTU0NzIxJGo1OCRsMCRoMA..) d’Okta.
+</Warning>
+
+Pour tester le flux XAA, l’application demandeuse doit obtenir un grant d’autorisation d’assertion d’identité (ID-JAG) auprès de l’IdP d’entreprise, puis l’échanger auprès d’Auth0 contre un jeton d’accès. Cet article présente les deux étapes : obtenir l’ID-JAG (au moyen de SAML ou d’OIDC) et l’envoyer au point de terminaison `/token` d’Auth0 afin d’obtenir un jeton d’accès pour votre API.
+
+<div id="obtain-the-id-jag">
+  ## Obtenir l’ID-JAG
+</div>
+
+Il existe deux façons d’obtenir un ID-JAG, selon que l’application demandeuse s’authentifie auprès de votre IdP d’entreprise à l’aide de SAML ou d’OIDC.
+
+<div id="saml-requesting-app">
+  ### Application demandeuse SAML
+</div>
+
+Commencez par vous connecter à votre application demandeuse à l’aide de votre tenant IdP. Une fois connecté, l’IdP redirige le navigateur vers votre application demandeuse avec une réponse SAML. Votre application demandeuse échange ensuite de façon sécurisée l’assertion SAML contenue dans la réponse SAML contre un `refresh_token` OIDC, puis échange le `refresh_token` contre un ID-JAG.
+
+<div align="center">
+  Réponse SAML =&gt; Assertion SAML =&gt; refresh&#95;token =&gt; ID-JAG
+</div>
+
+Une fois la réponse SAML reçue de l’IdP, extrayez l’assertion SAML à l’aide d’une bibliothèque SAML. Voici un exemple de réponse SAML :
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<saml2p:Response Destination="http://localhost:3000/saml/callback" Version="2.0" xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+    <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+        ...
+    </saml2:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        ...
+    </ds:Signature>
+    <saml2p:Status xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+        <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+    </saml2p:Status>
+    <!-- Début de l'assertion -->
+    <saml2:Assertion Version="2.0" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+        ...
+    </saml2:Assertion>
+    <!-- Fin de l'assertion -->
+</saml2p:Response>
+```
+
+Vous pouvez utiliser l’outil de ligne de commande `xmllint` pour extraire l’assertion SAML :
+
+```bash
+saml_xml=$(printf '%s' "${saml_response}" | base64 -d 2>/dev/null)
+saml_assertion=$(printf '%s' "${saml_xml}" | xmllint --nsclean --xpath "//*[local-name()='Assertion']" - 2>/dev/null)
+subject_token=$(printf '%s' "${saml_assertion}" | base64 | tr -d '\n')
+```
+
+Pour échanger l’assertion SAML contre un jeton d’actualisation OIDC, l’application demandeuse envoie une [requête d’échange de jetons](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) au point de terminaison `/token` de votre IdP avec les paramètres suivants :
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&subject_token_type=urn:ietf:params:oauth:token-type:saml2
+&requested_token_type=urn:ietf:params:oauth:token-type:refresh_token
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&scope=openid offline_access
+&subject_token={{SAML_ASSERTION_BASE64}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| **Paramètre**           | **Description**                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `grant_type`            | Le type d’autorisation. Définissez-le sur le type d’autorisation d’échange de jetons : `urn:ietf:params:oauth:grant-type:token-exchange`.                                |
+| `subject_token_type`    | Le type de jeton fourni dans le paramètre `subject_token`. Définissez-le sur `urn:ietf:params:oauth:token-type:saml2` pour indiquer qu’une assertion SAML est présentée. |
+| `requested_token_type`  | Le type de jeton que le client souhaite recevoir du serveur d’autorisation. Définissez-le sur `urn:ietf:params:oauth:token-type:refresh_token`.                          |
+| `scope`                 | Valeur fixe. Définissez-la sur `openid offline_access`.                                                                                                                  |
+| `subject_token`         | L’assertion SAML extraite de la réponse SAML, encodée en base64.                                                                                                         |
+| `client_id`             | L’ID client de l’application demandeuse dans l’IdP d’entreprise qui effectue la requête d’échange de jetons.                                                             |
+| `client_secret`         | (Facultatif) Le secret client que l’application demandeuse utilise pour s’authentifier auprès de l’IdP d’entreprise.                                                     |
+| `client_assertion`      | (Facultatif) L’assertion client, qui peut être utilisée pour authentifier l’application demandeuse au moyen de Private Key JWT.                                          |
+| `client_assertion_type` | (Facultatif) Le type d’assertion client. Pour Private Key JWT, définissez-le sur `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.                               |
+
+Si le client IdP est confidentiel, `client_secret` ou `client_assertion` est envoyé dans le Form Post ou les en-têtes HTTP; ils s’excluent donc mutuellement et sont indiqués comme facultatifs.
+
+Lorsque la requête est réussie, `refresh_token` est renvoyé dans la propriété `access_token` de la réponse JSON :
+
+```json
+{
+  "token_type": "N_A",
+  "expires_in": 2592000,
+  "access_token": "4SsoXJDBgcq0xxxxxxYn2K-p5l_GCdo",
+  "scope": "openid offline_access",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:refresh_token"
+}
+```
+
+Pour échanger le `refresh_token` contre un ID-JAG, envoyez une autre [requête d’échange de jetons](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) au point de terminaison `/token` de votre IdP avec les paramètres suivants :
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&subject_token_type=urn:ietf:params:oauth:token-type:refresh_token
+&audience={{YOUR_AUTH0_TENANT_ISSUER_URL}}
+&scope={{YOUR_AUTH0_API_SCOPE}}
+&subject_token={{REFRESH_TOKEN}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| **Paramètre**           | **Description**                                                                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | Le type d’autorisation. Définissez-le sur le type d’autorisation d’échange de jeton : `urn:ietf:params:oauth:grant-type:token-exchange`.                                                                         |
+| `requested_token_type`  | Le type de jeton que le client souhaite recevoir du serveur d’autorisation. Définissez-le sur le grant d’autorisation d’assertion d’identité, ou ID-JAG : `urn:ietf:params:oauth:token-type:id-jag`. |
+| `subject_token_type`    | Le type de jeton fourni dans le paramètre `subject_token`. Définissez-le sur `urn:ietf:params:oauth:token-type:refresh_token`.                                                                       |
+| `audience`              | Le destinataire prévu du jeton final. Définissez-le sur l’URL de l’émetteur de votre tenant Auth0 ou sur votre application de ressources dont le serveur d’autorisation se trouve à cette URL précise.            |
+| `scope`                 | Facultatif. Les scopes d’API de l’application de ressources auxquels le client souhaite accéder. Lorsque le serveur d’autorisation émet le jeton d’accès final, il y inclut ces scopes.                          |
+| `subject_token`         | Le `refresh_token` obtenu en échange de l’assertion SAML.                                                                                                                                            |
+| `client_id`             | L’ID client de l’application demandeuse au sein de l’IdP d’entreprise qui effectue la requête d’échange de jeton.                                                                                          |
+| `client_secret`         | (Facultatif) Le secret client que l’application demandeuse utilise pour s’authentifier auprès de l’IdP d’entreprise.                                                                                        |
+| `client_assertion`      | (Facultatif) L’assertion client, utilisée pour authentifier l’application demandeuse au moyen de Private Key JWT.                                                                                          |
+| `client_assertion_type` | (Facultatif) Le type d’assertion client. Pour Private Key JWT, définissez-le sur `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.                                                          |
+
+Si le client IdP est confidentiel, `client_secret` ou `client_assertion` est envoyé dans le Form Post ou les en-têtes HTTP; ils s’excluent donc mutuellement et sont tous deux marqués comme facultatifs.
+
+La réponse à cette requête contient l’ID-JAG dans la propriété `access_token` :
+
+```json
+{
+  "token_type": "N_A",
+  "expires_in": 300,
+  "access_token": "eyJraWQiOiJFeEwySxxxx",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:id-jag"
+}
+```
+
+L’ID-JAG suit un format JWT, comme dans l’exemple suivant :
+
+```json
+{
+  "jti": "IDAAG.jrdCpdgazbi52j3UxXT_MqgAUMW2n57EZq8RG0ucRnU",
+  "iss": "https://integrator-4598441.okta.com",
+  "aud": "https://amin.jp.auth0.com/",
+  "iat": 1784620622,
+  "exp": 1784620922,
+  "sub": "00u14j584jskYLAVs698",
+  "email": "test-xaa@example.com",
+  "client_id": "Josz8cBBCWKA6Q7CkhyhYjbKY4hqjXMG",
+  "sub_profile": "user",
+  "scope": "read",
+  "act": {
+    "sub": "wlp15fk3702lJwVLG698",
+    "sub_profile": "ai_agent"
+  },
+  "sub_id": {
+    "format": "saml-nameid",
+    "issuer": "http://www.okta.com/exk15fjrhugHeRpO1698",
+    "nameid": "test-xaa@example.com",
+    "nameid_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+  }
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Lorsque l’application de ressource est une application SAML, l’ID-JAG comprend également une revendication `sub_id` contenant les renseignements SAML `NameID` (`format`, `issuer`, `nameid` et `nameid_format`) de l’utilisateur authentifié, en plus de la revendication `sub` standard.
+</Callout>
+
+<div id="oidc-requesting-app">
+  ### Application demandeuse OIDC
+</div>
+
+Commencez par vous connecter à votre application demandeuse à l’aide de votre tenant IdP. Une fois la connexion réussie, l’IdP redirige le navigateur vers votre application demandeuse avec un code d’autorisation. Votre application demandeuse échange ensuite de façon sécurisée ce code contre un jeton d’accès et un jeton ID.
+
+<div align="center">
+  Jeton ID =&gt; ID-JAG
+</div>
+
+Pour échanger le jeton ID contre un ID-JAG, l’application demandeuse envoie une [requête d’échange de jetons](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-token-exchange) au point de terminaison `/token` de votre IdP avec les paramètres suivants :
+
+```bash
+POST /oauth2/v1/token HTTP/1.1
+Host: {{YOUR_IDP_DOMAIN}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&subject_token_type=urn:ietf:params:oauth:token-type:id_token
+&audience={{YOUR_AUTH0_TENANT_ISSUER_URL}}
+&scope={{YOUR_AUTH0_API_SCOPE}}
+&subject_token={{IDP_ID_TOKEN}}
+&client_id={{CLIENT_ID_IN_IDP}}
+&client_secret={{CLIENT_SECRET_IN_IDP}}
+&client_assertion={{PRIVATE_KEY_JWT_CLIENT_ASSERTION}}
+```
+
+| **Paramètre**           | **Description**                                                                                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | Le type d’autorisation. Définissez-le sur le type d’autorisation d’échange de jetons : `urn:ietf:params:oauth:grant-type:token-exchange`.                                                                                                                 |
+| `requested_token_type`  | Le type de jeton que le client souhaite recevoir du serveur d’autorisation. Définissez-le sur le grant d’autorisation d’assertion d’identité, ou ID-JAG : `urn:ietf:params:oauth:token-type:id-jag`.                                        |
+| `client_assertion_type` | (Facultatif) Le type de l’assertion client. Pour Private Key JWT, définissez-le sur `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.                                                                                                 |
+| `subject_token_type`    | Le type de jeton fourni dans le paramètre `subject_token`. Pour XAA, il indique qu’un jeton ID est présenté au serveur d’autorisation.                                                                                                        |
+| `audience`              | Le destinataire prévu du jeton final. Définissez-le sur l’**URL d’émetteur de votre tenant Auth0** ou sur votre application de ressources, dont le serveur d’autorisation se trouve à cette URL précise.                                                   |
+| `scope`                 | Facultatif. Le ou les scopes d’API de l’application de ressources auxquelles le client souhaite accéder. Lorsque le serveur d’autorisation émet le jeton d’accès final, il y inclut ces scopes.                                                         |
+| `subject_token`         | Le jeton que le client échange. Pour XAA, le jeton de sujet constitue la « preuve » ou l’« assertion » de l’identité de l’utilisateur. Définissez-le sur le jeton ID de l’IdP, que l’IdP utilisera pour vérifier l’identité de l’utilisateur. |
+| `client_id`             | L’ID client de l’application demandeuse au sein de l’IdP d’entreprise qui effectue la demande d’échange de jetons.                                                                                                                                   |
+| `client_secret`         | (Facultatif) Le secret client que l’application demandeuse utilise pour s’authentifier auprès de l’IdP d’entreprise.                                                                                                                                 |
+| `client_assertion`      | (Facultatif) L’assertion client, qui peut être utilisée pour authentifier l’application demandeuse au moyen de Private Key JWT.                                                                                                                      |
+
+Si le client IdP est confidentiel, `client_secret` ou `client_assertion` est envoyé dans le Form Post ou les en-têtes HTTP; ils s’excluent donc mutuellement et sont marqués comme facultatifs.
+
+<div id="send-id-jag-to-auth0s-token-endpoint">
+  ## Envoyer l’ID-JAG au point de terminaison `/token` d’Auth0
+</div>
+
+Une fois que l’application demandeuse obtient un ID-JAG, elle envoie une [demande de jeton d’accès](https://www.ietf.org/archive/id/draft-parecki-oauth-identity-assertion-authz-grant-05.html#name-access-token-request) au point de terminaison `/token` de votre tenant Auth0 :
+
+```bash
+POST https://{{YOUR_AUTH0_TENANT_DOMAIN}}/oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+&client_id={{REQUESTING_APP_CLIENT_ID_IN_AUTH0}}
+&client_secret={{REQUESTING_APP_CLIENT_SECRET_IN_AUTH0}}
+&resource={{AUTH0_API_IDENTIFIER}}
+&assertion={{ID_JAG}}
+```
+
+| **Paramètre**           | **Description**                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`            | Le type d’autorisation. Il indique à l’Authorization Server qu’il doit s’attendre à recevoir un JSON Web Token (JWT) comme principal identifiant d’authentification dans la requête.                                                                                                                                                                                                                            |
+| `client_id`             | L’ID client de l’application demandeuse auprès de l’Authorization Server de l’application de ressources qui effectue l’appel d’API.                                                                                                                                                                                                                                                                                               |
+| `assertion`             | L’ID-JAG ou le JSON Web Token (JWT) qui sert de porteur de l’assertion d’identité.                                                                                                                                                                                                                                                                                                                              |
+| `resource`              | (Facultatif) L’identifiant de ressource du serveur de ressources (API) de votre tenant Auth0. Si l’assertion ID-JAG comprend une revendication `resource`, cette valeur prévaut sur ce paramètre. Si aucune ressource n’est précisée dans l’ID-JAG ou dans le corps de la requête, l’[audience par défaut](https://auth0.com/docs/get-started/tenant-settings#api-authorization-settings) de votre tenant est utilisée. |
+| `client_secret`         | (Facultatif) Le secret client de l’application demandeuse auprès de l’Authorization Server de l’application de ressources qui effectue l’appel d’API.                                                                                                                                                                                                                                                                              |
+| `client_assertion`      | (Facultatif) L’assertion client, qui peut être utilisée pour authentifier l’application demandeuse au moyen de Private Key JWT.                                                                                                                                                                                                                                                                                     |
+| `client_assertion_type` | (Facultatif) Le type d’assertion client. Pour Private Key JWT, définissez `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.                                                                                                                                                                                                                                                                          |
+
+Si l’application demandeuse est un client confidentiel, `client_secret` ou `client_assertion` est envoyé dans le Form Post ou les en-têtes HTTP ; ils s’excluent donc mutuellement et sont indiqués comme facultatifs.
+
+Après avoir validé l’ID-JAG pour vérifier l’identité de l’utilisateur, l’Auth0 Authorization Server émet un jeton d’accès pour l’API de votre tenant Auth0. Le jeton d’accès comprend également les scopes demandés, autorisés par RBAC et les autres politiques définies dans votre tenant Auth0.
+
+L’Auth0 Authorization Server n’émet pas de jetons d’actualisation en réponse aux échanges de jetons ID-JAG. L’application demandeuse doit donc obtenir un nouvel ID-JAG auprès de l’IdP d’entreprise et se soumettre aux contrôles d’accès applicables pour obtenir un nouveau jeton d’accès par XAA.
+
+<div id="learn-more">
+  ## En savoir plus
+</div>
+
+Pour vous aider à tester le flux XAA, consultez les ressources suivantes :
+
+* [Auth0 Cross App Access Inspector](https://github.com/auth0-samples/auth0-cross-app-access-inspector) : une application Node.js simple qui permet de tester le flux XAA entre Okta et Auth0.
+* [XAA.dev](https://xaa.dev/) : un environnement isolé en ligne pour tester Cross App Access dans votre navigateur.

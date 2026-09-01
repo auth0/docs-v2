@@ -1,0 +1,110 @@
+---
+description: /oauth/ro から /oauth/token へ、パスワード API の呼び出しとレスポンスを移行する方法について説明します。
+title: リソース所有者パスワードフローを移行する
+---
+
+`/oauth/token` で <Tooltip tip="リソース所有者: 保護されたリソースへのアクセスを許可できるエンティティ（ユーザーやアプリケーションなど）。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=resource+owner">リソース所有者</Tooltip>パスワードがサポートされるようになりました。`/oauth/ro` エンドポイントの使用は 2017 年 7 月 8 日に非推奨となりました。`/oauth/ro` エンドポイントは以前、エンドユーザーがメールまたは SMS で受け取ったワンタイムパスワード (OTP) を、<Tooltip tip="ID トークン: リソースへのアクセスではなく、クライアント自体を対象とした認証情報です。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=ID+token">ID トークン</Tooltip> と <Tooltip tip="アクセストークン: API へのアクセスに使用される、opaque 文字列または JWT 形式の認可資格情報です。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=access+token">アクセストークン</Tooltip> に交換するために使用されていました。Auth0 では、このユースケース向けに `/oauth/ro` を置き換える新しい API を実装しており、新しいエンドポイントへの移行を推奨しています。
+
+<div id="features-affected">
+  ## 影響を受ける機能
+</div>
+
+この変更は、[リソース所有者パスワードフロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/resource-owner-password-flow) (Resource Owner Password Grant または ROPG と呼ばれることもあります) を使用し、Auth0 のライブラリや SDK を使わずに `/oauth/ro` を直接呼び出している場合に影響します。Lock や Auth0.js などの Auth0 ライブラリは、内部で `/oauth/ro` を使用しないように更新されています。lock-<Tooltip tip="パスワードレス: 第1の認証要素としてパスワードに依存しない認証形式。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=passwordless">パスワードレス</Tooltip>ライブラリを使用している場合は、代わりに Lock のパスワードレスモードを使用できるようになりました。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  ユーザーの `/oauth/ro` ベースのアクセストークンの有効期限が切れると、`/oauth/ro` のリフレッシュトークンを使って `/oauth/token` を呼び出し、新しいアクセストークンを取得することはできないため、Auth0 はユーザーに再認証を求めます (強制ログアウトが必要です) 。現在ログインしているすべてのユーザーは、`/oauth/ro` から `/oauth/token` への移行中に再度ログインする必要があります。
+</Callout>
+
+<div id="actions">
+  ## Actions
+</div>
+
+<div id="change-requests">
+  ### リクエストの変更
+</div>
+
+以前は、`/oauth/ro` へのリクエストのペイロードは以下のようになっていました。
+
+```json lines
+{
+  "grant_type": "password",
+  "client_id": "123",
+  "username": "alice",
+  "password": "A3ddj3w", 
+  "connection": "my-database-connection",
+  "scope": "openid email favorite_color offline_access",
+  "device": "my-device-name"
+}
+```
+
+新しい実装には、次の変更が含まれています。
+
+* token exchange を実行する endpoint は、`/oauth/token` になりました。
+* 特定の接続 (またはレルム) のユーザーを認証するために、Auth0 独自のグラントタイプが使用されます。
+* Auth0 は標準の OIDC スコープに加えて、カスタム API で定義したスコープもサポートしています。
+* 上記の `favorite_color` のように、これらのカテゴリのいずれにも当てはまらないスコープは、無効になりました。
+* `device` パラメーターは削除されました。
+* `audience` パラメーターは省略可能です。
+
+以下は、`/oauth/token` への request の payload の例です。
+
+```json lines
+{
+  "grant_type": "http://auth0.com/oauth/grant-type/password-realm",
+  "client_id": "123",
+  "username": "alice",
+  "password": "A3ddj3w",
+  "realm": "my-database-connection",
+  "scope": "openid email offline_access",
+  "audience": "https://api.example.com"
+}
+```
+
+* ここでは、グラントタイプとして標準の `password` ではなく `password-realm` を指定します。
+* `client_id`、`username`、`password` の各パラメータは変わりません。
+* Password Realm グラントタイプを使用するため `realm` が含まれ、以前の呼び出しで使われていた `connection` パラメータの代わりになります。
+* `scope` パラメータもほぼ同じですが、OIDC 以外の値は受け付けません。
+* `audience` パラメータを追加して、そのトークンの対象となる API の <Tooltip tip="Audience: 発行されたトークンの audience の一意の識別子。トークン内では aud という名前で表され、その値には、ID トークンの場合はアプリケーション（Client ID）の ID、アクセストークンの場合は API（API 識別子）の ID が含まれます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=audience">audience</Tooltip> を指定することもできます。
+
+<div id="response-changes">
+  ### レスポンスの変更
+</div>
+
+`/oauth/ro` からのレスポンスは、次のような形式でした。
+
+```json lines
+{
+  "access_token": "SlAV32hkKG",
+  "token_type": "Bearer",
+  "refresh_token": "8xLOxBtZp8",
+  "expires_in": 3600,
+  "id_token": "eyJ..."
+}
+```
+
+* 返されたアクセストークンは、`audience` パラメーターで指定された API が <Tooltip tip="署名アルゴリズム: トークンが改ざんされていないことを保証するために、トークンへデジタル署名する際に使用されるアルゴリズムです。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=signing+algorithm">署名アルゴリズム</Tooltip> として RS256 を使用している場合、`/userinfo` エンドポイントの呼び出しに使用できます。また、カスタム API が指定されている場合は、その API の呼び出しにも使用できます。
+* <Tooltip tip="Public Client: 資格情報を安全に保持できないクライアント（アプリケーション）です。例として、Native のデスクトップまたはモバイルのアプリケーション、そして JavaScript ベースのクライアント側 Web アプリケーション（シングルページアプリケーション（SPA）など）が含まれます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=public+client">パブリッククライアント</Tooltip> から要求された場合、ID トークンは強制的に RS256 で署名されます。
+* <Tooltip tip="リフレッシュトークン: ユーザーに再度ログインを強制することなく、新しいアクセストークンを取得するために使用されるトークンです。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Refresh+Token">リフレッシュトークン</Tooltip> は、`offline_access` スコープが付与され、かつ API で **オフラインアクセスの許可** が有効になっている場合にのみ返されます。
+
+`/oauth/token` から返される OIDC 準拠レスポンスの例を次に示します。
+
+```json lines
+{
+  "access_token": "eyJ...",
+  "token_type": "Bearer",
+  "refresh_token": "8xLOxBtZp8",
+  "expires_in": 3600,
+  "id_token": "eyJ..."
+}
+```
+
+<div id="verify-migration">
+  ### Verify の移行確認
+</div>
+
+1. コードベースの移行を完了し、アプリがそのエンドポイントを呼び出していないことを確認したら、[Dashboard &gt; Tenant Settings &gt; Advanced](https://manage.auth0.com/#/tenant/advanced) に移動します。
+2. **Migrations** までスクロールし、**レガシー** `/oauth/ro` **Endpoint** をオフにします。このスイッチをオフにすると、テナントでこの非推奨エンドポイントが無効になり、使用できなくなります。
+
+このスイッチをオフにした結果、ログインに失敗する場合は、アプリケーション内のレガシーコードをまだ完全に削除できていないことを示しています。
+
+本番環境で移行が正常に完了したら、このスイッチをオフにしてそのまま維持することで、非推奨機能が今後使用されないようにできます。

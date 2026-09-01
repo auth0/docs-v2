@@ -1,0 +1,720 @@
+---
+description: ハイブリッドフロー を実行し、アプリが ID トークンを使ってユーザー情報にアクセスすると同時に、アクセストークンと交換可能な認可コードを取得する方法を学びます。
+title: ハイブリッドフロー を使って API を呼び出す
+validatedOn: 2026-02-18
+---
+
+import {AuthCodeBlock} from "/snippets/ja-jp/AuthCodeBlock.jsx";
+
+import {AuthCodeGroup} from "/snippets/ja-jp/AuthCodeGroup.jsx";
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このチュートリアルでは、ハイブリッドフローを使用して独自のAPIを呼び出す方法を説明します。このフローの仕組みや、使用する理由について詳しく知りたい場合は、[ハイブリッドフロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/hybrid-flow)を参照してください。
+</Callout>
+
+Auth0 を使うと、次の方法でアプリに認可コードフローを簡単に実装できます。
+
+* [Authentication API](https://auth0.com/docs/api/authentication): 独自のソリューションを構築したい場合は、このまま読み進めて、API を直接呼び出す方法を確認してください。
+
+<div id="prerequisites">
+  ## 前提条件
+</div>
+
+**このチュートリアルを始める前に、以下を行ってください。**
+
+* [Auth0 にアプリケーションを登録する](/docs/ja-jp/get-started/auth0-overview/create-applications/regular-web-apps)。
+
+  * 適切な **Application Type** を選択します。
+  * **Allowed Callback URL** に `{https://yourApp/callback}` を追加します。
+  * アプリケーションの **Grant Types** に **Implicit** と **Authorization Code** が含まれていることを確認してください。方法については、[Grant Types を更新する](/docs/ja-jp/get-started/applications/update-grant-types)を参照してください。
+  * アプリケーションで **リフレッシュトークン** を使用できるようにするには、アプリケーションの **Grant Types** に **リフレッシュトークン** が含まれていることを確認してください。方法については、[Grant Types を更新する](/docs/ja-jp/get-started/applications/update-grant-types)を参照してください。**リフレッシュトークン** の詳細については、[リフレッシュトークン](/docs/ja-jp/secure/tokens/refresh-tokens)を参照してください。
+* [Auth0 に API を登録する](/docs/ja-jp/get-started/auth0-overview/set-up-apis)
+
+  * API が、以前のトークンの有効期限が切れた際に新しいトークンを取得するための **リフレッシュトークン** を受け取れるようにするには、**オフラインアクセスの許可** を有効にしてください。
+
+<div id="steps">
+  ## 手順
+</div>
+
+1. [ユーザーを認可する](#authorize-user):
+   ユーザーの認可を求め、認可コードを付与してアプリにリダイレクトします。
+2. [トークンをリクエストする](#request-tokens):
+   認可コードをトークンと交換します。
+3. [API を呼び出す](#call-api):
+   取得したアクセストークンを使用して API を呼び出します。
+4. [リフレッシュトークン](#refresh-tokens):
+   既存のトークンの有効期限が切れたら、リフレッシュトークンを使用して新しいトークンをリクエストします。
+
+任意: [サンプルのユースケースを見る](#sample-use-cases)
+
+<div id="authorize-user">
+  ### ユーザーを認可する
+</div>
+
+このステップには、次のプロセスのうち 1 つ以上が含まれる場合があります。
+
+* ユーザーを認証する
+* 認証を行うために、ユーザーを <Tooltip tip="IDプロバイダー (IdP): デジタルアイデンティティを保存・管理するサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Identity+Provider">IDプロバイダー</Tooltip> にリダイレクトする
+* 有効な <Tooltip tip="シングルサインオン (SSO): ユーザーが 1 つのアプリケーションにログインすると、そのユーザーは他のアプリケーションにも自動的にログインされるサービス。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Single+Sign-on">シングルサインオン</Tooltip> (SSO) セッションがあるかどうかを確認する
+* 以前に同意が与えられていない場合は、要求された権限レベルに対するユーザーの同意を得る。
+
+ユーザーを認可するには、アプリでユーザーを[認可 URL](https://auth0.com/docs/api/authentication#authorization-code-grant)に誘導する必要があります。
+
+<div id="example-authorization-url">
+  #### 認可 URL の例
+</div>
+
+export const codeExample1 = `https://{yourDomain}/authorize?
+    response_type=YOUR_RESPONSE_TYPE&
+    response_mode=form_post&
+    client_id={yourClientId}&
+    redirect_uri={https://yourApp/callback}&
+    scope=SCOPE&
+    audience=API_AUDIENCE&
+    state=STATE&
+    nonce=NONCE`;
+
+<AuthCodeBlock children={codeExample1} language="http" />
+
+##### パラメータ
+
+カスタム API の呼び出し時にユーザーを認可する場合は、次の点に注意してください。
+
+* <Tooltip tip="Audience: 発行されたトークンの audience を表す一意の識別子です。トークン内では aud という名前で、ID トークンの場合はアプリケーション（Client ID）、アクセストークンの場合は API（API Identifier）の ID が値に含まれます。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=audience">audience</Tooltip> パラメータを含める必要があります
+* 対象 API でサポートされている追加のスコープを含めることもできます
+
+| パラメータ名          | 説明                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response_type` | Auth0 が返す認証情報の種類 (code または token) を示します。このフローでは、値に `code` を含める必要がありますが、`id_token`、`token`、または `id_token token` を含めることもできます。具体的には、`id_token` は ID トークンを返し、`token` はアクセストークンを返します。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `response_mode` | レスポンスパラメータの返却方法を指定します。セキュリティ上の理由から、値は `form_post` にする必要があります。このモードでは、レスポンスパラメータは HTML フォームの値としてエンコードされ、HTTP POST メソッドで送信され、本文は `application/x-www-form-urlencoded` 形式でエンコードされます。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `client_id`     | アプリケーションの Client ID です。この値は [アプリケーション設定](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `redirect_uri`  | ユーザーが認可を許可した後に、Auth0 がブラウザーをリダイレクトする URL です。認可コードは `code` URL パラメータで取得できます。この URL は、[アプリケーション設定](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で有効な callback URL として指定する必要があります。<br /><br />**警告:** [OAuth 2.0 仕様](https://tools.ietf.org/html/rfc6749#section-3.1.2) に従い、Auth0 はハッシュ以降のすべてを削除し、フラグメントは*無視されます*。                                                                                                                                                                                                                                                                                                                             |
+| `scope`         | 認可をリクエストする [スコープ](/docs/ja-jp/get-started/apis/scopes) を指定します。これは、返してほしいクレーム (またはユーザー属性) を決定します。各値はスペースで区切る必要があります。`profile` や `email` など、ユーザーに関する [標準 OpenID Connect (OIDC) スコープ](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims)、[名前空間付き形式](/docs/ja-jp/secure/tokens/json-web-tokens/create-custom-claims) に準拠した [カスタムクレーム](/docs/ja-jp/secure/tokens/json-web-tokens/json-web-token-claims#custom-claims)、または対象 API がサポートする任意のスコープ (例: `read:contacts`) をリクエストできます。[リフレッシュトークン](/docs/ja-jp/glossary?term=Refresh+Token) を取得するには `offline_access` を含めます ([アプリケーション設定](https://manage.auth0.com/#/applications) で **オフラインアクセスの許可** フィールドが有効になっていることを確認してください) 。 |
+| `audience`      | アプリケーションがアクセスしたい API の一意の識別子です。このチュートリアルの前提条件の一部として作成した API の [設定](https://manage.auth0.com/#/apis) タブにある **Identifier** の値を使用します。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `state`         |  (推奨) アプリが最初のリクエストに追加し、アプリケーションへリダイレクトして戻る際に Auth0 が含める、不透明な任意の英数字文字列です。この値を使ってクロスサイトリクエストフォージェリ (CSRF) 攻撃を防ぐ方法については、[Mitigate CSRF Attacks With State Parameters](/docs/ja-jp/secure/attack-protection/state-parameters) を参照してください。                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `nonce`         | アプリが最初のリクエストに追加し、Auth0 が ID トークン内に含める、暗号学的にランダムな文字列です。[トークンリプレイ攻撃の防止に使用されます](/docs/ja-jp/get-started/authentication-and-authorization-flow/implicit-flow-with-form-post/mitigate-replay-attacks-when-using-the-implicit-flow)。                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `organization`  |  (任意) ユーザーの認証時に使用する organization の ID です。指定しない場合、アプリケーションで **Display Organization Prompt** が設定されていれば、ユーザーは認証時に organization名 を入力できます。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `invitation`    |  (任意) organization 招待の ticket ID です。[Organizations にメンバーを招待する](/docs/ja-jp/manage-users/organizations/configure-organizations/invite-members) 場合、ユーザーが招待を承諾した際に、アプリケーションは `invitation` と `organization` のキーと値のペアを転送して招待承諾を処理する必要があります。                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+
+例として、アプリに login を追加する際の認可 URL 用 HTML スニペットは次のようになります。
+
+export const codeExample2 = `<a href="https://{yourDomain}/authorize?
+  response_type=code id_token token&
+  client_id={yourClientId}&
+  redirect_uri={https://yourApp/callback}&  
+  scope=appointments%20contacts&
+  audience=appointments:api&
+  state=xyzABC123&
+  nonce=eq...hPmz">
+  Sign In
+</a>`;
+
+<AuthCodeBlock children={codeExample2} language="html" />
+
+<div id="response">
+  #### レスポンス
+</div>
+
+すべてが正常に進むと、`HTTP 302` レスポンスが返されます。要求した資格情報はレスポンスボディにエンコードされています。
+
+```json lines
+HTTP/1.1 302 Found
+Content-Type: application/x-www-form-urlencoded
+code=AUTHORIZATION_CODE&
+access_token=ey...MhPw
+&expires_in=7200
+&token_type=Bearer
+id_token=eyJ...acA&
+state=xyzABC123
+```
+
+返される値は、`response_type` として何をリクエストしたかによって異なる点に注意してください。
+
+| Response Type    | Components                                            |
+| ---------------- | ----------------------------------------------------- |
+| `code `          | 認可コード                                                 |
+| `id_token `      | ID トークン                                               |
+| `token `         | アクセストークン (`expires_in` と `token_type` の値を含む)          |
+| `id_token token` | ID トークン、アクセストークン (`expires_in` と `token_type` の値を含む)  |
+
+また、認可 URL の呼び出しに含めた state 値も Auth0 から返されます。
+
+<Warning>
+  このトランザクションで受け取るアクセストークンは、最初に受け取るアクセストークンにすぎません。API の呼び出しには使用しないことを推奨します。
+</Warning>
+
+<Warning>
+  トークンは保存する前に検証してください。方法については、[Validate ID Tokens](/docs/ja-jp/secure/tokens/id-tokens/validate-id-tokens) と [Validate Access Tokens](/docs/ja-jp/secure/tokens/access-tokens/validate-access-tokens) を参照してください。
+</Warning>
+
+<Tooltip tip="ID Token: リソースにアクセスするためではなく、クライアント自体を対象とした資格情報。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=ID+token">ID トークン</Tooltip>をデコードして解析すると、`code` のハッシュを含む `c_hash` という追加のクレームがあることに気付くでしょう。このクレームは、`code` と同時に ID トークンが発行される場合に必須であり、検証する必要があります。
+
+1. ID トークンヘッダーの `alg` クレームで指定されたハッシュアルゴリズムを使用して、`code` の ASCII 表現のオクテットをハッシュ化します。
+2. ハッシュの左半分を Base64url エンコードします。
+3. 結果が `c_hash` の値と一致することを確認します。
+
+<div id="request-tokens">
+  ### トークンを取得する
+</div>
+
+認可コードを取得したら、次はそれをトークンに交換する必要があります。前のステップで取得した認可コード (`code`) を使って、[トークン URL](https://auth0.com/docs/api/authentication#authorization-code) に `POST` します。
+
+このステップで受け取る <Tooltip tip="アクセストークン: API へのアクセスに使用される、不透明な文字列または JWT 形式の認可資格情報。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Access+Token">アクセストークン</Tooltip> は、API の呼び出しに使用するものです。このチュートリアルの前のステップで受け取ったアクセストークンとは、別のものとして管理してください。
+
+<div id="example-post-to-token-url">
+  #### token URL に POST する例
+</div>
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/oauth/token' \
+    --header 'content-type: application/x-www-form-urlencoded' \
+    --data grant_type=authorization_code \
+    --data 'client_id={yourClientId}' \
+    --data 'client_secret={yourClientSecret}' \
+    --data 'code=yourAuthorizationCode}' \
+    --data 'redirect_uri={https://yourApp/callback}'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/oauth/token");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("content-type", "application/x-www-form-urlencoded");
+  request.AddParameter("application/x-www-form-urlencoded", "grant_type=authorization_code&client_id={yourClientId}&client_secret=%7ByourClientSecret%7D&code=yourAuthorizationCode%7D&redirect_uri={https://yourApp/callback}", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/oauth/token"
+
+  	payload := strings.NewReader("grant_type=authorization_code&client_id={yourClientId}&client_secret=%7ByourClientSecret%7D&code=yourAuthorizationCode%7D&redirect_uri={https://yourApp/callback}")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("content-type", "application/x-www-form-urlencoded")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse response = Unirest.post("https://{yourDomain}/oauth/token")
+    .header("content-type", "application/x-www-form-urlencoded")
+    .body("grant_type=authorization_code&client_id={yourClientId}&client_secret=%7ByourClientSecret%7D&code=yourAuthorizationCode%7D&redirect_uri={https://yourApp/callback}")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/oauth/token',
+    headers: {'content-type': 'application/x-www-form-urlencoded'},
+    data: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: '{yourClientId}',
+      client_secret: '{yourClientSecret}',
+      code: 'yourAuthorizationCode}',
+      redirect_uri: '{https://yourApp/callback}'
+    })
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/oauth/token",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "grant_type=authorization_code&client_id={yourClientId}&client_secret=%7ByourClientSecret%7D&code=yourAuthorizationCode%7D&redirect_uri={https://yourApp/callback}",
+    CURLOPT_HTTPHEADER => [
+      "content-type: application/x-www-form-urlencoded"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "grant_type=authorization_code&client_id={yourClientId}&client_secret=%7ByourClientSecret%7D&code=yourAuthorizationCode%7D&redirect_uri={https://yourApp/callback}"
+
+  headers = { 'content-type': "application/x-www-form-urlencoded" }
+
+  conn.request("POST", "/{yourDomain}/oauth/token", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/oauth/token")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+  request = Net::HTTP::Post.new(url)
+  request["content-type"] = 'application/x-www-form-urlencoded'
+  request.body = "grant_type=authorization_code&client_id={yourClientId}&client_secret=%7ByourClientSecret%7D&code=yourAuthorizationCode%7D&redirect_uri={https://yourApp/callback}"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="parameters">
+  ##### パラメーター
+</div>
+
+| パラメーター名         | 説明                                                                                                                                                                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`    | `authorization_code` に設定します。                                                                                                                                                                                                 |
+| `code`          | このチュートリアルの前の手順で取得した `authorization_code` です。                                                                                                                                                                                 |
+| `client_id`     | アプリケーションの Client ID です。この値は [アプリケーション設定](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。                                                                                                          |
+| `client_secret` | アプリケーションの Client Secret です。この値は [アプリケーション設定](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。利用可能なアプリケーションの認証方法について詳しくは、[Application Credentials](/docs/ja-jp/secure/application-credentials) を参照してください。 |
+| `redirect_uri`  | アプリケーション設定に設定した有効なコールバックURLです。これは、このチュートリアルの前の手順で認可URLに渡した `redirect_uri` と完全に一致している必要があります。なお、URLエンコードが必要です。                                                                                                                |
+
+<div id="response">
+  #### レスポンス
+</div>
+
+正常に処理されると、`access_token`、`refresh_token`、`id_token`、`token_type` の各値を含むペイロードとともに、`HTTP 200` レスポンスが返されます。
+
+```json lines
+{
+  "access_token": "eyJz93a...k4laUWw",
+  "refresh_token": "GEbRxBN...edjnXbL",
+  "id_token": "eyJ0XAi...4faeEoQ",
+  "token_type": "Bearer"
+}
+```
+
+<Warning>
+  保存する前に、トークンを必ず検証してください。方法については、[ID トークンを検証する](/docs/ja-jp/secure/tokens/id-tokens/validate-id-tokens) と [アクセストークンを検証する](/docs/ja-jp/secure/tokens/access-tokens/validate-access-tokens) を参照してください。
+</Warning>
+
+[ID トークン](/docs/ja-jp/secure/tokens/id-tokens) には、デコードして取り出す必要があるユーザー情報が含まれています。
+
+[アクセストークン](/docs/ja-jp/secure/tokens/access-tokens) は、[Auth0 Authentication API の /userinfo エンドポイント](https://auth0.com/docs/api/authentication#get-user-info) や他の API を呼び出すために使用されます。独自の API を呼び出す場合、API が最初に行うべきことは、[アクセストークンを検証する](/docs/ja-jp/secure/tokens/access-tokens/validate-access-tokens) ことです。
+
+[リフレッシュトークン](/docs/ja-jp/secure/tokens/refresh-tokens) は、以前のアクセストークンまたは ID トークンの有効期限が切れた後に、新しいアクセストークンまたは ID トークンを取得するために使用されます。レスポンスに `refresh_token` が含まれるのは、`offline_access` スコープを含め、Auth0 Dashboard で API の **オフラインアクセスの許可** を有効にしている場合のみです。
+
+<Warning>
+  リフレッシュトークンを使うと、ユーザーは実質的に無期限に認証された状態を維持できるため、安全に保管する必要があります。
+</Warning>
+
+<div id="call-api">
+  ### API を呼び出す
+</div>
+
+通常の Web アプリケーション (または、アプリケーションの資格情報を安全に保存できる同様のケース) から API を呼び出すには、アプリケーションは取得したアクセストークンを、HTTP リクエストの Authorization ヘッダーで Bearer トークンとして渡す必要があります。
+
+<AuthCodeGroup>
+  ```bash cURL lines
+  curl --request GET \
+    --url https://myapi.com/api \
+    --header 'authorization: Bearer {accessToken}' \
+    --header 'content-type: application/json'
+  ```
+
+  ```csharp C# lines
+  var client = new RestClient("https://myapi.com/api");
+  var request = new RestRequest(Method.GET);
+  request.AddHeader("content-type", "application/json");
+  request.AddHeader("authorization", "Bearer {accessToken}");
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go lines expandable
+  package main
+
+  import (
+  	"fmt"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://myapi.com/api"
+
+  	req, _ := http.NewRequest("GET", url, nil)
+
+  	req.Header.Add("content-type", "application/json")
+  	req.Header.Add("authorization", "Bearer {accessToken}")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java lines
+  HttpResponse response = Unirest.get("https://myapi.com/api")
+    .header("content-type", "application/json")
+    .header("authorization", "Bearer {accessToken}")
+    .asString();
+  ```
+
+  ```javascript Node.JS lines
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'GET',
+    url: 'https://myapi.com/api',
+    headers: {'content-type': 'application/json', authorization: 'Bearer {accessToken}'}
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP lines expandable
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://myapi.com/api",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "GET",
+    CURLOPT_HTTPHEADER => [
+      "authorization: Bearer {accessToken}",
+      "content-type: application/json"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python lines
+  import http.client
+
+  conn = http.client.HTTPSConnection("myapi.com")
+
+  headers = {
+      'content-type': "application/json",
+      'authorization': "Bearer {accessToken}"
+      }
+
+  conn.request("GET", "/api", headers=headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby lines
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://myapi.com/api")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+  request = Net::HTTP::Get.new(url)
+  request["content-type"] = 'application/json'
+  request["authorization"] = 'Bearer {accessToken}'
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="refresh-tokens">
+  ### リフレッシュトークン
+</div>
+
+このチュートリアルに沿って進め、以下を完了していれば、すでに[リフレッシュトークン](/docs/ja-jp/secure/tokens/refresh-tokens)を受け取っています。
+
+* API でオフラインアクセスを許可するよう設定した
+* [authorize エンドポイント](https://auth0.com/docs/api/authentication/reference#authorize-application)を通じて認証リクエストを開始する際に、`offline_access` スコープを含めた
+
+新しいアクセストークンを取得するには、<Tooltip tip="リフレッシュトークン: ユーザーに再度ログインを求めることなく、新しいアクセストークンを取得するために使用するトークン。" cta="用語集を見る" href="/docs/ja-jp/glossary?term=Refresh+Token">リフレッシュトークン</Tooltip>を使用できます。通常、ユーザーが新しいアクセストークンを必要とするのは、以前のトークンの有効期限が切れた後、または初めて新しいリソースにアクセスするときだけです。API を呼び出すたびに新しいアクセストークンを取得するためにこのエンドポイントを呼び出すのは推奨されません。また、Auth0 ではレート制限が設けられているため、同じ IP から同じトークンを使用してそのエンドポイントに対して実行できるリクエスト数は制限されます。
+
+トークンを更新するには、`grant_type=refresh_token` を使用して、Authentication API の `/oauth/token` エンドポイントに `POST` リクエストを送信します。
+
+#### Token URL に POST する例
+
+<AuthCodeGroup>
+  ```bash cURL
+  curl --request POST \
+    --url 'https://{yourDomain}/oauth/token' \
+    --header 'content-type: application/x-www-form-urlencoded' \
+    --data grant_type=refresh_token \
+    --data 'client_id={yourClientId}' \
+    --data 'refresh_token={yourRefreshToken}'
+  ```
+
+  ```csharp C#
+  var client = new RestClient("https://{yourDomain}/oauth/token");
+  var request = new RestRequest(Method.POST);
+  request.AddHeader("content-type", "application/x-www-form-urlencoded");
+  request.AddParameter("application/x-www-form-urlencoded", "grant_type=refresh_token&client_id={yourClientId}&refresh_token=%7ByourRefreshToken%7D", ParameterType.RequestBody);
+  IRestResponse response = client.Execute(request);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+  	"fmt"
+  	"strings"
+  	"net/http"
+  	"io/ioutil"
+  )
+
+  func main() {
+
+  	url := "https://{yourDomain}/oauth/token"
+
+  	payload := strings.NewReader("grant_type=refresh_token&client_id={yourClientId}&refresh_token=%7ByourRefreshToken%7D")
+
+  	req, _ := http.NewRequest("POST", url, payload)
+
+  	req.Header.Add("content-type", "application/x-www-form-urlencoded")
+
+  	res, _ := http.DefaultClient.Do(req)
+
+  	defer res.Body.Close()
+  	body, _ := ioutil.ReadAll(res.Body)
+
+  	fmt.Println(res)
+  	fmt.Println(string(body))
+
+  }
+  ```
+
+  ```java Java
+  HttpResponse response = Unirest.post("https://{yourDomain}/oauth/token")
+    .header("content-type", "application/x-www-form-urlencoded")
+    .body("grant_type=refresh_token&client_id={yourClientId}&refresh_token=%7ByourRefreshToken%7D")
+    .asString();
+  ```
+
+  ```javascript Node.JS
+  var axios = require("axios").default;
+
+  var options = {
+    method: 'POST',
+    url: 'https://{yourDomain}/oauth/token',
+    headers: {'content-type': 'application/x-www-form-urlencoded'},
+    data: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: '{yourClientId}',
+      refresh_token: '{yourRefreshToken}'
+    })
+  };
+
+  axios.request(options).then(function (response) {
+    console.log(response.data);
+  }).catch(function (error) {
+    console.error(error);
+  });
+  ```
+
+  ```php PHP
+  $curl = curl_init();
+
+  curl_setopt_array($curl, [
+    CURLOPT_URL => "https://{yourDomain}/oauth/token",
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_ENCODING => "",
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    CURLOPT_CUSTOMREQUEST => "POST",
+    CURLOPT_POSTFIELDS => "grant_type=refresh_token&client_id={yourClientId}&refresh_token=%7ByourRefreshToken%7D",
+    CURLOPT_HTTPHEADER => [
+      "content-type: application/x-www-form-urlencoded"
+    ],
+  ]);
+
+  $response = curl_exec($curl);
+  $err = curl_error($curl);
+
+  curl_close($curl);
+
+  if ($err) {
+    echo "cURL Error #:" . $err;
+  } else {
+    echo $response;
+  }
+  ```
+
+  ```python Python
+  import http.client
+
+  conn = http.client.HTTPSConnection("")
+
+  payload = "grant_type=refresh_token&client_id={yourClientId}&refresh_token=%7ByourRefreshToken%7D"
+
+  headers = { 'content-type': "application/x-www-form-urlencoded" }
+
+  conn.request("POST", "/{yourDomain}/oauth/token", payload, headers)
+
+  res = conn.getresponse()
+  data = res.read()
+
+  print(data.decode("utf-8"))
+  ```
+
+  ```ruby Ruby
+  require 'uri'
+  require 'net/http'
+  require 'openssl'
+
+  url = URI("https://{yourDomain}/oauth/token")
+
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+  request = Net::HTTP::Post.new(url)
+  request["content-type"] = 'application/x-www-form-urlencoded'
+  request.body = "grant_type=refresh_token&client_id={yourClientId}&refresh_token=%7ByourRefreshToken%7D"
+
+  response = http.request(request)
+  puts response.read_body
+  ```
+</AuthCodeGroup>
+
+<div id="parameters">
+  ##### パラメーター
+</div>
+
+| Parameter Name  | Description                                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `grant_type`    | `refresh_token` に設定します。                                                                                                       |
+| `client_id`     | アプリケーションの Client ID です。この値は [アプリケーション設定](https://manage.auth0.com/#/Applications/\{yourClientId}/settings) で確認できます。 |
+| `refresh_token` | 使用するリフレッシュトークンです。                                                                                                             |
+| `scope`         |  (任意) リクエストするスコープ権限のスペース区切りリストです。送信しない場合は元のスコープが使用されます。送信する場合は、スコープを絞ってリクエストできます。なお、これは URL エンコードする必要があります。                   |
+
+<div id="response">
+  #### レスポンス
+</div>
+
+問題なく処理されると、新しい `access_token`、その有効期間 (秒単位の `expires_in`) 、許可された `scope` 値、`token_type` を含むペイロードを伴う `HTTP 200` レスポンスが返されます。初期トークンのスコープに `openid` が含まれている場合、レスポンスには新しい `id_token` も含まれます:
+
+```json lines
+{
+  "access_token": "eyJ...MoQ",
+  "expires_in": 86400,
+  "scope": "openid offline_access",
+  "id_token": "eyJ...0NE",
+  "token_type": "Bearer"
+}
+```
+
+<Warning>
+  保存する前に、必ずトークンを検証してください。方法については、[ID トークンを検証する](/docs/ja-jp/secure/tokens/id-tokens/validate-id-tokens) と [アクセストークンを検証する](/docs/ja-jp/secure/tokens/access-tokens/validate-access-tokens) を参照してください。
+</Warning>
+
+<div id="sample-use-cases">
+  ### 使用例
+</div>
+
+<div id="customize-tokens">
+  #### トークンをカスタマイズする
+</div>
+
+ルールを使うと、返されるアクセストークンのスコープを変更したり、アクセストークンや ID トークンにクレームを追加したりできます。 (ルールについて詳しくは、[Auth0 Rules](/docs/ja-jp/customize/rules) を参照してください。) そのためには、次のルールを追加します。このルールは、ユーザーの認証後に実行されます。
+
+```js lines
+exports.onExecutePostLogin = async (event, api) => {
+  // Access Token と ID トークンにカスタムクレームを追加する
+  api.accessToken.setCustomClaim('https://foo/bar', 'value');
+  api.idToken.setCustomClaim('https://fiz/baz', 'some other value');
+
+  // Access Token のスコープを変更する
+  api.accessToken.addScope('foo');
+  api.accessToken.addScope('bar');
+};
+```
+
+スコープは、すべてのルールの実行が完了した後にトークンで利用できるようになります。
+
+<Warning>
+  Auth0 は、[OpenID Connect (OIDC) 仕様](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims)で定義されている構造化されたクレーム形式でプロファイル情報を返します。つまり、ID トークンまたはアクセストークンに追加されるカスタムクレームは、競合が発生する可能性を避けるために、[ガイドラインと制限事項に準拠する](/docs/ja-jp/secure/tokens/json-web-tokens/create-custom-claims)必要があります。
+</Warning>
+
+<div id="learn-more">
+  ## 詳細情報
+</div>
+
+* [OAuth 2.0 認可フレームワーク](/docs/ja-jp/authenticate/protocols/oauth)
+* [OpenID Connect プロトコル](/docs/ja-jp/authenticate/protocols/openid-connect-protocol)
+* [トークン](/docs/ja-jp/secure/tokens)
