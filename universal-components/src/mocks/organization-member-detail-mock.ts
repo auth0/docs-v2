@@ -85,6 +85,17 @@ export const getOrganizationMemberDetailMock = () => {
     },
     customMessages: {},
 
+    permissions: {
+      canInvite: true,
+      canAssignRole: true,
+      canRemoveRole: true,
+      canRemoveFromOrganization: true,
+      canRevokeInvitation: true,
+      canResendInvitation: true,
+      canShowMemberMenu: true,
+      canShowInvitationMenu: true,
+    },
+
     activeTab,
     member,
     organizationDisplayName: ORG_NAME,

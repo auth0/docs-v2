@@ -168,6 +168,17 @@ export const getOrganizationMemberManagementMock = () => {
     hideHeader: false,
     readOnly: false,
 
+    permissions: {
+      canInvite: true,
+      canAssignRole: true,
+      canRemoveRole: true,
+      canRemoveFromOrganization: true,
+      canRevokeInvitation: true,
+      canResendInvitation: true,
+      canShowMemberMenu: true,
+      canShowInvitationMenu: true,
+    },
+
     activeTab,
     availableRoles,
     searchedRoles,
