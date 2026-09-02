@@ -16,7 +16,7 @@ export const Auth0SetupBlock = ({
         <li>
           Select <b>Create Connection</b>, then choose <b>{providerName}</b>.
         </li>
-        <li>Click <b>Continue</b>.</li>
+        <li>Select <b>Continue</b>.</li>
         <li>
           In <b>General</b>:
           <ol type="A">
@@ -55,12 +55,12 @@ export const Auth0SetupBlock = ({
             Connected Accounts for Token Vault
           </a>.
         </li>
-        <li>Click <b>Create</b>.</li>
+        <li>Select <b>Create</b>.</li>
         <li>
           After creation, you are redirected to the <b>Applications</b> page.
           Select the application(s) to enable this connection for.
           <br />
-          Note: In a new Auth0 tenant, you can select the <b>Default App</b>.
+          <Callout icon="file-lines" color="#0EA5E9" iconType="regular">In a new Auth0 tenant, you can select the <b>Default App</b>.</Callout>
         </li>
         <li>
           Once you have created your {providerName} social connection, <a href="https://auth0.com/docs/authenticate/identity-providers/test-connections">test your connection</a> to ensure the setup is working correctly before using it in your application.
