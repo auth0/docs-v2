@@ -133,7 +133,7 @@ export const Prerequisites = ({
   steps.push(
     <Step key="google-connection" title="Configure Google Social Integration">
       Set up a Google Cloud account that allows for external API calls by
-      following the <a href="/ai/docs/integrations/google">Google Social Integration</a>{" "}
+      following the <a href="/ai/docs/connections/google">Google Social Integration</a>{" "}
       instructions.
     </Step>
   );
