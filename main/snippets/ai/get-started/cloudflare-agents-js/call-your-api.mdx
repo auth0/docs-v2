@@ -1,0 +1,247 @@
+import { Prerequisites } from "/snippets/ai/get-started/prerequisites/call-your-api.jsx";
+import { AccountAndAppSteps } from "/snippets/ai/get-started/prerequisites/account-app-steps.jsx";
+import ConfigureCloudflareKvStore from "/snippets/ai/common/configure-cloudflare-kv-store.mdx";
+
+<Prerequisites />
+
+### Start from our Cloudflare Agents template
+
+Our [Auth0 Cloudflare Agents Starter Kit](https://github.com/auth0-lab/cloudflare-agents-starter) provides a starter project that includes the necessary dependencies and configuration to get you up and running quickly.
+
+To create a new Cloudflare Agents project using the template, run the following command in your terminal:
+
+```bash wrap lines
+npx create-cloudflare@latest --template auth0-lab/cloudflare-agents-starter
+```
+
+### About the dependencies
+
+The start kit is similar to the [Cloudflare Agents starter kit](https://github.com/cloudflare/agents-starter) but includes the following dependencies to integrate with Auth0 and Vercel AI:
+
+- `hono`: [Hono](https://hono.dev/) Web Application framework.
+- `@auth0/auth0-hono`: [Auth0 SDK](https://github.com/auth0-lab/auth0-hono) for the Hono web framework.
+- `hono-agents`: [Hono Agents](https://github.com/cloudflare/agents/tree/main/packages/hono-agents) to add intelligent, stateful AI agents to your Hono app.
+- `@auth0/auth0-cloudflare-agents-api`: [Auth0 Cloudflare Agents API SDK](https://github.com/auth0-lab/auth0-cloudflare-agents-api) to secure Cloudflare Agents using bearer tokens from Auth0.
+- `@auth0/ai`: [Auth0 AI SDK](https://github.com/auth0/auth0-ai-js) to provide base abstractions for authentication and authorization in AI applications.
+- `@auth0/ai-vercel`: [Auth0 Vercel AI SDK](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-vercel) to provide building blocks for using Auth0 for AI Agents with the Vercel AI SDK.
+- `@auth0/ai-cloudflare`: [Auth0 Cloudflare AI SDK](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-cloudflare) to provide building blocks for using Auth0 for AI Agents with the Cloudflare Agents API.
+
+**You don't need to install these dependencies manually**; they are already included in the starter kit.
+
+```bash wrap lines
+npm remove agents
+npm install hono \
+  @auth0/auth0-hono \
+  hono-agents \
+  @auth0/auth0-cloudflare-agents-api \
+  @auth0/ai-cloudflare \
+  @auth0/ai-vercel \
+  @auth0/ai
+```
+
+### Set up environment variables
+
+In the root directory of your project, copy the `.dev.vars.example` into `.dev.vars` file and configure the Auth0 and OpenAI variables.
+
+```bash .dev.vars wrap lines
+# ...
+# You can use any provider of your choice supported by Vercel AI
+OPENAI_API_KEY="OPENAI API KEY"
+
+#auth0
+AUTH0_DOMAIN="YOUR-ACCOUNT.us.auth0.com"
+AUTH0_CLIENT_ID="YOUR CLIENT ID"
+AUTH0_CLIENT_SECRET="YOUR CLIENT SECRET"
+AUTH0_SESSION_ENCRYPTION_KEY="RANDOM 32 CHARS"
+AUTH0_AUDIENCE="YOUR AUDIENCE"
+
+BASE_URL="http://localhost:3000"
+```
+
+If you use another provider for your LLM, adjust the variable name in `.dev.vars` accordingly.
+
+#### Configure a persistent store
+
+<ConfigureCloudflareKvStore />
+
+### Define a tool to call your API
+
+In this step, you'll create a Vercel AI tool to make the first-party API call to the Auth0 API. You will do the same for third-party APIs.
+
+After taking in an Auth0 access token during user login, the Cloudflare Worker sends the token to the Cloudflare Agent using the Authorization header in every web request or WebSocket connection.
+
+Since the Agent defined in the class Chat in `src/agent/chat.ts` uses the **AuthAgent** trait from the `@auth0/auth0-cloudflare-agents-api` it validates the signature of the token and that it matches the audience of the Agent.
+
+The tool we are defining here uses the same access token to call Auth0's [`/userinfo`](/docs/api/authentication/user-profile/get-user-info) endpoint.
+
+```tsx src/agent/tools.ts wrap lines
+/**
+ * Tool definitions for the AI chat agent
+ * Tools can either require human confirmation or execute automatically
+ */
+import { tool } from "ai";
+import { z } from "zod";
+
+import { getCurrentAgent } from "agents";
+import { unstable_scheduleSchema } from "agents/schedule";
+import { format, toZonedTime } from "date-fns-tz";
+import { buyStock } from "./auth0-ai-sample-tools/buy-stock";
+import { checkUsersCalendar } from "./auth0-ai-sample-tools/check-user-calendar";
+
+/**
+ * Weather information tool that requires human confirmation
+ * When invoked, this will present a confirmation dialog to the user
+ * The actual implementation is in the executions object below
+ */
+const getWeatherInformation = tool({
+  description: "show the weather in a given city to the user",
+  inputSchema: z.object({ city: z.string() }),
+});
+
+/**
+ * Local time tool that executes automatically
+ * Since it includes an execute function, it will run without user confirmation
+ * This is suitable for low-risk operations that don't need oversight
+ */
+const getLocalTime = tool({
+  description: "get the local time for a specified location",
+  inputSchema: z.object({
+    timeZone: z.string().describe("IANA time zone name"),
+  }),
+  execute: async ({ timeZone: location }) => {
+    const now = new Date();
+    const zonedDate = toZonedTime(now, location);
+    const output = format(zonedDate, "yyyy-MM-dd HH:mm:ssXXX", {
+      timeZone: location,
+    });
+    return output;
+  },
+});
+
+const scheduleTask = tool({
+  description: "A tool to schedule a task to be executed at a later time",
+  inputSchema: unstable_scheduleSchema,
+  execute: async ({ when, description }) => {
+    const { agent } = getCurrentAgent();
+
+    function throwError(msg: string): string {
+      throw new Error(msg);
+    }
+    if (when.type === "no-schedule") {
+      return "Not a valid schedule input";
+    }
+    const input =
+      when.type === "scheduled"
+        ? when.date // scheduled
+        : when.type === "delayed"
+          ? when.delayInSeconds // delayed
+          : when.type === "cron"
+            ? when.cron // cron
+            : throwError("not a valid schedule input");
+    try {
+      agent!.schedule(input!, "executeTask" as keyof typeof agent, description);
+    } catch (error) {
+      console.error("error scheduling task", error);
+      return `Error scheduling task: ${error}`;
+    }
+    return `Task scheduled for type "${when.type}" : ${input}`;
+  },
+});
+
+/**
+ * Tool to list all scheduled tasks
+ * This executes automatically without requiring human confirmation
+ */
+const getScheduledTasks = tool({
+  description: "List all tasks that have been scheduled",
+  inputSchema: z.object({}),
+  execute: async () => {
+    const { agent } = getCurrentAgent();
+
+    try {
+      const tasks = agent!.getSchedules();
+      if (!tasks || tasks.length === 0) {
+        return "No scheduled tasks found.";
+      }
+      return tasks;
+    } catch (error) {
+      console.error("Error listing scheduled tasks", error);
+      return `Error listing scheduled tasks: ${error}`;
+    }
+  },
+});
+
+/**
+ * Tool to cancel a scheduled task by its ID
+ * This executes automatically without requiring human confirmation
+ */
+const cancelScheduledTask = tool({
+  description: "Cancel a scheduled task using its ID",
+  inputSchema: z.object({
+    taskId: z.string().describe("The ID of the task to cancel"),
+  }),
+  execute: async ({ taskId }) => {
+    const { agent } = getCurrentAgent();
+    try {
+      await agent!.cancelSchedule(taskId);
+      return `Task ${taskId} has been successfully canceled.`;
+    } catch (error) {
+      console.error("Error canceling scheduled task", error);
+      return `Error canceling task ${taskId}: ${error}`;
+    }
+  },
+});
+
+/**
+ * Export all available tools
+ * These will be provided to the AI model to describe available capabilities
+ */
+export const tools = {
+  getWeatherInformation,
+  getLocalTime,
+  scheduleTask,
+  getScheduledTasks,
+  cancelScheduledTask,
+  checkUsersCalendar,
+  buyStock,
+};
+
+/**
+ * Implementation of confirmation-required tools
+ * This object contains the actual logic for tools that need human approval
+ * Each function here corresponds to a tool above that doesn't have an execute function
+ */
+export const executions = {
+  getWeatherInformation: async ({ city }: { city: string }) => {
+    console.log(`Getting weather information for ${city}`);
+    return `The weather in ${city} is sunny`;
+  },
+};
+```
+
+Then in the `tools` export of the `src/agent/chat.ts` file, add the `tools` to the `allTools` array:
+
+```tsx src/agent/chat.ts wrap lines
+async onChatMessage() {
+    const allTools = {
+      ...tools,
+      ...(this.mcp?.getAITools?.() ?? {}),
+    };
+    ... // The rest of the code
+```
+
+### Test your application
+
+To test the application, run `npm run start` and navigate to `http://localhost:3000/` and interact with the AI agent. You can ask questions like `“who am I?”` to trigger the tool call and test whether it successfully retrieves information about the logged-in user.
+
+```bash wrap lines
+User: who am I?
+AI: It seems that there is no user currently logged in. If you need assistance with anything else, feel free to ask!
+
+User: who am I?
+AI: You are Juan Martinez. Here are your details: - .........
+```
+
+That's it! You've successfully integrated first-party tool-calling into your project.
+
+Explore [the starter kit on GitHub](https://github.com/auth0-lab/cloudflare-agents-starter).

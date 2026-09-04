@@ -1,0 +1,236 @@
+import { Prerequisites } from "/snippets/ai/get-started/prerequisites/auth-for-rag.jsx";
+import { AccountAndAppSteps } from "/snippets/ai/get-started/prerequisites/account-app-steps.jsx";
+
+<Prerequisites appCreation={false} />
+
+### Install dependencies
+
+Please use [Python version >\=3.11 and \<4.0](https://www.python.org/downloads/).
+
+As a first step, let's create a virtual environment and install the dependencies:
+
+```bash wrap lines
+# Create a virtual env
+python -m venv venv
+# Activate the virtual env
+source ./venv/bin/activate
+# Install dependencies
+pip install langgraph langchain-openai python-dotenv faiss-cpu langchain-community auth0-ai-langchain langgraph-prebuilt
+```
+
+import SetupFGAStore from "/snippets/ai/get-started/common/setup-fga-store.mdx";
+
+<SetupFGAStore />
+
+Now, to access public information, you'll need to add a tuple on FGA. Navigate to the **Tuple Management** section and click **\+ Add Tuple**. Fill in the following information:
+
+- **User**: `user:*`
+- **Object**: select doc and add `public-doc` in the ID field
+- **Relation**: `viewer`
+
+A tuple signifies a user's relation to a given object. For example, the above tuple implies that all users can view the `public-doc` object.
+
+### Secure the RAG Tool
+
+After all this configuration, let's get back to our node.js project. There you'll secure the RAG tool using [Auth0 FGA](https://auth0.com/fine-grained-authorization) and [Auth0 AI SDK](https://github.com/auth0/auth0-ai-python).
+
+### Get the assets
+
+Create an `assets` folder and download the below files into the folder:
+
+- [`public-doc.md`](https://raw.githubusercontent.com/auth0-samples/auth0-ai-samples/refs/heads/main/authorization-for-rag/langgraph-agentic-js/assets/docs/public-doc.md)
+- [`private-doc.md`](https://raw.githubusercontent.com/auth0-samples/auth0-ai-samples/refs/heads/main/authorization-for-rag/langgraph-agentic-js/assets/docs/private-doc.md)
+
+### Create helper functions
+
+Create a LangGraph agent and other helper functions that are needed to load documents.
+
+The first helper will create an in-memory vector store using `faiss` and `OpenAIEmbeddings`. You can replace this module with your own store, as long as it follows the LangChain retriever specification.
+
+```py helpers/memory_store.py wrap lines
+import faiss
+
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.docstore import InMemoryDocstore
+from langchain_community.vectorstores import FAISS
+
+class MemoryStore:
+    def __init__(self, store):
+        self.store = store
+
+    @classmethod
+    def from_documents(cls, documents):
+        embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002")
+        index = faiss.IndexFlatL2(1536)
+        docstore = InMemoryDocstore({})
+        index_to_docstore_id = {}
+        vector_store = FAISS(embedding_model, index, docstore, index_to_docstore_id)
+
+        vector_store.add_documents(documents)
+
+        return cls(vector_store)
+
+    def as_retriever(self):
+        return self.store.as_retriever()
+```
+
+The second helper will load the documents from the assets folder into the store.
+
+```py helpers/read_documents.py wrap lines
+import os
+
+from langchain_core.documents import Document
+
+def read_documents():
+    current_dir = os.path.dirname(__file__)
+    public_doc_path = os.path.join(current_dir, "../docs/public-doc.md")
+    private_doc_path = os.path.join(current_dir, "../docs/private-doc.md")
+
+    with open(public_doc_path, "r", encoding="utf-8") as file:
+        public_doc_content = file.read()
+
+    with open(private_doc_path, "r", encoding="utf-8") as file:
+        private_doc_content = file.read()
+
+    documents = [
+        Document(
+            page_content=public_doc_content,
+            metadata={"id": "public-doc", "access": "public"},
+        ),
+        Document(
+            page_content=private_doc_content,
+            metadata={"id": "private-doc", "access": "private"},
+        ),
+    ]
+
+    return documents
+```
+
+### Create a RAG Pipeline
+
+Define a RAG tool that uses the `FGARetriever` to filter authorized data from an in-memory vector database.
+
+In the first step, we will define a new RAG tool. The agent will call up the tool when needed.
+
+```py main.py wrap lines
+@tool
+def agent_retrieve_context_tool(query: str):
+    """Call to get information about a company, e.g., What is the financial outlook for ZEKO?"""
+    documents = read_documents()
+    vector_store = MemoryStore.from_documents(documents)
+
+    user_id = "admin"
+
+    retriever = FGARetriever(
+        retriever=vector_store.as_retriever(),
+        build_query=lambda doc: ClientBatchCheckItem(
+            user=f"user:{user_id}",
+            object=f"doc:{doc.metadata.get('id')}",
+            relation="viewer",
+        ),
+    )
+
+    relevant_docs = retriever.invoke(query)
+
+    if len(relevant_docs) > 0:
+        return "\n\n".join([doc.page_content for doc in relevant_docs])
+
+    return "I don't have any information on that."
+
+tools = [agent_retrieve_context_tool]
+```
+
+The `FGARetriever` defined in the `retrieve` node is designed to abstract the base retriever from the FGA query logic. In this case, the `build_query` argument lets us specify how to query our FGA model by asking if the user is a viewer of the document.
+
+```py main.py wrap lines
+# ...
+
+build_query=lambda doc: ClientBatchCheckItem(
+    user=f"user:{user_id}",
+    object=f"doc:{doc.metadata.get('id')}",
+    relation="viewer",
+),
+```
+
+Next, we define the reactive agent nodes, as seen in the file below. Please refer to the comments to see explanations of the steps:
+
+```py main.py wrap lines
+# ...
+
+def agent_node(state: State):
+    """
+    Generate the response from the agent.
+    """
+    llm_response = llm.invoke(state["messages"])
+    return {"messages": [llm_response]}
+
+def agent_should_continue(state: State):
+    """
+    Determines whether the conversation should continue based on the user input.
+    """
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+
+    return END
+
+def generate_response_node(state: State):
+    """
+    Generate the response from the agent based on the result of the RAG tool.
+    """
+    prompt = PromptTemplate(
+        template="""You are an assistant for question-answering tasks. Use the following pieces of retrieved-context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise. Question: {question}. Context: {context}. Answer:""",
+        input_variables=["question", "context"],
+    )
+
+    question = state["messages"][0].content
+    context = state["messages"][-1].content
+
+    chain = prompt | llm
+
+    llm_response = chain.invoke(
+        {"question": question, "context": context}, prompt=prompt
+    )
+
+    return {"messages": [llm_response]}
+```
+
+And finally, we build the graph.
+
+```py main.py wrap lines
+# ...
+
+# Create the OpenAI chat tool
+llm = ChatOpenAI(model="gpt-4o-mini").bind_tools(tools)
+
+# Build the graph
+graph_builder = StateGraph(State)
+tool_node = ToolNode(tools)
+
+# Define the nodes
+graph_builder.add_node("agent", agent_node)
+graph_builder.add_node("tools", tool_node)
+graph_builder.add_node("generate_response", generate_response_node)
+
+# Run the graph
+result = graph.invoke(
+    {"messages": [("human", "What is the financial outlook for ZEKO?")]}
+)
+print(result["messages"][-1].content)
+```
+
+### Run the application
+
+To run the application, simply run the Python script as follows:
+
+```bash wrap lines
+python main.py
+```
+
+The application can retrieve the information if you change the query to something available in the public document. Now, to access the private information, you'll need to update your tuple list. Go back to the Auth0 FGA dashboard in the **Tuple Management** section and click **\+ Add Tuple**. Fill in the following information:
+
+- **User**: `user:user1`
+- **Object**: select doc and add `private-doc` in the ID field
+- **Relation**: `viewer`
+
+Now, click **Add Tuple** and then run `npm start` again. This time, you should see a response containing the forecast information since you added a tuple that defines the `viewer` relation for `user1` to the `private-doc` object.
