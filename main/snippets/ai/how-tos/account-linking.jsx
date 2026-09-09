@@ -12,7 +12,7 @@ export const AccountLinking = ({ connectionLabel = "any Identity Provider" }) =>
     </p>
     <p>
       Account Linking is separate from{" "}
-      <a href="/ai/docs/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault">
+      <a href="/docs/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault">
         Connected Accounts for Token Vault
       </a>
       :

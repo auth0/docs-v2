@@ -51,7 +51,7 @@ export const Auth0SetupBlock = ({
           In <b>Purpose</b>, toggle on <b>Connected Accounts for Token Vault</b>. This lets the
           connection retrieve and securely store access tokens for external
           APIs. Learn more in{" "}
-          <a href="/ai/docs/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault">
+          <a href="/docs/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault">
             Connected Accounts for Token Vault
           </a>.
         </li>
