@@ -2,98 +2,107 @@ export const getSsoProviderEditMock = () => {
   const mockProvider = {
     id: 'test-provider-id',
     name: 'Provider Name',
+    display_name: 'SAML Provider',
     is_enabled: true,
-    strategy: 'waad' as const,
+    strategy: 'samlp' as const,
     options: {},
+    use_for_third_party_client_access: false,
+    cross_app_access_resource_app: { status: 'disabled' as const },
   };
 
-  const mockProvisioningConfig = {
-    scim_url: 'https://scim.example.com',
-    scim_token: 'mock-scim-token',
-    status: 'active',
-    last_synced: '2024-06-01T12:00:00Z',
+  const mockOrganization = {
+    name: 'Org',
+    branding: {
+      colors: {
+        primary: '',
+        page_background: '',
+      },
+      logo_url: undefined,
+    },
   };
 
-  const mockScimTokens = [
-    {
-      token_id: 'token-1',
-      scopes: ['scim'],
-      created_at: '2024-06-01T12:00:00Z',
+  const mockIdpConfig = {
+    organization: {
+      can_set_show_as_button: false,
+      can_set_assign_membership_on_login: false,
     },
-    {
-      token_id: 'token-2',
-      scopes: ['scim'],
-      created_at: '2024-06-02T12:00:00Z',
+    strategies: {
+      waad: {
+        provisioning_methods: [],
+        enabled_features: [],
+      },
+      adfs: {
+        provisioning_methods: [],
+        enabled_features: [],
+      },
+      'google-apps': {
+        provisioning_methods: [],
+        enabled_features: [],
+      },
+      oidc: {
+        provisioning_methods: [],
+        enabled_features: [],
+        cross_app_access_resource_app: {
+          status: {
+            default_value: 'disabled',
+            allowed_values: ['disabled', 'enabled'],
+          },
+        },
+      },
+      samlp: {
+        provisioning_methods: [],
+        enabled_features: [],
+        cross_app_access_resource_app: {
+          status: {
+            default_value: 'disabled',
+            allowed_values: ['disabled', 'enabled'],
+          },
+        },
+      },
+      okta: {
+        provisioning_methods: [],
+        enabled_features: [],
+        cross_app_access_resource_app: {
+          status: {
+            default_value: 'disabled',
+            allowed_values: ['disabled', 'enabled'],
+          },
+        },
+      },
+      pingfederate: {
+        provisioning_methods: [],
+        enabled_features: [],
+      },
     },
-  ];
+  };
 
-  const mockLogic = {
+  const unifiedProps = {
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
-    activeTab: 'sso',
     schema: undefined,
-    readOnly: true,
+    readOnly: false,
     providerId: 'mock-provider-id',
     domains: undefined,
     hideHeader: false,
-    currentStyles: { variables: {}, classes: {} },
+    hideProvisioningTab: false,
+    hideDeleteProvider: false,
+    hideRemoveFromOrganization: false,
+    hideAttributeMappings: false,
+    customMessages: {},
+    backButton: undefined,
+
+    // Data
     provider: mockProvider,
-    organization: {
-      name: 'Org',
-      branding: {
-        colors: {
-          primary: '',
-          page_background: '',
-        },
-        logo_url: undefined,
-      },
-    },
+    organization: mockOrganization,
+    idpConfig: mockIdpConfig,
+
+    // Loading states
     isLoading: false,
     isUpdating: false,
     isEnabling: false,
     isDeleting: false,
     isRemoving: false,
-    idpConfig: {
-      organization: {
-        can_set_show_as_button: false,
-        can_set_assign_membership_on_login: false,
-      },
-      strategies: {
-        waad: {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-        adfs: {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-        'google-apps': {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-        oidc: {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-        samlp: {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-        okta: {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-        pingfederate: {
-          provisioning_methods: [],
-          enabled_features: [],
-        },
-      },
-    },
-    customMessages: {},
-    backButton: undefined,
-    shouldAllowDeletion: true,
     isLoadingConfig: false,
     isLoadingIdpConfig: false,
-    showProvisioningTab: true,
     isProvisioningUpdating: false,
     isProvisioningDeleting: false,
     isScimTokensLoading: false,
@@ -103,49 +112,30 @@ export const getSsoProviderEditMock = () => {
     isProvisioningAttributesSyncing: false,
     hasSsoAttributeSyncWarning: false,
     hasProvisioningAttributeSyncWarning: false,
-    provisioningConfig: mockProvisioningConfig as
-      | typeof mockProvisioningConfig
-      | undefined,
-    scimTokens: mockScimTokens,
-    t: (key: string) => key,
-  };
 
-  const mockHandlers = {
-    setActiveTab: () => {},
+    // Feature flags
+    shouldAllowDeletion: true,
+    showProvisioningTab: true,
+    showThirdPartyAccess: true,
+    showCrossAppAccess: true,
+    isCrossAppAccessReadOnly: false,
+
+    // Handlers
     updateProvider: async () => {},
-    createProvisioningAction: async () => {
-      mockLogic.provisioningConfig = mockProvisioningConfig;
-    },
-    deleteProvisioningAction: async () => {
-      mockLogic.provisioningConfig = undefined;
-    },
-    listScimTokens: async () => ({ scim_tokens: mockScimTokens }),
-    createScimTokenAction: async () => {
-      const token = {
-        token_id: `token-${mockLogic.scimTokens.length + 1}`,
-        scopes: ['scim'],
-        created_at: '2024-06-03T12:00:00Z',
-      };
-      mockLogic.scimTokens.push(token);
-      return { ...token, token: `scim-secret-${token.token_id}` };
-    },
-    deleteScimTokenAction: async (idpScimTokenId: string) => {
-      mockLogic.scimTokens = mockLogic.scimTokens.filter(
-        (t) => t.token_id !== idpScimTokenId,
-      );
-    },
+    listScimTokens: async () => ({ scim_tokens: [] }),
     syncSsoAttributes: async () => {},
-    syncProvisioningAttributes: async () => {},
     onDeleteConfirm: async () => {},
     onRemoveConfirm: async () => {},
-    handleToggleProvider: async () => {
-      mockLogic.provider.is_enabled = !mockLogic.provider.is_enabled;
-    },
-    fetchProvisioning: async () => {
-      mockLogic.provisioningConfig = mockProvisioningConfig;
-      return mockProvisioningConfig;
-    },
+    handleToggleProvider: async () => {},
+    createProvisioning: async () => {},
+    deleteProvisioning: async () => {},
+    createScimToken: async () => undefined,
+    deleteScimToken: async () => {},
+    syncProvisioningAttributes: async () => {},
+    fetchProvisioning: async () => null,
+
+    enableProviderAction: undefined,
   };
 
-  return { logic: mockLogic, handlers: mockHandlers };
+  return { ...unifiedProps };
 };
