@@ -388,6 +388,7 @@ export const SectionCard = ({ item }) => {
   const sample = getLink(item, "sample app");
   const quickstart = getLink(item, "quickstart");
   const docs = getLink(item, "Get started");
+  const reference = getLink(item, "reference");
 
   const title = item?.name ?? "";
   const subtext = item?.subtext ?? "";
@@ -493,20 +494,33 @@ export const SectionCard = ({ item }) => {
             )}
           </div>
 
-          {tertiary && (
-            <a
-              href={tertiary.url}
-              className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
-              style={{ borderBottom: "none !important" }}
-            >
-              {tertiaryLabel === "Quickstart" ? (
-                <Icon icon="play" className="w-3 h-3 shrink-0" />
-              ) : (
-                <Icon icon="file-lines" className="w-3 h-3 shrink-0" />
-              )}
-              <span className="w-full">{tertiaryLabel}</span>
-            </a>
-          )}
+          <div className="libraries_cards flex items-center w-full gap-5">
+            {tertiary && (
+              <a
+                href={tertiary.url}
+                className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
+                style={{ borderBottom: "none !important" }}
+              >
+                {tertiaryLabel === "Quickstart" ? (
+                  <Icon icon="play" className="w-3 h-3 shrink-0" />
+                ) : (
+                  <Icon icon="file-lines" className="w-3 h-3 shrink-0" />
+                )}
+                <span className="w-full">{tertiaryLabel}</span>
+              </a>
+            )}
+
+            {reference && (
+              <a
+                href={reference.url}
+                className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="book" className="w-3 h-3 shrink-0" />
+                <span className="w-full">Reference</span>
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </article>
