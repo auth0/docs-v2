@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+// import { useState, useMemo, useRef, useEffect } from "react";
 
 export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
   const fuzzySearch = (needle, haystack) => {
