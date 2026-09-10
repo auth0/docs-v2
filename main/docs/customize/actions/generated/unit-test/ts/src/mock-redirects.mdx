@@ -1,0 +1,60 @@
+```ts title="mock-redirects.ts"
+import type { Event, PasswordResetPostChallengeAPI } from '@auth0/actions/password-reset-post-challenge/v1';
+
+const VERIFICATION_URL = 'https://verify.example.com/identity';
+const RISK_SCORE_THRESHOLD = 50;
+
+/**
+* Handler that will be called during the execution of a PasswordResetPostChallenge flow.
+* Redirects the user to an external identity verification page when the supplemental
+* risk assessment score exceeds the configured threshold.
+*
+* @param {Event} event - Details about the user and the password reset transaction.
+* @param {PasswordResetPostChallengeAPI} api - Interface whose methods can be used to change the behavior of the password reset.
+*/
+exports.onExecutePostChallenge = async (event: Event, api: PasswordResetPostChallengeAPI) => {
+  const riskScore = event.authentication.riskAssessment?.supplemental?.akamai?.akamaiUserRisk?.score ?? 0;
+
+  if (riskScore < RISK_SCORE_THRESHOLD) {
+    return;
+  }
+
+  const sessionToken = api.redirect.encodeToken({
+    secret: event.secrets.REDIRECT_SECRET,
+    payload: { userId: event.user.user_id },
+  });
+
+  api.redirect.sendUserTo(VERIFICATION_URL, {
+    query: { session_token: sessionToken },
+  });
+};
+
+/**
+* Handler that will be called when the user returns from the redirect issued by
+* onExecutePostChallenge. Validates the session token before allowing the password
+* reset flow to proceed.
+*
+* @param {Event} event - Details about the user and the password reset transaction.
+* @param {PasswordResetPostChallengeAPI} api - Interface whose methods can be used to change the behavior of the password reset.
+*/
+exports.onContinuePostChallenge = async (event: Event, api: PasswordResetPostChallengeAPI) => {
+  let payload;
+
+  try {
+    payload = api.redirect.validateToken({ secret: event.secrets.REDIRECT_SECRET });
+  } catch (err) {
+    api.access.deny(`Unable to verify redirect response: ${(err as Error).message}`);
+    return;
+  }
+
+  if (payload.userId !== event.user.user_id) {
+    api.access.deny('Verification response does not match the current user.');
+    return;
+  }
+
+  if (event.request.query.verified !== 'true') {
+    api.access.deny('Identity verification was not completed.');
+  }
+};
+
+```
