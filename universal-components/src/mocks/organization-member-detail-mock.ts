@@ -80,10 +80,19 @@ export const getOrganizationMemberDetailMock = () => {
     styling: {
       variables: { common: {}, light: {}, dark: {} },
       classes: {
+        'OrganizationMemberDetail-root': 'uc-member-detail-preview',
         'OrganizationMemberDetail-header': 'uc-preview-hide-back-button',
       },
     },
-    customMessages: {},
+    customMessages: {
+      member: {
+        detail: {
+          roles: {
+            description: 'Manage user roles and permissions.',
+          },
+        },
+      },
+    },
 
     permissions: {
       canInvite: true,
