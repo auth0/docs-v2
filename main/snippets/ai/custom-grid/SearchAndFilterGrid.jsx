@@ -1,5 +1,4 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { CustomCard } from "/snippets/ai/custom-grid/CustomCard.jsx";
 
 export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
   const fuzzySearch = (needle, haystack) => {
@@ -127,9 +126,57 @@ export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
       </div>
 
       <Columns cols={2}>
-        {sortedItems.map((item) => (
-          <CustomCard item={item} key={item.id} />
-        ))}
+        {sortedItems.map((item) => {
+          const isComingSoon = item.status === "Coming Soon";
+          return (
+            <Card href={item.href} disabled={isComingSoon} key={item.id}>
+              <div className="custom-card">
+                <div className="custom-card-header">
+                  <span
+                    className={`custom-card-icon ${
+                      isComingSoon ? "coming-soon" : ""
+                    }`}
+                  >
+                    <img
+                      src={item.icon}
+                      alt={`${item.title} icon`}
+                      style={{ ...item.styles }}
+                    />
+                  </span>
+                  <h3
+                    className={`custom-card-title ${
+                      isComingSoon ? "coming-soon" : ""
+                    }`}
+                  >
+                    {item.title}
+                  </h3>
+                </div>
+
+                <p
+                  className={`custom-card-description ${
+                    isComingSoon ? "coming-soon" : ""
+                  }`}
+                >
+                  {item.description}
+                </p>
+
+                <div className="custom-card-footer">
+                  <span
+                    className={`custom-card-type-tag ${
+                      isComingSoon ? "coming-soon" : ""
+                    }`}
+                  >
+                    {item.type}
+                  </span>
+
+                  {isComingSoon && (
+                    <em className="custom-card-coming-soon">Coming Soon</em>
+                  )}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
       </Columns>
 
       {sortedItems.length === 0 && (
