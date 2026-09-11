@@ -1,0 +1,193 @@
+### 1. Configure Auth0 AI
+
+First, you must install the SDK:
+
+```bash wrap lines
+npm install @auth0/ai-llamaindex
+```
+
+Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required GitHub scopes.
+
+```typescript ./src/lib/auth0-ai.ts wrap lines
+import { Auth0AI } from "@auth0/ai-llamaindex";
+import { auth0 } from "@/lib/auth0";
+
+const auth0AI = new Auth0AI();
+
+export const withGitHub = auth0AI.withTokenVault({
+  connection: "github",
+  scopes: ["repo"],
+  refreshToken: async () => {
+    const session = await auth0.getSession();
+    const refreshToken = session?.tokenSet.refreshToken as string;
+    return refreshToken;
+  },
+});
+
+```
+<Info>
+Here, the property `auth0` is an instance of `@auth0/nextjs-auth0` to handle the application auth flows. <br/>
+You can check different authentication options for Next.js with Auth0 at the [official documentation.](https://github.com/auth0/nextjs-auth0?tab=readme-ov-file#3-create-the-auth0-sdk-client)
+</Info>
+
+### 2. Integrate your tool with GitHub
+
+Wrap your tool using the Auth0 AI SDK to obtain an access token for the GitHub API.
+
+```typescript ./src/lib/tools/listRepositories.ts wrap lines highlight={3-5,13,18,27-29}
+import { Octokit, RequestError } from "octokit";
+import { z } from "zod";
+import { withGitHub } from "@/lib/auth0-ai";
+import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
+import { TokenVaultError } from "@auth0/ai/interrupts";
+import { tool } from "llamaindex";
+
+export const listRepositories = () =>
+  withGitHub(
+    tool(
+      async () => {
+        // Get the access token from Auth0 AI
+        const accessToken = getAccessTokenFromTokenVault();
+
+        // GitHub SDK
+        try {
+          const octokit = new Octokit({
+            auth: accessToken,
+          });
+
+          const { data } = await octokit.rest.repos.listForAuthenticatedUser();
+
+          return data.map((repo) => repo.name);
+        } catch (error) {
+          if (error instanceof RequestError) {
+            if (error.status === 401) {
+              throw new TokenVaultError(
+                `Authorization required to access the Token Vault connection`
+              );
+            }
+          }
+
+          throw error;
+        }
+      },
+      {
+        name: "listRepositories",
+        description: "List respositories for the current user on GitHub",
+        parameters: z.object({}),
+      }
+    )
+  );
+```
+
+### 3. Handle authentication redirects
+
+Interrupts are a way for the system to pause execution and prompt the user to take an action —such as authenticating or granting API access— before resuming the interaction. This ensures that any required access is granted dynamically and securely during the chat experience. In this context, Auth0-AI SDK manages authentication redirects in the LlamaIndex SDK via these interrupts.
+
+#### Server Side
+
+On the server-side code of your Next.js App, you need to set up the tool invocation and handle the interruption messaging via the `errorSerializer`. The `setAIContext` function is used to set the async-context for the Auth0 AI SDK.
+
+```typescript ./src/app/api/chat/route.ts wrap lines highlight={2-5,15,35}
+import { createDataStreamResponse, LlamaIndexAdapter, Message, ToolExecutionError } from "ai";
+import { listRepositories } from "@/lib/tools/";
+import { setAIContext } from "@auth0/ai-llamaindex";
+import { withInterruptions } from "@auth0/ai-llamaindex/interrupts";
+import { errorSerializer } from "@auth0/ai-vercel/interrupts";
+import { OpenAIAgent } from "llamaindex";
+
+export async function POST(request: Request) {
+  const { id, messages }: { id: string; messages: Message[] } =
+    await request.json();
+
+  setAIContext({ threadID: id });
+
+  return createDataStreamResponse({
+    execute: withInterruptions(
+      async (dataStream) => {
+        const agent = new OpenAIAgent({
+          systemPrompt: "You are an AI assistant",
+          tools: [listRepositories()],
+          verbose: true,
+        });
+
+        const stream = await agent.chat({
+          message: messages[messages.length - 1].content,
+          stream: true,
+        });
+
+        LlamaIndexAdapter.mergeIntoDataStream(stream as any, { dataStream });
+      },
+      {
+        messages,
+        errorType: ToolExecutionError,
+      }
+    ),
+    onError: errorSerializer((err) => {
+      console.log(err);
+      return "Oops, an error occured!";
+    }),
+  });
+}
+```
+
+#### Client Side
+
+In this example, we utilize the `TokenVaultConsentPopup` component to show a pop-up that allows the user to authenticate with GitHub and grant access with the requested scopes. You'll first need to install the `@auth0/ai-components` package:
+
+```bash wrap lines
+npx @auth0/ai-components add TokenVault
+```
+
+Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
+
+```tsx ./src/components/chat.tsx wrap lines highlight={4-6,28-38}
+"use client";
+
+import { generateId } from "ai";
+import { TokenVaultConsentPopup } from "@/components/auth0-ai/TokenVault/popup";
+import { useInterruptions } from "@auth0/ai-vercel/react";
+import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
+import { useChat } from "@ai-sdk/react";
+
+export default function Chat() {
+  const { messages, handleSubmit, input, setInput, toolInterrupt } =
+    useInterruptions((handler) =>
+      useChat({
+        experimental_throttle: 100,
+        sendExtraMessageFields: true,
+        generateId,
+        onError: handler((error) => console.error("Chat error:", error)),
+      })
+    );
+
+  return (
+    <div>
+      {messages.map((message) => (
+        <div key={message.id}>
+          {message.role === "user" ? "User: " : "AI: "}
+          {message.content}
+          {message.parts && message.parts.length > 0 && (
+            <div>
+              {toolInterrupt?.toolCall.id.includes(message.id) &&
+                TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
+                  <TokenVaultConsentPopup
+                    interrupt={toolInterrupt}
+                    connectWidget={{
+                      title: `Requested by: "${toolInterrupt.toolCall.name}"`,
+                      description: "Description...",
+                      action: { label: "Check" },
+                    }}
+                  />
+                )}
+            </div>
+          )}
+        </div>
+      ))}
+
+      <form onSubmit={handleSubmit}>
+        <input value={input} placeholder="Say something..." onChange={(e) => setInput(e.target.value)} autoFocus />
+      </form>
+    </div>
+  );
+}
+```

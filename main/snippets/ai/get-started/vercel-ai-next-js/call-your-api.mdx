@@ -1,0 +1,141 @@
+import { Prerequisites } from "/snippets/ai/get-started/prerequisites/call-your-api.jsx";
+import { AccountAndAppSteps } from "/snippets/ai/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/ai/download-quickstart/DownloadQuickstartButton.jsx";
+
+<Prerequisites />
+
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="authenticate-users"
+  framework="vercel-ai-next-js"
+/>
+
+### Install dependencies
+
+In the root directory of your project, install the following dependencies:
+
+- `ai`: Core [Vercel AI SDK](https://sdk.vercel.ai/docs) module that interacts with various AI model providers.
+- `@ai-sdk/openai`: [OpenAI](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) provider for the Vercel AI SDK.
+- `@ai-sdk/react`: [React](https://react.dev/) UI components for the Vercel AI SDK.
+- `zod`: TypeScript-first schema validation library.
+
+```bash wrap lines
+npm install ai@6 @ai-sdk/openai@3 @ai-sdk/react@3 zod@3.25.76
+```
+
+### Update the environment file
+
+Copy the `.env.example` file to `.env.local` and update the variables with your Auth0 credentials. You can find your Auth0 domain, client ID, and client secret in the application you created in the Auth0 Dashboard.
+
+### Define a tool to call your API
+
+In this step, you'll create a Vercel AI tool to make the first-party API call. The tool fetches an access token to call the API.
+
+In this example, after taking in an Auth0 access token during user login, the tool returns the user profile of the currently logged-in user by calling the [/userinfo](/docs/api/authentication/user-profile/get-user-info) endpoint.
+
+```ts src/lib/tools/user-info.ts wrap lines
+import { tool } from "ai";
+import { z } from "zod";
+
+import { auth0 } from "../auth0";
+
+export const getUserInfoTool = tool({
+  description: "Get information about the current logged in user.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    const session = await auth0.getSession();
+    if (!session) {
+      return "There is no user logged in.";
+    }
+
+    const response = await fetch(
+      `https://${process.env.AUTH0_DOMAIN}/userinfo`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.tokenSet.accessToken}`,
+        },
+      }
+    );
+
+    if (response.ok) {
+      return { result: await response.json() };
+    }
+
+    return "I couldn't verify your identity";
+  },
+});
+```
+
+### Add the tool to the AI agent
+
+The AI agent processes and runs the user's request through the AI pipeline, including the tool call. Vercel AI simplifies this task with the `streamText()` method. Update the `/src/app/api/chat/route.ts` file with the following code:
+
+```ts src/app/api/chat/route.ts wrap lines highlight={2,11-13,23}
+//...
+import { getUserInfoTool } from "@/lib/tools/user-info";
+
+//... existing code
+
+export async function POST(req: NextRequest) {
+  const { id, messages }: { id: string; messages: Array<UIMessage> } = await req.json();
+
+  setAIContext({ threadID: id });
+
+  const tools = {
+    getUserInfoTool,
+  };
+
+  const stream = createUIMessageStream({
+    originalMessages: messages,
+    execute: async ({ writer }) => {
+      const result = streamText({
+        model: openai('gpt-4o-mini'),
+        system: AGENT_SYSTEM_TEMPLATE,
+        messages: await convertToModelMessages(messages),
+        stopWhen: stepCountIs(5),
+        tools,
+      });
+
+      writer.merge(
+        result.toUIMessageStream({
+          sendReasoning: true,
+        })
+      );
+    },
+    onError: (err: any) => {
+      console.log(err);
+      return `An error occurred! ${err.message}`;
+    },
+  });
+
+  return createUIMessageStreamResponse({ stream });
+}
+//... existing code
+```
+
+You need an API Key from OpenAI or another provider to use an LLM. Add that API key to your `.env.local` file:
+
+```bash .env.local wrap lines
+# ...
+# You can use any provider of your choice supported by Vercel AI
+OPENAI_API_KEY="YOUR_API_KEY"
+```
+
+If you use another provider for your LLM, adjust the variable name in `.env.local` accordingly.
+
+### Test your application
+
+To test the application, run `npm run dev` and navigate to `http://localhost:3000`. To interact with the AI agent, you can ask questions like `"who am I?"` to trigger the tool call and test whether it successfully retrieves information about the logged-in user.
+
+```bash wrap lines
+User: who am I?
+AI: It seems that there is no user currently logged in. If you need assistance with anything else, feel free to ask!
+
+User: who am I?
+AI: You are Deepu Sasidharan. Here are your details: - .........
+```
+
+That's it! You've successfully integrated first-party tool-calling into your project.
+
+Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/call-apis-on-users-behalf/your-api/vercel-ai-next-js).

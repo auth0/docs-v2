@@ -1,0 +1,312 @@
+import { Prerequisites } from "/snippets/ai/get-started/prerequisites/async-auth.jsx";
+import { AccountAndAppSteps } from "/snippets/ai/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/ai/download-quickstart/DownloadQuickstartButton.jsx";
+
+<Prerequisites
+  callbackUrl="http://localhost:8000/api/auth/callback"
+  logoutUrl="http://localhost:5173"
+/>
+
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="authenticate-users"
+  framework="langchain-fastapi-py"
+/>
+
+The project is divided into two parts:
+
+- `backend/`: contains the backend code for the Web app and API written in Python using FastAPI and the LangGraph agent.
+- `frontend/`: contains the frontend code for the Web app written in React as a Vite SPA.
+
+### Install dependencies
+
+In the `backend` directory of your project, install the following dependencies:
+
+- `auth0-ai-langchain`: [Auth0 AI SDK for LangChain](https://github.com/auth0/auth0-ai-python/tree/main/packages/auth0-ai-langchain) built for AI agents powered by LangChain.
+- `langgraph`: [LangGraph](https://pypi.org/project/langgraph/) for building stateful, multi-factor applications with LLMs.
+- `langchain-openai`: LangChain integrations for OpenAI.
+- `langgraph-cli`: LangGraph CLI for running a local LangGraph server.
+
+Make sure you have [uv](https://docs.astral.sh/uv/) installed and run the following command to install the dependencies:
+
+```bash wrap lines
+cd backend
+uv sync
+uv add "auth0-ai-langchain>=1.0.1" "langgraph>=0.5.4" langchain-openai "langgraph-cli[inmem]>=0.3.6" --prerelease=allow
+```
+
+### Update the environment file
+
+Copy the `.env.example` file to `.env` and update the variables with your Auth0 credentials. You can find your Auth0 domain, client ID, and client secret in the application you created in the Auth0 Dashboard.
+
+### Set up Human-in-the-Loop approvals
+
+Integrate the Auth0 AI SDK into your application to secure your async AI agent workflow. For this quickstart, we will use a blocking request flow. In real use cases, often an asynchronous flow is preferred.
+
+#### Configure the Auth0 AI SDK
+
+To require asynchronous authorization for your tool, the tool needs to be wrapped with the Async authorizer, `with_async_authorization()`. Let's create a helper function to wrap the tool with the Async authorizer.
+
+Create a file at `app/core/auth0_ai.py` and instantiate a new Auth0 AI SDK client:
+
+```python app/core/auth0_ai.py wrap lines
+from auth0_ai.authorizers.types import Auth0ClientParams
+from auth0_ai_langchain.auth0_ai import Auth0AI
+from langchain_core.runnables import ensure_config
+
+from app.core.config import settings
+
+auth0_ai = Auth0AI(
+    Auth0ClientParams(
+        {
+            "domain": settings.AUTH0_DOMAIN,
+            "client_id": settings.AUTH0_CLIENT_ID,
+            "client_secret": settings.AUTH0_CLIENT_SECRET,
+        }
+    )
+)
+
+with_async_authorization = auth0_ai.with_async_authorization(
+    audience=settings.SHOP_API_AUDIENCE,
+    # param: scopes
+    # add any scopes you want to use with your API
+    scopes=["openid", "product:buy"],
+    binding_message=lambda product, quantity: f"Do you want to buy {quantity} {product}",
+    user_id=lambda *_, **__: ensure_config()
+    .get("configurable")
+    .get("_credentials")
+    .get("user")
+    .get("sub"),
+    # param: requested_expiry
+    # Controls how long the authorization request is valid.
+    # requested_expiry=301,
+
+    # param: on_authorization_request
+    # When this flag is set to `block`, the execution of the tool awaits
+    # until the user approves or rejects the request.
+    #
+    # Given the asynchronous nature of the CIBA flow, this mode
+    # is only useful during development.
+    #
+    # In practice, the process that is awaiting the user confirmation
+    # could crash or timeout before the user approves the request.
+    on_authorization_request="block",
+
+    # requested_expiry=301,
+)
+```
+
+This will intercept the tool call to initiate an Async Authorization request:
+
+- The Async Authorization request includes the user ID that will approve the request.
+- Auth0 sends the user a mobile push notification. The AI agent polls the `/token` endpoint for a user response.
+- The mobile application retrieves the `bindingMessage` containing the consent details, in this case, the details of the product to purchase.
+- The user responds to the request:
+  - If the request is approved, the tool execution will continue.
+  - If the request is rejected, the tool execution will not continue.
+
+<Frame>
+  <img src="/docs/images/ai/async_auth_diagram.png" alt="CIBA sequence diagram" />
+</Frame>
+
+#### Pass credentials to the tools
+
+Update the API route to pass the user session data to the agent in `app/api/routes/chat.py`:
+
+```python app/api/routes/chat.py wrap lines highlight={2,9,21}
+# ...
+from app.core.auth import auth_client
+# ...
+
+@agent_router.api_route(
+    "/{full_path:path}", methods=["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"]
+)
+async def api_route(
+    request: Request, full_path: str, auth_session=Depends(auth_client.require_session)
+):
+    try:
+        # ... existing code
+
+        # Prepare body
+        body = await request.body()
+        if request.method in ("POST", "PUT", "PATCH") and body:
+            content = await request.json()
+            content["config"] = {
+                "configurable": {
+                    "_credentials": {
+                        "user": auth_session.get("user"),
+                    }
+                }
+            }
+            body = json.dumps(content).encode("utf-8")
+
+            # ... existing code
+```
+
+#### Create a tool to call your API
+
+In this example, we use a tool that buys products on the user's behalf. When the user approves the transaction, the Auth0 AI SDK retrieves an access token to call the shop's API. Upon completing the Async Authorization flow, the AI agent responds with a message confirming the purchase. The Auth0 AI SDK returns an error response if the user denies the transaction.
+
+Now, create a file `app/agents/tools/shop_online.py` and add the following code:
+
+```python app/agents/tools/shop_online.py wrap lines
+import httpx
+from langchain_core.tools import StructuredTool
+from auth0_ai_langchain.async_authorization import get_async_authorization_credentials
+from pydantic import BaseModel
+
+from app.core.auth0_ai import with_async_authorization
+from app.core.config import settings
+
+
+class BuyOnlineSchema(BaseModel):
+    product: str
+    quantity: int
+
+
+async def shop_online_fn(product: str, quantity: int):
+    """Tool to buy products online."""
+
+    api_url = settings.SHOP_API_URL
+
+    if not api_url.strip():
+        # No API set, mock a response
+        return f"Ordered {quantity} {product}"
+
+    credentials = get_async_authorization_credentials()
+
+    if not credentials:
+        raise ValueError("Async Authorization credentials not found")
+
+    headers = {
+        "Authorization": f"Bearer {credentials['access_token']}",
+        "Content-Type": "application/json",
+    }
+
+    data = {
+        "product": product,
+        "quantity": quantity,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                api_url,
+                headers=headers,
+                json=data,
+            )
+
+        if response.status_code != 200:
+            raise ValueError(f"Failed to buy product: {response.text}")
+
+        return response.json()
+
+    except httpx.HTTPError as e:
+        return {
+            "success": False,
+            "error": f"Failed to buy product: {str(e)}",
+        }
+
+
+shop_online = with_async_authorization(
+    StructuredTool(
+        name="shop_online",
+        description="Tool to buy products online.",
+        args_schema=BuyOnlineSchema,
+        coroutine=shop_online_fn,
+    )
+)
+```
+
+### Update environment variables
+
+You need to [obtain an API Key from OpenAI](https://platform.openai.com/api-keys) to use an LLM.
+
+If you want to use an API, it must be [registered with Auth0](/docs/get-started/apis) and have a valid audience.
+
+Update the `.env` file with the following variables:
+
+```bash .env wrap lines
+# ... existing variables
+# OpenAI API configuration
+OPENAI_API_KEY="YOUR_API_KEY"
+
+# Shop API configuration
+SHOP_API_URL=<your-shop-api-url>
+SHOP_API_AUDIENCE="https://api.shop-online-demo.com"
+```
+
+Update your `app/core/config.py` to include the shop audience:
+
+```python app/core/config.py wrap lines highlight={4,5}
+# ...
+class Settings(BaseSettings):
+    # ... existing code
+    SHOP_API_URL: str = ""
+    SHOP_API_AUDIENCE: str = ""
+    # ... existing code
+```
+
+### Require async authorization for your tool
+
+Call the tool from your AI app to make purchases. Update the `app/agents/assistant0.py` file with the following code:
+
+```python app/agents/assistant0.py wrap lines highlight={2,4}
+# ...
+from app.agents.tools.shop_online import shop_online
+
+tools = [shop_online]
+
+llm = ChatOpenAI(model="gpt-4.1-mini")
+
+# ... existing code
+agent = create_react_agent(
+    llm,
+    tools=ToolNode(tools, handle_tool_errors=False),
+    prompt=get_prompt(),
+)
+```
+
+### Test your application
+
+To test the application, start the FastAPI backend, LangGraph server, and the frontend:
+
+1. In a new terminal, start the FastAPI backend:
+
+```bash wrap lines
+cd backend
+source .venv/bin/activate
+fastapi dev app/main.py
+```
+
+2. In another terminal, start the LangGraph server:
+
+```bash wrap lines
+cd backend
+source .venv/bin/activate
+uv pip install -U langgraph-api
+langgraph dev --port 54367 --allow-blocking
+```
+
+<Note>
+  This will open the LangGraph Studio in a new tab. You can close it as we won't
+  require it for testing the application.
+</Note>
+
+3. In another terminal, start the frontend:
+
+```bash wrap lines
+cd frontend
+cp .env.example .env # Copy the `.env.example` file to `.env`.
+npm install
+npm run dev
+```
+
+Visit the URL `http://localhost:5173` in your browser and interact with the AI agent.
+
+You can ask the AI agent to buy a product, for example, "Buy an XYZ phone." Now, look for a push notification from the [Auth0 Guardian app](/docs/secure/multi-factor-authentication/auth0-guardian) or your custom app integrated with the [Auth0 Guardian SDK](/docs/secure/multi-factor-authentication/auth0-guardian) on your mobile device. Once you approve the notification, you should see the tool being executed and a response from the agent.
+
+That's it! You've successfully integrated asynchronous authorization into your LangGraph FastAPI project.
+
+Explore the [example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/asynchronous-authorization/langchain-fastapi-py).
