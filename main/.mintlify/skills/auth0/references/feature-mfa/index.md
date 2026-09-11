@@ -56,13 +56,14 @@ Recipe (do in order):
 
 | Your context | Verify with |
 |---|---|
-| Session-managing SDK (web app) | The `amr` claim (contains `mfa` when MFA completed) off the SDK's own session / current-user accessor - already validated, so trust it as-is. Accessor name is SDK-specific -> see the `framework-*` reference. |
+| Session-managing SDK (web app) | The `amr` claim (contains `mfa` when MFA completed) off the SDK's own session / current-user accessor - already validated, so trust it as-is. Accessor name is SDK-specific -> see the SDK's own example ("Example code snippets" below). |
 | Resource API (raw bearer token) | The high-value **scope** (e.g. `transfer:funds`) on the access token, via your *existing* JWT/scope-check middleware - see "Related capabilities". |
 | Frontend | Nothing - treat any `amr` check as UX, never enforcement. |
 
 Notes: a silent token request may instead surface an `mfa_required` error - handle it by
 re-authenticating interactively. Never re-decode or re-verify the token by hand (see
-"Common mistakes"). `amr` is not a reliable contract for *which* factor ran; to enforce a
+"Common mistakes"). Some session SDKs persist only a default subset of ID-token claims, so
+`amr` can be missing from the accessor until you opt it in (see "Common mistakes"). `amr` is not a reliable contract for *which* factor ran; to enforce a
 **specific** factor, have the post-login Action read `event.authentication.methods[].type`
 into a custom claim. Action-defined MFA overrides the Guardian policy (it refines, not
 replaces) and differs from **Adaptive MFA** (the Guardian `confidence-score` policy, owned
@@ -73,7 +74,7 @@ not relax it.
 
 The app collects credentials, so no browser runs the challenge: sign-in returns an
 `mfa_required` error carrying an `mfa_token`. Each step is a method on the SDK's own MFA
-client - get exact names from the `framework-*` example; never hand-roll the token grant
+client - get exact names from the SDK's own example ("Example code snippets" below); never hand-roll the token grant
 or the MFA API URLs.
 
 Recipe (do in order):
@@ -116,7 +117,7 @@ and what the app must get right:
 
 SDK-specific symbols (an SDK's own method or option name - e.g. the silent-token call,
 the `mfa_required`/`MfaRequiredError` handling, the interactive re-auth option, refresh-token
-requirements) are **not** listed here; they belong in the relevant `framework-*` reference.
+requirements) are **not** listed here; get them from the SDK's own example (see "Example code snippets").
 
 ### `amr` claim values
 
@@ -148,24 +149,29 @@ Returned by the token/authorization endpoints during an MFA flow (KEEP INLINE):
 
 ### Example code snippets
 
-**Before writing MFA code:** find the one row below matching the detected SDK and read
-ONLY the named section from its URL (from that heading down to the next `## `) - these are
-large multi-topic files, so with `WebFetch` ask it to return just that section verbatim.
-No matching row (a backend SDK not listed below), or the fetch fails? Fall
-back to the language-neutral mechanic above. Never substitute a web search for "how to do
-MFA".
-files or docs searches.
+**Before writing MFA code:** find the row below matching the detected SDK **and** the flow
+being implemented — for SDKs with both an `(MFA)` and a `(step-up)` row, default to `(step-up)` unless the user explicitly requests the MFA API flow.
+Read ONLY the named section from its URL (from that heading down to the next `## `) - these
+are large multi-topic files, so with `WebFetch` ask it to return just that section verbatim.
+No matching row (a backend SDK not listed below), or the fetch fails? Fall back to the
+language-neutral mechanic above. Never substitute a web search for "how to do MFA".
 
 | SDK | Raw example file (markdown) | Find section |
 |---|---|---|
-| `@auth0/auth0-react` | https://raw.githubusercontent.com/auth0/auth0-react/main/EXAMPLES.md | `## Step-Up Authentication` |
-| `@auth0/auth0-vue` | https://raw.githubusercontent.com/auth0/auth0-vue/main/EXAMPLES.md | `## Step-Up Authentication` |
-| `@auth0/auth0-angular` | https://raw.githubusercontent.com/auth0/auth0-angular/main/EXAMPLES.md | `## Step-Up Authentication` |
-| `@auth0/auth0-spa-js` | https://raw.githubusercontent.com/auth0/auth0-spa-js/main/EXAMPLES.md | `## Step-Up Authentication` |
-| `@auth0/nextjs-auth0` | https://raw.githubusercontent.com/auth0/nextjs-auth0/main/EXAMPLES.md | `## Multi-Factor Authentication (MFA)` |
-| `@auth0/auth0-auth-js` | https://raw.githubusercontent.com/auth0/auth0-auth-js/main/packages/auth0-auth-js/EXAMPLES.md | `## Using Multi-Factor Authentication (MFA)` |
+| `@auth0/auth0-react` (MFA) | https://raw.githubusercontent.com/auth0/auth0-react/main/EXAMPLES.md | `## Multi-Factor Authentication (MFA)` |
+| `@auth0/auth0-react` (step-up) | https://raw.githubusercontent.com/auth0/auth0-react/main/EXAMPLES.md | `## Step-Up Authentication` |
+| `@auth0/auth0-vue` (MFA) | https://raw.githubusercontent.com/auth0/auth0-vue/main/EXAMPLES.md | `## Multi-Factor Authentication (MFA)` |
+| `@auth0/auth0-vue` (step-up) | https://raw.githubusercontent.com/auth0/auth0-vue/main/EXAMPLES.md | `## Step-Up Authentication` |
+| `@auth0/auth0-angular` (MFA) | https://raw.githubusercontent.com/auth0/auth0-angular/main/EXAMPLES.md | `## Multi-Factor Authentication (MFA)` |
+| `@auth0/auth0-angular` (step-up) | https://raw.githubusercontent.com/auth0/auth0-angular/main/EXAMPLES.md | `## Step-Up Authentication` |
+| `@auth0/auth0-spa-js` (step-up) | https://raw.githubusercontent.com/auth0/auth0-spa-js/main/examples/step-up-authentication.md | whole file |
+| `@auth0/nextjs-auth0` | https://raw.githubusercontent.com/auth0/nextjs-auth0/main/guides/mfa.md | whole file |
+| `@auth0/auth0-auth-js` | https://raw.githubusercontent.com/auth0/auth0-auth-js/main/packages/auth0-auth-js/examples/mfa.md | whole file |
 | `@auth0/auth0-server-js` | https://raw.githubusercontent.com/auth0/auth0-auth-js/main/packages/auth0-server-js/MFA.md | whole file |
-| `auth0-server-python` | https://raw.githubusercontent.com/auth0/auth0-server-python/main/examples/StepUpAuthentication.md | whole file |
+| `Auth0.swift` (iOS/macOS) | https://raw.githubusercontent.com/auth0/Auth0.swift/master/examples/mfa-api.md | whole file |
+| `Auth0.Android` | https://raw.githubusercontent.com/auth0/Auth0.Android/main/examples/authentication-api/mfa-flexible-factors.md | whole file |
+| `auth0-server-python` (MFA flow) | https://raw.githubusercontent.com/auth0/auth0-server-python/main/examples/MFA.md | whole file |
+| `auth0-server-python` (step-up) | https://raw.githubusercontent.com/auth0/auth0-server-python/main/examples/StepUpAuthentication.md | whole file |
 
 ## Tenant configuration
 
@@ -181,17 +187,25 @@ first, then choose an enforcement path - the two are independent:
   calls `api.multifactor.enable(...)`; do **not** set the `all-applications` policy, or MFA
   becomes mandatory for every application instead of the conditions the Action defines.
 
-The CLI anchor for the tenant-wide path (enable factor, then require the policy):
+The CLI anchor for the tenant-wide path (enable factors, then enforce the policy). SMS requires three separate endpoints — `guardian/factors/sms` does not accept `message_type` or `provider` in its body (returns 400); use the phone sub-endpoints below:
 
 ```bash
-# 1. Enable a factor (otp shown; others: sms, email, push-notification,
-#    webauthn-roaming, webauthn-platform)
+# TOTP / Authenticator app
 auth0 api put "guardian/factors/otp" --data '{"enabled": true}'
 
-# 2. Require MFA tenant-wide. PUT replaces the whole policy list with a bare array;
-#    the wrong verb answers with a 404 that reads like a path/permissions problem.
-#    An empty array means "available but NOT required".
+# SMS — three steps required
+auth0 api put "guardian/factors/sms" --data '{"enabled": true}'
+auth0 api put "guardian/factors/phone/message-types" --data '{"message_types": ["sms"]}'
+auth0 api put "guardian/factors/phone/selected-provider" --data '{"provider": "auth0"}'
+
+# Email
+auth0 api put "guardian/factors/email" --data '{"enabled": true}'
+
+# Enforce MFA for all applications (PUT replaces the whole list; wrong verb returns 404)
 auth0 api put "guardian/policies" --data '["all-applications"]'
+
+# Verify with the list endpoint only — do not GET individual factors, they return 404
+auth0 api get "guardian/factors"
 ```
 
 The full factor set, the `confidence-score` (adaptive) policy, the Terraform
@@ -238,11 +252,13 @@ which uses the `mfa_token` and the MFA API surface instead:
 | Trusting a frontend MFA check | The client can be bypassed entirely | Enforce server-side: `amr` on a web/session backend, the high-value scope on a resource API |
 | Checking `amr` on a resource API's access token | Access tokens carry no `amr` by default, so valid stepped-up callers are rejected | Gate the API on the high-value scope; add `amr` as a custom claim only if this API also validates it |
 | Hand-decoding the token to read `amr` (`jwt.decode`, `PyJWKClient`, `id_token.split`, manual JWKS) | Reinvents validation the SDK already performed, and usually disables `exp`/`iss`/audience checks in the process | Read `amr` from the SDK's session/current-user accessor; its claims are already verified |
+| Assuming the session accessor always carries `amr` | Some SDKs persist only a default claim subset, so `amr` is silently absent and the check never passes | Opt the claim in: `@auth0/nextjs-auth0` v4 needs a `beforeSessionSaved` hook to copy `amr` into the session (`session.user.amr`); `express-openid-connect` keeps the full claims on `req.oidc.idTokenClaims`, not the filtered `req.oidc.user` |
 | Omitting `max_age=0` on step-up | A still-valid session satisfies the request with no fresh challenge | Send `max_age=0` (or the SDK's fresh-auth option) for step-up |
 | Ignoring `mfa_required` from a silent token call | The step-up silently fails and the action proceeds unverified | Catch it and re-authenticate interactively |
 | Preferring SMS by default | SMS is vulnerable to SIM-swap | Prefer TOTP or WebAuthn; treat SMS as a fallback |
 | No recovery codes enabled | Users get locked out when they lose a device | Enable recovery codes during enrollment |
 | Wrong HTTP verb on `guardian/policies` | Returns a misleading 404 | Use `PUT` with a bare JSON array |
+| Sending `message_type` or `provider` to `guardian/factors/sms` directly | Returns a 400 — those fields are not accepted on that endpoint | Use `PUT guardian/factors/phone/message-types` for the message type and `PUT guardian/factors/phone/selected-provider` for the provider |
 | Using the Management API to list or remove a user's own factors during the sign-in flow | Forces the app to hold Management API admin scopes and ignores the `mfa_token` the flow already issued | List and challenge through the SDK's MFA client on the `mfa_token`; remove with a post-MFA `remove:authenticators` access token (mfa audience); reserve the Management API for admin / out-of-band |
 | Assuming an already-enrolled factor needs no challenge and jumping straight to verify | Diverges from the SDK's documented enrolled-factor flow and breaks for out-of-band factors (SMS/push), whose challenge is what delivers the code | Challenge the enrolled authenticator, then verify |
 
@@ -250,8 +266,9 @@ which uses the `mfa_token` and the MFA API surface instead:
 
 - **Tenant setup and Actions** - `tooling-cli` and `tooling-terraform` own Guardian
   factor/policy configuration and Action deployment (`auth0 actions ...`).
-- **SDK-side step-up trigger** - the detected `framework-*` reference owns the SDK's own
-  step-up call, its `mfa_required` handling, and any refresh-token requirement.
+- **SDK-side step-up trigger** - the SDK's own step-up call, its `mfa_required` handling,
+  and any refresh-token requirement live in that SDK's own example (see "Example code
+  snippets"), not in a `framework-*` reference.
 - **Server-side MFA enforcement** - the API `framework-*` references (JWT validation) own
   the scope/claim-check middleware; on a resource API gate the sensitive endpoint on the
   high-value scope (access tokens carry no `amr` by default), and on a web/session backend

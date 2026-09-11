@@ -1,59 +1,55 @@
 ---
-title: "Events Best Practices"
-'description': "Review best practices for using Events in Auth0"
+description: 配信の確認、非同期キューの使用、イベントの重複排除と順序付け、再試行および自動無効化の動作の理解など、イベントストリームを確実に処理するための Auth0 Events のベストプラクティスを確認する。
+title: Events のベストプラクティス
 ---
 
-<Warning>
-Events are currently available in Early Access. To use this feature, you must have an Enterprise plan. By using this feature, you agree to the applicable Free Trial terms in Okta’s [Master Subscription Agreement](https://www.okta.com/legal). To learn more about Auth0's product release cycle, read [Product Release Stages](/docs/ja-jp/troubleshoot/product-lifecycle/product-release-stages).
-</Warning>
+イベントストリームを開発する際に最大限の効果を得るため、Auth0 では以下にまとめたベストプラクティスに従うことを推奨しています。これらのガイドラインは、手戻りや負担を減らし、効率を高め、より優れたイベント活用の実現に役立ちます。
 
-For best results when developing event streams, Auth0 recommends adhering to the best practices compiled below. These guidelines can help reduce friction, increase efficiency, and promote a best-in-class eventing journey.
+### イベントの処理には非同期キューを使用する {#use-asynchronous-queues-to-process-events}
 
-### Use asynchronous queues to process events
+イベントを受信したら、HTTP 2XX OK (例: 200 OK、202 Accepted、204 No Content) を返して、イベントが正常に配信されたことを示します。この応答がない場合、Auth0 はイベント配信を失敗と見なし、[イベント配信失敗時のシステム動作](#system-behavior-during-failed-event-deliveries)で説明されている動作に従って再試行します。
 
-On receiving an event, respond with an HTTP 2XX OK (e.g., 200OK, 202 Accepted, 204 No Content)  to signal that the event was successfully delivered. Without this response, Auth0 considers the event delivery a failure and will retry in accordance with the behavior described under [System behavior during failed event deliveries](#system-behavior-during-failed-event-deliveries).
+スケーラビリティの問題を避けるため、受信したイベントを非同期キューで処理するようにハンドラーを構成してください。イベントを同期的に処理すると、Webhook 配信が急増した際に (たとえば、月初にすべてのサブスクリプションが更新されるとき) 、エンドポイントのホストが処理しきれなくなる可能性があります。非同期キューを使えば、同時発生するイベントをシステムで対応可能な速度で処理できます。
 
-To avoid scalability issues, configure your handler to process incoming events with an asynchronous queue. If processing events synchronously, any large spike in webhook deliveries (for example, during the beginning of the month when all subscriptions renew) may overwhelm your endpoint hosts. Asynchronous queues allow you to process the concurrent events at a rate your system can support.
+### 重複するイベントを無視する {#ignore-duplicate-events}
 
-### Ignore duplicate events
+Webhookエンドポイントでは、同じイベントを複数回受信することがあります。処理済みのイベントIDを記録しておくことで、重複したイベントの受信を防げます。
 
-Webhook endpoints may occasionally receive the same event more than once. You can guard against duplicated event receipts by logging the event IDs you’ve processed.
+### 順不同で届くイベントを処理する {#handle-out-of-sequence-events}
 
-### Handle out-of-sequence events
-
-Auth0 does not guarantee that events are delivered in the same sequence that they are generated. For example, when a user is created and then immediately updated such that another user is linked to it, you may receive:
+Auth0 は、イベントが生成された順序どおりに配信されることを保証していません。たとえば、ユーザーが作成された直後に更新され、別のユーザーにリンクされた場合、次のような順序で受信することがあります。
 
 * `user.updated (for User 1)`
 * `user.created (for User 1)`
 * `user.deleted (for User 2)`
 * `user.updated (for User 2)`
 
-To ensure you do not overwrite your data with stale information, check the timestamp of the incoming webhook data against the timestamp of the data in your system. Each `data.object` in the payload includes a `created_at` field and an `updated_at` field.
+古い情報でデータを上書きしないようにするには、受信したウェブフックの `time` 属性を、システム内のデータのタイムスタンプと比較してください。ペイロード内の `data.object` 属性には、操作固有のタイムスタンプとして `created_at` フィールドと `updated_at` フィールドが含まれる場合もあります。詳細については、[Event Catalog](/docs/ja-jp/events) のイベント詳細を参照してください。
 
-### Listen for specific event types
+### 特定のイベントタイプのみを受信する {#listen-for-specific-event-types}
 
-Configure your webhook endpoints to receive only the types of events required by your integration. Listening for extra events (or all events) puts undue strain on your server and is not recommended.
+Webhook エンドポイントが、連携に必要なイベントタイプのみを受信するように設定します。不要なイベント (またはすべてのイベント) を受信すると、サーバーに過度な負荷がかかるため、推奨されません。
 
-You can change the events that a webhook endpoint receives by [updating event streams](/docs/ja-jp/customize/events/create-an-event-stream).
+Webhook エンドポイントが受信するイベントは、[イベントストリームを更新](/docs/ja-jp/customize/events/create-an-event-stream)することで変更できます。
 
-### System behavior during failed event deliveries
+### イベント配信の失敗時におけるシステムの動作 {#system-behavior-during-failed-event-deliveries}
 
-Currently, Auth0  only allows four total attempts, including the initial attempt and three retries with exponential backoff (1s, 2s, 4s).  If you receive a 4XX, the event fails immediately with no retries, as retrying is unlikely to change the response.
+現在、Auth0 では、初回の試行と指数バックオフ (1秒、2秒、4秒) による3回の再試行を含め、合計4回までしか試行されません。4XX を受信した場合は、再試行しても応答が変わる可能性が低いため、イベントは再試行されず即座に失敗となります。
 
-If your endpoint still does not respond successfully after this time, the event is marked as failed, and Auth0 will no longer retry sending it. For more information on failing events, review [Event Stream Testing, Observability, and Failure Recovery](/docs/ja-jp/customize/events/event-testing-observability-and-failure-recovery).
+この時点までにエンドポイントが正常な応答を返さない場合、そのイベントは失敗としてマークされ、Auth0 は以後その送信を再試行しません。イベントの失敗について詳しくは、[イベントストリーム Testing, Observability, and Failure Recovery](/docs/ja-jp/customize/events/event-testing-observability-and-failure-recovery)を参照してください。
 
-### Disable failing event streams
+### 障害が発生しているイベントストリームを無効にする {#disable-failing-event-streams}
 
-Event streams are automatically disabled in the following scenarios:
+イベントストリームは、次のいずれかの場合に自動的に無効になります。
 
-* Auth0 receives 500 failures (i.e., anything other than a `2XX`) in a row.
-* The Event Stream reaches 5000 total failed deliveries.
-* Auth0 receives three consecutive delivery attempt failures (i.e., anything other than a `2XX`).
+* Auth0 が 500 回連続で失敗応答 (つまり、`2XX` 以外の応答) を受信した場合。
+* イベントストリーム の配信失敗総数が 5000 件に達した場合。
+* Auth0 が 3 回連続で配信試行の失敗 (つまり、`2XX` 以外の応答) を受信した場合。
 
-  + If you wish to permit more delivery attempt failures, submit a support ticket requesting the number of failures you wish to permit, and Auth0 will review your request.
+  * 配信試行の失敗回数の上限を増やしたい場合は、許可を希望する失敗回数を記載のうえ、サポートチケットを送信してください。Auth0 にてリクエストを確認します。
 
-## もっと詳しく
+## 詳細を見る {#learn-more}
 
-* [Event Types](/docs/ja-jp/customize/events/event-types)
-* [Create an Event Stream](/docs/ja-jp/customize/events/create-an-event-stream)
-* [Event Testing, Observability, and Failure Recovery](/docs/ja-jp/customize/events/event-testing-observability-and-failure-recovery)
+* [イベントカタログ](/docs/ja-jp/events)
+* [イベントストリームを作成する](/docs/ja-jp/customize/events/create-an-event-stream)
+* [イベントのテスト、可観測性、障害からの復旧](/docs/ja-jp/customize/events/event-testing-observability-and-failure-recovery)

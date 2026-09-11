@@ -12,6 +12,7 @@ export const getOrganizationDetailsEditLMock = () => {
         logo_url: '',
       },
       metadata: {},
+      third_party_client_access: 'block',
     },
     isLoading: false,
     isFetchLoading: false,
@@ -29,6 +30,9 @@ export const getOrganizationDetailsEditLMock = () => {
     },
     readOnly: false,
     hideHeader: false,
+    showThirdPartyAccess: true,
+    isThirdPartyAccessReadOnly: false,
+    thirdPartyAccessDefaultValue: 'block' as const,
   };
   return { ...unifiedProps };
 };
