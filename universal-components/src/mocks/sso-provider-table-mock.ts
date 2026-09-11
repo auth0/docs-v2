@@ -39,8 +39,8 @@ export const getSsoProviderTableMock = () => {
   const [selectedIdp, setSelectedIdp] = useState<any>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
-
-  const noop = () => {};
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
 
   return {
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
@@ -71,11 +71,11 @@ export const getSsoProviderTableMock = () => {
     shouldAllowDeletion: true,
     shouldHideCreate: false,
 
-    // Modals suppressed for this component's preview.
-    showDeleteModal: false,
-    showRemoveModal: false,
-    setShowDeleteModal: noop,
-    setShowRemoveModal: noop,
+    // Modals are intentionally live so readers can open the confirm dialogs.
+    showDeleteModal,
+    showRemoveModal,
+    setShowDeleteModal,
+    setShowRemoveModal,
 
     selectedIdp,
     setSelectedIdp,
@@ -89,8 +89,14 @@ export const getSsoProviderTableMock = () => {
     handleEdit: () => {
       console.log('Navigate to SSO Provider Edit Page');
     },
-    handleDelete: (idp: any) => setSelectedIdp(idp),
-    handleDeleteFromOrganization: (idp: any) => setSelectedIdp(idp),
+    handleDelete: (idp: any) => {
+      setSelectedIdp(idp);
+      setShowDeleteModal(true);
+    },
+    handleDeleteFromOrganization: (idp: any) => {
+      setSelectedIdp(idp);
+      setShowRemoveModal(true);
+    },
     handleToggleEnabled: async (idp: any, enabled: boolean) => {
       setProviders((prev) =>
         prev.map((p) => (p.id === idp.id ? { ...p, is_enabled: enabled } : p)),
@@ -102,6 +108,7 @@ export const getSsoProviderTableMock = () => {
         setProviders((prev) => prev.filter((p) => p.id !== provider.id));
         setIsDeleting(false);
         setSelectedIdp(null);
+        setShowDeleteModal(false);
       }, 700);
     },
     handleRemoveConfirm: async (provider: any) => {
@@ -110,6 +117,7 @@ export const getSsoProviderTableMock = () => {
         setProviders((prev) => prev.filter((p) => p.id !== provider.id));
         setIsRemoving(false);
         setSelectedIdp(null);
+        setShowRemoveModal(false);
       }, 700);
     },
   };

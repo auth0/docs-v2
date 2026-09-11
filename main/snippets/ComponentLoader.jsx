@@ -1,11 +1,35 @@
 export const ComponentLoader = (props) => {
-  const themePref = window?.localStorage?.getItem?.("isDarkMode");
-  const theme =
-    themePref === "dark" || themePref === "light"
-      ? themePref
-      : window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
+  const detectTheme = () => {
+    if (typeof document === "undefined") return "light";
+    const html = document.documentElement;
+    const colorScheme =
+      html.style.colorScheme ||
+      getComputedStyle(html).colorScheme;
+    if (colorScheme) return colorScheme === "dark" ? "dark" : "light";
+
+    const isDarkMode = window?.localStorage?.getItem?.("isDarkMode");
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    const shouldBeDark = isDarkMode === "dark" || (isDarkMode !== "light" && prefersDark);
+    return shouldBeDark ? "dark" : "light";
+  };
+
+  const [theme, setTheme] = useState(detectTheme);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    // Sync once on mount in case the theme resolved after first render.
+    setTheme(detectTheme());
+
+    const observer = new MutationObserver(() => setTheme(detectTheme()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "class", "data-theme", "data-theme-preference"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
   const lang = {
     i18n: {
       currentLanguage: props.lang || "en-US",
@@ -20,7 +44,6 @@ export const ComponentLoader = (props) => {
           theme === "light"
             ? "rgb(var(--gray-950)/.03)"
             : "rgb(255 255 255/.1)",
-        display: "flex",
         alignItems: "center",
         justifyContent: "center",
         position: "relative",
@@ -92,7 +115,7 @@ export const ComponentLoader = (props) => {
         style={{
           width: "100%",
           textAlign: "center",
-          color: theme === "light" ? "#6B7280" : "ffffff",
+          color: theme === "light" ? "#6B7280" : "#ffffff",
           fontSize: "12px",
           marginTop: "8px",
           marginBottom: "8px",

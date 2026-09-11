@@ -22,6 +22,7 @@ let isScanning = false;
 let routeChangeHandler: (() => void) | null = null;
 let themeObserver: MutationObserver | null = null;
 let currentColorScheme: string | null = null;
+let currentThemePreference: string | null = null;
 
 // ==================== Helper Functions ====================
 async function getModule() {
@@ -173,13 +174,15 @@ function cleanup() {
 
 function setupThemeWatcher() {
   currentColorScheme = detectColorScheme();
+  currentThemePreference = document.documentElement.getAttribute('data-theme-preference');
 
   themeObserver = new MutationObserver(() => {
     const newColorScheme = detectColorScheme();
+    const newThemePreference = document.documentElement.getAttribute('data-theme-preference');
 
-    // Check if color scheme actually changed
-    if (currentColorScheme !== newColorScheme) {
+    if (currentColorScheme !== newColorScheme || currentThemePreference !== newThemePreference) {
       currentColorScheme = newColorScheme;
+      currentThemePreference = newThemePreference;
       // Remount all components with new theme
       unmountAll();
       setTimeout(scanAndMount, 100);
@@ -189,7 +192,7 @@ function setupThemeWatcher() {
   // Observe HTML element for style and class changes
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['style', 'class', 'data-theme'],
+    attributeFilter: ['style', 'class', 'data-theme', 'data-theme-preference'],
   });
 }
 
