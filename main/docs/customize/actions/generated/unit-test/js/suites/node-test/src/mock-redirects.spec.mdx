@@ -1,0 +1,106 @@
+```js title="mock-redirects.spec.js"
+const assert = require('node:assert');
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
+const { getDefaultArguments, loadAction } = require('@auth0/actions/password-reset-post-challenge/v1/test');
+const path = require('path');
+
+const DIRNAME = path.dirname('../../../');
+const ACTION_PATH = path.resolve(DIRNAME, './src/mock-redirects.js');
+const VERIFICATION_URL = 'https://verify.example.com/identity';
+
+describe('onExecutePostChallenge', () => {
+  let loader;
+  let event;
+  let api;
+
+  beforeEach(async () => {
+    loader = await loadAction(ACTION_PATH);
+    [event, api] = getDefaultArguments();
+    event.secrets.REDIRECT_SECRET = 'test-secret';
+    mock.method(api.redirect, 'encodeToken', () => 'signed.jwt.token');
+    mock.method(api.redirect, 'sendUserTo');
+  });
+
+  afterEach(() => {
+    mock.reset();
+  });
+
+  it('does not redirect when the risk score is below the threshold', async () => {
+    event.authentication.riskAssessment.supplemental.akamai.akamaiUserRisk.score = 10;
+
+    await loader.execute('onExecutePostChallenge', event, api);
+
+    assert.strictEqual(api.redirect.encodeToken.mock.calls.length, 0);
+    assert.strictEqual(api.redirect.sendUserTo.mock.calls.length, 0);
+  });
+
+  it('redirects to the identity verification page when the risk score exceeds the threshold', async () => {
+    event.authentication.riskAssessment.supplemental.akamai.akamaiUserRisk.score = 80;
+
+    await loader.execute('onExecutePostChallenge', event, api);
+
+    assert.deepEqual(api.redirect.encodeToken.mock.calls[0].arguments, [{
+      secret: 'test-secret',
+      payload: { userId: event.user.user_id },
+    }]);
+    assert.deepEqual(api.redirect.sendUserTo.mock.calls[0].arguments, [VERIFICATION_URL, {
+      query: { session_token: 'signed.jwt.token' },
+    }]);
+  });
+});
+
+describe('onContinuePostChallenge', () => {
+  let loader;
+  let event;
+  let api;
+
+  beforeEach(async () => {
+    loader = await loadAction(ACTION_PATH);
+    [event, api] = getDefaultArguments();
+    event.secrets.REDIRECT_SECRET = 'test-secret';
+    mock.method(api.access, 'deny');
+  });
+
+  afterEach(() => {
+    mock.reset();
+  });
+
+  it('denies access when the redirect token cannot be validated', async () => {
+    mock.method(api.redirect, 'validateToken', () => {
+      throw new Error('invalid signature');
+    });
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    assert.deepEqual(api.redirect.validateToken.mock.calls[0].arguments, [{ secret: 'test-secret' }]);
+    assert.deepEqual(api.access.deny.mock.calls[0].arguments, ['Unable to verify redirect response: invalid signature']);
+  });
+
+  it('denies access when the token belongs to a different user', async () => {
+    mock.method(api.redirect, 'validateToken', () => ({ userId: 'someone-else' }));
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    assert.deepEqual(api.access.deny.mock.calls[0].arguments, ['Verification response does not match the current user.']);
+  });
+
+  it('denies access when the verification was not completed', async () => {
+    mock.method(api.redirect, 'validateToken', () => ({ userId: event.user.user_id }));
+    event.request.query.verified = 'false';
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    assert.deepEqual(api.access.deny.mock.calls[0].arguments, ['Identity verification was not completed.']);
+  });
+
+  it('allows the flow to continue when verification succeeded', async () => {
+    mock.method(api.redirect, 'validateToken', () => ({ userId: event.user.user_id }));
+    event.request.query.verified = 'true';
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    assert.strictEqual(api.access.deny.mock.calls.length, 0);
+  });
+});
+
+```

@@ -1,0 +1,109 @@
+```ts title="mock-redirects.test.ts"
+const { getDefaultArguments, loadAction } = require('@auth0/actions/password-reset-post-challenge/v1/test');
+const path = require('path');
+const { compileActionModules } = require('./test-utils/load-compiled-action');
+
+const DIRNAME = path.dirname('../../../');
+const ACTION_PATH = path.resolve(DIRNAME, './src/mock-redirects.ts');
+const VERIFICATION_URL = 'https://verify.example.com/identity';
+
+describe('onExecutePostChallenge', () => {
+  let loader: any;
+  let event: any;
+  let api: any;
+
+  beforeEach(async () => {
+    jest.resetAllMocks();
+    const { compiledActionPath } = compileActionModules(ACTION_PATH);
+    loader = await loadAction(compiledActionPath);
+    [event, api] = getDefaultArguments();
+    event.secrets.REDIRECT_SECRET = 'test-secret';
+    jest.spyOn(api.redirect, 'encodeToken').mockReturnValue('signed.jwt.token');
+    jest.spyOn(api.redirect, 'sendUserTo');
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('does not redirect when the risk score is below the threshold', async () => {
+    event.authentication.riskAssessment.supplemental.akamai.akamaiUserRisk.score = 10;
+
+    await loader.execute('onExecutePostChallenge', event, api);
+
+    expect(api.redirect.encodeToken).not.toHaveBeenCalled();
+    expect(api.redirect.sendUserTo).not.toHaveBeenCalled();
+  });
+
+  it('redirects to the identity verification page when the risk score exceeds the threshold', async () => {
+    event.authentication.riskAssessment.supplemental.akamai.akamaiUserRisk.score = 80;
+
+    await loader.execute('onExecutePostChallenge', event, api);
+
+    expect(api.redirect.encodeToken).toHaveBeenCalledWith({
+      secret: 'test-secret',
+      payload: { userId: event.user.user_id },
+    });
+    expect(api.redirect.sendUserTo).toHaveBeenCalledWith(VERIFICATION_URL, {
+      query: { session_token: 'signed.jwt.token' },
+    });
+  });
+});
+
+describe('onContinuePostChallenge', () => {
+  let loader: any;
+  let event: any;
+  let api: any;
+
+  beforeEach(async () => {
+    jest.resetAllMocks();
+    const { compiledActionPath } = compileActionModules(ACTION_PATH);
+    loader = await loadAction(compiledActionPath);
+    [event, api] = getDefaultArguments();
+    event.secrets.REDIRECT_SECRET = 'test-secret';
+    jest.spyOn(api.access, 'deny');
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('denies access when the redirect token cannot be validated', async () => {
+    jest.spyOn(api.redirect, 'validateToken').mockImplementation(() => {
+      throw new Error('invalid signature');
+    });
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    expect(api.redirect.validateToken).toHaveBeenCalledWith({ secret: 'test-secret' });
+    expect(api.access.deny).toHaveBeenCalledWith('Unable to verify redirect response: invalid signature');
+  });
+
+  it('denies access when the token belongs to a different user', async () => {
+    jest.spyOn(api.redirect, 'validateToken').mockReturnValue({ userId: 'someone-else' });
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    expect(api.access.deny).toHaveBeenCalledWith('Verification response does not match the current user.');
+  });
+
+  it('denies access when the verification was not completed', async () => {
+    jest.spyOn(api.redirect, 'validateToken').mockReturnValue({ userId: event.user.user_id });
+    event.request.query.verified = 'false';
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    expect(api.access.deny).toHaveBeenCalledWith('Identity verification was not completed.');
+  });
+
+  it('allows the flow to continue when verification succeeded', async () => {
+    jest.spyOn(api.redirect, 'validateToken').mockReturnValue({ userId: event.user.user_id });
+    event.request.query.verified = 'true';
+
+    await loader.execute('onContinuePostChallenge', event, api);
+
+    expect(api.access.deny).not.toHaveBeenCalled();
+  });
+});
+
+```
