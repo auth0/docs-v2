@@ -75,40 +75,50 @@ sequenceDiagram
   }
 }
 ```
-### Transfer anonymous sessions data to user's metadata 
+### Transfer anonymous sessions data to user's metadata
 
-When a user who has an anonymous session decides to log in or sign up, your application passes the `anonymous_session_token` to the `/authorize` endpoint using a cookie or an HTTP header. 
+There are different mechanisms to transfer an anonymous session into an authenticated user, depending on the flow you are using and where your application resides in terms of domains and FQDNs.
+
+#### Transferring a session in redirect flows (authorization code, authorization code with PKCE)
+
+##### Transferring a session through a cookie
+
+When a user who has an anonymous session decides to log in or sign up, your application passes the `anonymous_session_token` to the `/authorize` endpoint using a cookie. This mechanism works when your application and the authorization server live in the same domain — for example, when your application lives in `application.mydomain.com` and the authorization server's custom domain is `auth.mydomain.com`. In this case, the cookie is considered same-domain and forwarded to the authorization server automatically, so logging in works as usual:
 
 ```javascript cookie example
 // No extra code needed — cookie is sent automatically
 await auth0.loginWithRedirect();
 ```
 
-```javascript authorize endpoint example
-GET /authorize?
-  client_id: YOUR_CLIENT_ID&
-  redirect_uri: https://YOUR_ClIENT_URL/callback&
-  response_type: code&
-  scope: openid&
-  Auth0-Anonymous-Session: eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0...
-```
+##### Transferring a session through a transfer ticket
+
+In scenarios where cookies would need to travel cross-domain, multiple browser mechanisms will block the anonymous session cookie from being sent over the network. Even with the correct CORS configuration on the server and client, advanced mechanisms such as Apple's Intelligent Tracking Protection (ITP) may block or drop the cookie, resulting in unmatched users.
+
+To overcome this, use a two-step anonymous session transfer mechanism that does not rely on cookies:
+
+1. Call the `/anonymous/token` endpoint, requesting the `urn:auth0:anon_transfer_token` audience, to receive an `anon_transfer_token` in exchange.
+2. Include the `anon_transfer_token` as a parameter in the `/authorize` call.
+
+The `anon_transfer_token` is bound to the IP address that requested it. If you plan to use this cookieless mechanism for login, Auth0 recommends turning off the issuance of anonymous session cookies in your [tenant settings](/docs/manage-users/sessions/anonymous-sessions/configure-anonymous-sessions#configure-anonymous-sessions-in-your-auth0-tenant) to avoid undesired clashes or injections.
 
 ```mermaid actions={false}
 sequenceDiagram
   participant app as SPA/APP
   participant idp as Auth0
-  participant rs as Resource Server
-  note over app: User has been browsing the site<br>anonymously and now logs in.
-  app ->>+ idp: POST /authorize?client_id=xxx... <br>Cookie: auth0_anon=eJY...
-  idp ->> idp: Run post-login actions, includes anonymous_session data<br> (language, country, order_id)
-  idp ->> idp: api.idToken.addCustomClaim('original_uid', event.anonymous_session.user_id)
-  idp ->>- app: Access Token, ID Token (with original_uid claim), auth0 cookie
-  app ->>+ rs: Get /purchase?user:anon@1234-5678-90
-  rs ->> rs: Purchase order PO123 created by <br>user_id: anon@1234-5678-90
-  rs ->>- app: HTTP 200 OK {purchase_orders: ["PO123"]}
+  alt Login with cookie
+    app ->>+ idp: GET /authorize?client_id=xxx...<br>Cookie: auth0_anon=eyJ...
+  else Login with anonymous transfer token
+    app ->> idp: POST /anonymous/token<br>{audience: "urn:auth0:anon_transfer_token"}
+    idp ->> app: anon_transfer_token, expires in: 30
+    app ->>+ idp: GET /authorize?client_id=xxx...&anon_transfer_token=<att>
+  end
+  note over app,idp: Login ceremonies
+  idp ->> idp: Run post-login/pre-registration<br>includes event.anonymous_session
+  note over app,idp: Auth Code Callback
+  idp ->>- app: HTTP 200 OK <br> Access Token, ID Token...
 ```
 
-Auth0 makes the anonymous session data available in your [`pre-user-registration`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger)  and [`post-login`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) Actions triggers using the `event.anonymous_session` object.
+Upon successful login, Auth0 makes the anonymous session data available in your [`pre-user-registration`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/pre-user-registration-trigger) and [`post-login`](/docs/customize/actions/explore-triggers/signup-and-login-triggers/login-trigger) Actions triggers using the `event.anonymous_session` object.
 
 ```json anonymous session object
 {
@@ -125,11 +135,29 @@ Auth0 makes the anonymous session data available in your [`pre-user-registration
 }
 ```
 
+#### Transferring a session in a Resource Owner Password Grant (ROPG) scenario
+
+When using ROPG for login, include the `anonymous_session_token` in the request body of the `/oauth/token` call:
+
+```http Anonymous session token in a ROPG request
+POST /oauth/token HTTP/1.1
+
+username=<username>&
+password=<password>&
+client_id=<client_id>&
+scope=<desired scopes>&
+grant_type=http://auth0.com/oauth/grant-type/password-realm&
+client_secret=<secret>&
+realm=<database or realm>&
+audience=<desired audience>&
+anonymous_session_token=ANONYMOUS_SESSION_eyJ...
+```
+
 To learn more about anonymous sessions with Actions, read [Anonymous Sessions Use Cases](/docs/manage-users/sessions/anonymous-sessions/anonymous-sessions-use-cases).
 
 ### End the anonymous session after transfer
 
-Anonymous sessions are not automatically invalidated when a user authenticates. To end the session use the `/anonymous/logout` endpoint:
+Anonymous session cookies are not automatically flushed when a user authenticates, so the cookie can continue to be sent in subsequent logins. To end the session, use the `/anonymous/logout` endpoint:
 
 ```javascript wrap lines
 // In your application, after successful login
@@ -142,6 +170,10 @@ if (wasAnonymousSession) {
   });
 }
 ```
+
+Auth0 does not offer server-side invalidation for anonymous sessions. Logging out a session only cleans up the anonymous session cookie — if the browser or application retains the token after the cookie is cleaned up, that token can still be used normally.
+
+If you want more control over anonymous sessions, you can configure your tenant to not issue cookies for anonymous sessions at all — see [Configure anonymous sessions in your Auth0 tenant](/docs/manage-users/sessions/anonymous-sessions/configure-anonymous-sessions#configure-anonymous-sessions-in-your-auth0-tenant).
 
 ## Best practices
 
@@ -171,4 +203,5 @@ Here are some best practices for anonymous sessions:
 ## Learn more
 
 - [Configure Anonymous Sessions](/docs/manage-users/sessions/anonymous-sessions/configure-anonymous-sessions) Learn how to configure anonymous sessions.
+- [Configure Custom Claims for Anonymous Sessions](/docs/manage-users/sessions/anonymous-sessions/configure-custom-claims-for-anonymous-sessions) Learn how to map anonymous session metadata into access token claims.
 - [Anonymous Sessions Use Cases](/docs/manage-users/sessions/anonymous-sessions/anonymous-sessions-use-cases) Learn about anonymous sessions use cases. 
