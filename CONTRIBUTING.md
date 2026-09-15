@@ -77,3 +77,26 @@ Read [the Components page of our style guide](https://oktawiki.atlassian.net/wik
 ### Images and other media
 
 Upload images or other files to the `/images` folders in the repository following our [screenshot use policy in our style guide](https://oktawiki.atlassian.net/wiki/spaces/DOCS/pages/2544472521/Multimedia+and+screenshot+use+policy).
+
+## Translations
+
+The `main` site uses [General Translation](https://generaltranslation.com/en-US/docs/overview/get-started) for automated translation. We only write and maintain English content in `docs/`; the `fr-ca` and `ja-jp` locale directories are generated automatically and should not be edited by hand.
+
+A [GitHub Actions workflow](.github/workflows/translate.yml) runs the General Translation CLI on every push to `main` that touches translatable source files (`main/docs/**/*.mdx`, `main/docs/oas/**/*.json`, or `main/snippets/**/*.jsx`). It opens or updates a single automated PR (branch `automated/translations-update`) with the resulting translations, so locale content typically lags the English source by one PR cycle rather than updating instantly.
+
+### How the `gt` CLI works
+
+Translation behavior for `main` is configured in [`main/gt.config.json`](main/gt.config.json), which defines the target locales (`fr-ca`, `ja-jp`), which files are translatable, and how source paths map to locale paths.
+
+[`main/gt-lock.json`](main/gt-lock.json) is the lockfile the CLI generates and maintains. For each source file it stores a content hash (and a hash per locale translation). When you run `gt translate`, the CLI hashes the current source files and compares them against the lockfile — only files whose hash has changed (new or edited content) get re-translated; everything else is left untouched. This keeps translation runs fast and avoids re-translating content that hasn't changed. Don't edit `gt-lock.json` by hand; it's maintained entirely by the CLI.
+
+### Running `gt` locally
+
+To run `gt` commands (e.g. `gt translate`) locally instead of relying on CI, create a `.env.local` file inside `main/` with your project credentials:
+
+```
+GT_PROJECT_ID=<your-project-id>
+GT_API_KEY=<your-api-key>
+```
+
+Install the CLI globally with `npm i -g gt@latest`, then from inside `main/`, run commands with `gt <command>` (e.g. `gt translate`). Never commit `.env.local` — it contains a live API key.
