@@ -1,3 +1,4 @@
+// Creates the custom Token Vault Connections cards
 export const SectionsWithCards = ({ sections }) => {
   const [query, setQuery] = useState("");
 

@@ -1,5 +1,6 @@
 // import { useState, useMemo, useRef, useEffect } from "react";
 
+// Creates the custom css to search and filter Token Vault connections
 export const SearchAndFilterGrid = ({ items = [], filters = [] }) => {
   const fuzzySearch = (needle, haystack) => {
     if (!needle || !haystack) return false;
