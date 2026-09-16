@@ -38,7 +38,7 @@ The Mintlify CLI also provides some useful tools, like finding broken internal l
 
 Mintlify automatically generates a deployment preview for any PR against `main`.
 
-Additionally, for the `sus` and `tus` staging and testing environments, you can push to the `staging` and `testing` branches, respectively. Please coordinate with the team for use of these environments.
+Additionally, for the `sus` and `tus` staging and testing environments, you can (force) push to the `staging` and `testing` branches, respectively. Please coordinate with the team for use of these environments.
 
 ### External link checking
 
