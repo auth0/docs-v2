@@ -144,8 +144,6 @@ export const getOrganizationMemberDetailMock = () => {
     handleRemoveFromOrganizationConfirm: async () => {
       setIsRemovingFromOrganization(true);
       await delay();
-      setMember(null);
-      setMemberRoles([]);
       setIsRemovingFromOrganization(false);
       closeModal();
     },

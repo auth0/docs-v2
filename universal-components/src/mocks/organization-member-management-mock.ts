@@ -163,7 +163,7 @@ export const getOrganizationMemberManagementMock = () => {
   });
 
   return {
-    styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
+    styling: { variables: { common: {}, light: {}, dark: {} }, classes: { 'OrganizationInvitationTab-table': 'uc-invitation-table' } },
     customMessages: {},
     hideHeader: false,
     readOnly: false,

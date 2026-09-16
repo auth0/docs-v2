@@ -3,13 +3,15 @@ export const ComponentLoader = (props) => {
     if (typeof document === "undefined") return "light";
     const html = document.documentElement;
     const colorScheme =
-      html.style.colorScheme ||
-      getComputedStyle(html).colorScheme;
+      html.style.colorScheme || window.getComputedStyle(html).colorScheme;
     if (colorScheme) return colorScheme === "dark" ? "dark" : "light";
 
     const isDarkMode = window?.localStorage?.getItem?.("isDarkMode");
-    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-    const shouldBeDark = isDarkMode === "dark" || (isDarkMode !== "light" && prefersDark);
+    const prefersDark = window.matchMedia?.(
+      "(prefers-color-scheme: dark)",
+    ).matches;
+    const shouldBeDark =
+      isDarkMode === "dark" || (isDarkMode !== "light" && prefersDark);
     return shouldBeDark ? "dark" : "light";
   };
 
@@ -24,7 +26,12 @@ export const ComponentLoader = (props) => {
     const observer = new MutationObserver(() => setTheme(detectTheme()));
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["style", "class", "data-theme", "data-theme-preference"],
+      attributeFilter: [
+        "style",
+        "class",
+        "data-theme",
+        "data-theme-preference",
+      ],
     });
 
     return () => observer.disconnect();
