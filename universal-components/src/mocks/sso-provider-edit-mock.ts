@@ -76,6 +76,27 @@ export const getSsoProviderEditMock = () => {
     },
   };
 
+  const mockPermissions = {
+    canListProviders: true,
+    canCreateProvider: true,
+    canUpdateProvider: true,
+    canDeleteProvider: true,
+    canDetachProvider: true,
+    canListDomains: true,
+    canAssociateDomain: true,
+    canDissociateDomain: true,
+    canCreateDomain: true,
+    canVerifyDomain: true,
+    canDeleteDomain: true,
+    canCreateProvisioning: true,
+    canUpdateProvisioning: true,
+    canDeleteProvisioning: true,
+    canCreateScimToken: true,
+    canDeleteScimToken: true,
+    canConfigureProvider: true,
+    canShowProviderMenu: true,
+  };
+
   const unifiedProps = {
     styling: { variables: { common: {}, light: {}, dark: {} }, classes: {} },
     schema: undefined,
@@ -91,6 +112,7 @@ export const getSsoProviderEditMock = () => {
     backButton: undefined,
 
     // Data
+    permissions: mockPermissions,
     provider: mockProvider,
     organization: mockOrganization,
     idpConfig: mockIdpConfig,
