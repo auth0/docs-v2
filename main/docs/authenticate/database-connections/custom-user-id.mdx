@@ -1,0 +1,133 @@
+---
+title: How to Set Custom User IDs with Actions for New Users in Database Connections
+sidebarTitle: Set Custom User IDs
+description: Write a `pre-user-registration` Action to set custom `user_id`s when creating new users in database connections so you can maintain ID consistency across systems or standardize ID formats.
+validatedOn: 2026-09-14
+---
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="custom user ID assignment with Actions"
+    stage="ea"
+    terms="true"
+/>
+
+By default, when creating a new user, Auth0 automatically generates a [`user_id` attribute](/docs/manage-users/user-accounts/user-profiles/user-profile-structure#param-identities) as a unique identifier of that user.
+
+Database connections support setting a custom user ID during user creation. You may want to specify your own user IDs if you need standardized formatting or consistency across systems. For example:
+
+* Maintaining an existing user ID structure when migrating from another identity provider to Auth0 so that tokens, audit logs, and integrations remain consistent.
+
+* Ensuring compatibility with data or billing systems that require a specific formats like UUID v4 or sequential integer user IDs.
+
+* Matching user IDs to primary keys in an internal database or CRM for simplified data joins and reporting.
+
+* Composing deterministic user IDs from known attributes, like tenant names or app metadata.
+
+You can set a custom `user_id` by calling `api.user.setUserId()` in an [Action](/docs/customize/actions/actions-overview) added to the [`pre-user-registration` trigger](/docs/customize/actions/explore-triggers/pre-user-registration), which fires before a new user profile is created.
+
+## How user IDs are determined
+
+In the user profile, [the `identities` array](/docs/manage-users/user-accounts/user-profiles/user-profile-structure#param-identities) contains objects with information from each identity provider with which the user authenticates. Setting a custom user ID sets the `user_id` attribute in the `identities` array object for the database connection.
+
+There are different ways to set a custom `identities` user ID depending on how you create the user. The following table summarizes available creation methods and how the `user_id` is set by precedence:
+
+| User creation method | `user_id` precedence |
+|----------------------|-----------------------------|
+| The [Authentication API's Create a new user endpoint](/docs/api/authentication/signup/create-a-new-user) (`POST /dbconnections/signup`) or [Universal Login](/docs/authenticate/login/auth0-universal-login) sign-up | <ol><li>`api.user.setUserId()` in a `pre-user-registration` Action</li> <li>Auth0-generated user ID</li></ol> |
+| The [Management API's Create a user endpoint](/docs/api/management/v2/users/post-users) (`POST /users`) | <ol><li>`api.user.setUserId()` in a `pre-user-registration` Action</li> <li>[`user_id` set in the request body](/docs/api/management/v2/users/post-users#body-user-id)</li> <li>Auth0-generated user ID</li></ol> |
+| A custom database connection with [automatic migration](/docs/manage-users/user-migration/configure-automatic-migration-from-your-database) enabled | <ol><li>`api.user.setUserId()` in a `pre-user-registration` Action</li> <li>The [`user_id` attribute in the normalized user profile](/docs/manage-users/user-accounts/user-profiles/user-profile-structure#param-user-id) returned from the [Login](/docs/authenticate/database-connections/custom-db/templates/login) and [Get User](/docs/authenticate/database-connections/custom-db/templates/get-user) database action scripts</li><li>Auth0-generated user ID</li></ol> |
+| A [bulk user import job](/docs/manage-users/user-migration/bulk-user-imports) | <ol><li>The [bulk import JSON's `user_id` property](/docs/manage-users/user-migration/bulk-user-import-schema#param-user-id)</li> <li>Auth0-generated user ID</li></ol> |
+
+In summary, a user ID set with `api.user.setUserId()` in a `pre-user-registration` Action takes precedence over other methods of setting a custom user ID, but the `pre-user-registration` trigger does not fire for bulk import jobs.
+
+Additionally, Auth0 sets the user profile's [root-level `user_id`](/docs/manage-users/user-accounts/user-profiles/user-profile-structure#param-user-id) based on the profile's primary identity, which is the first identity in the `identities` array.
+
+The root-level `user_id` is the primary identity's user ID prefixed with the connection strategy (for example, `auth0|your_custom_id`). The root-level `user_id` is used as the value for the [`sub` claim](/docs/secure/tokens/json-web-tokens/json-web-token-claims), for example, so make sure downstream systems expect the prefixed value.
+
+## Set custom user IDs with a `pre-user-registration` Action
+
+To set a custom `user_id` with a `pre-user-registration` Action, you need to create the Action, write the code that sets the user ID to the value you want, and then add the Action to the `pre-user-registration` trigger.
+
+<Steps titleSize="h3">
+
+<Step title="Create the Action">
+Go to **[Dashboard > Actions > Library](https://manage.auth0.com/#/actions/library)**. Select **Create Action**, then choose **Create Custom Action** from the drop-down menu.
+
+In the **Create Action** window that opens, enter the following fields:
+
+	* **Name**: Choose a name for your action, like "Set Custom User ID".
+	* **Trigger**: Select **Pre User Registration**.
+	* **Runtime**: Choose your Node runtime.
+
+Then select **Create** to go to the Actions code editor for the new Action.
+</Step>
+
+<Step title="Write the Action code">
+In the Actions code editor, [write your Action code](/docs/customize/actions/action-coding-guidelines) using `api.user.setUserId()` to set the user ID based on your use case.
+
+Custom user IDs must meet the following requirements:
+
+* The `user_id` must be unique within the connection. If a user with the specified `user_id` already exists, creation fails.
+
+* The `user_id` must pass the same validation as the Management API [Create a user endpoint's `user_id` body parameter](/docs/api/management/v2/users/post-users#body-user-id).
+
+If user creation fails due to user ID issues, check your [tenant logs](/docs/deploy-monitor/logs) for [log type `fs`](/docs/tenant-logs/auth-signup-fail/fs) (failed sign-up).
+
+<AccordionGroup>
+	<Accordion title="Example: Generate a UUID v4">
+	You can generate a UUID v4 using Node's built-in `crypto` module:
+
+	```js wrap Example: Generate a UUID v4
+	exports.onExecutePreUserRegistration = async (event, api) => {
+	  const crypto = require('crypto');
+	  api.user.setUserId(crypto.randomUUID());
+	};
+	```
+	</Accordion>
+
+	<Accordion title="Example: Generate a specific UUID version">
+	If you need a specific UUID version (v1, v5, v7, etc.), add the `uuid` npm package as a dependency and use it in your Action:
+
+	```js wrap Example: Generate a specific UUID version
+	const { v7: uuidv7 } = require('uuid');
+
+	exports.onExecutePreUserRegistration = async (event, api) => {
+	  api.user.setUserId(uuidv7());
+	};
+	```
+	</Accordion>
+
+	<Accordion title="Example: Compose an ID from sign-up data">
+	You can compose a deterministic user ID from sign-up data, like an `app_metadata` value:
+
+	```js wrap Example: Compose an ID from sign-up data
+	exports.onExecutePreUserRegistration = async (event, api) => {
+	  const externalId = event.user.app_metadata?.external_id;
+	  if (externalId) {
+		api.user.setUserId(externalId);
+	  }
+	};
+	```
+	</Accordion>
+</AccordionGroup>
+
+Once you finish writing and [testing the Action](/docs/customize/actions/test-actions), select **Deploy**.
+</Step>
+
+<Step title="Add the Action to the trigger">
+After you deploy the Action, go to **[Dashboard > Actions > Triggers > Pre User Registration](https://manage.auth0.com/#/actions/triggers/pre-user-registration)**.
+
+In the **Add Action** section on the right, under **Custom**, drag the new Action you created into the flow between **Start** and **Complete**. Then, select **Apply**.
+</Step>
+</Steps>
+
+## Limitations
+
+* Setting a custom user ID with the `pre-user-registration` trigger is not supported for passwordless connections.
+
+* The `pre-user-registration` trigger does not fire for bulk import jobs.
+
+* You cannot set a custom `user_id` for users logging in via social or enterprise connections because those IDs are provided by the external identity provider.
+
+* You cannot change an existing user's `user_id`.
