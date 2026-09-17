@@ -4,6 +4,8 @@ import {
   getSsoProviderEditMock,
   getSsoProviderTableMock,
   getOrganizationDetailsEditLMock,
+  getOrganizationMemberDetailMock,
+  getOrganizationMemberManagementMock,
   getUserMfaManagementMock,
 } from "@/mocks";
 
@@ -15,6 +17,8 @@ const mockLogicRegistry: Record<string, () => unknown> = {
   "sso-provider-table": getSsoProviderTableMock,
   "organization-details-edit": getOrganizationDetailsEditLMock,
   "user-mfa-management": getUserMfaManagementMock,
+  "organization-member-management": getOrganizationMemberManagementMock,
+  "organization-member-detail": getOrganizationMemberDetailMock,
 };
 
 export function getComponentMock(componentName: string) {
