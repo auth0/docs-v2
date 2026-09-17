@@ -74,10 +74,23 @@ export const getDomainManagementMock = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showConfigureModal, setShowConfigureModal] = useState(false);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const noop = () => {};
 
   const domainTable = {
+    permissions: {
+      canCreateDomain: true,
+      canVerifyDomain: true,
+      canDeleteDomain: true,
+      canAssociateProvider: true,
+      canDissociateProvider: true,
+      canConfigureDomain: true,
+      canShowDomainMenu: true,
+    },
     domains,
     providers: mockProviders,
     isFetching: false,
@@ -95,15 +108,15 @@ export const getDomainManagementMock = () => {
       hasPreviousPage: false,
     },
 
-    // Modals suppressed for this component's preview.
-    showCreateModal: false,
-    showConfigureModal: false,
-    showVerifyModal: false,
-    showDeleteModal: false,
-    setShowCreateModal: noop,
-    setShowConfigureModal: noop,
-    setShowVerifyModal: noop,
-    setShowDeleteModal: noop,
+    // Modals are intentionally live so readers can open the dialogs.
+    showCreateModal,
+    showConfigureModal,
+    showVerifyModal,
+    showDeleteModal,
+    setShowCreateModal,
+    setShowConfigureModal,
+    setShowVerifyModal,
+    setShowDeleteModal,
 
     verifyError,
     selectedDomain,
@@ -114,6 +127,7 @@ export const getDomainManagementMock = () => {
       await delay();
       setDomains((prev) => [...prev, createDomain(domainUrl)]);
       setIsCreating(false);
+      setShowCreateModal(false);
     },
     handleVerify: async (domain: Domain) => {
       setIsVerifying(true);
@@ -124,19 +138,33 @@ export const getDomainManagementMock = () => {
         ),
       );
       setIsVerifying(false);
+      setShowVerifyModal(false);
     },
     handleDelete: async (domain: Domain) => {
       setIsDeleting(true);
       await delay();
       setDomains((prev) => prev.filter((d) => d.id !== domain.id));
       setIsDeleting(false);
+      setShowDeleteModal(false);
     },
     handleToggleSwitch: async () => {},
-    handleCloseVerifyModal: () => setVerifyError(undefined),
-    handleCreateClick: noop,
-    handleConfigureClick: (domain: Domain) => setSelectedDomain(domain),
-    handleVerifyClick: async (domain: Domain) => setSelectedDomain(domain),
-    handleDeleteClick: (domain: Domain) => setSelectedDomain(domain),
+    handleCloseVerifyModal: () => {
+      setVerifyError(undefined);
+      setShowVerifyModal(false);
+    },
+    handleCreateClick: () => setShowCreateModal(true),
+    handleConfigureClick: (domain: Domain) => {
+      setSelectedDomain(domain);
+      setShowConfigureModal(true);
+    },
+    handleVerifyClick: async (domain: Domain) => {
+      setSelectedDomain(domain);
+      setShowVerifyModal(true);
+    },
+    handleDeleteClick: (domain: Domain) => {
+      setSelectedDomain(domain);
+      setShowDeleteModal(true);
+    },
     handleNextPage: noop,
     handlePreviousPage: noop,
     handlePageSizeChange: noop,

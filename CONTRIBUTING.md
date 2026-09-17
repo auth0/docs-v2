@@ -34,6 +34,12 @@ Auth0 employees need to disable the VPN when installing the CLI and running `min
 
 The Mintlify CLI also provides some useful tools, like finding broken internal links with `mint broken-links` or checking accessibility with `mint a11y`.
 
+### Deploy previews
+
+Mintlify automatically generates a deployment preview for any PR against `main`.
+
+Additionally, for the `sus` and `tus` staging and testing environments, you can (force) push to the `staging` and `testing` branches, respectively. Please coordinate with the team for use of these environments.
+
 ### External link checking
 
 We use [Lychee](https://lychee.cli.rs/) to check for broken non-local links. Our Lychee config is in [`lychee.toml`](lychee.toml).

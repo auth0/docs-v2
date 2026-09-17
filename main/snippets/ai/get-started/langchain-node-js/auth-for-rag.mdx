@@ -1,0 +1,188 @@
+import { Prerequisites } from "/snippets/ai/get-started/prerequisites/auth-for-rag.jsx";
+import { AccountAndAppSteps } from "/snippets/ai/get-started/prerequisites/account-app-steps.jsx";
+
+<Prerequisites appCreation={false} />
+
+### Install dependencies
+
+As a first step, let's get all dependencies installed:
+
+```bash Create a new Node.js project wrap lines
+npm init -y
+npm install langchain@0.3 @langchain/langgraph@0.2 @auth0/ai-langchain@4 dotenv@16
+```
+
+import SetupFGAStore from "/snippets/ai/get-started/common/setup-fga-store.mdx";
+
+<SetupFGAStore />
+
+Now, to access public information, you'll need to add a tuple on FGA. Navigate to the **Tuple Management** section and click **\+ Add Tuple**. Fill in the following information:
+
+- **User**: `user:*`
+- **Object**: select doc and add `public-doc` in the ID field
+- **Relation**: `viewer`
+
+A tuple signifies a user's relation to a given object. For example, the above tuple implies that all users can view the `public-doc` object.
+
+### Secure the RAG Tool
+
+After configuring your FGA Store, let’s get back to our node.js project. There you’ll secure the RAG tool using [Auth0 FGA](https://auth0.com/fine-grained-authorization) and [Auth0 AI SDK](https://github.com/auth0/auth0-ai-python).
+
+### Get the Assets
+
+Create an `assets` folder and download the below files into the folder:
+
+- [`public-doc.md`](https://raw.githubusercontent.com/auth0-samples/auth0-ai-samples/refs/heads/main/authorization-for-rag/langgraph-agentic-js/assets/docs/public-doc.md)
+- [`private-doc.md`](https://raw.githubusercontent.com/auth0-samples/auth0-ai-samples/refs/heads/main/authorization-for-rag/langgraph-agentic-js/assets/docs/private-doc.md)
+
+### Create helper functions
+
+Create a LangGraph agent and other helper functions that are needed to load documents.
+
+The first helper will create an in-memory vector store using `faiss` and `OpenAIEmbeddings`. You can replace this module with your own store, as long as it follows the LangChain retriever specification.
+
+```ts helpers.ts wrap lines
+import fs from "node:fs/promises";
+import { StructuredToolInterface } from "@langchain/core/tools";
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
+import { ChatOpenAI } from "@langchain/openai";
+import { Document } from "@langchain/core/documents";
+
+export class RetrievalAgent {
+  private agent;
+
+  private constructor(agent) {
+    this.agent = agent;
+  }
+
+  // Create a retrieval agent with a retriever tool and a language model
+  static create(tools: StructuredToolInterface[]) {
+    // Create a retrieval agent that has access to the retrieval tool.
+    const retrievalAgent = createReactAgent({
+      llm: new ChatOpenAI({ temperature: 0, model: "gpt-4o-mini" }),
+      tools,
+      stateModifier: [
+        "Answer the user's question only based on context retrieved from provided tools.",
+        "Only use the information provided by the tools.",
+        "If you need more information, ask for it.",
+      ].join(" "),
+    });
+
+    return new RetrievalAgent(retrievalAgent);
+  }
+
+  // Query the retrieval agent with a user question
+  async query(query: string) {
+    const { messages } = await this.agent.invoke({
+      messages: [
+        {
+          role: "user",
+          content: query,
+        },
+      ],
+    });
+
+    return messages.at(-1)?.content;
+  }
+}
+
+async function readDoc(path: string) {
+  return await fs.readFile(path, "utf-8");
+}
+
+/* Reads documents from the assets folder and converts them to langChain Documents */
+export async function readDocuments() {
+  const folderPath = "./assets";
+  const files = await fs.readdir(folderPath);
+  const documents: Document[] = [];
+
+  for (const file of files) {
+    documents.push(
+      new Document({
+        pageContent: await readDoc(`${folderPath}/${file}`),
+        metadata: { id: file.slice(0, file.lastIndexOf(".")) },
+      })
+    );
+  }
+
+  return documents;
+}
+```
+
+### Create a RAG Pipeline
+
+Define a RAG tool that uses the `FGARetriever` to filter authorized data from an in-memory vector database.
+
+In the first step, we will define a new RAG tool. The agent calls the tool when needed.
+
+```ts index.ts wrap lines
+import "dotenv/config";
+
+import { OpenAIEmbeddings } from "@langchain/openai";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { FGARetriever } from "@auth0/ai-langchain/RAG";
+
+import { readDocuments, RetrievalAgent } from "./helpers";
+
+async function main() {
+  console.info(
+    "\n..:: LangGraph Agents Example: Agentic Retrieval with Auth0 FGA \n\n"
+  );
+
+  const user = "user1";
+  // 1. Read and load documents from the assets folder
+  const documents = await readDocuments();
+  // 2. Create an in-memory vector store from the documents for OpenAI models.
+  const vectorStore = await MemoryVectorStore.fromDocuments(
+    documents,
+    new OpenAIEmbeddings({ model: "text-embedding-3-small" })
+  );
+  // 3. Create a retriever that uses FGA to gate fetching documents on permissions.
+  const retriever = FGARetriever.create({
+    retriever: vectorStore.asRetriever(),
+    // FGA tuple to query for the user's permissions
+    buildQuery: (doc) => ({
+      user: `user:${user}`,
+      object: `doc:${doc.metadata.id}`,
+      relation: "viewer",
+    }),
+  });
+  // 4. Convert the retriever into a tool for an agent.
+  const fgaTool = retriever.asJoinedStringTool();
+  // 5. The agent will call the tool, rephrasing the original question and
+  // populating the "query" argument, until it can answer the user's question.
+  const retrievalAgent = RetrievalAgent.create([fgaTool]);
+  // 6. Query the retrieval agent with a prompt
+  const answer = await retrievalAgent.query("Show me forecast for ZEKO?");
+
+  console.info(answer);
+}
+
+main().catch(console.error);
+```
+
+### Run the application
+
+To run the application, add the below to `package.json`:
+
+```json package.json wrap lines
+"x-type": "module",
+"main": "index.js",
+"scripts": {
+  "start": "npx tsx index.ts"
+},
+```
+
+Run the application using `npm start`, and the agent will respond that it cannot find the required information.
+
+The application can retrieve the information if you change the query to something available in the public document.
+
+Now, to access the private information, you’ll need to update your tuple list. Go back to the Okta FGA dashboard in the **Tuple Management** section and click **\+ Add Tuple**. Fill in the following information:
+
+- **User**: `user:user1`
+- **Object**: select doc and add `private-doc` in the ID field
+- **Relation**: `viewer`
+
+Now, click **Add Tuple** and then run `npm start` again. This time, you should see a response containing the forecast information since you added a tuple that defines the `viewer` relation for `user1` to the `private-doc` object.
+
+Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/authorization-for-rag/langgraph-agentic-js).

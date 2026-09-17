@@ -1,0 +1,117 @@
+### 1. Configure Auth0 AI
+
+First, you must install the SDK:
+
+```bash wrap lines
+pip install auth0-ai-llamaindex
+```
+
+Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required GitHub scopes.
+
+```python ./src/lib/auth0-ai.py wrap lines
+from auth0_ai_llamaindex.auth0_ai import Auth0AI
+from flask import session
+
+auth0_ai = Auth0AI()
+
+with_github = auth0_ai.with_token_vault(
+    connection="github",
+    scopes=["repo"],
+    refresh_token=lambda *_args, **_kwargs:session["user"]["refresh_token"],
+)
+```
+<Info>
+Here, the session is controlled by a Flask application instance. You may utilize any other framework or session store of your preference.
+</Info>
+
+### 2. Integrate your tool with GitHub
+
+Wrap your tool using the Auth0 AI SDK to obtain an access token for the GitHub API.
+
+```python ./src/lib/tools/list_repositories.py wrap lines highlight={4-5,9,19,21}
+from github import Github
+from github.GithubException import BadCredentialsException
+from llama_index.core.tools import FunctionTool
+from auth0_ai_llamaindex.token_vault import get_access_token_from_token_vault, TokenVaultError
+from src.lib.auth0_ai import with_github
+
+def list_github_repositories_tool_function():
+    # Get the access token from Auth0 AI
+    access_token = get_access_token_from_token_vault()
+
+    # GitHub SDK
+    try:
+        g = Github(access_token)
+        user = g.get_user()
+        repos = user.get_repos()
+        repo_names = [repo.name for repo in repos]
+        return repo_names
+    except BadCredentialsException:
+        raise TokenVaultError("Authorization required to access the Token Vault API")
+
+list_github_repositories_tool = with_github(FunctionTool.from_defaults(
+    name="list_github_repositories",
+    description="List respositories for the current user on GitHub",
+    fn=list_github_repositories_tool_function,
+))
+```
+
+Now that the tool is protected, you can pass it your LlamaIndex agent.
+
+```python ./src/lib/agent.ts wrap lines highlight={3,13}
+from datetime import datetime
+from llama_index.agent.openai import OpenAIAgent
+from src.lib.tools.list_repositories import list_github_repositories_tool
+
+system_prompt = f"""You are an assistant designed to answer random user's questions.
+**Additional Guidelines**:
+- Today’s date for reference: {datetime.now().isoformat()}
+"""
+
+agent = OpenAIAgent.from_tools(
+    tools=[
+        # a tool with Token Vault access
+        list_github_repositories_tool
+        # ... other tools
+    ],
+    model="gpt-4o",
+    system_prompt=system_prompt
+    verbose=True,
+)
+```
+
+### 3. Handle authentication redirects
+
+Interrupts are a way for the system to pause execution and prompt the user to take an action —such as authenticating or granting API access— before resuming the interaction. This ensures that any required access is granted dynamically and securely during the chat experience. In this context, Auth0-AI SDK manages such authentication redirects integrated with the LLamaIndex SDK.
+
+#### Server side
+
+On the server side of your Flask application you will need to set up a route to handle the Chat API requests. This route will be responsible for forwarding the requests to the OpenAI API utilizing LlamaIndex's SDK, that has been initialized with Auth0 AI's protection enhancements for tools.
+
+When `TokenVaultInterrupt` error occurs, the server side will signal the front-end about the level access restrictions, and the front-end should prompt the user to trigger a new authorization (or login) request with the necessary permissions.
+
+
+```python ./src/app.py wrap lines highlight={3-5,19-20}
+from dotenv import load_dotenv
+from flask import Flask, request, jsonify, session
+from auth0_ai_llamaindex.auth0_ai import Auth0AI
+from auth0_ai_llamaindex.token_vault import TokenVaultInterrupt
+from src.lib.agent import agent
+
+load_dotenv()
+app = Flask(__name__)
+
+@app.route("/chat", methods=["POST"])
+async def chat():
+    if "user" not in session:
+        return jsonify({"error": "unauthorized"}), 401
+
+    try:
+        message = request.json.get("message")
+        response = agent.achat(message)
+        return jsonify({"response": str(response)})
+    except TokenVaultInterrupt as e:
+        return jsonify({"error": str(e.to_json())}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+```
