@@ -1,0 +1,346 @@
+---
+description: Token Vault で Cross App Access (XAA) を使用するように設定し、アプリケーションが XAA を通じてユーザーに代わって取得したアクセストークンを保存・再利用できるようにします。
+title: Token Vault を使用した Cross App Access (XAA)
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx";
+
+<ReleaseStageNotice feature="Cross App Access (XAA) for the Requesting App" stage="ea" plans="Enterprise, B2B Pro, and B2B Essential" terms="true" />
+
+[Cross App Access (XAA) ](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)を使用すると、企業環境のIT管理者はapp-to-appおよびagent-to-appの接続を一元的に管理できます。Token VaultはXAAと連携し、アプリケーションがユーザーに代わってサードパーティAPIから取得したアクセストークンを安全に保存して再利用します。
+
+Token Vaultを使用すると、ユーザーにOAuth 2.0の同意フローを実行させることなく、1回の呼び出しでAuth0のリフレッシュトークンを保存済みのサードパーティアクセストークンと交換できます。このアクセスは、お客様の組織とサードパーティAPIの双方から信頼されている集中管理型のアイデンティティプロバイダー (IdP) によって仲介されます。Auth0におけるXAAについて詳しくは、[Cross App Access](/docs/ja-jp/ai-agents-mcp/cross-app-access)をお読みください。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  **Requesting App側からXAAフロー全体を構築してテストする場合**：まず[環境の設定](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/set-up-xaa-test-environment)と[OktaをOIDC IdPとして使用する](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp)を完了してから、このページに戻って[テストアプリケーションを構成](#configure-your-test-application)してください。
+
+  **すでにToken Vaultを設定済みで、XAAのサポートを追加する場合**：[既存のToken Vault連携にXAAを追加する](#add-xaa-to-an-existing-token-vault-integration)に進んでください。
+</Callout>
+
+## XAA では何が異なるのか？ {#whats-different-with-xaa}
+
+1. Token Vault を XAA と組み合わせて使用する場合、エンドユーザーが外部アプリケーションと[アカウントを接続](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault)する必要はありません。My Account API の `/me/v1/connected-accounts/connect` エンドポイントに `POST` リクエストを送信する「[サードパーティアプリケーション]に接続」ボタンをアプリケーション側に用意する必要もありません。
+2. エンドユーザーは、XAA 用に構成された Okta または OIDC 接続によるフェデレーションログインで認証する必要があります。その接続は Requesting App として構成されている必要があります。
+3. アクセス先となるサードパーティ API は、Resource App として XAA をサポートしている必要があります。つまり、`ID-JAG` をアクセストークンと交換できることが条件となります。
+4. Connected Accounts for Token Vault と Cross App Access for Token Vault が有効化された状態で、サードパーティアプリケーションへの接続が存在している必要があります。
+
+## 既存の Token Vault 連携に XAA を追加する {#add-xaa-to-an-existing-token-vault-integration}
+
+すでに Token Vault を設定済みで XAA のサポートを追加したい場合は、既存の 2 つの接続を更新する必要があります。ユーザーが認証に使用する接続 (Requesting App の接続) と、サードパーティ API への接続 (Resource App の接続) です。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  このセクションでは、既存の接続で XAA を有効にするために必要な Auth0 側の変更のみを説明します。これらの接続を初めて作成する場合や、Okta 側の設定が必要な場合は、[OktaをOIDC IdPとして使用する](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp) を参照して、エンドツーエンドのセットアップを行ってください。
+</Callout>
+
+### Requesting Appの接続を構成する {#configure-the-requesting-app-connection}
+
+ユーザーが認証に使用する接続は、ユーザーに代わってエンタープライズIdPに`ID-JAG`を要求するように構成する必要があります。接続には、Okta WorkforceまたはOIDCの接続を使用できます。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **[Authentication] &gt; [Enterprise]** に移動し、対象の接続を選択して設定を開きます。
+    2. **[Credentials]** で、**[Communication Channel]** を **[Back Channel]** に設定します。Token Vaultは、フロントチャネルを使用してID-JAGを要求することはできません。
+    3. **[Settings] &gt; [Scopes]** で、`offline_access`を追加します。
+    4. **[Mappings]** で **[Okta Basic]** を選択し、JSONマッピングの`userinfo_scope`リストに`offline_access`を追加します。**[Save]** を選択します。
+    5. **[Cross App Access] &gt; [Cross App Access Role]** で、**[Requesting Application]** を選択します。
+
+    <Frame>![](/docs/images/xaa/xaa_connection_requesting_app.png)</Frame>
+
+    6. **[Save]** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    [Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id)エンドポイントに`PATCH`呼び出しを行います。
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{yourConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "cross_app_access_requesting_app": { "active": true },
+        "options": {
+          "scope": "openid profile email offline_access",
+          "type": "back_channel",
+          "attribute_map": {
+            "mapping_mode": "use_map",
+            "userinfo_scope": "openid email profile groups offline_access",
+            "attributes": {
+              "name": "${context.tokenset.name}",
+              "email": "${context.tokenset.email}",
+              "username": "${context.tokenset.preferred_username}",
+              "federated_groups": "${context.userinfo.groups}",
+              "federated_locale": "${context.userinfo.locale}",
+              "federated_zoneinfo": "${context.userinfo.zoneinfo}"
+            }
+          }
+        }
+      }'
+    ```
+
+    以降、ユーザーがその接続を使用してサインインすると、Token Vaultはリフレッシュトークンを保持し、それを使用してサードパーティAPIへのアクセスを要求します。
+  </Tab>
+</Tabs>
+
+### Resource App の接続を構成する {#configure-the-resource-app-connection}
+
+サードパーティ API への Resource App の接続は、Connected Accounts for Token Vault と Cross App Access for Token Vault の両方が有効になっている OIDC 接続である必要があります。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **[Authentication] &gt; [Enterprise]** に移動し、サードパーティ API への OIDC 接続を選択して、その設定を開きます。
+    2. **[Purpose]** で、**[Connected Accounts for Token Vault]** または **[Authentication and Connected Accounts for Token Vault]** を選択します。
+    3. **[Cross App Access]** で、以下を設定します。
+       * **[Cross App Access Roles]** で、**[Requesting Application]** を有効にします。
+       * **[Cross App Access for Token Vault]** を有効にします。
+
+    <Frame>![](/docs/images/xaa/xaa_connection_req_app_tv.png)</Frame>
+
+    4. **[Save]** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    [Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) エンドポイントを `PATCH` で呼び出します。
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{yourConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "cross_app_access_requesting_app": { "active": true },
+        "connected_accounts": {
+          "active": true,
+          "cross_app_access": true
+        }
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+両方の接続を構成したら、[テストアプリケーションを構成する](#configure-your-test-application)と[エンドツーエンドのフローをテストする](#test-the-end-to-end-flow)に進んでください。
+
+## テストアプリケーションを構成する {#configure-your-test-application}
+
+Requesting App のテナントで、Token Vault のトークン交換を実行するアプリケーションを作成または構成します。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Token Vault グラントタイプを使用できるのは、コンフィデンシャルかつファーストパーティで、OIDC 準拠のクライアントのみです。従来型Webアプリケーションはこれらの要件を満たしています。
+</Callout>
+
+**アプリケーション &gt; アプリケーション** に移動し、**Create Application** を選択します。名前を入力し、**Web アプリケーション** を選択します。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **Application URIs** で、アプリケーションのコールバック URL (例: `https://localhost:3000/callback`) を **Allowed Callback URLs** に追加します。
+    2. **Cross App Access** で、**Allow Cross App Access** を有効にします。
+    3. **Advanced Settings &gt; Grant Types** で、**認可コード**、**リフレッシュトークン**、**Token Vault** を有効にします。
+    4. **変更を保存** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    [Update a Client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) エンドポイントに `PATCH` リクエストを送信し、必要なグラントタイプを追加して Cross App Access を有効にします。
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/clients/{clientId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "cross_app_access": { "active": true },
+        "grant_types": [
+          "authorization_code",
+          "refresh_token",
+          "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+        ]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+アプリケーションの **Client ID** と **Client Secret** を控えておいてください。トークン交換を実行する際に必要になります。
+
+### アプリケーションでOkta接続を有効化する {#enable-okta-connections-for-the-application}
+
+Requesting App側からXAAテスト環境を一から構築した場合：このアプリケーションに対して、[環境の設定](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/set-up-xaa-test-environment)でRequesting AppテナントとResource Appテナントの間に構成したOIDC接続と、[OktaをOIDC IdPとして使用する](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp)で構成したOkta Workforce接続を有効化する必要があります。
+
+すでにToken Vaultを設定済みで、XAAのサポートを追加する場合：作成したテスト用アプリケーションに対して、Requesting App接続とResource App接続を有効化する必要があります。詳細については、[既存のToken Vault連携にXAAを追加する](#add-xaa-to-an-existing-token-vault-integration)をお読みください。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Okta Workforce接続またはRequesting App接続を有効化するには：
+
+    1. **[Authentication] &gt; [Enterprise] &gt; [Okta Workforce]** に移動し、Okta Workforce接続を選択して、**[Applications]** タブを選択します。次に、作成したテスト用アプリケーションで有効化します。
+
+    OIDC接続またはResource App接続を有効化するには：
+
+    1. **[Authentication] &gt; [Enterprise] &gt; [OpenID Connect (OIDC)]** に移動し、OIDC接続を選択して、**[Applications]** タブを選択します。次に、作成したテスト用アプリケーションで有効化します。
+  </Tab>
+
+  <Tab title="Management API">
+    各接続について[Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id)エンドポイントに`PATCH`呼び出しを行い、アプリケーションの`client_id`を`enabled_clients`配列に追加します。
+
+    Okta Workforce接続の場合：
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{oktaWorkforceConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "enabled_clients": ["{yourApplicationClientId}"]
+      }'
+    ```
+
+    OIDC接続の場合：
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{oidcConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "enabled_clients": ["{yourApplicationClientId}"]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+## エンドツーエンドのフローをテストする {#test-the-end-to-end-flow}
+
+XAA Token Vaultフローをテストするには、アプリケーションで次の手順を実行する必要があります。
+
+1. Okta Workforce接続またはRequesting Appの接続で認可コードフローを完了し、[Auth0のリフレッシュトークンを取得する](#step-1-obtain-an-auth0-refresh-token)。
+2. Token VaultグラントタイプまたはResource Appの接続を使用して、OIDC接続でResource Appのアクセストークンと[リフレッシュトークンを交換する](#step-2-exchange-the-refresh-token-with-token-vault)。
+
+[テスト用アプリケーションを構成する](#configure-your-test-application)で構成したテスト用アプリケーション、またはToken Vaultグラントを有効にした既存のアプリケーションを使用してください。
+
+### ステップ1：Auth0のリフレッシュトークンを取得する {#step-1-obtain-an-auth0-refresh-token}
+
+アプリケーションでは、Okta Workforce接続を使った[認可コードフロー](/docs/ja-jp/get-started/authentication-and-authorization-flow/authorization-code-flow)でユーザーを認証し、リフレッシュトークンを取得します。
+
+#### 認可リクエストを開始する {#initiate-the-authorization-request}
+
+以下の `GET` リクエストを、ご自身の値に置き換えたうえで Auth0 の `/authorize` エンドポイントに送信します。
+
+```bash
+GET https://{yourRequestingAppDomain}/authorize?
+  response_type=code&
+  client_id={yourApplicationClientId}&
+  redirect_uri={yourCallbackUrl}&
+  scope=offline_access&
+  connection={yourOktaWorkforceConnectionName} // または Requesting App の接続名
+```
+
+| パラメータ           | 説明                                                                                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response_type` | 認可コードフローを使用する場合は `code` を設定します。                                                                                                                       |
+| `client_id`     | [アプリケーションを構成する](#configure-your-test-application)で構成したアプリケーションの **Client ID**。                                                                        |
+| `redirect_uri`  | アプリケーションのコールバックURL。アプリケーション設定で構成した **Allowed Callback URL** のいずれかと一致している必要があります。                                                                      |
+| `scope`         | リフレッシュトークンを要求する場合は `offline_access` を設定します。                                                                                                           |
+| `connection`    | [OktaをOIDC IdPとして使用する](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp)で構成した Okta Workforce 接続の名前、または Requesting App Connection。 |
+
+テストユーザーは認証のためにOktaにリダイレクトされます。ログインに成功すると、Auth0はクエリ文字列に認可 `code` を付与して `redirect_uri` へリダイレクトします。
+
+#### 認可コードをリフレッシュトークンと交換する {#exchange-the-authorization-code-for-a-refresh-token}
+
+Auth0 の `/oauth/token` エンドポイントに `POST` リクエストを送信し、認可コードをトークンと交換します。
+
+```bash
+curl -X POST 'https://{yourRequestingAppDomain}/oauth/token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "grant_type": "authorization_code",
+    "code": "{authorizationCode}",
+    "client_id": "{yourApplicationClientId}",
+    "client_secret": "{yourApplicationClientSecret}",
+    "redirect_uri": "{yourCallbackUrl}"
+  }'
+```
+
+| パラメータ           | 説明                               |
+| --------------- | -------------------------------- |
+| `grant_type`    | `authorization_code` を設定します。     |
+| `code`          | ユーザーの認証後にAuth0から返される認可コードです。     |
+| `client_id`     | アプリケーションの**Client ID**です。        |
+| `client_secret` | アプリケーションの**Client Secret**です。    |
+| `redirect_uri`  | 認可リクエストで使用したものと同じコールバック URLです。 |
+
+成功した場合のレスポンスには、`refresh_token`が含まれます。
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5...",
+  "refresh_token": "v1.MjzFJHdw...",
+  "id_token": "eyJhbGciOiJSUzI1NiIsInR5...",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+### ステップ 2: Token Vault でリフレッシュトークンを交換する {#step-2-exchange-the-refresh-token-with-token-vault}
+
+リフレッシュトークンを使用して Token Vault グラントタイプのエンドポイントを呼び出し、Resource App のアクセストークンを取得します。
+
+```bash
+curl -X POST 'https://{yourRequestingAppDomain}/oauth/token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "client_id": "{yourApplicationClientId}",
+    "client_secret": "{yourApplicationClientSecret}",
+    "subject_token": "{refreshToken}",
+    "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "requested_token_type": "http://auth0.com/oauth/token-type/federated-connection-access-token",
+    "connection": "{yourOidcConnectionName}" // または Resource App の接続名
+  }'
+```
+
+| パラメータ                  | 説明                                                                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `client_id`            | アプリケーションの**Client ID**。                                                                                                                                              |
+| `client_secret`        | アプリケーションの**Client Secret**。                                                                                                                                          |
+| `subject_token`        | [ステップ1](#step-1-obtain-an-auth0-refresh-token)で取得したAuth0リフレッシュトークン。                                                                                                  |
+| `grant_type`           | Token Vaultのグラントタイプ：`urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token`。                                                            |
+| `subject_token_type`   | リフレッシュトークンを交換することを示すために、`urn:ietf:params:oauth:token-type:refresh_token`を設定します。                                                                                      |
+| `requested_token_type` | Resource Appのアクセストークンを要求するために、`http://auth0.com/oauth/token-type/federated-connection-access-token`を設定します。                                                       |
+| `connection`           | [環境の設定](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/set-up-xaa-test-environment)で**Cross App Access for Token Vault**を有効にして構成したOIDC接続の名前、またはResource Appの接続。 |
+
+Token VaultはXAA flowを使用して、Resource Appへのアクセストークンを取得します。具体的には、有効なRequesting App IdPから保存済みのリフレッシュトークンを検索し、そのIdPにユーザーの代わりに`ID-JAG`トークンを要求します。次に、そのトークンをResource Appに提示してアクセストークンと交換し、取得したアクセストークンをアプリに返します。
+
+リクエストが成功すると、Resource Appのアクセストークンが返されます：
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5...",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+これでアプリケーションは、このアクセストークンを使用して、ユーザーに代わってResource AppのAPIを呼び出せるようになります。
+
+## 複数の Requesting App IdP に対応する {#handle-multiple-requesting-app-idps}
+
+Auth0 テナントには、Requesting App として XAA をサポートし、かつ XAA が有効になっている (つまり `cross_app_access_requesting_app.active` プロパティが `true` に設定されている) IdP への接続が多数構成されていることがあります。
+
+アプリケーションがトークン交換リクエストを行う際、Token Vault が `ID-JAG` を要求できるのは、ユーザーがすでに認証を済ませている IdP に対してのみです。そのため、ユーザーを認証する接続で XAA が有効になっている有効なユーザーアイデンティティが、現在のユーザーのプロファイルにちょうど 1 つだけリンクされている必要があります。そうでない場合、Token Vault はどの IdP に `ID-JAG` を要求すればよいか判断できません。有効なアイデンティティが複数ある場合、リクエストは次のエラーで失敗します。
+
+```json
+{
+    "error": "invalid_request",
+    "error_description": "Multiple enterprise connections with XAA support enabled"
+}
+```
+
+現在のユーザープロファイルに、XAA をサポートする接続タイプ (つまり Okta および OIDC の接続タイプ) でリンクされた ID が 10 個を超えて存在する場合、*それらの接続で XAA が有効になっていなくても*、Token Vault は次のエラーで失敗します。
+
+```json
+{
+    "error": "invalid_request",
+    "error_description": "User can have a maximum of 10 linked accounts to use XAA"
+}
+```
+
+これにより、Token Vault が有効な XAA 接続を特定するために確認する接続の数を絞り込めます。
+
+## Auth0 Organizations を XAA で使用する {#use-auth0-organizations-with-xaa}
+
+Token Vault は、利用可能な Requesting App の接続を、現在のユーザーの組織で有効になっているものに絞り込みます。Organizations を使用する Auth0 ソリューションでは、各 IdP へのアクセスを組織単位で制限できるため、ユーザーセッションごとにどの Requesting App の接続を使用すべきかを明確にできます。
+
+Token Vault の交換で使用される `subject_token` には、それぞれユーザーがログインした組織に関する情報が含まれています。この組織コンテキストをもとに、適切な XAA Requesting App の接続が特定されます。ただし、有効な接続が複数見つかった場合は、リクエストは失敗します。

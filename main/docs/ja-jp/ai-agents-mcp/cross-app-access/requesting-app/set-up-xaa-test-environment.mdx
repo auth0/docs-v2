@@ -1,0 +1,132 @@
+---
+description: Cross App Access 用に、テスト用の Resource App と、Requesting App テナントと Resource App テナント間の OIDC 接続を設定します。
+sidebarTitle: XAA 環境設定
+title: XAA 環境設定
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx";
+
+<ReleaseStageNotice feature="Cross App Access (XAA) for the Requesting App" stage="ea" plans="Enterprise, B2B Pro, and B2B Essential" terms="true" />
+
+Requesting App 側からエンドツーエンドの XAA フローをテストするには、2つの Auth0 テナントが必要です。
+
+* Requesting App テナント：Requesting App として機能する、お客様の Auth0 テナントです。AI エージェントや SaaS アプリケーションはここに登録します。
+* Resource App テナント：Resource App の認可サーバーとして機能する別の Auth0 テナントです。本番環境では、このテナントは呼び出し先の API を提供するサードパーティの SaaS プロバイダーが所有します。
+
+環境のセットアップでは、次の内容を扱います。
+
+1. Resource App テナントで[テスト用の Resource App を構成する](#configure-the-test-resource-app)。
+2. Requesting App テナントと Resource App テナントの間で [OIDC 接続を構成する](#configure-the-oidc-connection)。
+
+この記事で扱うのは Auth0 環境のセットアップのみです。エンタープライズ IdP 側の構成については、IdP Integration の該当するガイド［[Okta as OIDC IdP](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp)］をお読みください。
+
+## テスト用 Resource App を設定する {#configure-the-test-resource-app}
+
+以下の手順では、Resource App テナントにテスト用の Resource App とその API を設定します。本番環境では、これらの手順はサードパーティの SaaS プロバイダーが XAA の Resource App 設定の一環として実施します。
+
+### Resource Appを作成する {#create-the-resource-app}
+
+Resource Appのテナントで、**アプリケーション &gt; アプリケーション**に移動し、**Create Application**を選択します。名前を入力し、使用するアプリケーションの種類に応じて**Regular Web Application**、**Native**、**Single Page Application**のいずれかを選択します。
+
+<Frame>![](/docs/images/xaa/xaa_create_native_app.png)</Frame>
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **Application URIs**で、Requesting AppテナントのコールバックURLを**Allowed Callback URL**として追加します：`https://YOUR_REQUESTING_APP_DOMAIN/login/callback`
+    2. **Cross App Access**で、**Allow Cross App Access**を有効にします。
+
+    <Frame>![](/docs/images/xaa/allow_xaa_auth0_app.png)</Frame>
+
+    3. **Advanced Settings &gt; Grant Types**で、**認可コード**と**リフレッシュトークン**を選択します。
+    4. **変更を保存**を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    [Update a Client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id)エンドポイントに`PATCH`リクエストを送信し、必要なグラントタイプの追加、Cross App Accessの有効化、許可するコールバックURLの設定を行います：
+
+    ```bash
+    curl --request PATCH 'https://{yourResourceAppDomain}/api/v2/clients/{clientId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "callbacks": ["https://YOUR_REQUESTING_APP_DOMAIN/login/callback"],
+        "cross_app_access": { "active": true },
+        "grant_types": [
+          "authorization_code",
+          "refresh_token"
+        ]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+Resource AppのClient IDとClient Secretを控えておいてください。Requesting AppテナントでOIDC接続を構成する際に必要になります。[Client ID Metadata Document (CIMD) ](/docs/ja-jp/get-started/auth0-overview/create-applications/register-applications-with-cimd)を使用して登録したアプリケーションでは、Client IDとしてExternal Client IDフィールドの値を使用します。
+
+### Resource App API を作成する {#create-the-resource-app-api}
+
+Resource App テナントで、**[アプリケーション]&gt;[API]** に移動し、**[API の作成]** を選択します。
+
+1. API の名前と識別子を入力します。識別子は作成後に変更できません。
+2. **[アクセス設定]** で、**[オフラインアクセスの許可]** を選択します。
+3. **[アプリケーションのアクセスポリシー]** で、**[すべてのアプリを許可]** を選択するか、ユーザー委譲アクセスとクライアントアクセスの必要に応じてアプリごとの認可を設定します。
+4. [テナント設定](/docs/ja-jp/get-started/tenant-settings)で、この API 識別子を Resource App テナントの **[既定の Audience]** として設定します。
+5. **[Create]** を選択します。
+
+## OIDC 接続を構成する {#configure-the-oidc-connection}
+
+Requesting App のテナントで、自身のテナントを Resource App のテナントとフェデレーションする OIDC エンタープライズ接続を作成します。この接続によって、Requesting App として動作するテナントは、エンタープライズ IdP から ID-JAG を取得し、それを Resource App のアクセストークンと交換できるようになります。
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. **［Authentication］&gt;［Enterprise］&gt;［OpenID Connect］** に移動し、**［Create Connection］** を選択します。
+
+    以下の項目を入力します。
+
+    | フィールド                  | 値                                                                                                  |
+    | ---------------------- | -------------------------------------------------------------------------------------------------- |
+    | **Connection name**    | 接続の一意の名前 (例：`my-resource-app-oidc-connection`) 。                                                   |
+    | **OIDC Discovery URL** | Resource App テナントのディスカバリー URL：`https://YOUR_RESOURCE_APP_DOMAIN/.well-known/openid-configuration`。 |
+    | **Client ID**          | Resource App テナントにある Resource App アプリケーションの Client ID。                                             |
+    | **Client Secret**      | Resource App テナントにある Resource App アプリケーションの Client Secret。                                         |
+
+    2. **［Purpose］** で **［Authentication and Connected Accounts for Token Vault］** を選択し、この接続をユーザーのログインと Token Vault による安全なトークン管理に使用できるようにします。
+
+    3. **［Cross App Access］** で以下を設定します。
+       * **［Cross App Access Roles］** で **［Resource Application］** を選択します。
+       * **［Cross App Access for Token Vault］** で **［Enable Cross App Access for Token Vault］** を選択し、ユーザーに代わって Resource App からアクセストークンを取得・保管する権限を Token Vault に付与します。
+
+    4. **［Create］** を選択します。
+  </Tab>
+
+  <Tab title="Management API">
+    [Create a Connection](https://auth0.com/docs/api/management/v2/connections/post-connections) エンドポイントに `POST` 呼び出しを実行します。
+
+    ```bash
+    curl --request POST 'https://{yourDomain}/api/v2/connections' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "name": "my-resource-app-oidc-connection",
+        "strategy": "oidc",
+        "options": {
+          "discovery_url": "https://YOUR_RESOURCE_APP_DOMAIN/.well-known/openid-configuration",
+          "client_id": "<RESOURCE_APP_CLIENT_ID>",
+          "client_secret": "<RESOURCE_APP_CLIENT_SECRET>",
+          "scope": "openid profile email"
+        },
+        "metadata": {
+          "purpose": "connected_accounts"
+        },
+        "cross_app_access_resource_app": { "active": true },
+        "connected_accounts": {
+          "active": true,
+          "cross_app_access": true
+        }
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+## 次のステップ {#next-steps}
+
+OIDC接続の設定が完了したら、続いてエンタープライズ IdPを設定します：[OIDC IdPとしてのOkta](/docs/ja-jp/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp)。

@@ -1,0 +1,351 @@
+---
+description: Configurez Token Vault pour utiliser l'accès interapplications (XAA) afin de stocker et de réutiliser les jetons d'accès que votre application obtient par XAA au nom d'un utilisateur.
+title: Accès interapplications (XAA) avec Token Vault
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-ca/ReleaseStageNotice.jsx";
+
+<ReleaseStageNotice feature="Cross App Access (XAA) for the Requesting App" stage="ea" plans="Enterprise, B2B Pro, and B2B Essential" terms="true" />
+
+L’[accès interapplications (XAA)](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/) permet aux administrateurs TI en contexte d’entreprise de gérer de façon centralisée les connexions application-à-application et agent-à-application. Token Vault fonctionne avec XAA pour stocker et réutiliser en toute sécurité les jetons d’accès que votre application récupère auprès d’une API tierce au nom d’un utilisateur.
+
+Avec Token Vault, votre application peut échanger un jeton d’actualisation Auth0 contre un jeton d’accès tiers stocké en une seule requête, sans obliger l’utilisateur à passer par un flux de consentement OAuth 2.0. Cet accès est plutôt géré par un fournisseur d’identité (IdP) centralisé auquel font confiance à la fois votre organisation et l’API tierce. Pour en savoir plus sur XAA dans Auth0, consultez [Accès interapplications](/docs/fr-ca/ai-agents-mcp/cross-app-access).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  **Si vous souhaitez créer et tester le flux XAA complet du côté de la Requesting App** : suivez d’abord [Configuration de l’environnement](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/set-up-xaa-test-environment) et [Okta comme IdP OIDC](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp), puis revenez ici pour [configurer votre application de test](#configure-your-test-application).
+
+  **Si Token Vault est déjà configuré et que vous voulez ajouter la prise en charge de XAA** : passez à [Ajouter XAA à une intégration Token Vault existante](#add-xaa-to-an-existing-token-vault-integration).
+</Callout>
+
+## Qu&#39;est-ce qui change avec XAA? {#whats-different-with-xaa}
+
+1. Lorsque vous utilisez Token Vault avec XAA, les utilisateurs finaux n&#39;ont pas à [connecter leur compte](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault) à des applications externes. Votre application n&#39;a pas besoin d&#39;afficher un bouton « Se connecter à [Application tierce] » qui envoie une requête `POST` au endpoint `/me/v1/connected-accounts/connect` du My Account API.
+2. L&#39;utilisateur final doit s&#39;authentifier au moyen d&#39;un login fédéré avec une connexion Okta ou OIDC configurée pour XAA. Cette connexion doit être configurée à titre de Requesting App.
+3. L&#39;API tierce visée doit prendre en charge XAA en tant que Resource App, c&#39;est-à-dire qu&#39;elle peut échanger un `ID-JAG` contre des access tokens.
+4. Une connexion à l&#39;application tierce doit exister, avec les options Connected Accounts for Token Vault et Cross App Access for Token Vault activées.
+
+## Ajouter XAA à une intégration Token Vault existante {#add-xaa-to-an-existing-token-vault-integration}
+
+Si Token Vault est déjà configuré et que vous souhaitez y ajouter la prise en charge de XAA, vous devez mettre à jour deux connexions existantes : la connexion utilisée par vos utilisateurs pour s’authentifier (la connexion Requesting App) et la connexion à l’API third-party (la connexion Resource App).
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Cette section porte uniquement sur les modifications à apporter du côté d’Auth0 pour activer XAA sur des connexions existantes. Si vous créez ces connexions pour la première fois ou que vous devez configurer le côté Okta, consultez [Okta comme IdP OIDC](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp) pour la configuration end-to-end complète.
+</Callout>
+
+### Configurer la connection de la Requesting App {#configure-the-requesting-app-connection}
+
+La connection avec laquelle vos utilisateurs s&#39;authentifient doit être configurée de façon à demander un `ID-JAG` à l&#39;enterprise IdP au nom de l&#39;utilisateur. Il peut s&#39;agir d&#39;une connection Okta Workforce ou OIDC.
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. Allez à **Authentication &gt; Enterprise**, sélectionnez votre connection, puis ouvrez ses paramètres.
+    2. Sous **Credentials**, réglez **Communication Channel** à **Back Channel**. Token Vault ne peut pas demander d&#39;ID-JAG par le front channel.
+    3. Sous **Settings &gt; Scopes**, ajoutez `offline_access`.
+    4. Sous **Mappings**, sélectionnez **Okta Basic** et ajoutez `offline_access` à la liste `userinfo_scope` du mapping JSON. Sélectionnez **Save**.
+    5. Sous **Cross App Access &gt; Cross App Access Role**, sélectionnez **Requesting Application**.
+
+    <Frame>![](/docs/images/xaa/xaa_connection_requesting_app.png)</Frame>
+
+    6. Sélectionnez **Save**.
+  </Tab>
+
+  <Tab title="Management API">
+    Effectuez une requête `PATCH` vers l&#39;endpoint [Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) :
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{yourConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "cross_app_access_requesting_app": { "active": true },
+        "options": {
+          "scope": "openid profile email offline_access",
+          "type": "back_channel",
+          "attribute_map": {
+            "mapping_mode": "use_map",
+            "userinfo_scope": "openid email profile groups offline_access",
+            "attributes": {
+              "name": "${context.tokenset.name}",
+              "email": "${context.tokenset.email}",
+              "username": "${context.tokenset.preferred_username}",
+              "federated_groups": "${context.userinfo.groups}",
+              "federated_locale": "${context.userinfo.locale}",
+              "federated_zoneinfo": "${context.userinfo.zoneinfo}"
+            }
+          }
+        }
+      }'
+    ```
+
+    À la prochaine ouverture de session d&#39;un utilisateur au moyen de cette connection, Token Vault conservera le refresh token et s&#39;en servira pour demander l&#39;accès à l&#39;API third-party.
+  </Tab>
+</Tabs>
+
+### Configurer la connexion de la Resource App {#configure-the-resource-app-connection}
+
+La connexion de la Resource App à l&#39;API third-party doit être une connexion OIDC dont les fonctionnalités Connected Accounts for Token Vault et accès interapplications pour Token Vault sont activées.
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. Allez à **Authentication &gt; Enterprise**, sélectionnez la connexion OIDC vers l&#39;API third-party, puis ouvrez ses paramètres.
+    2. Sous **Purpose**, sélectionnez **Connected Accounts for Token Vault** ou **Authentication and Connected Accounts for Token Vault**.
+    3. Sous **Cross App Access** :
+       * Pour **Cross App Access Roles**, activez **Requesting Application**.
+       * Activez **Cross App Access for Token Vault**.
+
+    <Frame>![](/docs/images/xaa/xaa_connection_req_app_tv.png)</Frame>
+
+    4. Sélectionnez **Save**.
+  </Tab>
+
+  <Tab title="Management API">
+    Effectuez une requête `PATCH` vers l&#39;endpoint [Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) :
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{yourConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "cross_app_access_requesting_app": { "active": true },
+        "connected_accounts": {
+          "active": true,
+          "cross_app_access": true
+        }
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+Une fois les deux connexions configurées, passez à [Configurer votre application de test](#configure-your-test-application) et [testez le flow end-to-end](#test-the-end-to-end-flow).
+
+## Configurer votre application de test {#configure-your-test-application}
+
+Dans le tenant de votre Requesting App, créez ou configurez l&#39;application qui effectuera le token exchange Token Vault.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Seuls les clients confidential, first-party et OIDC-conformant peuvent utiliser le Token Vault grant type. Les Regular Web Applications répondent à ces exigences.
+</Callout>
+
+Accédez à **Applications &gt; Applications**, puis sélectionnez **Create Application**. Saisissez un nom et sélectionnez **Regular Web Application**.
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    1. Sous **Application URIs**, ajoutez le callback URL de votre application (p. ex. `https://localhost:3000/callback`) aux **Allowed Callback URLs**.
+    2. Sous **Cross App Access**, activez **Allow Cross App Access**.
+    3. Sous **Advanced Settings &gt; Grant Types**, activez **Authorization Code**, **Refresh Token** et **Token Vault**.
+    4. Sélectionnez **Save Changes**.
+  </Tab>
+
+  <Tab title="Management API">
+    Faites une requête `PATCH` à l&#39;endpoint [Update a Client](https://auth0.com/docs/api/management/v2/clients/patch-clients-by-id) pour ajouter les grant types requis et activer l&#39;accès interapplications :
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/clients/{clientId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "cross_app_access": { "active": true },
+        "grant_types": [
+          "authorization_code",
+          "refresh_token",
+          "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token"
+        ]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+Prenez note du **Client ID** et du **Client Secret** de l&#39;application. Vous en aurez besoin au moment d&#39;effectuer le token exchange.
+
+### Activer les connexions Okta pour l&#39;application {#enable-okta-connections-for-the-application}
+
+Si vous avez configuré l&#39;environnement de test XAA à partir de zéro du côté de la Requesting App : vous devez activer la connexion OIDC que vous avez configurée à l&#39;étape [Configuration de l&#39;environnement](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/set-up-xaa-test-environment) entre le tenant de votre Requesting App et le tenant de votre Resource App, ainsi que la connexion Okta Workforce que vous avez configurée à l&#39;étape [Okta comme IdP OIDC](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp) pour cette application.
+
+Si vous avez déjà configuré Token Vault et que vous ajoutez la prise en charge de XAA : vous devez activer la connexion de la Requesting App et celle de la Resource App pour l&#39;application de test que vous venez de créer. Pour en savoir plus, consultez [Ajouter XAA à une intégration Token Vault existante](#add-xaa-to-an-existing-token-vault-integration).
+
+<Tabs>
+  <Tab title="Auth0 Dashboard">
+    Pour activer la connexion Okta Workforce ou la connexion de la Requesting App :
+
+    1. Accédez à **Authentication &gt; Enterprise &gt; Okta Workforce**, sélectionnez la connexion Okta Workforce, puis sélectionnez l&#39;onglet **Applications**. Activez-la ensuite pour l&#39;application de test que vous venez de créer.
+
+    Pour activer la connexion OIDC ou la connexion de la Resource App :
+
+    1. Accédez à **Authentication &gt; Enterprise &gt; OpenID Connect (OIDC)**, sélectionnez la connexion OIDC, puis sélectionnez l&#39;onglet **Applications**. Activez-la ensuite pour l&#39;application de test que vous venez de créer.
+  </Tab>
+
+  <Tab title="Management API">
+    Effectuez une requête `PATCH` vers l&#39;endpoint [Update a Connection](https://auth0.com/docs/api/management/v2/connections/patch-connections-by-id) pour chaque connexion afin d&#39;ajouter le `client_id` de l&#39;application à l&#39;array `enabled_clients`.
+
+    Pour la connexion Okta Workforce :
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{oktaWorkforceConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "enabled_clients": ["{yourApplicationClientId}"]
+      }'
+    ```
+
+    Pour la connexion OIDC :
+
+    ```bash
+    curl --request PATCH 'https://{yourDomain}/api/v2/connections/{oidcConnectionId}' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer <YOUR_MANAGEMENT_API_ACCESS_TOKEN>' \
+      --data '{
+        "enabled_clients": ["{yourApplicationClientId}"]
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+## Tester le flow de bout en bout {#test-the-end-to-end-flow}
+
+Pour tester le flow XAA Token Vault, votre application doit :
+
+1. [Obtenir un refresh token Auth0](#step-1-obtain-an-auth0-refresh-token) en réalisant un Authorization Code Flow avec la connection Okta Workforce ou la connection de la Requesting App.
+2. [Échanger le refresh token](#step-2-exchange-the-refresh-token-with-token-vault) contre un access token de la Resource App avec la connection OIDC, à l&#39;aide du Token Vault grant type ou de la connection de la Resource App.
+
+Utilisez l&#39;application de test que vous avez configurée à la section [Configurer votre application de test](#configure-your-test-application), ou une application existante dont le grant Token Vault est activé.
+
+### Étape 1 : Obtenir un refresh token Auth0 {#step-1-obtain-an-auth0-refresh-token}
+
+Votre application utilise le [flux du code d&#39;autorisation](/docs/fr-ca/get-started/authentication-and-authorization-flow/authorization-code-flow) avec la connexion Okta Workforce afin d&#39;authentifier l&#39;utilisateur et d&#39;obtenir un refresh token.
+
+#### Lancer l&#39;authorization request {#initiate-the-authorization-request}
+
+Envoyez la requête `GET` suivante à l&#39;endpoint `/authorize` d&#39;Auth0, en remplaçant les valeurs par les vôtres :
+
+```bash
+GET https://{yourRequestingAppDomain}/authorize?
+  response_type=code&
+  client_id={yourApplicationClientId}&
+  redirect_uri={yourCallbackUrl}&
+  scope=offline_access&
+  connection={yourOktaWorkforceConnectionName} // ou le nom de la connection de votre Requesting App
+```
+
+| Paramètre       | Description                                                                                                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response_type` | À définir à `code` pour utiliser le flux de code d&#39;autorisation.                                                                                                                                                 |
+| `client_id`     | Le **Client ID** de l&#39;application que vous avez configurée à la section [Configurer votre application](#configure-your-test-application).                                                                        |
+| `redirect_uri`  | Le callback URL de votre application. Il doit correspondre à un **Allowed Callback URL** configuré dans les paramètres de l&#39;application.                                                                         |
+| `scope`         | À définir à `offline_access` pour demander un refresh token.                                                                                                                                                         |
+| `connection`    | Le nom de la connection Okta Workforce que vous avez configurée à la section [Okta comme IdP OIDC](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/idp/okta-as-oidc-idp), ou la connection de la Requesting App. |
+
+Votre utilisateur de test sera redirigé vers Okta pour s&#39;authentifier. Après un login réussi, Auth0 le redirige vers votre `redirect_uri` avec un `code` d&#39;autorisation dans la query string.
+
+#### Échanger le code d&#39;autorisation contre un jeton d&#39;actualisation {#exchange-the-authorization-code-for-a-refresh-token}
+
+Envoyez une requête `POST` à l&#39;endpoint Auth0 `/oauth/token` afin d&#39;échanger le code d&#39;autorisation contre des jetons :
+
+```bash
+curl -X POST 'https://{yourRequestingAppDomain}/oauth/token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "grant_type": "authorization_code",
+    "code": "{authorizationCode}",
+    "client_id": "{yourApplicationClientId}",
+    "client_secret": "{yourApplicationClientSecret}",
+    "redirect_uri": "{yourCallbackUrl}"
+  }'
+```
+
+| Paramètre       | Description                                                                           |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `grant_type`    | À définir à `authorization_code`.                                                     |
+| `code`          | Le code d&#39;autorisation retourné par Auth0 une fois l&#39;utilisateur authentifié. |
+| `client_id`     | Le **Client ID** de l&#39;application.                                                |
+| `client_secret` | Le **Client Secret** de l&#39;application.                                            |
+| `redirect_uri`  | La même callback URL que celle utilisée dans la requête d&#39;autorisation.           |
+
+Une réponse réussie comprend un `refresh_token` :
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5...",
+  "refresh_token": "v1.MjzFJHdw...",
+  "id_token": "eyJhbGciOiJSUzI1NiIsInR5...",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+### Étape 2 : Échanger le refresh token avec Token Vault {#step-2-exchange-the-refresh-token-with-token-vault}
+
+Utilisez le refresh token pour interroger l&#39;endpoint du grant type Token Vault et obtenir un access token de la Resource App.
+
+```bash
+curl -X POST 'https://{yourRequestingAppDomain}/oauth/token' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "client_id": "{yourApplicationClientId}",
+    "client_secret": "{yourApplicationClientSecret}",
+    "subject_token": "{refreshToken}",
+    "grant_type": "urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "requested_token_type": "http://auth0.com/oauth/token-type/federated-connection-access-token",
+    "connection": "{yourOidcConnectionName}" // ou le nom de la connection de votre Resource App
+  }'
+```
+
+| Paramètre              | Description                                                                                                                                                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `client_id`            | Le **Client ID** de l&#39;application.                                                                                                                                                                                                                 |
+| `client_secret`        | Le **Client Secret** de l&#39;application.                                                                                                                                                                                                             |
+| `subject_token`        | Le refresh token Auth0 obtenu à l&#39;[étape 1](#step-1-obtain-an-auth0-refresh-token).                                                                                                                                                                |
+| `grant_type`           | Le Token Vault grant type : `urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token`.                                                                                                                                      |
+| `subject_token_type`   | À définir à `urn:ietf:params:oauth:token-type:refresh_token` pour indiquer qu&#39;un refresh token est échangé.                                                                                                                                        |
+| `requested_token_type` | À définir à `http://auth0.com/oauth/token-type/federated-connection-access-token` pour demander un access token de la Resource App.                                                                                                                    |
+| `connection`           | Le nom de la connection OIDC que vous avez configurée dans [Environment Setup](/docs/fr-ca/ai-agents-mcp/cross-app-access/requesting-app/set-up-xaa-test-environment) avec **Cross App Access for Token Vault** activé, ou la connection de la Resource App. |
+
+Token Vault utilise le XAA flow pour obtenir un access token vers la Resource App : il recherche un refresh token stocké provenant d&#39;un IdP de Requesting App valide, demande à cet IdP un token `ID-JAG` en votre nom, puis le présente à la Resource App en échange d&#39;un access token, qu&#39;il retourne ensuite à votre application.
+
+Une response réussie retourne un access token de la Resource App :
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5...",
+  "token_type": "Bearer",
+  "expires_in": 86400
+}
+```
+
+Votre application peut désormais utiliser cet access token pour interroger l&#39;API de la Resource App au nom de l&#39;utilisateur.
+
+## Gérer plusieurs IdPs de Requesting App {#handle-multiple-requesting-app-idps}
+
+Un tenant Auth0 peut compter de nombreuses connections configurées vers des IdPs qui prennent en charge XAA à titre de Requesting App
+et pour lesquelles XAA est activé (p. ex. leur propriété `cross_app_access_requesting_app.active` est définie à
+`true`).
+
+Lorsqu&#39;une application effectue un token exchange request, Token Vault ne peut demander un `ID-JAG` qu&#39;auprès d&#39;un IdP auprès duquel l&#39;utilisateur s&#39;est déjà authentifié. Il doit exister une seule identity utilisateur valide liée au profile de l&#39;utilisateur
+actuel, avec XAA activé sur la connection qui authentifie l&#39;utilisateur; sinon, Token Vault ne saura pas à quel IdP demander un `ID-JAG`. S&#39;il y a plusieurs identities valides, la request échouera avec l&#39;erreur suivante :
+
+```json
+{
+    "error": "invalid_request",
+    "error_description": "Multiple enterprise connections with XAA support enabled"
+}
+```
+
+Si le profil de l&#39;utilisateur actuel comporte plus de 10 identités liées sur des types de connexion qui prennent en charge XAA
+(soit les types de connexion Okta et OIDC) *même si XAA n&#39;est pas activé sur ces connexions*, Token
+Vault échouera avec l&#39;erreur suivante :
+
+```json
+{
+    "error": "invalid_request",
+    "error_description": "User can have a maximum of 10 linked accounts to use XAA"
+}
+```
+
+Cela limite le nombre de connections que le Token Vault doit vérifier pour repérer une connection XAA valide.
+
+## Utiliser Auth0 Organizations avec XAA {#use-auth0-organizations-with-xaa}
+
+Token Vault filtrera également les connections de Requesting App disponibles pour ne conserver que celles qui sont activées pour l&#39;organization de l&#39;utilisateur actuel. Une solution Auth0 qui utilise Organizations peut limiter l&#39;accès à chaque IdP par Organization afin de préciser quelle connection de Requesting App doit être utilisée pour chaque session utilisateur.
+
+Chaque `subject_token` utilisé dans un échange Token Vault contient de l&#39;information sur l&#39;organization dans laquelle l&#39;utilisateur s&#39;est connecté. Cet organization context servira à trouver la bonne connection de Requesting App XAA. Toutefois, si plusieurs connections valides sont trouvées, la request échouera tout de même.
