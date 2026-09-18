@@ -1,0 +1,164 @@
+import { Prerequisites } from "/snippets/ai/get-started/prerequisites/auth-for-rag.jsx";
+import { AccountAndAppSteps } from "/snippets/ai/get-started/prerequisites/account-app-steps.jsx";
+import { DownloadQuickstartButton } from "/snippets/ai/download-quickstart/DownloadQuickstartButton.jsx";
+
+<Prerequisites />
+
+### Download sample app
+Start by downloading and extracting the sample app. Then open in your preferred IDE.
+<DownloadQuickstartButton
+  category="authorization-for-rag"
+  framework="vercel-ai-next-js"
+/>
+
+### Install dependencies
+
+In the root directory of your project, install the following dependencies:
+
+- `@auth0/ai-vercel`: [Auth0 AI SDK for Vercel AI](https://github.com/auth0/auth0-ai-js/tree/main/packages/ai-vercel) built for AI agents powered by the Vercel AI SDK.
+- `ai`: Core [Vercel AI SDK](https://sdk.vercel.ai/docs) module that interacts with various AI model providers.
+- `@ai-sdk/openai`: [OpenAI](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) provider for the Vercel AI SDK.
+- `@ai-sdk/react`: [React](https://react.dev/) UI components for the Vercel AI SDK.
+- `zod`: TypeScript-first schema validation library.
+
+```bash wrap lines
+npm install @auth0/ai-vercel@5 ai@6 @ai-sdk/openai@3 @ai-sdk/react@3 zod@3.25.76
+```
+
+### Update the environment file
+
+Copy the `.env.example` file to `.env.local` and update the variables with your Auth0 credentials. You can find your Auth0 domain, client ID, and client secret in the application you created in the Auth0 Dashboard.
+
+import SetupFGAStore from "/snippets/ai/get-started/common/setup-fga-store.mdx";
+
+<SetupFGAStore />
+
+### Secure the RAG Tool
+
+After configuring your FGA Store, secure the RAG tool using Auth0 FGA and Auth0 AI SDK.
+
+The starter application is already configured to handle documents and embeddings.
+
+**Document Upload and Storage**
+
+- You can upload documents through the UI (`src/app/documents/page.tsx`).
+- Uploaded documents are processed by the API route (`src/app/api/documents/upload/route.ts`).
+- APIs for uploading and retrieving documents are defined in (`src/lib/actions/documents.ts`).
+- Database is defined in `src/lib/db`.
+- FGA helpers are defined in `src/lib/fga`.
+- Documents are stored as embeddings in a vector database for efficient retrieval (`src/lib/rag/embedding.ts`).
+
+**Access Control with Auth0 FGA**
+
+- When a document is uploaded, the app automatically creates [FGA tuples](https://docs.fga.dev/fga-concepts#what-is-a-relationship-tuple) to define which users can access which documents. A tuple signifies a user's relation to a given object. For example, the below tuple implies that all users can view the `<document name>` object.
+- Navigate to the **Tuple Management** section to see the tuples being added. If you want to add a tuple manually for a document, click **+ Add Tuple**. Fill in the following information:
+  - **User**: `user:*`
+  - **Object**: select doc and add `<document name>` in the ID field
+  - **Relation**: `viewer`
+
+#### Create a RAG tool
+
+Define a RAG tool that uses the `FGAFilter` to filter authorized data from the vector database:
+
+```tsx src/lib/tools/context-docs.ts wrap lines
+import { tool } from "ai";
+import { z } from "zod";
+import { FGAFilter } from "@auth0/ai";
+
+import { findRelevantContent } from "@/lib/rag/embedding";
+import { auth0 } from "../auth0";
+
+export type DocumentWithScore = {
+  content: string;
+  documentId: string;
+  similarity: number;
+};
+
+export const getContextDocumentsTool = tool({
+  description:
+    "Use the tool when user asks for documents or projects or anything that is stored in the knowledge base.",
+  parameters: z.object({
+    question: z.string().describe("the users question"),
+  }),
+  execute: async ({ question }) => {
+    const session = await auth0.getSession();
+    const user = session?.user;
+
+    if (!user) {
+      return "There is no user logged in.";
+    }
+
+    const retriever = FGAFilter.create({
+      buildQuery: (doc: DocumentWithScore) => ({
+        user: `user:${user?.email}`,
+        object: `doc:${doc.documentId}`,
+        relation: "can_view",
+      }),
+    });
+
+    const documents = await findRelevantContent(question, 25);
+    // filter docs based on FGA authorization
+    const context = await retriever.filter(documents);
+    return context;
+  },
+});
+```
+
+#### Use the RAG tool from AI agent
+
+Call the tool from your AI agent to get data from documents. Update the `/src/app/api/chat/route.ts` file with the following code:
+
+```ts src/app/api/chat/route.ts wrap lines highlight={2,8}
+//...
+import { getContextDocumentsTool } from "@/lib/tools/context-docs";
+
+//... existing code
+export async function POST(req: NextRequest) {
+  //... existing code
+  const tools = {
+    getContextDocumentsTool,
+  };
+
+  return createDataStreamResponse({
+    execute: async (dataStream: DataStreamWriter) => {
+      const result = streamText({
+        model: openai("gpt-4o-mini"),
+        system: AGENT_SYSTEM_TEMPLATE,
+        messages,
+        maxSteps: 5,
+        tools,
+      });
+
+      result.mergeIntoDataStream(dataStream, {
+        sendReasoning: true,
+      });
+    },
+    onError: (err: any) => {
+      console.log(err);
+      return `An error occurred! ${err.message}`;
+    },
+  });
+}
+```
+
+### Test your application
+
+Start the database and create required tables:
+
+```bash wrap lines
+# start the postgres database
+docker compose up -d
+# create the database schema
+npm run db:migrate
+```
+
+Start the application with `npm run dev`. Then, navigate to `http://localhost:3000`.
+Upload a document from the documents tab and ask your AI Agent a question about the document. You should get a response with the relevant information.
+
+Go to an incognito window, log in as a different user, and ask it the same question. You should not get a response.
+
+Share the document from the documents page to the second user and try again. You should see the information now.
+
+That's it! You successfully integrated RAG protected by Auth0 FGA into your project.
+
+Explore [the example app on GitHub](https://github.com/auth0-samples/auth0-ai-samples/tree/main/authorization-for-rag/vercel-ai-next-js).

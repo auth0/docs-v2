@@ -26,6 +26,12 @@ const mockIdpConfig = {
       helpText: "Enter your SAML provider details.",
       provisioning_methods: [],
       enabled_features: [],
+      cross_app_access_resource_app: {
+        status: {
+          default_value: "disabled",
+          allowed_values: ["disabled", "enabled"],
+        },
+      },
     },
     oidc: {
       fields: [
@@ -41,6 +47,12 @@ const mockIdpConfig = {
       helpText: "Enter your OIDC provider details.",
       provisioning_methods: [],
       enabled_features: [],
+      cross_app_access_resource_app: {
+        status: {
+          default_value: "disabled",
+          allowed_values: ["disabled", "enabled"],
+        },
+      },
     },
     // Add empty configs for other strategies to satisfy the type
     adfs: {
@@ -66,6 +78,12 @@ const mockIdpConfig = {
     okta: {
       provisioning_methods: [],
       enabled_features: [],
+      cross_app_access_resource_app: {
+        status: {
+          default_value: "disabled",
+          allowed_values: ["disabled", "enabled"],
+        },
+      },
     },
     pingfederate: {
       provisioning_methods: [],
@@ -135,6 +153,9 @@ export const getSsoProviderCreateMock = () => {
     isDarkMode: false,
     formData,
     wizardSteps: [],
+    showThirdPartyAccess: true,
+    showCrossAppAccess: true,
+    isCrossAppAccessReadOnly: false,
   };
 
   const mockHandlers = {

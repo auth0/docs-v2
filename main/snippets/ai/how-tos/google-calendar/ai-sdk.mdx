@@ -1,0 +1,195 @@
+
+### 1. Configure Auth0 AI
+
+First, you must install the SDK:
+
+```bash wrap lines
+npm install @auth0/ai-vercel
+```
+
+Then, you need to initialize Auth0 AI and set up the connection to request access tokens with the required Google Calendar scopes.
+
+```typescript ./src/lib/auth0-ai.ts wrap lines
+import { Auth0AI } from "@auth0/ai-vercel";
+import { auth0 } from "@/lib/auth0";
+
+const auth0AI = new Auth0AI();
+
+export const withGoogleCalendar = auth0AI.withTokenVault({
+  connection: "google-oauth2",
+  scopes: ["https://www.googleapis.com/auth/calendar.freebusy"],
+  refreshToken: async () => {
+    const session = await auth0.getSession();
+    const refreshToken = session?.tokenSet.refreshToken as string;
+
+    return refreshToken;
+  },
+});
+```
+
+<Info>
+Here, the property `auth0` is an instance of `@auth0/nextjs-auth0` to handle the application auth flows. <br/>
+You can check different authentication options for Next.js with Auth0 at the [official documentation.](https://github.com/auth0/nextjs-auth0?tab=readme-ov-file#3-create-the-auth0-sdk-client)
+</Info>
+
+### 2. Integrate your tool with Google Calendar
+
+Wrap your tool using the Auth0 AI SDK to obtain an access token for the Google Calendar API.
+
+```typescript ./src/lib/tools/checkUsersCalendar.ts wrap lines highlight={4-6,10,19,26-28,46-48}
+import { addHours, formatISO } from "date-fns";
+import { GaxiosError } from "gaxios";
+import { google } from "googleapis";
+import { getAccessTokenFromTokenVault } from "@auth0/ai-vercel";
+import { TokenVaultError } from "@auth0/ai/interrupts";
+import { withGoogleCalendar } from "@/lib/auth0-ai";
+import { tool } from "ai";
+import { z } from "zod";
+
+export const checkUsersCalendar = withGoogleCalendar(
+  tool({
+    description:
+      "Check user availability on a given date time on their calendar",
+    parameters: z.object({
+      date: z.coerce.date(),
+    }),
+    execute: async ({ date }) => {
+      // Get the access token from Auth0 AI
+      const accessToken = getAccessTokenFromTokenVault();
+
+      // Google SDK
+      try {
+        const calendar = google.calendar("v3");
+        const auth = new google.auth.OAuth2();
+
+        auth.setCredentials({
+          access_token: accessToken,
+        });
+
+        const response = await calendar.freebusy.query({
+          auth,
+          requestBody: {
+            timeMin: formatISO(date),
+            timeMax: addHours(date, 1).toISOString(),
+            timeZone: "UTC",
+            items: [{ id: "primary" }],
+          },
+        });
+
+        return {
+          available: response.data?.calendars?.primary?.busy?.length === 0,
+        };
+      } catch (error) {
+        if (error instanceof GaxiosError) {
+          if (error.status === 401) {
+            throw new TokenVaultError(
+              `Authorization required to access the Token Vault connection`
+            );
+          }
+        }
+
+        throw error;
+      }
+    },
+  })
+);
+```
+
+### 3. Handle authentication redirects
+
+Interrupts are a way for the system to pause execution and prompt the user to take an action—such as authenticating or granting API access—before resuming the interaction. This ensures that any required access is granted dynamically and securely during the chat experience. In this context, Auth0-AI SDK manages authentication redirects in the Vercel AI SDK via these interrupts.
+
+#### Server Side
+
+On the server-side code of your Next.js App, you need to set up the tool invocation and handle the interruption messaging via the `errorSerializer`. The `setAIContext` function is used to set the async-context for the Auth0 AI SDK.
+
+```typescript ./src/app/api/chat/route.ts wrap lines highlight={3-4,10,13,27,29}
+import { createDataStreamResponse, Message, streamText } from "ai";
+import { checkUsersCalendar } from "@/lib/tools/";
+import { setAIContext } from "@auth0/ai-vercel";
+import { errorSerializer, withInterruptions } from "@auth0/ai-vercel/interrupts";
+import { openai } from "@ai-sdk/openai";
+
+export async function POST(request: Request) {
+  const { id, messages} = await request.json();
+  const tools = { checkUsersCalendar };
+  setAIContext({ threadID: id });
+
+  return createDataStreamResponse({
+    execute: withInterruptions(
+      async (dataStream) => {
+        const result = streamText({
+          model: openai("gpt-4o-mini"),
+          system: "You are a friendly assistant! Keep your responses concise and helpful.",
+          messages,
+          maxSteps: 5,
+          tools,
+        });
+
+        result.mergeIntoDataStream(dataStream, {
+          sendReasoning: true,
+        });
+      },
+      { messages, tools }
+    ),
+    onError: errorSerializer((err) => {
+      console.log(err);
+      return "Oops, an error occured!";
+    }),
+  });
+}
+```
+
+#### Client Side
+
+In this example, we utilize the `TokenVaultConsentPopup` component to show a pop-up that allows the user to authenticate with Google Calendar and grant access with the requested scopes. You'll first need to install the `@auth0/ai-components` package:
+
+```bash wrap lines
+npx @auth0/ai-components add TokenVault
+```
+
+Then, you can integrate the authentication popup in your chat component, using the interruptions helper from the SDK:
+
+```tsx ./src/components/chat.tsx wrap lines highlight={4-6,10-14,25-34}
+"use client";
+
+import { useChat } from "@ai-sdk/react";
+import { useInterruptions } from "@auth0/ai-vercel/react";
+import { TokenVaultInterrupt } from "@auth0/ai/interrupts";
+import { TokenVaultConsentPopup } from "@/components/auth0-ai/TokenVault/popup";
+
+export default function Chat() {
+  const { messages, handleSubmit, input, setInput, toolInterrupt } =
+    useInterruptions((handler) =>
+      useChat({
+        onError: handler((error) => console.error("Chat error:", error)),
+      })
+    );
+
+  return (
+    <div>
+      {messages.map((message) => (
+        <div key={message.id}>
+          {message.role === "user" ? "User: " : "AI: "}
+          {message.content}
+        </div>
+      ))}
+
+      {TokenVaultInterrupt.isInterrupt(toolInterrupt) && (
+        <TokenVaultConsentPopup
+          interrupt={toolInterrupt}
+          connectWidget={{
+            title: "Check your availability in Google Calendar",
+            description:"description ...",
+            action: { label: "Check" },
+          }}
+        />
+      )}
+
+      <form onSubmit={handleSubmit}>
+        <input value={input} placeholder="Say something..." onChange={(e) => setInput(e.target.value)} />
+      </form>
+    </div>
+  );
+}
+```
