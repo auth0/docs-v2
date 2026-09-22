@@ -1,0 +1,135 @@
+---
+title: "Experiment Center"
+description: "Auth0 Experiment Centerの概要と、A/Bテスト用の認証フローを作成する方法について説明します。"
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Auth0 Experiment Center" stage="ea" plans="Enterprise" contact="担当のアカウントエグゼクティブ" />
+
+Auth0 Experiment Centerは、Auth0に標準搭載された実験エンジンです。[認証](/docs/ja-jp/authenticate/login/auth0-universal-login)体験の変更をA/Bテストし、その影響を認証イベントの[ログ](/docs/ja-jp/deploy-monitor/logs)で確認できます。
+
+Experiment Centerでは、A/BテストをAuth0上で定義すると、トラフィックが決定論的に振り分けられ、既存の認証イベントに実験のメタデータが付加されて返されるため、お使いのツールで結果を分析できます。
+
+Experiment Centerは[Auth0 Identity Conversion Suite](/docs/ja-jp/customize/identity-conversion-suite)の一部です。
+
+## 仕組み {#how-it-works}
+
+Experiment Centerを使用すると、Auth0の認証パイプラインで制御されたA/Bテストを実行できます。変更をすべてのユーザーに一度に適用するのではなく、一定の割合のトラフィックにのみ新しい動作を公開し、拡張された認証イベントを通じて結果を測定して、準備が整った時点で優れた方を本番へ展開します。
+
+Experiment Centerは、次の3つのエンティティで構成されています。
+
+* **Experiment**：トラフィックの分割方法とテストの実行タイミングを定義します。
+* **機能フラグ**：テストの対象と、選択し得るバリエーションを定義します。
+* **セグメント**：experimentを特定のバリエーションに振り分けるためのルールのセットを定義します。
+
+<Warning>
+  お客様は、クッキーおよび類似技術に関連する機能を、エンドユーザーにサービスを提供するうえで厳密に必要な目的にのみ使用する責任を負います。
+
+  詳しくは、[Auth0の一般データ保護規則 (GDPR) への準拠](/docs/ja-jp/secure/data-privacy-and-compliance/gdpr)をお読みください。
+</Warning>
+
+## Experiment {#experiment}
+
+experimentは、機能フラグを包み込む計測の仕組みです。定義する内容は次のとおりです。
+
+* どの機能フラグをテストするか
+* バリエーションごとにトラフィックをどう配分するか
+* テストをいつ実行するか
+
+各experimentが参照する機能フラグは、必ず1つだけです。
+
+### experiment のライフサイクル {#experiment-lifecycle}
+
+experiment には5つの状態があります。
+
+| ステータス       | 意味                                                       |
+| ----------- | -------------------------------------------------------- |
+| `draft`     | 作成済みで未実行。クエリパラメーターによる上書きを使って安全にテストできます。                  |
+| `active`    | 実行中。すべての認証取引でバリアントの割り当てとコンテキストの注入が有効になります。               |
+| `paused`    | 一時停止中。新規の割り当ては行われません。進行中のセッションは割り当て済みのバリエーションをそのまま維持します。 |
+| `completed` | 終了済み。新規の割り当ては行われません。手動でのプロモーション時に参照できるよう設定は保持されます。       |
+| `archived`  | 論理削除済み。既定の一覧表示には表示されません。分析データは保持されます。                    |
+
+### 割り当て戦略 {#allocation-strategies}
+
+experiment では、次の2つの割り当て戦略のいずれかを使用します。
+
+**割合ベース:** トラフィックは重みに応じて各バリエーションに振り分けられます。重みの合計は 100 になる必要があります。重み 0 も有効です (そのバリエーションは experiment の定義に含まれますが、トラフィックは割り当てられません) 。
+
+**セグメントベース (ターゲット指定) :** トラフィックはセグメントへの所属に基づいてバリエーションへ振り分けられます。セグメントは優先順位順に評価され、最初に一致したセグメントが採用されます。どのセグメントにも一致しない場合は、`is_fallback` の割り当てがリクエストを受け取ります。
+
+experiment エンティティの詳細については、[Entities Details](/docs/ja-jp/customize/experiment-center/entities#experiment) を参照してください。
+
+### Experiment コンテキスト {#experiment-context}
+
+experiment がアクティブでバリエーションが割り当てられると、Experiment Center はランタイムサーフェスに `ExperimentContext` オブジェクトを注入します。
+
+[ACUL](/docs/ja-jp/customize/login-pages/advanced-customizations#advanced-customizations-for-universal-login-acul) の画面では、`context_configuration` で対象の画面をオプトインした場合にのみ受け取ります。
+詳細については、[ACUL 統合ガイド](/docs/ja-jp/customize/experiment-center/integrations/acul-integration-guide)を参照してください。
+
+[アクション](/docs/ja-jp/customize/actions/actions-overview)と[ページテンプレート](/docs/ja-jp/customize/login-pages/universal-login/customize-templates#customize-universal-login-page-templates)は、experiment がアクティブな場合は常に自動的に受け取ります。オブジェクトの構造は次のとおりです。
+
+```typescript
+{
+  experiment_id: string;   // アクティブなexperimentのID
+  variation_id: string;    // 割り当てられたバリエーションのID
+  config: {                // マージされた設定（ベースライン + オーバーライド）
+    [paramName]: { value: unknown }
+  };
+  is_control: boolean;     // コントロールバリエーションの場合はtrue
+}
+```
+
+`config` フィールドには、割り当てられたバリエーションのマージ済みの設定がすべて含まれます。機能フラグで定義されたパラメーターには常に値が設定されているため、フォールバック処理を記述する必要はありません。
+
+### Assignment {#assignment}
+
+Assignment (割り当て) とは、認証の取引中にユーザーを特定のバリエーションへ振り分ける仕組みです。割り当ては決定論的かつスティッキーであり、同じユーザーは同じデバイスで同じ experiment に対して常に同じバリエーションが表示されるため、ログインをまたいでも体験が安定します。
+
+* **割合による割り当て**は、重みに応じてトラフィックを各バリエーションに振り分けます。特定の対象は常に同じバリエーションに割り当てられます。
+* **セグメントによる割り当て**は、リクエストのプロパティをセグメントルールと優先順位順に照合します。最初に一致したセグメントによってバリエーションが決まり、同じセグメントに一致するリクエストは常に同じバリエーションになります。
+
+割り当ての結果はテナントのログの `details.experiment` に記録されます。個別の API では公開されません。
+
+assignment エンティティについて詳しくは、[Entities Details](/docs/ja-jp/customize/experiment-center/entities#assignment)をお読みください。
+
+## 機能フラグ {#feature-flag}
+
+機能フラグは、テスト対象を制御する単位です。次の要素を含みます。
+
+* **ベースライン設定**: 型付きのパラメーターとそのデフォルト値
+* 1つ以上の**バリエーション**: ベースラインとは異なる代替設定
+
+機能フラグはテナント単位のスコープを持ち、再利用できます。同じフラグを、期間をまたいで複数のexperimentから参照することも可能です (たとえば、同じ機能に対する第1四半期のテストと第2四半期の改善テストなど) 。
+
+### 機能フラグのライフサイクル {#feature-flag-lifecycle}
+
+機能フラグには、3つの状態からなるライフサイクルが保存されています。
+
+| Status     | 意味                                                              |
+| ---------- | --------------------------------------------------------------- |
+| `draft`    | 作成済みですが、まだ有効ではありません。有効な experiment から参照することはできません。              |
+| `active`   | 使用可能な状態です。このフラグを参照する experiment を有効にするには、事前にこの状態になっている必要があります。  |
+| `archived` | 最終状態です。このフラグを参照する新しい experiment は作成できません。必要に応じて新しいフラグを作成してください。 |
+
+機能フラグエンティティの詳細については、[Entities Details](/docs/ja-jp/customize/experiment-center/entities#feature-flag)をご覧ください。
+
+### Variation {#variation}
+
+バリエーションとは、機能フラグ内で定義された体験の1つのバージョンです。どの設定パラメーターがベースラインと異なり、どの程度異なるのかを指定します。
+
+* **コントロールバリエーション**はベースラインであり、オーバーライドは空です (フラグのデフォルトからパラメーターは変更されていません) 。
+* **トリートメントバリエーション**は、それぞれ1つ以上のパラメーターのオーバーライドを指定します。
+
+バリエーションは `is_control` マーカーを持ちません。特定のexperimentにおいてそのバリエーションが統計上のコントロールとなるかどうかは、バリエーションではなく割り当てで設定されます。同じバリエーションが、あるexperimentではコントロール、別のexperimentではトリートメントとなることもあります。
+
+バリエーションエンティティの詳細については、[Entities Details](/docs/ja-jp/customize/experiment-center/entities#variation)をご覧ください。
+
+## セグメント {#segment}
+
+セグメントとは、一連のルールに一致する認証リクエストをまとめた名前付きのグループです。ターゲット割り当ての実験でセグメントを使用すると、特定のトラフィックコホートを特定のバリエーションにルーティングできます。
+
+セグメントはテナント単位のスコープを持ち、複数の実験で再利用できます。
+
+セグメントエンティティの詳細については、[エンティティの詳細](/docs/ja-jp/customize/experiment-center/entities#segment)を参照してください。
