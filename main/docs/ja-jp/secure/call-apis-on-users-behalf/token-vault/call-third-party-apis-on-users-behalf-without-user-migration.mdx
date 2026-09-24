@@ -1,0 +1,214 @@
+---
+description: ユーザーのidentity storeをAuth0に移行することなく、AIエージェントがユーザーに代わってサードパーティAPIを呼び出せるようにします。
+title: ユーザーを移行せずにユーザーに代わってサードパーティAPIを呼び出す
+sidebarTitle: ユーザーを移行せずにユーザーに代わってサードパーティAPIを呼び出す
+---
+
+ユーザーのidentity storeをAuth0に移行することなく、[Token Vault](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault)をアプリケーションに統合できます。プライマリ認証は、カスタム、サードパーティ、ローカルデータベース、B2C/B2Bソリューションのいずれであっても、引き続きユーザーのIDプロバイダー(IdP)が担います。一方、Auth0は自律型AIワークフローのために、サードパーティのOAuthアクセストークンを安全に保存・ローテーション・発行します。
+
+[カスタムトークン交換](/docs/ja-jp/authenticate/custom-token-exchange)([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693))を使用して、ユーザーのIdPが発行したトークンをAuth0のトークンと交換し、軽量なジャストインタイム(JIT)シャドウプロファイルをプロビジョニングします。次に、[Connected Accounts](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault)フローを使用して、サードパーティのプロバイダーアカウントをそのプロファイルにリンクします。これにより、バックエンドやエージェントは、有効期間の長い資格情報を直接扱うことなく、有効期間の短いダウンストリームトークンを必要なときに取得できます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  カスタムトークン交換とToken Vaultの併用は、ユーザーストアを移行せずにAIエージェントを利用可能にするための暫定的なソリューションです。Auth0は近日中に、ID-JAG([Cross App Access](/docs/ja-jp/ai-agents-mcp/cross-app-access))を基盤とするネイティブソリューションに対応する予定です。これにより、カスタムトークン交換を独自に実装しなくても、アプリ間の認可を標準化できるようになります。
+</Callout>
+
+## アーキテクチャの概要 {#architecture-overview}
+
+| コンポーネント                  | 役割                                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| ユーザーのIdP                 | ユーザーを認証し、プライマリートークン (署名付きOIDC IDトークンまたはJWTアサーション) を発行するプライマリIDプロバイダー (カスタム、サードパーティ、ローカルデータベースなど) です。 |
+| アプリサーバー                  | アプリケーションのセッションを管理し、Auth0とのカスタムトークン交換を実行して接続フローを進めます。                                                  |
+| Auth0アクション (カスタムトークン交換)  | ユーザーのIdPが発行したプライマリートークンを検証し、アクセストークンをAuth0 Organizationsに紐付けます。                                       |
+| Token Vault              | 接続済みのサードパーティOAuthトークンをOrganizationごとに暗号化して管理します。                                                      |
+| AIエージェント／ワーカー            | 有効期間の短いダウンストリームトークンを取得し、ツール呼び出しを自動実行します。                                                              |
+
+## 前提条件 {#prerequisites}
+
+* Auth0テナント：アクティブなテナント。マルチテナントまたはB2B構成を使用している場合は、[Organizations](/docs/ja-jp/manage-users/organizations)を有効にしておく必要があります。
+* ユーザーIdPの機能：署名付きのOIDC IDトークンまたはJWTアサーションを発行できるプライマリIDプロバイダー。署名検証用に、公開JWKSエンドポイントまたは静的キーが用意されている必要があります。
+* サードパーティ開発者の認証情報：AIエージェントがアクセスする各ダウンストリームプロバイダー (GitHub、Google Workspace、Salesforceなど) の有効なクライアント認証情報 (クライアントIDとクライアントシークレット) 。
+* テナント管理者のアクセス権：Auth0テナント内でクライアントアプリケーションの作成、OAuth接続の構成、[カスタムトークン交換](/docs/ja-jp/authenticate/custom-token-exchange)アクションの導入を行える権限。
+
+## ステップ 1: セットアップとアプリケーションの登録 {#step-1-setup-and-application-registration}
+
+### アプリケーションを登録して設定する {#register-and-configure-your-application}
+
+**Applications &gt; Applications** に移動し、アプリケーションを作成します。作成したアプリケーションは、[カスタムトークン交換](/docs/ja-jp/authenticate/custom-token-exchange/configure-custom-token-exchange#enable-custom-token-exchange-for-your-application)を有効にした、ファーストパーティかつコンフィデンシャルな OIDC 準拠アプリケーションとして設定します。
+
+* アプリケーションの **Allow Refresh Token Rotation** を無効にします。トークンを繰り返し取得する際には同じ subject token を再利用するため、ローテーションを有効にするとダウンストリームへのアクセスが機能しなくなります。
+* **Advanced Settings &gt; Grant Types** で、**Refresh Token** と **Token Vault** が選択されていることを確認します。
+* **APIs &gt; Auth0 My Account API** で、以下のスコープを指定して、アプリケーションに [My Account API](/docs/ja-jp/manage-users/my-account-api) ([マルチリソースリフレッシュトークン](/docs/ja-jp/secure/tokens/refresh-tokens/multi-resource-refresh-token)で取得) へのアクセスを許可します。
+  * `read:me:connected_accounts`
+  * `create:me:connected_accounts`
+  * `delete:me:connected_accounts`
+
+次に、**Applications &gt; APIs** で、対象 API の **Allow Skipping User Consent** を選択します。
+
+### ダウンストリームOAuth接続を登録する {#register-downstream-oauth-connections}
+
+AIエージェントがアクセスする必要のあるサードパーティのプロバイダーごとに、以下の手順を実行します。
+
+1. **Authentication &gt; Social**または**Authentication &gt; Enterprise**に移動します。
+2. プロバイダーの開発者ポータルで取得した資格情報を使用して、接続を追加します。
+3. **Purpose**で、接続の[Connected Accounts for Token Vaultを有効化](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/configure-token-vault#configure-connected-accounts-for-token-vault)します。
+4. **Permissions**で`Offline Access`を選択します。これにより、クライアントアプリケーションが外部プロバイダーからリフレッシュトークンを取得できるようになります。
+5. 接続の**Applications**タブで、登録済みのアプリケーションを有効にします。
+
+詳細については、「[Connected Accounts for Token Vault](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault)」を参照してください。
+
+## ステップ2：カスタムトークン交換アクションを構成する {#step-2-configure-the-custom-token-exchange-action}
+
+[カスタムトークン交換トリガー](/docs/ja-jp/customize/actions/explore-triggers/custom-token-exchange) (`onExecuteCustomTokenExchange`) を使用して、**Actions &gt; Library &gt; Custom**で新しいアクションを作成します。このアクションは、ユーザーIdPが発行したトークンを検証し、Auth0にシャドウユーザープロファイルを作成します。必要に応じて、アクセストークンのスコープをAuth0 Organizationに限定することもできます。
+
+```javascript lines expandable
+const { createRemoteJWKSet, jwtVerify } = require('jose');
+
+/**
+ * カスタムトークン交換 Handler
+ * @param {Event} event - Auth0 カスタムトークン交換イベント
+ * @param {CustomTokenExchangeAPI} api - Auth0 アクション API
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const token = event.transaction.subject_token;
+  const issuer = event.secrets.YOUR_IDP_ISSUER; // OIDC 発行者の形式（末尾にスラッシュを付ける）
+  const audience = event.secrets.YOUR_IDP_AUDIENCE; // トークンの対象をログイン用クライアントに限定
+
+  let claims;
+  try {
+    const jwks = createRemoteJWKSet(new URL(`${issuer}.well-known/jwks.json`));
+
+    // 1. ユーザー IdP が発行した IDトークンを検証
+    ({ payload: claims } = await jwtVerify(token, jwks, { issuer, audience }));
+  } catch {
+    return api.access.rejectInvalidSubjectToken('Invalid subject token');
+  }
+  if (!claims.sub) return api.access.rejectInvalidSubjectToken('Missing sub');
+  if (!claims.email) return api.access.rejectInvalidSubjectToken('Missing email');
+
+  // 2. Auth0 で JIT シャドウプロファイルをプロビジョニングまたは更新
+  api.authentication.setUserByConnection(
+    'cte-users',
+    {
+      user_id: claims.sub, // 変化せず、アップストリームのユーザーごとに一意な値
+      email: claims.email,
+      email_verified: claims.email_verified === true,
+      name: claims.name,
+    },
+    { creationBehavior: 'create_if_not_exists', updateBehavior: 'none' },
+  );
+
+  // 3. 任意：Token Vault へのアクセスに必要な場合は Organization コンテキストを付与
+  if (event.organization) api.authentication.setOrganization(event.organization.id);
+};
+```
+
+次に、Management API を使用して[カスタムトークン交換プロファイルを作成](/docs/ja-jp/authenticate/custom-token-exchange/configure-custom-token-exchange#configure-custom-token-exchange-profile)し、カスタムの `subject_token_type` をこのアクションに紐付けます。URN には予約済みの名前空間 (`urn:ietf`、`urn:auth0`、`urn:okta` など) を使用できません。
+
+```json lines
+{
+  "name": "external-idp-exchange",
+  "subject_token_type": "urn:acme:external-idp",
+  "action_id": "<YOUR_ACTION_ID>",
+  "type": "custom_authentication"
+}
+```
+
+## ステップ3：IdPトークンをAuth0 My Account APIのアクセストークンと交換する {#step-3-exchange-your-idp-token-for-an-auth0-my-account-api-access-token}
+
+アプリケーションのバックエンドからトークン交換リクエスト ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) を送信し、ユーザーのOrganizationをスコープとするAuth0 My Account APIのアクセストークンを取得します。
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+  --data-urlencode 'subject_token=<YOUR_USER_IDP_ID_TOKEN>' \
+  --data-urlencode 'subject_token_type=urn:acme:external-idp' \
+  --data-urlencode 'audience=https://{yourDomain}/me/' \
+  --data-urlencode 'scope=read:me:connected_accounts create:me:connected_accounts' \
+  --data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+  --data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+  # Organizationsを使用する場合のみ、--data-urlencode 'organization=<YOUR_ORGANIZATION_ID>' を追加します。
+```
+
+レスポンスには、My Account APIのアクセストークンとリフレッシュトークンが含まれます。
+
+## ステップ4：ダウンストリームのアカウントをToken Vaultにリンクする {#step-4-link-downstream-accounts-to-token-vault}
+
+[Connected Accounts](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault)フローを使用すると、Auth0をユーザーのプライマリーログインに設定しなくても、GitHub、Google Workspace、SalesforceなどのサードパーティOAuthプロバイダーを認可できます。
+
+```typescript lines expandable
+// 1. 接続フローを作成する（バックエンド）
+async function startConnect(myAccountToken, connection, redirectUri) {
+  const res = await fetch(
+    'https://{yourDomain}/me/v1/connected-accounts/connect',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${myAccountToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ connection, redirect_uri: redirectUri, state: '<csrf>' }),
+    },
+  );
+  const { connect_uri, connect_params, auth_session } = await res.json();
+  // auth_session を（サーバー側に短期間）保存し、ユーザーを以下の URL にリダイレクトする:
+  return {
+    authorizationUrl: `${connect_uri}?ticket=${encodeURIComponent(connect_params.ticket)}`,
+    auth_session,
+  };
+}
+
+// 2. アカウントのリンクを完了するコールバック（バックエンド）
+async function completeConnect(myAccountToken, auth_session, connect_code, redirectUri) {
+  await fetch('https://{yourDomain}/me/v1/connected-accounts/complete', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${myAccountToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ auth_session, connect_code, redirect_uri: redirectUri }),
+  });
+  // 成功すると、アカウントが connected_accounts に追加され、トークンが Token Vault に保存される。
+}
+```
+
+## ステップ5：AIエージェント用のサードパーティトークンを取得する {#step-5-retrieve-third-party-tokens-for-ai-agents}
+
+エージェントは、[リフレッシュトークン交換](/docs/ja-jp/secure/call-apis-on-users-behalf/token-vault/refresh-token-exchange-with-token-vault)を使って、有効期限内のダウンストリームアクセストークンをToken Vaultから直接取得します。
+
+```typescript lines expandable
+async function getVaultToken(refreshToken: string, connection: string): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token',
+    subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+    subject_token: refreshToken,
+    requested_token_type: 'http://auth0.com/oauth/token-type/federated-connection-access-token',
+    connection, // 例: 'github'、'google-oauth2'
+    client_id: process.env.AGENT_CLIENT_ID!,
+    client_secret: process.env.AGENT_CLIENT_SECRET!,
+    // login_hint: '<任意 — リンクされたアカウントが複数ある場合に区別するため>'
+  });
+  const res = await fetch('https://{yourDomain}/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const data = await res.json();
+  return data.access_token; // ダウンストリームプロバイダーの短期トークン
+}
+```
+
+## ステップ6：AIエージェントのツール呼び出しを実行する {#step-6-execute-ai-agent-tool-calls}
+
+取得したプロバイダーのトークンをサードパーティのSDKに渡し、ユーザーに代わってAPI操作を実行します。
+
+```javascript lines
+import { Octokit } from '@octokit/rest';
+
+async function runGitHubAgentTool(refreshToken) {
+  const token = await getVaultToken(refreshToken, 'github');
+  const octokit = new Octokit({ auth: token });
+  const { data } = await octokit.rest.issues.listForAuthenticatedUser({ state: 'open', per_page: 5 });
+  return data.map((i) => ({ title: i.title, url: i.html_url }));
+}
+```
