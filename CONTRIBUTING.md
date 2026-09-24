@@ -6,9 +6,9 @@ Thanks for your interest in contributing to Auth0's docs!
 
 Before you start working on a contribution to the docs, please coordinate with the appropriate team:
 
-* The content in this repo is owned by the writers on the Product Documentation team, @project-docs-writers-codeowner.
+- The content in this repo is owned by the writers on the Product Documentation team, @project-docs-writers-codeowner.
 
-* The code and API documentation in this repo is owned by the engineers on the Docs Management team, @project-docs-management-codeowner.
+- The code and API documentation in this repo is owned by the engineers on the Docs Management team, @project-docs-management-codeowner.
 
 Both teams have additional resources, contextual information, and internal documentation to help you decide when and how to contribute.
 
@@ -47,7 +47,7 @@ We use [Lychee](https://lychee.cli.rs/) to check for broken non-local links. Our
 For local link checking, run `lychee` from the root of the repo. Specify the config file and the path(s) you want to check. For example, to check everything in the main docs site:
 
 ```
-lychee -c lychee.toml 'main/docs/**/*.mdx' 
+lychee -c lychee.toml 'main/docs/**/*.mdx'
 ```
 
 Our CI uses the same Lychee config to check external links in PRs that change content files. The GitHub Action leaves a comment on the PR with a summary of the results and a list of any broken links.
@@ -66,7 +66,7 @@ Of [Mintlify's built-in front matter fields](https://www.mintlify.com/docs/organ
 
 We one use piece of custom front matter:
 
-* `validatedOn` with a date in `yyyy-mm-dd` format to indicate when the content was last validated.
+- `validatedOn` with a date in `yyyy-mm-dd` format to indicate when the content was last validated.
 
 ### URLs and navigation
 
@@ -83,3 +83,26 @@ Read [the Components page of our style guide](https://oktawiki.atlassian.net/wik
 ### Images and other media
 
 Upload images or other files to the `/images` folders in the repository following our [screenshot use policy in our style guide](https://oktawiki.atlassian.net/wiki/spaces/DOCS/pages/2544472521/Multimedia+and+screenshot+use+policy).
+
+## Translations
+
+The `main` site uses [General Translation](https://generaltranslation.com/en-US/docs/overview/get-started) for automated translation. We only write and maintain English content in `docs/`; the `fr-ca` and `ja-jp` locale directories are generated automatically and should not be edited by hand.
+
+A [GitHub Actions workflow](.github/workflows/translate.yml) runs the General Translation CLI on every push to `main` that touches translatable source files (`main/docs/**/*.mdx`, `main/docs/oas/**/*.json`, or `main/snippets/**/*.jsx`). It opens or updates a single automated PR (branch `automated/translations-update`) with the resulting translations, so locale content typically lags the English source by one PR cycle rather than updating instantly.
+
+### How the `gt` CLI works
+
+Translation behavior for `main` is configured in [`main/gt.config.json`](main/gt.config.json), which defines the target locales (`fr-ca`, `ja-jp`), which files are translatable, and how source paths map to locale paths.
+
+[`main/gt-lock.json`](main/gt-lock.json) is the lockfile the CLI generates and maintains. For each source file it stores a content hash (and a hash per locale translation). When you run `gt translate`, the CLI hashes the current source files and compares them against the lockfile — only files whose hash has changed (new or edited content) get re-translated; everything else is left untouched. This keeps translation runs fast and avoids re-translating content that hasn't changed. Don't edit `gt-lock.json` by hand; it's maintained entirely by the CLI.
+
+### Running `gt` locally
+
+To run `gt` commands (e.g. `gt translate`) locally instead of relying on CI, create a `.env.local` file inside `main/` with your project credentials:
+
+```
+GT_PROJECT_ID=<your-project-id>
+GT_API_KEY=<your-api-key>
+```
+
+Install the CLI globally with `npm i -g gt@latest`, then from inside `main/`, run commands with `gt <command>` (e.g. `gt translate`). Never commit `.env.local` — it contains a live API key.
