@@ -1,0 +1,174 @@
+---
+title: "トークン内のエージェントアイデンティティ"
+description: "client credentials、OBOトークン交換、標準のloginフローにおいて、Auth0がアクセストークンにエージェントのアイデンティティを埋め込む仕組みを解説します。"
+---
+
+import { ReleaseStageNotice } from "/snippets/ja-jp/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Agent as Principal" stage="ea" contact="Auth0 Support" terms="true" />
+
+[クライアントに関連付ける](/docs/ja-jp/ai-agents-mcp/agent-as-principal/associate-agent-client)と、そのクライアントに発行されるトークンには、帰属の明確化とトレーサビリティのためにエージェントのアイデンティティが含まれます。エージェントのアイデンティティがトークン内のどこに示されるかは、付与タイプによって異なります。
+
+* [クライアントの資格情報フロー](#client-credentials-flow)：エージェントがサブジェクトになります。そのアイデンティティはトップレベルの`sub`クレームに示されます。
+* [標準のログインフロー](#standard-login-flow)：ユーザーがサブジェクトになります。エージェントのアイデンティティは単一階層の`act`クレームに示されます。
+* [On-Behalf-Of (OBO) トークン交換](#on-behalf-of-obo-token-exchange)：ユーザーがサブジェクトのままです。エージェントのアイデンティティは`act`クレームに示され、その中に発信元のクライアントを示すネストされた`act`が含まれます。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0は、エージェントに紐づくクライアントでの[`jwt_bearer`付与](/docs/ja-jp/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt)をサポートしていません。
+</Callout>
+
+またAuth0は、[OAuth Actor Profile for Delegation](https://www.ietf.org/archive/id/draft-mcguinness-oauth-actor-profile-00.html)ドラフトを採用し、トークン内の各位置にあるエンティティの種類を明示的に識別するための`sub_profile`クレームと`client_profile`クレームを導入しています。
+
+## エージェントのサブジェクトクレーム {#agent-subject-claims}
+
+`sub_profile` クレームと `client_profile` クレームは、エージェントに紐づくクライアントが発行するトークンにおいて、エンティティタイプを示します:
+
+| クレーム             | 説明                                                                                                                                                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub_profile`    | サブジェクトのエンティティタイプ。値: `user`、`ai_agent`、`service`、`browser_app`、`native_app`。                                                                                                                                                                                 |
+| `client_profile` | リクエスト元クライアントのエンティティタイプ。値: `user`、`ai_agent`、`service`、`browser_app`、`native_app`。スペース区切りで複数の値を指定できます (例: `service ai_agent`)。                                                                                                                               |
+| `act`            | OBO トークン交換で使われるアクタークレーム。エージェントに紐づくクライアントが関与する場合は常に含まれます。`sub`、`iss`、`sub_profile`、`client_id`、`client_profile` を含み、さらに任意で `cnf` ([DPoP バインディング](/docs/ja-jp/secure/sender-constraining/demonstrating-proof-of-possession-dpop)) と、マルチホップチェーン用にネストされた `act` を含みます。 |
+
+発行されたトークンで `sub_profile` クレームと `client_profile` クレームを受け取るには、[リソースサーバーの設定](#configure-resource-server-to-receive-agent-subject-claims)が必要です。クレーム内にエージェントの ID が現れる箇所 (トップレベルの `sub` または `act.sub`) では、作成時に設定されていれば `external_agent_id` が、設定されていなければ `agent_id` が使われます。
+
+## エージェントのサブジェクトクレームを受け取るようにリソースサーバーを構成する {#configure-resource-server-to-receive-agent-subject-claims}
+
+`sub_profile` クレームと `client_profile` クレームを受け取るには、対象のリソースサーバーに `agent_subject_claims: 'auth0-v1'` を設定します。これはリソースサーバーごとのオプトイン方式です。
+
+```http
+PATCH /api/v2/resource-servers/{id}
+Content-Type: application/json
+
+{
+  "agent_subject_claims": "auth0-v1"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  `sub_profile` クレーム は、トークンに正式なエンティティ型を導入するものです。トークンを受け取るサービス側で、`sub_profile` が常に user であると想定しないようにしてください。`sub_profile` が存在しない場合 (リソースサーバーでオプトインが有効になっていない場合) 、従来の動作がそのまま維持されます。
+
+  有効化する前に、ダウンストリームのサービスでの `sub` の解析処理を確認してください。`sub` クレーム の形式を検証または解析しているサービスでは、client credentials グラントで `ai_agent` を有効なエンティティ型として扱えるよう、更新が必要になる場合があります。
+</Callout>
+
+## 標準のログインフロー {#standard-login-flow}
+
+エージェントに紐づくクライアントは、認可コード、インプリシット、CIBA、デバイス、MFA、パスワード、パスキー、またはリフレッシュトークンの各グラントを使用して、標準のログインフローを実行できます。サブジェクトはユーザーのままです。エージェントのアイデンティティはトップレベルの `sub` クレームには現れません。代わりに単一レベルの `act` クレームが追加され、トークン内でエージェントを識別できるようになります。
+
+次の例では、エージェントに紐づくクライアントが標準のログインフローを実行し、以下のエージェントのサブジェクトクレームを含むトークンを発行します。
+
+* `sub`: ユーザー ID
+* `sub_profile`: `user`
+* `client_profile`: `ai_agent` (クライアントがエージェントに紐付けられていることを示す)
+* `act`: エージェントを識別する単一レベルのアクタークレーム (`"sub": "agt_1a2b3c", "sub_profile": "ai_agent"`)
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "agent-linked-client-id",
+  "client_profile": "ai_agent",
+  "aud": "https://resource-api.example.com",
+  "scope": "read:data",
+  "exp": 1711820400,
+  "iat": 1711816800,
+  "act": {
+    "sub": "agt_1a2b3c",
+    "sub_profile": "ai_agent",
+    "client_id": "agent-linked-client-id"
+  }
+}
+```
+
+## クライアントの資格情報フロー {#client-credentials-flow}
+
+エージェントに紐づくマシンツーマシン (M2M) クライアントは、クライアントの資格情報フローを実行します。この場合、エージェント自身がサブジェクトとなって認証され、ユーザーは関与しません。
+
+次の例では、エージェントに紐づく M2M クライアントがクライアントの資格情報フローを実行し、以下のエージェントのサブジェクトクレームを含むトークンを発行します。
+
+* `sub`: 作成時に設定されている場合はエージェントの `external_agent_id`、設定されていない場合は `agent_id`
+* `sub_profile`: `ai_agent`
+* `client_profile`: `service ai_agent` (エージェントに紐づく M2M クライアントを表します)
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "agt_1a2b3c",
+  "sub_profile": "ai_agent",
+  "client_id": "YOUR_CLIENT_ID",
+  "client_profile": "service ai_agent",
+  "aud": "https://your-resource-api.example.com",
+  "scope": "read:data",
+  "exp": 1711820400,
+  "iat": 1711816800
+}
+```
+
+## On-Behalf-Of (OBO) トークン交換 {#on-behalf-of-obo-token-exchange}
+
+OBOトークン交換では、ユーザーが認証を行い、エージェントのリソースサーバーをオーディエンスとするアクセストークンを受け取ります。続いて、エージェントに紐づくクライアントが、[On-Behalf-Ofトークン交換](/docs/ja-jp/secure/call-apis-on-users-behalf/on-behalf-of-token-exchange)を使用して、このトークンを委任トークンと交換します。この間、サブジェクトは一貫してユーザーのままです。エージェントは `act` クレーム内でアクターとして識別されます。
+
+トークン交換の前に、ユーザーはブラウザーアプリ経由で認証を行い、アクセストークンを受け取ります。
+
+* `sub`: ユーザーID
+* `sub_profile`: `user`
+* `client_profile`: 発信元のクライアントを `browser_app` として識別します
+* `aud`: エージェントのリソースサーバー
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "spa-client-id",
+  "client_profile": "browser_app",
+  "aud": "https://ai-agent-resource-server.example.com",
+  "scope": "read:data",
+  "exp": 1711820300,
+  "iat": 1711816700
+}
+```
+
+エージェントに紐づくクライアントは、OBO トークン交換を使用してユーザートークンを交換します:
+
+* `sub`: ユーザー ID (変更なし)
+* `sub_profile`: `user` (変更なし)
+* `client_profile`: `service ai_agent`。エージェントに紐づくクライアントを表します
+* `aud`: 新しいリソースサーバー
+* `act`: 直接のアクターはエージェントで、ネストされた `act` にフローを開始した元のクライアントが示されます。委任の最大深度は 5 ホップ、つまりネストされた `act` 4 階層です。
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "agent-client-id",
+  "client_profile": "service ai_agent",
+  "aud": "https://resource-api.example.com",
+  "scope": "read:data",
+  "cnf": { "jkt": "NzbLsXh8uDCcd7MNwrnNZpX0ak8ACQ" },
+  "exp": 1711820400,
+  "iat": 1711816800,
+  "act": {
+    "sub": "agt_1a2b3c",
+    "sub_profile": "ai_agent",
+    "client_id": "agent-client-id",
+    "act": {
+      "sub": "spa-client-id",
+      "sub_profile": "browser_app",
+      "client_id": "spa-client-id"
+    }
+  }
+}
+```
+
+トークン交換は現在、受け取ったトークンのサブジェクトがユーザーである場合にのみ OBO をサポートしています。エージェントやクライアント自体が OBO 交換のトップレベルのサブジェクトとなるトークンの発行は、まだサポートされていません。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  OBO トークン交換ではリフレッシュトークンはサポートされていません。設定方法や制限事項の詳細は、[On-Behalf-Of トークン交換](/docs/ja-jp/secure/call-apis-on-users-behalf/on-behalf-of-token-exchange)をお読みください。
+</Callout>
+
+## 次のステップ {#next-steps}
+
+* [Actionsを使用してアクセストークンにエージェントコンテキストを追加する](/docs/ja-jp/ai-agents-mcp/agent-as-principal/actions-context)
+* エージェントIDの特定とトレーサビリティのために、[テナントログ内のエージェントID](/docs/ja-jp/ai-agents-mcp/agent-as-principal/tenant-logs)をクエリする

@@ -1,0 +1,174 @@
+---
+title: "L'identité de l'agent dans les jetons"
+description: "Comment Auth0 intègre l'identité de l'agent dans les jetons d'accès, que ce soit dans les flux d'informations d'identification du client, d'échange de jetons OBO ou de connexion standard."
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-ca/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="Agent as Principal" stage="ea" contact="Auth0 Support" terms="true" />
+
+Une fois l&#39;agent [associé à un client](/docs/fr-ca/ai-agents-mcp/agent-as-principal/associate-agent-client), les jetons émis à ce client portent l&#39;identité de l&#39;agent à des fins d&#39;attribution et de traçabilité. La façon dont l&#39;identité de l&#39;agent apparaît dans le jeton dépend du type d&#39;autorisation :
+
+* [Flux des identifiants client](#client-credentials-flow) : l&#39;agent est le sujet. Son identité apparaît dans la demande personnalisée `sub` de premier niveau.
+* [Flux de connexion standard](#standard-login-flow) : l&#39;utilisateur est le sujet. L&#39;identité de l&#39;agent apparaît dans une demande personnalisée `act` à un seul niveau.
+* [Échange de jetons On-Behalf-Of (OBO)](#on-behalf-of-obo-token-exchange) : l&#39;utilisateur demeure le sujet. L&#39;identité de l&#39;agent apparaît dans la demande personnalisée `act`, accompagnée d&#39;une demande personnalisée `act` imbriquée qui indique le client d&#39;origine.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Auth0 ne prend pas en charge le [type d&#39;autorisation `jwt_bearer`](/docs/fr-ca/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) pour les clients liés à un agent.
+</Callout>
+
+Auth0 adopte également l&#39;ébauche [OAuth Actor Profile for Delegation](https://www.ietf.org/archive/id/draft-mcguinness-oauth-actor-profile-00.html), qui introduit les demandes personnalisées `sub_profile` et `client_profile` afin d&#39;identifier explicitement le type d&#39;entité à chaque position du jeton.
+
+## Demandes personnalisées du sujet de l&#39;agent {#agent-subject-claims}
+
+Les demandes personnalisées `sub_profile` et `client_profile` précisent le type d&#39;entité dans les jetons émis par les clients liés à un agent :
+
+| Demande personnalisée | Description                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub_profile`         | Type d&#39;entité du sujet. Valeurs : `user`, `ai_agent`, `service`, `browser_app`, `native_app`.                                                                                                                                                                                                                                                                                                                 |
+| `client_profile`      | Type d&#39;entité du client demandeur. Valeurs : `user`, `ai_agent`, `service`, `browser_app`, `native_app`. Plusieurs valeurs séparées par une espace sont permises (par exemple, `service ai_agent`).                                                                                                                                                                                                           |
+| `act`                 | Demande personnalisée d&#39;acteur pour l&#39;échange de jetons OBO. Présente dès qu&#39;un client lié à un agent intervient. Contient `sub`, `iss`, `sub_profile`, `client_id`, `client_profile` et, facultativement, `cnf` ([liaison DPoP](/docs/fr-ca/secure/sender-constraining/demonstrating-proof-of-possession-dpop)) ainsi qu&#39;une demande personnalisée `act` imbriquée pour les chaînes à sauts multiples. |
+
+Vous devez [configurer votre serveur de ressources](#configure-resource-server-to-receive-agent-subject-claims) pour qu&#39;il reçoive les demandes personnalisées `sub_profile` et `client_profile` dans les jetons émis. Partout où l&#39;identifiant d&#39;un agent apparaît dans une demande personnalisée (`sub` de premier niveau ou `act.sub`), il s&#39;agit de l&#39;`external_agent_id` de l&#39;agent si celui-ci a été défini à la création; sinon, il s&#39;agit de l&#39;`agent_id`.
+
+## Configurer le serveur de ressources pour recevoir les demandes de sujet de l&#39;agent {#configure-resource-server-to-receive-agent-subject-claims}
+
+Pour recevoir les demandes `sub_profile` et `client_profile`, définissez `agent_subject_claims: 'auth0-v1'` sur le serveur de ressources cible. Cette option doit être activée individuellement pour chaque serveur de ressources.
+
+```http
+PATCH /api/v2/resource-servers/{id}
+Content-Type: application/json
+
+{
+  "agent_subject_claims": "auth0-v1"
+}
+```
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  La demande personnalisée `sub_profile` introduit un type d&#39;entité formel dans le jeton. Les services qui reçoivent des jetons ne devraient pas présumer que `sub_profile` vaudra toujours user. Si `sub_profile` est absent (l&#39;option n&#39;est pas activée pour le serveur de ressources), le comportement actuel demeure inchangé.
+
+  Vérifiez la façon dont `sub` est analysé dans les services en aval avant d&#39;activer l&#39;option. Les services qui valident ou analysent le format de la demande personnalisée `sub` devront peut-être être mis à jour pour traiter `ai_agent` comme un type d&#39;entité valide dans le cas des octrois par information d&#39;identification du client.
+</Callout>
+
+## Flux de connexion standard {#standard-login-flow}
+
+Un client lié à un agent peut exécuter un flux de connexion standard à l&#39;aide de l&#39;octroi par code d&#39;autorisation, implicite, CIBA, par appareil, MFA, par mot de passe, par clé d&#39;identification ou par jeton d&#39;actualisation. Le sujet demeure l&#39;utilisateur. L&#39;identité de l&#39;agent n&#39;apparaît pas dans la demande personnalisée `sub` de premier niveau. À la place, une demande personnalisée `act` à un seul niveau est ajoutée afin que l&#39;agent puisse être identifié dans le jeton.
+
+Dans l&#39;exemple suivant, un client lié à un agent exécute un flux de connexion standard et émet un jeton comportant les demandes de sujet d&#39;agent suivantes :
+
+* `sub` : l&#39;identifiant de l&#39;utilisateur
+* `sub_profile` : `user`
+* `client_profile` : `ai_agent`, qui indique que le client est lié à un agent
+* `act` : une demande d&#39;acteur à un seul niveau qui identifie l&#39;agent (`"sub": "agt_1a2b3c", "sub_profile": "ai_agent"`)
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "agent-linked-client-id",
+  "client_profile": "ai_agent",
+  "aud": "https://resource-api.example.com",
+  "scope": "read:data",
+  "exp": 1711820400,
+  "iat": 1711816800,
+  "act": {
+    "sub": "agt_1a2b3c",
+    "sub_profile": "ai_agent",
+    "client_id": "agent-linked-client-id"
+  }
+}
+```
+
+## Flux des identifiants client {#client-credentials-flow}
+
+Un client de communication entre machines (M2M) lié à un agent exécute un flux des identifiants client. L&#39;agent est le sujet et s&#39;authentifie en son propre nom; aucun utilisateur n&#39;intervient.
+
+Dans l&#39;exemple suivant, un client M2M lié à un agent exécute un flux des identifiants client et émet un jeton comportant les demandes de sujet d&#39;agent suivantes :
+
+* `sub` : l&#39;`external_agent_id` de l&#39;agent s&#39;il en a été défini un à la création, sinon l&#39;`agent_id`
+* `sub_profile` : `ai_agent`
+* `client_profile` : `service ai_agent`, représentant le client M2M lié à l&#39;agent
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "agt_1a2b3c",
+  "sub_profile": "ai_agent",
+  "client_id": "YOUR_CLIENT_ID",
+  "client_profile": "service ai_agent",
+  "aud": "https://your-resource-api.example.com",
+  "scope": "read:data",
+  "exp": 1711820400,
+  "iat": 1711816800
+}
+```
+
+## Échange de jetons On-Behalf-Of (OBO) {#on-behalf-of-obo-token-exchange}
+
+Dans l&#39;échange de jetons OBO, un utilisateur s&#39;authentifie et reçoit un jeton d&#39;accès dont le public est le serveur de ressources de l&#39;agent. Le client lié à l&#39;agent échange ensuite ce jeton contre un jeton délégué au moyen de l&#39;[échange de jetons On-Behalf-Of](/docs/fr-ca/secure/call-apis-on-users-behalf/on-behalf-of-token-exchange). L&#39;utilisateur demeure le sujet tout au long du processus. L&#39;agent est identifié comme l&#39;acteur dans la demande personnalisée `act`.
+
+Avant l&#39;échange de jetons, l&#39;utilisateur s&#39;authentifie au moyen d&#39;une application de navigateur et reçoit un jeton d&#39;accès :
+
+* `sub` : l&#39;identifiant de l&#39;utilisateur
+* `sub_profile` : `user`
+* `client_profile` : identifie le client d&#39;origine comme un `browser_app`
+* `aud` : le serveur de ressources de l&#39;agent
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "spa-client-id",
+  "client_profile": "browser_app",
+  "aud": "https://ai-agent-resource-server.example.com",
+  "scope": "read:data",
+  "exp": 1711820300,
+  "iat": 1711816700
+}
+```
+
+Le client lié à l&#39;agent échange le jeton de l&#39;utilisateur au moyen de l&#39;échange de jetons OBO :
+
+* `sub` : l&#39;identifiant de l&#39;utilisateur (inchangé)
+* `sub_profile` : `user` (inchangé)
+* `client_profile` : `service ai_agent`, qui représente le client lié à l&#39;agent
+* `aud` : le nouveau serveur de ressources
+* `act` : l&#39;acteur immédiat est l&#39;agent, avec un `act` imbriqué qui indique le client d&#39;origine ayant amorcé le flux. La profondeur maximale de délégation est de 5 sauts, soit 4 niveaux de `act` imbriqués.
+
+```json
+{
+  "iss": "https://YOUR_AUTH0_DOMAIN/",
+  "sub": "auth0|user123",
+  "sub_profile": "user",
+  "client_id": "agent-client-id",
+  "client_profile": "service ai_agent",
+  "aud": "https://resource-api.example.com",
+  "scope": "read:data",
+  "cnf": { "jkt": "NzbLsXh8uDCcd7MNwrnNZpX0ak8ACQ" },
+  "exp": 1711820400,
+  "iat": 1711816800,
+  "act": {
+    "sub": "agt_1a2b3c",
+    "sub_profile": "ai_agent",
+    "client_id": "agent-client-id",
+    "act": {
+      "sub": "spa-client-id",
+      "sub_profile": "browser_app",
+      "client_id": "spa-client-id"
+    }
+  }
+}
+```
+
+L&#39;échange de jetons prend actuellement en charge l&#39;OBO uniquement lorsque le sujet du jeton entrant est un utilisateur. L&#39;émission de jetons dans lesquels un agent ou un client est lui-même le sujet de premier niveau d&#39;un échange OBO n&#39;est pas encore prise en charge.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les jetons d&#39;actualisation ne sont pas pris en charge pour l&#39;échange de jetons OBO. Pour en apprendre davantage sur la configuration et les limites, faites la lecture de [Échange de jetons On-Behalf-Of](/docs/fr-ca/secure/call-apis-on-users-behalf/on-behalf-of-token-exchange).
+</Callout>
+
+## Prochaines étapes {#next-steps}
+
+* Ajoutez du [contexte d&#39;agent aux jetons d&#39;accès à l&#39;aide des Actions](/docs/fr-ca/ai-agents-mcp/agent-as-principal/actions-context)
+* Interrogez l&#39;[ID de l&#39;agent dans les journaux du locataire](/docs/fr-ca/ai-agents-mcp/agent-as-principal/tenant-logs) pour assurer l&#39;attribution et la traçabilité de l&#39;identité de l&#39;agent
