@@ -1,0 +1,214 @@
+---
+description: Enable AI agents to call third-party APIs on the user's behalf without migrating your user identity store to Auth0.
+title: Call Third-Party APIs on User's Behalf Without User Migration
+sidebarTitle: Call Third-Party APIs on User's Behalf Without User Migration
+---
+
+Integrate [Token Vault](/docs/secure/call-apis-on-users-behalf/token-vault) into your applications without migrating your user identity store to Auth0. Primary authentication stays with your user identity provider (IdP), whether custom, third-party, local database, or a B2C/B2B solution, while Auth0 securely stores, rotates, and dispenses third-party OAuth access tokens for autonomous AI workflows.
+
+Using [Custom Token Exchange](/docs/authenticate/custom-token-exchange) ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)), you exchange a token issued by your user IdP for Auth0 tokens, provisioning a lightweight just-in-time (JIT) shadow profile. You then link third-party provider accounts to that profile using the [Connected Accounts](/docs/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault) flow, and your backend or agents retrieve short-lived downstream tokens on demand, without ever handling long-lived credentials directly.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+Using Custom Token Exchange alongside Token Vault provides an interim solution for enabling AI agents without migrating user stores. Auth0 will soon support a native solution powered by ID-JAG ([Cross App Access](/docs/ai-agents-mcp/cross-app-access)) to standardize cross-app authorization without requiring custom token exchange engineering.
+</Callout>
+
+## Architecture overview
+
+| Component | Role |
+| --- | --- |
+| Your User IdP | The primary identity provider (i.e. custom, third-party, local database) that authenticates users and issues primary tokens (signed OIDC ID tokens or JWT assertions). |
+| App Server | Manages application sessions and performs the Custom Token Exchange with Auth0 to drive the connect flow. |
+| Auth0 Action (Custom Token Exchange) | Validates primary tokens from your User IdP and binds access tokens to Auth0 Organizations. |
+| Token Vault | Encrypts and manages connected third-party OAuth tokens per Organization. |
+| AI Agent / Worker | Retrieves short-lived downstream tokens to execute automated tool calls. |
+
+## Prerequisites
+
+* Auth0 tenant: An active tenant, with [Organizations](/docs/manage-users/organizations) enabled if you are using multi-tenant or B2B structures.
+* User IdP capabilities: A primary identity provider capable of issuing signed OIDC ID tokens or JWT assertions, backed by a public JWKS endpoint or static key for signature verification.
+* Third-party developer credentials: Active client credentials (Client ID and Client Secret) for each downstream provider your AI agents need to access, such as GitHub, Google Workspace, or Salesforce.
+* Tenant administrator access: Permissions within your Auth0 tenant to create client applications, configure OAuth connections, and deploy [Custom Token Exchange](/docs/authenticate/custom-token-exchange) Actions.
+
+## Step 1: Setup and application registration
+
+### Register and configure your application
+
+Navigate to **Applications > Applications** and create your application. Configure it as a first-party, confidential, OIDC-conformant application with [Custom Token Exchange](/docs/authenticate/custom-token-exchange/configure-custom-token-exchange#enable-custom-token-exchange-for-your-application) enabled:
+
+* Disable **Allow Refresh Token Rotation** for the application. Repeated token retrievals rely on reusing the same subject token, so rotation would break downstream access.
+* Under **Advanced Settings > Grant Types**, make sure **Refresh Token** and **Token Vault** are selected.
+* Under **APIs > Auth0 My Account API**, grant the application access to the [My Account API](/docs/manage-users/my-account-api) (obtained through a [multi-resource refresh token](/docs/secure/tokens/refresh-tokens/multi-resource-refresh-token)) with these scopes:
+  * `read:me:connected_accounts`
+  * `create:me:connected_accounts`
+  * `delete:me:connected_accounts`
+
+Then, under **Applications > APIs**, select **Allow Skipping User Consent** on the target API.
+
+### Register downstream OAuth connections
+
+For each third-party provider your AI agents need to access:
+
+1. Navigate to **Authentication > Social** or **Authentication > Enterprise**.
+2. Add the connection using credentials from the provider's developer portal.
+3. Under **Purpose**, [enable Connected Accounts for Token Vault](/docs/secure/call-apis-on-users-behalf/token-vault/configure-token-vault#configure-connected-accounts-for-token-vault) on the connection.
+4. Under **Permissions**, select `Offline Access`, allowing your client application to obtain a refresh token from the external provider.
+5. Under the connection's **Applications** tab, enable your registered application.
+
+To learn more, read [Connected Accounts for Token Vault](/docs/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault).
+
+## Step 2: Configure the Custom Token Exchange Action
+
+Create a new Action under **Actions > Library > Custom** using the [Custom Token Exchange trigger](/docs/customize/actions/explore-triggers/custom-token-exchange) (`onExecuteCustomTokenExchange`). This Action validates the token issued by your User IdP, creates a shadow user profile in Auth0, and, optionally, scopes the access token to an Auth0 Organization.
+
+```javascript lines expandable
+const { createRemoteJWKSet, jwtVerify } = require('jose');
+
+/**
+ * Custom Token Exchange Handler
+ * @param {Event} event - Auth0 Custom Token Exchange Event
+ * @param {CustomTokenExchangeAPI} api - Auth0 Action API
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const token = event.transaction.subject_token;
+  const issuer = event.secrets.YOUR_IDP_ISSUER; // trailing slash, OIDC issuer form
+  const audience = event.secrets.YOUR_IDP_AUDIENCE; // pins token to your login client
+
+  let claims;
+  try {
+    const jwks = createRemoteJWKSet(new URL(`${issuer}.well-known/jwks.json`));
+
+    // 1. Validate the ID token issued by your User IdP
+    ({ payload: claims } = await jwtVerify(token, jwks, { issuer, audience }));
+  } catch {
+    return api.access.rejectInvalidSubjectToken('Invalid subject token');
+  }
+  if (!claims.sub) return api.access.rejectInvalidSubjectToken('Missing sub');
+  if (!claims.email) return api.access.rejectInvalidSubjectToken('Missing email');
+
+  // 2. Provision or update the JIT shadow profile in Auth0
+  api.authentication.setUserByConnection(
+    'cte-users',
+    {
+      user_id: claims.sub, // stable, unique per upstream user
+      email: claims.email,
+      email_verified: claims.email_verified === true,
+      name: claims.name,
+    },
+    { creationBehavior: 'create_if_not_exists', updateBehavior: 'none' },
+  );
+
+  // 3. Optional: Attach Organization context for Token Vault access if needed
+  if (event.organization) api.authentication.setOrganization(event.organization.id);
+};
+```
+
+Then [create a Custom Token Exchange Profile](/docs/authenticate/custom-token-exchange/configure-custom-token-exchange#configure-custom-token-exchange-profile) using the Management API, linking a custom `subject_token_type` to this Action. The URN must not use a reserved namespace (`urn:ietf`, `urn:auth0`, `urn:okta`, and so on):
+
+```json lines
+{
+  "name": "external-idp-exchange",
+  "subject_token_type": "urn:acme:external-idp",
+  "action_id": "<YOUR_ACTION_ID>",
+  "type": "custom_authentication"
+}
+```
+
+## Step 3: Exchange your IdP token for an Auth0 My Account API access token
+
+Send a token exchange request ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) from your application backend to obtain an Auth0 My Account API access token scoped to the user's Organization.
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+  --data-urlencode 'subject_token=<YOUR_USER_IDP_ID_TOKEN>' \
+  --data-urlencode 'subject_token_type=urn:acme:external-idp' \
+  --data-urlencode 'audience=https://{yourDomain}/me/' \
+  --data-urlencode 'scope=read:me:connected_accounts create:me:connected_accounts' \
+  --data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+  --data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+  # Add --data-urlencode 'organization=<YOUR_ORGANIZATION_ID>' only if using Organizations.
+```
+
+The response contains a My Account API access token and a refresh token.
+
+## Step 4: Link downstream accounts to Token Vault
+
+Use the [Connected Accounts](/docs/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault) flow to authorize third-party OAuth providers, such as GitHub, Google Workspace, or Salesforce, without setting Auth0 as the user's primary login.
+
+```typescript lines expandable
+// 1. Create the connect flow (backend)
+async function startConnect(myAccountToken, connection, redirectUri) {
+  const res = await fetch(
+    'https://{yourDomain}/me/v1/connected-accounts/connect',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${myAccountToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ connection, redirect_uri: redirectUri, state: '<csrf>' }),
+    },
+  );
+  const { connect_uri, connect_params, auth_session } = await res.json();
+  // Persist auth_session (server-side, short-lived); send the user to:
+  return {
+    authorizationUrl: `${connect_uri}?ticket=${encodeURIComponent(connect_params.ticket)}`,
+    auth_session,
+  };
+}
+
+// 2. Callback to complete the link (backend)
+async function completeConnect(myAccountToken, auth_session, connect_code, redirectUri) {
+  await fetch('https://{yourDomain}/me/v1/connected-accounts/complete', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${myAccountToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ auth_session, connect_code, redirect_uri: redirectUri }),
+  });
+  // On success, the account is added to connected_accounts, and tokens land in Token Vault.
+}
+```
+
+## Step 5: Retrieve third-party tokens for AI agents
+
+Agents retrieve unexpired downstream access tokens directly from Token Vault using the [refresh token exchange](/docs/secure/call-apis-on-users-behalf/token-vault/refresh-token-exchange-with-token-vault).
+
+```typescript lines expandable
+async function getVaultToken(refreshToken: string, connection: string): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token',
+    subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+    subject_token: refreshToken,
+    requested_token_type: 'http://auth0.com/oauth/token-type/federated-connection-access-token',
+    connection, // e.g. 'github', 'google-oauth2'
+    client_id: process.env.AGENT_CLIENT_ID!,
+    client_secret: process.env.AGENT_CLIENT_SECRET!,
+    // login_hint: '<optional — disambiguate multiple linked accounts>'
+  });
+  const res = await fetch('https://{yourDomain}/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const data = await res.json();
+  return data.access_token; // short-lived downstream provider token
+}
+```
+
+## Step 6: Execute AI agent tool calls
+
+Pass the retrieved provider token into third-party SDKs to perform API actions on the user's behalf.
+
+```javascript lines
+import { Octokit } from '@octokit/rest';
+
+async function runGitHubAgentTool(refreshToken) {
+  const token = await getVaultToken(refreshToken, 'github');
+  const octokit = new Octokit({ auth: token });
+  const { data } = await octokit.rest.issues.listForAuthenticatedUser({ state: 'open', per_page: 5 });
+  return data.map((i) => ({ title: i.title, url: i.html_url }));
+}
+```

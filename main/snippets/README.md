@@ -25,3 +25,9 @@ import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
     terms="true"
 />
 ```
+
+## Data
+
+Some snippets store structured data for components to render.
+
+* `snippets/ai/data/integrations.jsx`: The list of Token Vault connections. Used on one page.
