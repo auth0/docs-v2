@@ -19,18 +19,21 @@ export const SectionsWithCards = ({ sections }) => {
     const sample = getLink(item, "sample app");
     const quickstart = getLink(item, "quickstart");
     const docs = getLink(item, "documentation");
+    const reference = getLink(item, "reference");
 
     const title = item?.name ?? "";
     const subtext = item?.subtext ?? "";
     const badge = item?.badge ?? "";
     const date = item?.date ?? ""; // plain string like "Jan 16, 2024"
 
-    const tertiary = quickstart || docs;
+    const tertiary = quickstart || docs || reference;
     const tertiaryLabel = quickstart
       ? "Quickstart"
       : docs
         ? "Documentation"
-        : "";
+        : reference
+          ? "Reference"
+          : "";
 
     return (
       <article className="libraries_card rounded-3xl transition-shadow mb-4">
@@ -135,7 +138,11 @@ export const SectionsWithCards = ({ sections }) => {
       "
                 style={{ borderBottom: "none !important" }}
               >
-                <Icon icon="play" className="w-4 h-4 shrink-0" />
+                {tertiaryLabel === "Reference" ? (
+                  <Icon icon="book-open" className="w-4 h-4 shrink-0" />
+                ) : (
+                  <Icon icon="play" className="w-4 h-4 shrink-0" />
+                )}
                 <span className="leading-none">{tertiaryLabel}</span>
               </a>
             )}
@@ -247,14 +254,15 @@ export const LibrariesCards = ({ cards }) => {
     const sample = getLink(item, "sample app");
     const quickstart = getLink(item, "quickstart");
     const docs = getLink(item, "Get started");
+    const reference = getLink(item, "reference");
 
     const title = item?.name ?? "";
     const subtext = item?.subtext ?? "";
     const badge = item?.badge ?? "";
     const date = item?.date ?? ""; // plain string like "Jan 16, 2024"
 
-    const tertiary = quickstart || docs;
-    const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
+    const tertiary = quickstart || docs || reference;
+    const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : reference ? "Reference" : "";
 
     return (
       <article className="libraries_card rounded-2xl transition-shadow mb-4">
@@ -360,6 +368,8 @@ export const LibrariesCards = ({ cards }) => {
               >
                 {tertiaryLabel === "Quickstart" ? (
                   <Icon icon="play" className="w-4 h-4 shrink-0" />
+                ) : tertiaryLabel === "Reference" ? (
+                  <Icon icon="book-open" className="w-4 h-4 shrink-0" />
                 ) : (
                   <Icon icon="file-lines" className="w-4 h-4 shrink-0" />
                 )}
@@ -389,6 +399,7 @@ export const SectionCard = ({ item }) => {
   const sample = getLink(item, "sample app");
   const quickstart = getLink(item, "quickstart");
   const docs = getLink(item, "Get started");
+  const reference = getLink(item, "reference");
 
   const title = item?.name ?? "";
   const subtext = item?.subtext ?? "";
@@ -410,8 +421,8 @@ export const SectionCard = ({ item }) => {
     "!my-0 w-8 h-8 object-contain shrink-0 " +
     (isHttpsLogo ? "mint-filter mint-grayscale" : "");
 
-  const tertiary = quickstart || docs;
-  const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
+  const tertiary = quickstart || docs || reference;
+  const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : reference ? "Reference" : "";
 
   return (
     <article className="libraries_card rounded-2xl transition-shadow mb-4">
@@ -502,6 +513,8 @@ export const SectionCard = ({ item }) => {
             >
               {tertiaryLabel === "Quickstart" ? (
                 <Icon icon="play" className="w-3 h-3 shrink-0" />
+              ) : tertiaryLabel === "Reference" ? (
+                <Icon icon="book-open" className="w-3 h-3 shrink-0" />
               ) : (
                 <Icon icon="file-lines" className="w-3 h-3 shrink-0" />
               )}
