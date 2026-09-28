@@ -26,14 +26,8 @@ export const SectionsWithCards = ({ sections }) => {
     const badge = item?.badge ?? "";
     const date = item?.date ?? ""; // plain string like "Jan 16, 2024"
 
-    const tertiary = quickstart || docs || reference;
-    const tertiaryLabel = quickstart
-      ? "Quickstart"
-      : docs
-        ? "Documentation"
-        : reference
-          ? "Reference"
-          : "";
+    const tertiary = quickstart || docs;
+    const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Documentation" : "";
 
     return (
       <article className="libraries_card rounded-3xl transition-shadow mb-4">
@@ -138,12 +132,25 @@ export const SectionsWithCards = ({ sections }) => {
       "
                 style={{ borderBottom: "none !important" }}
               >
-                {tertiaryLabel === "Reference" ? (
-                  <Icon icon="book-open" className="w-4 h-4 shrink-0" />
-                ) : (
-                  <Icon icon="play" className="w-4 h-4 shrink-0" />
-                )}
+                <Icon icon="play" className="w-4 h-4 shrink-0" />
                 <span className="leading-none">{tertiaryLabel}</span>
+              </a>
+            )}
+
+            {reference && (
+              <a
+                href={reference.url}
+                className="
+        no_external_icon inline-flex items-center gap-2 text-sm font-medium
+        !text-black dark:!text-white
+        !no-underline !border-0
+        transition-colors duration-200
+        hover:!text-neutral-700 dark:hover:!text-neutral-200
+      "
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="book" className="w-4 h-4 shrink-0" />
+                <span className="leading-none">Reference</span>
               </a>
             )}
           </div>
@@ -261,8 +268,8 @@ export const LibrariesCards = ({ cards }) => {
     const badge = item?.badge ?? "";
     const date = item?.date ?? ""; // plain string like "Jan 16, 2024"
 
-    const tertiary = quickstart || docs || reference;
-    const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : reference ? "Reference" : "";
+    const tertiary = quickstart || docs;
+    const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
 
     return (
       <article className="libraries_card rounded-2xl transition-shadow mb-4">
@@ -368,12 +375,27 @@ export const LibrariesCards = ({ cards }) => {
               >
                 {tertiaryLabel === "Quickstart" ? (
                   <Icon icon="play" className="w-4 h-4 shrink-0" />
-                ) : tertiaryLabel === "Reference" ? (
-                  <Icon icon="book-open" className="w-4 h-4 shrink-0" />
                 ) : (
                   <Icon icon="file-lines" className="w-4 h-4 shrink-0" />
                 )}
                 <span className="leading-none">{tertiaryLabel}</span>
+              </a>
+            )}
+
+            {reference && (
+              <a
+                href={reference.url}
+                className="
+                  no_external_icon inline-flex items-center gap-2 text-sm font-medium
+                  !text-black dark:!text-white
+                  !no-underline !border-0
+                  transition-colors duration-200
+                  hover:!text-neutral-700 dark:hover:!text-neutral-200
+                "
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="book" className="w-4 h-4 shrink-0" />
+                <span className="leading-none">Reference</span>
               </a>
             )}
           </div>
@@ -421,8 +443,8 @@ export const SectionCard = ({ item }) => {
     "!my-0 w-8 h-8 object-contain shrink-0 " +
     (isHttpsLogo ? "mint-filter mint-grayscale" : "");
 
-  const tertiary = quickstart || docs || reference;
-  const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : reference ? "Reference" : "";
+  const tertiary = quickstart || docs;
+  const tertiaryLabel = quickstart ? "Quickstart" : docs ? "Get started" : "";
 
   return (
     <article className="libraries_card rounded-2xl transition-shadow mb-4">
@@ -505,22 +527,33 @@ export const SectionCard = ({ item }) => {
             )}
           </div>
 
-          {tertiary && (
-            <a
-              href={tertiary.url}
-              className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
-              style={{ borderBottom: "none !important" }}
-            >
-              {tertiaryLabel === "Quickstart" ? (
-                <Icon icon="play" className="w-3 h-3 shrink-0" />
-              ) : tertiaryLabel === "Reference" ? (
-                <Icon icon="book-open" className="w-3 h-3 shrink-0" />
-              ) : (
-                <Icon icon="file-lines" className="w-3 h-3 shrink-0" />
-              )}
-              <span className="w-full">{tertiaryLabel}</span>
-            </a>
-          )}
+          <div className="libraries_cards flex items-center w-full gap-5">
+            {tertiary && (
+              <a
+                href={tertiary.url}
+                className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
+                style={{ borderBottom: "none !important" }}
+              >
+                {tertiaryLabel === "Quickstart" ? (
+                  <Icon icon="play" className="w-3 h-3 shrink-0" />
+                ) : (
+                  <Icon icon="file-lines" className="w-3 h-3 shrink-0" />
+                )}
+                <span className="w-full">{tertiaryLabel}</span>
+              </a>
+            )}
+
+            {reference && (
+              <a
+                href={reference.url}
+                className="no_external_icon inline-flex flex-1 items-center gap-1.5 text-sm font-medium !text-black dark:!text-white !no-underline !border-0 transition-colors duration-200 hover:!text-neutral-700 dark:hover:!text-neutral-200 h-6"
+                style={{ borderBottom: "none !important" }}
+              >
+                <Icon icon="book" className="w-3 h-3 shrink-0" />
+                <span className="w-full">Reference</span>
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </article>
