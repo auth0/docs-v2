@@ -6,8 +6,6 @@ This repo contains the content, configuration, and styling for much of Auth0's d
 
 * The `main` directory is a Mintlify site for the main product documentation at https://auth0.com/docs.
 
-* The `auth4genai` directory is a Mintlify site for the Auth0 for AI Agents docs at https://auth0.com/ai/docs.
-
 * The `ui` directory contains a shared React component library for both docs sites. (See [the Docs UI library README](./ui/README.md) for more information.)
 
 * The `universal-components` directory contains a shared React universal component library for both docs sites. (See [the Docs UI library README](./universal-components/README.md) for more information.)
