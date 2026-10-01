@@ -4,19 +4,25 @@ description: Learn how to register applications with the Client ID Metadata Docu
 validatedOn: 2026-04-29
 ---
 
-Register an application in Auth0 by importing an externally hosted Client ID Metadata Document (CIMD) from a URL. A CIMD is a JSON file containing client metadata hosted on your domain (e.g., `https://example-client.com/mcp-metadata.json`). The CIMD URL is the application's client ID and proves domain ownership, ensuring only trusted tenant administrators can register applications.
+Register an application in Auth0 by importing an externally hosted Client ID Metadata Document (CIMD) from a URL. A CIMD is a JSON file containing client metadata hosted on your domain (e.g., `https://example-client.com/mcp-metadata.json`). The CIMD URL is the application's client ID and proves domain ownership, ensuring only trusted applications can be registered in Auth0. While Auth0 maintains a record of these settings, the hosted CIMD remains the source of truth.
 
-When you import an application from its CIMD URL, Auth0 fetches, validates, and persists the metadata to register the application as a CIMD client. While Auth0 maintains a record of these settings, the hosted CIMD remains the source of truth; metadata updates are synchronized through [manual refreshes](#refresh-client-metadata). This application registration process is called manual CIMD registration.
+Auth0 supports manual CIMD and dynamic CIMD registration:
+- Manual CIMD registration: Manually import an application from its CIMD URL. Auth0 fetches and validates the CIMD to register the application as a CIMD client; metadata updates are synchronized through manual refreshes.
+- Dynamic CIMD registration: The application registers itself via its CIMD URL at runtime when it sends an OAuth request to Auth0; metadata updates are synchronized reactively on-demand for authorization requests and proactively in the background for frequently-used clients.
 
-You can only register [third-party applications](/docs/get-started/applications/third-party-applications) using manual CIMD, which are subject to [enhanced security controls](/docs/get-started/applications/third-party-applications/security-controls). Once registered, [set up your CIMD client](#set-up-cimd-client) as a third-party application in Auth0.
+Only [third-party applications](/docs/get-started/applications/third-party-applications) can be registered with CIMD, which are subject to [enhanced security controls](/docs/get-started/applications/third-party-applications/security-controls). Once registered, [set up your CIMD client](#set-up-cimd-client) as a third-party application in Auth0.
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
 CIMD clients always register with `third_party_security_mode: "strict"`, regardless of your tenant's **Create Permissive Third-Party Clients by Default** setting. Permissive mode is not available for CIMD clients. Strict third-party applications [do not support Rules](/docs/get-started/applications/third-party-applications/security-controls#features-not-supported), and login flows for CIMD clients fail if your tenant has active Rules. If you use Rules, [migrate to Actions](/docs/customize/actions/migrate/migrate-from-rules-to-actions) before registering CIMD clients.
 </Callout>
 
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+You cannot switch a CIMD client from manual or dynamic once registered. To do so, delete and re-register the client.
+</Callout>
+
 ## Key benefits
 
-Manual CIMD registration has the following benefits:
+Manual and dynamic CIMD registration have the following benefits:
 
 1. Uses asymmetric cryptography (public/private keys) instead of shared symmetric secrets that can be leaked.
 2. Application owners manage client metadata directly in the CIMD; Auth0 simply pulls and persists these updates.
@@ -28,7 +34,7 @@ Rate limits for CIMD clients will be introduced in a future release. You will be
 
 ## Use cases
 
-Common use cases for manual CIMD registration include:
+Common use cases for manual and dynamic CIMD registration include:
 
 - MCP clients: Only need to be registered with CIMD once per deployment. All instances of that deployment use the same registration credentials. To learn how Auth0 secures MCP clients and servers, read [Auth for MCP](https://auth0.com/ai/docs/mcp/intro/overview).
 - Third-party integrations: Partner applications, SaaS platforms, and external services that authenticate users on behalf of organizations. These applications manage their own client metadata and cryptographic keys, enabling independent updates and key rotation without sharing secrets.
@@ -57,6 +63,9 @@ Auth0 automatically [maps and validates CIMD fields](#cimd-json-validation-rules
 
 ## How it works
 
+Learn about how manual and dynamic CIMD work in Auth0:
+
+<Tabs><Tab title="Manual CIMD registration">
 The following diagram shows the end-to-end manual CIMD registration flow:
 
 - [Phase 1: Registration](#phase-1%3A-registration)
@@ -117,20 +126,68 @@ Once registered, the application uses its CIMD URL as its identity during the OA
 6. **Code exchange**: The application exchanges the authorization code for an access token at the token endpoint.
 7. **Authorization complete**: The Auth0 Authorization Server returns an access token where the `client_id` is set to the CIMD URL. The application can now access the API on the user's behalf.
 
+</Tab><Tab title="Dynamic CIMD registration">
+
+The following diagram shows the end-to-end dynamic CIMD registration flow:
+
+```mermaid
+sequenceDiagram
+      actor User
+      participant CA as Client App
+      participant AS as Authorization Server
+      participant CD as Client's Domain (Hosts JSON)
+
+      User->>CA: 1. Start Login
+      CA->>AS: 2. Auth Request (client_id=https://...)
+
+      alt Metadata Cached and Fresh
+          AS->>AS: 3. Retrieve Cached Metadata
+      else Metadata Missing or Stale
+          AS->>CD: 3. GET /.../client-metadata.json
+          CD-->>AS: 4. Returns client-metadata.json
+          AS->>AS: 5. Validate Metadata (SSRF checks, etc.)
+          AS->>AS: Create Non-Validated Client Record
+      end
+
+      AS->>User: 6. Show Consent Screen (using client_name)
+      User->>AS: 7. Approve Consent
+      AS-->>CA: 8. Redirect with Authorization Code
+
+      CA->>AS: 9. Request Token (with Code)
+      AS-->>CA: 10. Return Access Token
+```
+</Tab></Tabs>
+
+During dynamic CIMD registration, the application registers itself with Auth0 at runtime, without a prior manual registration step:
+
+1. **Start login**: The user initiates a login from the client application.
+2. **Authorization request**: The application sends an authorization request to the Auth0 Authorization Server, passing its CIMD URL as the `client_id`.
+3. **Metadata resolution**: If Auth0 already has fresh, cached metadata for the client, it uses the cached copy and skips the next steps. Otherwise, Auth0 sends a `GET` request to the client's domain to retrieve the CIMD (`client-metadata.json`).
+4. **Metadata returned**: The client's domain returns the CIMD.
+5. **Security validation**: Auth0 validates the CIMD against the [CIMD URL validation rules](#cimd-url-validation-rules) and [CIMD JSON validation rules](#cimd-json-validation-rules), including SSRF checks, and registers the application as a non-validated CIMD client.
+6. **User consent**: Auth0 displays a consent screen to the user, identifying the application by the `client_name` retrieved from the CIMD metadata.
+7. **Approve consent**: The user approves the consent request.
+8. **Redirection**: Auth0 redirects the user back to the application with an authorization code.
+9. **Token request**: The application exchanges the authorization code for an access token at the token endpoint.
+10. **Access token returned**: The Auth0 Authorization Server returns an access token to the application. The application can now access the API on the user's behalf.
+
+Auth0-registered dynamic CIMD clients that never complete an authorization flow are temporarily held and automatically removed; a client is only persisted once a user successfully completes authorization.
+
 ## Prerequisites
 
-Before registering an application with manual CIMD, make sure your tenant and application meet the following requirements:
+Before registering an application with CIMD, make sure your tenant and application meet the following requirements:
 
 ### Tenant configuration
 
 * **Enable CIMD support**: Enable the **Client ID Metadata Document Registration** toggle in your [tenant settings](/docs/get-started/tenant-settings) to indicate CIMD support in the Auth0 Authorization Server metadata, allowing clients to automatically discover this capability when connecting.
   - Navigate to **Settings > Advanced** and scroll down to the **Settings** section.
   - Toggle on **Client ID Metadata Document Registration**.
+  - To enable Dynamic CIMD Registration support, toggle on **Dynamic CIMD Registration**.
 * **Resource Parameter Compatibility Profile (Optional)**: For MCP clients, we recommend enabling this profile in your [tenant settings](/docs/get-started/tenant-settings). This allows the authorization server to handle resource-specific requests ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707.html#name-resource-parameter)) by checking the `resource` parameter if the `audience` is not provided.
 
 ### Supported client types
 
-You can register the following client types with manual CIMD in Auth0:
+You can register the following client types with CIMD in Auth0:
 
 * **Application type**: Must be a native or regular web application.
 * **Third-party application**: Must be a [third-party application](/docs/get-started/applications/third-party-applications) (`is_first_party: false`), which is subject to [enhanced security controls](/docs/get-started/applications/third-party-applications/security-controls). Once registered, [set up your CIMD client](#set-up-cimd-client) as a third-party application in Auth0.
@@ -156,9 +213,9 @@ Private Key JWT authentication is available only for Enterprise customers. To le
 CIMD clients that use Private Key JWT authentication must [implement key rotation by generating a new key pair with a new, unique `kid`](#security-considerations).
 </Callout>
 
-## Register applications with manual CIMD
+## Register applications with CIMD
 
-When creating an application in Auth0, register it manually with CIMD using the Auth0 Dashboard or Management API.
+When creating an application in Auth0, register it manually with CIMD using the Auth0 Dashboard or Management API. When dynamic CIMD registration is enabled, applications register themselves at runtime with Auth0.
 
 <Tabs>
 <Tab title="Auth0 Dashboard">
@@ -298,7 +355,7 @@ Location: /api/v2/clients/YOUR_CLIENT_ID
 
 ## Set up CIMD client
 
-Manual CIMD registration is limited to third-party applications (`is_first_party: false`), which are subject to [enhanced security controls](/docs/get-started/applications/third-party-applications/security-controls). Once you've registered your CIMD client, set it up as a third-party application in Auth0:
+Manual and dynamic CIMD registration is limited to third-party applications (`is_first_party: false`), which are subject to [enhanced security controls](/docs/get-started/applications/third-party-applications/security-controls). Once you've registered your CIMD client, set it up as a third-party application in Auth0:
 
 - [Configure API access policy](/docs/get-started/applications/third-party-applications/configure-third-party-applications#configure-api-access-policies): Create client grants to authorize its access to APIs
 - [Promote connections to the domain level](/docs/get-started/applications/third-party-applications/configure-third-party-applications#configure-connections): Make connections available on the domain or tenant level to authenticate your users
@@ -307,7 +364,11 @@ To learn more, read [Configure Third-Party Applications](/docs/get-started/appli
 
 ## Refresh client metadata
 
-Once you've registered the CIMD client, you can manually refresh client metadata. Auth0 fetches fresh client metadata from the CIMD, which you can preview and save.
+Manual CIMD clients and dynamic CIMD clients refresh client metadata in different ways.
+
+<Tabs><Tab title="Manual CIMD clients">
+
+For manual CIMD clients, you can manually refresh client metadata. Auth0 fetches fresh client metadata from the CIMD, which you can preview and save.
 
 When you refresh client metadata, Auth0 updates the `app_type` and `grant_types` to match the values in the hosted CIMD. To learn more about CIMD fields, read [CIMD JSON validation rules](#cimd-json-validation-rules).
 
@@ -318,7 +379,45 @@ In the Auth0 Dashboard:
 3. Select **Refresh Preview** to preview the latest client metadata in the CIMD. Review any validation warnings or errors.
 4. Select **Save**.
 
+</Tab><Tab title="Dynamic CIMD clients">
+
+For dynamic CIMD clients, Auth0 fetches the latest CIMD document automatically in the following cases:
+- On first discovery when the client makes an OAuth request to Auth0
+- When a cached copy of the CIMD is missing
+- When something in the OAuth request fails validation, such as a `redirect_uri` mismatch
+
+Unlike manual CIMD, where a tenant admin reviews and approves metadata updates, dynamic CIMD re-fetches, validates, and applies refreshed metadata and key changes automatically to every tenant using that client; no per-tenant action is needed.
+
+Frequently-used clients are refreshed periodically in the background before they go stale, so active users don't experience added login latency waiting on a live metadata fetch. Less-used clients are only refreshed reactively, on demand.
+
+### Decoupled refresh cadence for metadata vs. keys
+
+CIMD metadata (name, redirect URIs, etc.) and signing keys (JWKS) refresh on
+different schedules, since keys rotate far more often than metadata. This
+means a key rotation doesn't force an unnecessary full metadata refetch, and
+vice versa.
+
+### Automatic key resolution
+  
+If Auth0 can't find a signing key (`kid`) it needs during token validation, it
+automatically fetches the latest keys from the client's `jwks_uri` on demand,
+rather than requiring a manual update.
+
+### Failure handling
+
+If a client's metadata URL or keys become temporarily unreachable or invalid,
+Auth0 backs off automatically rather than retrying immediately on every
+request. If validated metadata is fetched successfully but something in
+the request is still invalid, Auth0 fails that authorization request without
+re-fetching the document.
+
+</Tab></Tabs>
+
 ## Get CIMD client
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+A dynamically registered CIMD client that hasn't completed an authorization flow is not guaranteed to persist, and may not appear in subsequent `GET` requests.
+</Callout>
 
 To get a CIMD client, make a `GET` request to the `/v2/clients/{clientId}` endpoint, where `{clientID}` is the Auth0-generated client ID assigned to the CIMD client:
 
@@ -456,4 +555,6 @@ Auth0 supports the following CIMD properties:
 
 To successfully rotate keys for CIMD clients using Private Key JWT authentication, generate a new key pair with a new, unique `kid`. If you rotate your private key and update your JWKS with new key material under the same `kid`, Auth0's CIMD registration rejects the new key and preserves the old one. This ensures that key rotation requires explicit addition of new keys rather than silent replacement.
 
-Make sure you refresh your key registration in Auth0 after rotating your keys. To learn more, read [Rotate signing keys](/docs/secure/tokens/json-web-tokens/json-web-key-sets#rotate-signing-keys).
+For manual CIMD clients, refresh your key registration in Auth0 after rotating your keys. To learn more, read [Rotate signing keys](/docs/secure/tokens/json-web-tokens/json-web-key-sets#rotate-signing-keys).
+
+For dynamic CIMD clients, no manual refresh is required: if Auth0 cannot find a signing key (`kid`) during token validation, it automatically fetches the latest keys from the client's `jwks_uri`.
