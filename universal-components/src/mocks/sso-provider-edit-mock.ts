@@ -1,7 +1,7 @@
 export const getSsoProviderEditMock = () => {
   const mockProvider = {
     id: 'test-provider-id',
-    name: 'Provider Name',
+    name: 'provider-name',
     display_name: 'SAML Provider',
     is_enabled: true,
     strategy: 'samlp' as const,
