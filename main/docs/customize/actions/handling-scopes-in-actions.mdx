@@ -1,0 +1,158 @@
+---
+description: Learn how to modify token scopes with Post Login and Credentials Exchange Actions while respecting authorization policies.
+title: Handling Scopes in Actions
+---
+Use `api.transaction.*` methods to modify target scopes in Post Login and Credentials Exchange Actions. Auth0 evaluates the resulting scopes against applicable authorization policies before issuing tokens.
+
+Post Login also supports direct access token changes with `api.accessToken.addScope()` and `removeScope()`, bypassing authorization policy evaluation. These independent methods are unavailable in Credentials Exchange.
+
+## How target scopes work
+
+`event.transaction.target_scopes` contains the current target set of scopes; which will be filtered by authorization policies after actions execution to calculate the final granted scopes. `event.transaction.target_scopes` is initially populated with the requested scopes in Post Login; or the Application's authorized scopes for the target API in Credentials Exchange.
+
+**Changes accumulate across Actions.** Each target-scope method immediately updates `event.transaction.target_scopes`, both within the current Action and for subsequent Actions within the same transaction. `event.transaction.requested_scopes` is unchanged. Read the target set from the event; modify it through the API methods:
+
+| Method | Effect | API reference |
+| --- | --- | --- |
+| `addTargetScope(scope)` | Adds a scope. | [Post Login](/docs/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `removeTargetScope(scope)` | Removes a scope. | [Post Login](/docs/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `setTargetScopes(scopes)` | Replaces the whole set. | [Post Login](/docs/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `clearTargetScopes()` | Empties the set. | [Post Login](/docs/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+
+Auth0 evaluates the final target set against authorization policies after all Actions finish. Unauthorized additions are silently dropped. Removed scopes stay out unless a later operation restores them or replaces the set.
+
+<Note>
+All four methods affect API, OIDC, and refresh token scopes, including `openid`, `profile`, and `offline_access`, subject to the flow's capabilities. Adding or removing these scopes can change token issuance or profile information.
+
+`setTargetScopes()` and `clearTargetScopes()` replace the whole set, so they can also remove scopes unintentionally. Removing or omitting `openid` can prevent ID token issuance; removing or omitting `offline_access` can prevent refresh token issuance. Use `removeTargetScope()` to remove only a specific scope.
+</Note>
+
+### Authorization and consent
+
+Existing controls still apply:
+
+* **Application access:** [API access policies](/docs/get-started/apis/api-access-policies-for-applications) and [client grants](/docs/get-started/applications/application-access-to-apis-client-grants), including default third-party permissions.
+* **User permissions:** When [RBAC](/docs/manage-users/access-control/rbac) is enabled, Auth0 checks roles and directly assigned permissions. Organization logins use the user's roles in that Organization.
+* **Consent:** When consent is required, all scopes remaining after authorization filtering are included in the consent prompt, including scopes added by Actions. Scopes removed from the final target set or rejected by policy are not shown. Clearing scopes does not skip consent.
+
+Credentials Exchange has no user or user consent. Its target set is intersected with the client grant. **Target-scope methods are its only scope-modification methods:** `api.accessToken.addScope()` and `removeScope()` are unavailable.
+
+## Examples
+
+### Add a scope while respecting authorization policies
+
+Add read access to reports, subject to applicable policies and any required consent:
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.addTargetScope('read:reports');
+};
+```
+
+### Remove write access for risky transactions
+
+Remove write access when Auth0 detects impossible travel between consecutive logins. Other target scopes remain unchanged. To learn more about assessment codes, read [Customize Adaptive MFA](/docs/secure/multi-factor-authentication/adaptive-mfa/customize-adaptive-mfa).
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  const travel = event.authentication?.riskAssessment?.assessments?.ImpossibleTravel;
+  if (travel?.code === 'impossible_travel_from_last_login') {
+    api.transaction.removeTargetScope('write:reports');
+  }
+};
+```
+
+### Remove admin access for delegated requests
+
+Use `event.transaction.actor` to detect a delegated request, regardless of the flow that supplied the actor. Remove admin access while leaving other scopes, including `openid`, unchanged:
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.transaction?.actor) {
+    api.transaction.removeTargetScope('admin:reports');
+  }
+};
+```
+
+### Apply changes across Actions
+
+For a request with `write:reports`, Action 1 adds read access. The event immediately shows both scopes:
+
+```javascript Action 1 lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.addTargetScope('read:reports');
+  console.log(event.transaction.target_scopes);
+  // ['write:reports', 'read:reports']
+};
+```
+
+Action 2 receives that accumulated set and removes write access:
+
+```javascript Action 2 lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.removeTargetScope('write:reports');
+  console.log(event.transaction.target_scopes);
+  // ['read:reports']
+};
+```
+
+Auth0 then evaluates `read:reports`. Its presence in the target set does not guarantee issuance.
+
+### Limit machine-to-machine access to writing reports
+
+Keep only write access in Credentials Exchange. The scope must still be allowed by the client grant:
+
+```javascript lines
+exports.onExecuteCredentialsExchange = async (event, api) => {
+  api.transaction.setTargetScopes(['write:reports']);
+};
+```
+
+## Modify access token scopes directly
+
+For first-party applications, Post Login provides direct token-level changes through `api.accessToken.addScope()` and `removeScope()`. Both operate after authorization, outside RBAC, application access policy, and consent evaluation. Neither changes `event.transaction.target_scopes`.
+
+`addScope()` adds a scope without those checks or displaying it on the consent screen. `removeScope()` only narrows the final access token; it does not remove the scope from the consent prompt.
+
+Use direct changes deliberately, with trusted scope values and the expected API audience. Target-scope changes cannot cancel a force-add:
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.resource_server?.identifier === 'https://example.com/api') {
+    api.accessToken.addScope('audit:reports');
+    api.transaction.removeTargetScope('audit:reports');
+  }
+};
+```
+
+`audit:reports` still reaches the access token, although absent from the target set and consent screen. This holds across Actions, regardless of call order.
+
+<Note>
+[Third-party applications](/docs/get-started/applications/third-party-applications/security-controls) do not support `api.accessToken.addScope()`, so additions cannot bypass application permissions or consent. `removeScope()` remains available because it only reduces access. Use target-scope methods when you want changes reflected in both authorization and consent.
+</Note>
+
+## Supported flows
+
+| Flow | Behavior |
+| --- | --- |
+| Authorization Code, Implicit, Hybrid | Supported. |
+| Resource Owner Password, Password Realm, Passwordless OTP | Supported. |
+| Offline Refresh Token exchange | Supported. Starts with the exchange's scopes, or the previously granted set if omitted. Refresh token authorization limits still apply. |
+| Device Authorization | Supported. |
+| MFA (OTP, out-of-band, recovery code), Passkey / WebAuthn | Supported. |
+| Token Exchange (Custom Token Exchange, on-behalf-of, Native Social Login) | Supported. |
+| Cross App Access (ID-JAG) | Supported. |
+| CIBA web-link channel | Supported. |
+| Client Credentials | Supported through Credentials Exchange Actions. |
+| CIBA MFA push channel | Changes are ignored. |
+| SAML, WS-Fed, legacy endpoints, legacy authorization model | Changes are ignored. |
+| Token Vault federated connection access token exchange | Target-scope methods cause an error. |
+
+For shared Actions, skip target-scope methods when `event.transaction.protocol === 'oauth2-token-exchange-federated-connection'`. Do not rely on target-scope changes to restrict unsupported flows.
+
+## Learn more
+
+* [Post Login API object](/docs/actions/reference/post-login/post-login-api-object)
+* [Credentials Exchange API object](/docs/actions/reference/credentials-exchange/credentials-exchange-api-object)
+* [Actions Transaction Metadata](/docs/customize/actions/transaction-metadata)
+* [Redirect with Actions](/docs/customize/actions/redirect-with-actions)
