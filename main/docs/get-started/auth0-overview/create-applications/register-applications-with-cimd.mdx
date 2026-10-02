@@ -4,178 +4,7 @@ description: Learn how to register applications with the Client ID Metadata Docu
 validatedOn: 2026-04-29
 ---
 
-Register an application in Auth0 by importing an externally hosted Client ID Metadata Document (CIMD) from a URL. A CIMD is a JSON file containing client metadata hosted on your domain (e.g., `https://example-client.com/mcp-metadata.json`). The CIMD URL is the application's client ID and proves domain ownership, ensuring only trusted applications can be registered in Auth0. While Auth0 maintains a record of these settings, the hosted CIMD remains the source of truth.
-
-Auth0 supports manual CIMD and dynamic CIMD registration:
-- Manual CIMD registration: Manually import an application from its CIMD URL. Auth0 fetches and validates the CIMD to register the application as a CIMD client; metadata updates are synchronized through manual refreshes.
-- Dynamic CIMD registration: The application registers itself via its CIMD URL at runtime when it sends an OAuth request to Auth0; metadata updates are synchronized reactively on-demand for authorization requests and proactively in the background for frequently-used clients.
-
-Tenant administrators can use Application Profiles to set consistent application settings around refresh token lifetimes and Organizations behavior for dynamically registered CIMD clients.
-
-Only [third-party applications](/docs/get-started/applications/third-party-applications) can be registered with CIMD, which are subject to [enhanced security controls](/docs/get-started/applications/third-party-applications/security-controls). Once registered, [set up your CIMD client](#set-up-cimd-client) as a third-party application in Auth0.
-
-<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-CIMD clients always register with `third_party_security_mode: "strict"`, regardless of your tenant's **Create Permissive Third-Party Clients by Default** setting. Permissive mode is not available for CIMD clients. Strict third-party applications [do not support Rules](/docs/get-started/applications/third-party-applications/security-controls#features-not-supported), and login flows for CIMD clients fail if your tenant has active Rules. If you use Rules, [migrate to Actions](/docs/customize/actions/migrate/migrate-from-rules-to-actions) before registering CIMD clients.
-</Callout>
-
-<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-You cannot switch a CIMD client from manual or dynamic once registered. To do so, delete and re-register the client.
-</Callout>
-
-## Key benefits
-
-Manual and dynamic CIMD registration have the following benefits:
-
-1. MCP clients only need to be registered with CIMD once per deployment. All instances of that deployment use the same registration credentials.
-2. Uses asymmetric cryptography (public/private keys) instead of shared symmetric secrets that can be leaked.
-3. Application owners manage client metadata directly in the CIMD; Auth0 automatically maps these properties to its internal configuration during registration.
-4. The CIMD URL acts as a human-readable identifier in audit logs, making it easy to verify the origin of requests from specific MCP tool servers or hosts.
-
-<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
-Rate limits for CIMD clients will be introduced in a future release. You will be able to set a specific rate limit for a CIMD client, as well as a shared rate limit on the aggregated traffic from all CIMD clients in a tenant.
-</Callout>
-
-## Use cases
-
-Common use cases for manual and dynamic CIMD registration include:
-
-- MCP clients: Only need to be registered with CIMD once per deployment. All instances of that deployment use the same registration credentials. To learn how Auth0 secures MCP clients and servers, read [Auth for MCP](https://auth0.com/ai/docs/mcp/intro/overview).
-- Third-party integrations: Partner applications, SaaS platforms, and external services that authenticate users on behalf of organizations. These applications manage their own client metadata and cryptographic keys, enabling independent updates and key rotation without sharing secrets.
-
-## Example CIMD
-
-The following is an example CIMD for a public MCP client, where `"token_endpoint_auth_method": "none"`:
-
-```json https://example-client.com/mcp-metadata.json wrap lines
-{
-  "client_id": "https://example-client.com/mcp-metadata.json",
-  "client_name": "Example MCP Tool Server",
-  "description": "MCP server providing tools for data analysis",
-  "logo_uri": "https://example-client.com/logo.png",
-  "application_type": "web",
-  "grant_types": ["authorization_code", "refresh_token"],
-  "redirect_uris": [
-    "https://example-client.com/callback"
-  ],
-  "token_endpoint_auth_method": "none",
-  "response_types": ["code"]
-}
-```
-
-Auth0 automatically [maps and validates CIMD fields](#cimd-json-validation-rules). To learn more about supported client types, read [Prerequisites](#prerequisites).
-
-## How it works
-
-Learn about how manual and dynamic CIMD work in Auth0:
-
-<Tabs><Tab title="Manual CIMD registration">
-The following diagram shows the end-to-end manual CIMD registration flow:
-
-- [Phase 1: Registration](#phase-1-registration)
-- [Phase 2: Authorization](#phase-2-authorization)
-
-```mermaid
-%%{init: { "sequence": { "mirrorActors": true }}}%%
-sequenceDiagram
-    rect rgb(240, 248, 255)
-    Note over Tenant Admin,Auth0: Registration Phase
-    participant Tenant Admin
-    participant Auth0
-    participant Domain
-    Tenant Admin->>Auth0: Create CIMD app
-    Auth0->>Tenant Admin: POST /register<br/>(external_client_id = https://.../client.json)
-    Auth0->>Domain: GET https://.../client.json
-    Domain-->>Auth0: Client metadata (CIMD JSON)
-    Auth0->>Auth0: Validate + store client
-    end
-    rect rgb(240, 255, 240)
-    Note over Client,Auth0: Authorization Phase
-    actor User
-    participant Client
-    participant Auth0
-    User->>Client: User-initiated task
-    Client->>Auth0: /authorize?client_id = https://.../client.json<br/>(Auth0 resolves client by external_client_id == client_id)
-    Auth0->>User: Consent screen<br/>(client metadata)
-    User->>Auth0: Approve
-    Auth0-->>Client: Authorization code
-    Client->>Auth0: Exchange code
-    Auth0->>Client: Complete authorization & redirect to client redirect_uri
-    Client->>Auth0: Request resource access token with /oauth/token
-    Auth0-->>Client: Return resource access token<br/>(includes client_id=https://../client.json)
-    end
-```
-
-### Phase 1: Registration
-
-During manual CIMD registration, a tenant admin registers the application by importing its externally hosted CIMD to Auth0:
-
-1. **Application creation**: The tenant admin creates a CIMD app in Auth0 by:
-   - Selecting **Import from URL** in the Auth0 Dashboard
-   - Making a POST request to the `/register` endpoint, providing the `external_client_id`
-2. **Metadata fetch**: Auth0 makes a GET request to the client's domain to retrieve the CIMD (client.json).
-3. **Security validation**: Auth0 maps and validates the CIMD URL against the [CIMD URL validation rules](#cimd-url-validation-rules) and the CIMD against the [CIMD validation rules](#cimd-json-validation-rules), verifying that the `external_client_id` matches the CIMD URL, among other checks.
-4. **Persistence**: Once validated, Auth0 stores the client metadata in the database.
-5. **Confirmation**: Auth0 returns a success response; the application has been successfully registered as a CIMD client in Auth0.
-
-### Phase 2: Authorization
-
-Once registered, the application uses its CIMD URL as its identity during the OAuth flow.
-
-1. **User-initiated task**: The user initiates a task that requires the application to access an API.
-2. **Authorization request**: The application makes a request to the Auth0 Authorization Server, passing its CIMD URL as the `client_id`.
-3. **Client resolution**: The Auth0 Authorization Server queries the database to resolve the provided URL (`client_id`) to the stored client configuration (`external_client_id`).
-4. **User consent**: Auth0 displays a consent screen to the user, identifying the application by the `client_name` retrieved from the CIMD metadata.
-5. **Redirection**: After the user approves consent, Auth0 redirects the user back to the application with an authorization code.
-6. **Code exchange**: The application exchanges the authorization code for an access token at the token endpoint.
-7. **Authorization complete**: The Auth0 Authorization Server returns an access token where the `client_id` is set to the CIMD URL. The application can now access the API on the user's behalf.
-
-</Tab><Tab title="Dynamic CIMD registration">
-
-The following diagram shows the end-to-end dynamic CIMD registration flow:
-
-```mermaid
-sequenceDiagram
-      actor User
-      participant CA as Client App
-      participant AS as Authorization Server
-      participant CD as Client's Domain (Hosts JSON)
-
-      User->>CA: 1. Start Login
-      CA->>AS: 2. Auth Request (client_id=https://...)
-
-      alt Metadata Cached and Fresh
-          AS->>AS: 3. Retrieve Cached Metadata
-      else Metadata Missing or Stale
-          AS->>CD: 3. GET /.../client-metadata.json
-          CD-->>AS: 4. Returns client-metadata.json
-          AS->>AS: 5. Validate Metadata (SSRF checks, etc.)
-          AS->>AS: Create Non-Validated Client Record
-      end
-
-      AS->>User: 6. Show Consent Screen (using client_name)
-      User->>AS: 7. Approve Consent
-      AS-->>CA: 8. Redirect with Authorization Code
-
-      CA->>AS: 9. Request Token (with Code)
-      AS-->>CA: 10. Return Access Token
-```
-
-During dynamic CIMD registration, the application registers itself with Auth0 at runtime, without a prior manual registration step:
-
-1. **Start login**: The user initiates a login from the client application.
-2. **Authorization request**: The application sends an authorization request to the Auth0 Authorization Server, passing its CIMD URL as the `client_id`.
-3. **Metadata resolution**: If Auth0 already has fresh, cached metadata for the client, it uses the cached copy and skips the next steps. Otherwise, Auth0 sends a `GET` request to the client's domain to retrieve the CIMD (`client-metadata.json`).
-4. **Metadata returned**: The client's domain returns the CIMD.
-5. **Security validation**: Auth0 validates the CIMD against the [CIMD URL validation rules](#cimd-url-validation-rules) and [CIMD JSON validation rules](#cimd-json-validation-rules), including SSRF checks, and registers the application as a non-validated CIMD client.
-6. **User consent**: Auth0 displays a consent screen to the user, identifying the application by the `client_name` retrieved from the CIMD metadata.
-7. **Approve consent**: The user approves the consent request.
-8. **Redirection**: Auth0 redirects the user back to the application with an authorization code.
-9. **Token request**: The application exchanges the authorization code for an access token at the token endpoint.
-10. **Access token returned**: The Auth0 Authorization Server returns an access token to the application. The application can now access the API on the user's behalf.
-
-Auth0-registered dynamic CIMD clients that never complete an authorization flow are temporarily held and automatically removed; a client is only persisted once a user successfully completes authorization.
-
-</Tab></Tabs>
+To learn about Client ID Metadata Document (CIMD) registration, including its benefits, use cases, and how manual and dynamic CIMD work, read [CIMD Overview](/docs/get-started/auth0-overview/create-applications/cimd-overview).
 
 ## Prerequisites
 
@@ -207,7 +36,7 @@ Depending on whether the client is public or confidential, Auth0 supports the fo
   - Must use [Proof Key for Code Exchange (PKCE)](/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce) for authorization flows
 * **Confidential clients**:
   - Only [Private Key JWT authentication](/docs/get-started/authentication-and-authorization-flow/authenticate-with-private-key-jwt) is supported; set `token_endpoint_auth_method` to `private_key_jwt` in client metadata
-  - Provide a `jwks_uri` to host public keys. The `jwks_uri` must share the exact same origin (scheme, host, and port) as the CIMD URL. To learn more, read [CIMD JSON validation rules](#cimd-json-validation-rules).
+  - Provide a `jwks_uri` to host public keys. The `jwks_uri` must share the exact same origin (scheme, host, and port) as the CIMD URL. To learn more, read [CIMD JSON validation rules](/docs/get-started/auth0-overview/create-applications/cimd-validation-rules#cimd-json-validation-rules).
 
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">
 Private Key JWT authentication is available only for Enterprise customers. To learn more about Enterprise plans, review [Pricing](https://auth0.com/pricing) or contact [Auth0 Sales](https://auth0.com/contact-us).
@@ -232,8 +61,8 @@ To register an application with manual CIMD using the Auth0 Dashboard:
 
 1. Navigate to **Applications > Applications**.
 2. Select **Create Application > Import from URL**.
-3. Enter the CIMD URL. Then, select **Preview**. Auth0 validates the CIMD URL against the [CIMD URL validation rules](#cimd-url-validation-rules).
-4. If your CIMD URL is valid, Auth0 loads the CIMD and validates it against the [CIMD JSON validation rules](#cimd-json-validation-rules). Preview your client metadata and troubleshoot it for any validation errors.
+3. Enter the CIMD URL. Then, select **Preview**. Auth0 validates the CIMD URL against the [CIMD URL validation rules](/docs/get-started/auth0-overview/create-applications/cimd-validation-rules#cimd-url-validation-rules).
+4. If your CIMD URL is valid, Auth0 loads the CIMD and validates it against the [CIMD JSON validation rules](/docs/get-started/auth0-overview/create-applications/cimd-validation-rules#cimd-json-validation-rules). Preview your client metadata and troubleshoot it for any validation errors.
 5. Select **Create**.
 
 </Tab>
@@ -378,7 +207,7 @@ Manual CIMD clients and dynamic CIMD clients refresh client metadata in differen
 
 For manual CIMD clients, you can manually refresh client metadata. Auth0 fetches fresh client metadata from the CIMD, which you can preview and save.
 
-When you refresh client metadata, Auth0 updates the `app_type` and `grant_types` to match the values in the hosted CIMD. To learn more about CIMD fields, read [CIMD JSON validation rules](#cimd-json-validation-rules).
+When you refresh client metadata, Auth0 updates the `app_type` and `grant_types` to match the values in the hosted CIMD. To learn more about CIMD fields, read [CIMD JSON validation rules](/docs/get-started/auth0-overview/create-applications/cimd-validation-rules#cimd-json-validation-rules).
 
 In the Auth0 Dashboard:
 
@@ -512,50 +341,6 @@ curl --location --request PATCH \
 ```
 
 </Tab></Tabs>
-
-## CIMD URL validation rules
-
-To pass validation in Auth0, CIMD URLs must meet the following requirements:
-
-| Category | Rule | Requirement |
-|----------|------|-------------|
-| **Protocol** | HTTPS Required | Must use the `https://` scheme. |
-| **Host** | No Localhost | `localhost`, `127.0.0.1`, and `::1` are rejected. |
-| | Valid Hostname | Must contain a non-empty hostname; triple-slashes (e.g., `https:///`) are forbidden. |
-| **Path** | Path Component | Must contain a path beyond the root `/`. |
-| | No Dot Segments | Must not contain `.` or `..` (including encoded `%2e`) in the path. |
-| **Constraints** | Length Limit | Maximum of 120 bytes. |
-| | No Whitespace | No leading or trailing whitespace allowed. |
-| | Format | Must be a non-empty string parseable as a URL. |
-| **Forbidden** | No Credentials | No username or password allowed in the URL. |
-| | No Fragments | Fragment identifiers (`#`) are not permitted. |
-| | No Query | Query strings (`?`) are not permitted. |
-| | No Port 0 | Port 0 is reserved and forbidden. |
-| **Encoding** | Percent-Encoding | `%` must be followed by exactly two hex digits. |
-
-## CIMD JSON validation rules
-
-Auth0 applies the following CIMD JSON validation rules:
-
-* **Unsupported properties**: Auth0 ignores unsupported properties during mapping and reports them as warnings in the validation response.
-* **Inline JWKS**: Providing an inline `jwks` object instead of a `jwks_uri` is not supported and will trigger an `invalid_client_metadata` error.
-* **Private keys**: Any JWKS retrieved via `jwks_uri` that contains private key material (the `d` parameter) will be rejected.
-* **Fetch security**: Both the CIMD document and the `jwks_uri` are subject to 5KB and 12KB size limits, respectively, and neither supports HTTP redirects.
-
-Auth0 supports the following CIMD properties:
-
-| Property | Required | Type | Validation Rules | Auth0 Mapping |
-|----------|----------|------|-----------------|---------------|
-| `client_id` | Yes | String | Must be a valid HTTPS URL that exactly matches the document's hosted location. | `external_client_id` |
-| `client_name` | Yes | String | Must be a non-empty string. | `name` |
-| `redirect_uris` | Conditional | String Array | Required if `grant_types` includes `authorization_code` or `implicit`. Must be unique HTTPS URIs (loopback allowed for native apps). | `callbacks` |
-| `grant_types` | Yes | String Array | Must include at least one supported type (`authorization_code` or `refresh_token`). Unsupported types trigger warnings and are filtered out. | `grant_types` |
-| `application_type` | No | String | Only `native` or `web` are allowed. Unknown values are rejected. Defaults to `web`. | `app_type` |
-| `token_endpoint_auth_method` | No | String | Supports `none` or `private_key_jwt`. Symmetric secret methods (e.g., `client_secret_post`) are forbidden. | `token_endpoint_auth_method` |
-| `jwks_uri` | Conditional | String | Required if `token_endpoint_auth_method` is `private_key_jwt`. Must be an HTTPS URL sharing the same origin as the `client_id`. | `jwks_uri` |
-| `logo_uri` | No | String | Must be a valid HTTP or HTTPS URL. | `logo_uri` |
-| `description` | No | String | Free text with a maximum limit of 140 characters. | `description` |
-| `response_types` | No | String Array | Validated for OIDC consistency but not persisted. Generates a warning if it contains `code` while `authorization_code` is missing from `grant_types`. | (None) |
 
 ## Security considerations
 
