@@ -1,8 +1,11 @@
 ---
-description: Understand how to link user accounts from various identity providers, so your users can authenticate from any account and be recognized by your app.
 title: Link User Accounts
+description: Understand how to link user accounts from various identity providers, so your users can authenticate from any account and be recognized by your app.
+related:
+    - /docs/manage-users/user-accounts/user-account-linking/unlink-user-accounts
+    - /docs/manage-users/user-accounts/user-account-linking/user-initiated-account-linking-client-side-implementation
+    - /docs/manage-users/user-accounts/user-account-linking/suggested-account-linking-server-side-implementation
 ---
-
 import {AuthCodeBlock} from "/snippets/AuthCodeBlock.jsx";
 import {AuthCodeGroup} from "/snippets/AuthCodeGroup.jsx";
 
@@ -31,7 +34,7 @@ The following steps illustrate an example implementation:
 1. Action identifies the potential user accounts to link (if they exist).
 2. Action redirects the user to an external linking application with a token payload that contains candidate user identities:
 
-   ```json lines
+   ```json
    {
      "current_identity": {
        "user_id": event.user.user_id,
@@ -54,13 +57,10 @@ The following steps illustrate an example implementation:
    }
    ```
 
-   
-
-   
 3. External linking application prompts the user to authenticate using the credentials for the account they wish to link.
 4. External linking application redirects the user back to the Action with a token payload that contains the primary and secondary user identities:
 
-   ```json lines
+   ```json
    {
      "primary_identity": {
        "user_id": PRIMARY_USER_ID,
@@ -79,260 +79,259 @@ The following steps illustrate an example implementation:
 6. Action calls the Management API to link the accounts based on the results from the external linking application.
 7. Action switches to the primary user if it doesn’t match the `event.user.user_id`.
 
-### Example: Account linking Action
+## Example: Account linking Action
 
 ```javascript lines expandable
-const { ManagementClient, AuthenticationClient } = require('auth0');
+    const { ManagementClient, AuthenticationClient } = require('auth0');
 
-/**
- * Auth0 Account Linking Action - Production Version
- *
- * Required dependency: auth0@5.3.1
- *
- * This Action detects users with duplicate accounts (same verified email)
- * and redirects them to an external service to manage account linking.
- */
+    /**
+     * Auth0 Account Linking Action - Production Version
+     *
+     * Required dependency: auth0@5.3.1
+     *
+     * This Action detects users with duplicate accounts (same verified email)
+     * and redirects them to an external service to manage account linking.
+     */
 
-const ACCOUNT_LINKING_TIMESTAMP_KEY = 'account_linking_timestamp';
-const TTL_LEEWAY_FACTOR = 0.2;
-const PROPERTIES_TO_COMPLETE = ['given_name', 'family_name', 'name'];
+    const ACCOUNT_LINKING_TIMESTAMP_KEY = 'account_linking_timestamp';
+    const TTL_LEEWAY_FACTOR = 0.2;
+    const PROPERTIES_TO_COMPLETE = ['given_name', 'family_name', 'name'];
 
-/**
- * Get Management API access token with caching
- */
-const getManagementAccessToken = async (event, api) => {
-  const cacheKey = `mgmt-api-token-${event.secrets.MANAGEMENT_API_CLIENT_ID}`;
-  const cached = api.cache.get(cacheKey);
+    /**
+     * Get Management API access token with caching
+     */
+    const getManagementAccessToken = async (event, api) => {
+      const cacheKey = `mgmt-api-token-${event.secrets.MANAGEMENT_API_CLIENT_ID}`;
+      const cached = api.cache.get(cacheKey);
 
-  if (cached && cached.value) {
-    return cached.value;
-  }
+      if (cached && cached.value) {
+        return cached.value;
+      }
 
-  const auth = new AuthenticationClient({
-    domain: event.secrets.MANAGEMENT_API_DOMAIN,
-    clientId: event.secrets.MANAGEMENT_API_CLIENT_ID,
-    clientSecret: event.secrets.MANAGEMENT_API_CLIENT_SECRET
-  });
+      const auth = new AuthenticationClient({
+        domain: event.secrets.MANAGEMENT_API_DOMAIN,
+        clientId: event.secrets.MANAGEMENT_API_CLIENT_ID,
+        clientSecret: event.secrets.MANAGEMENT_API_CLIENT_SECRET
+      });
 
-  const response = await auth.oauth.clientCredentialsGrant({
-    audience: `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/`
-  });
+      const response = await auth.oauth.clientCredentialsGrant({
+        audience: `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/`
+      });
 
-  
-  const accessToken = response.access_token || response.data?.access_token;
-  const expiresIn = response.expires_in || response.data?.expires_in;
+      
+      const accessToken = response.access_token || response.data?.access_token;
+      const expiresIn = response.expires_in || response.data?.expires_in;
 
-  if (accessToken && typeof accessToken === 'string') {
-    api.cache.set(cacheKey, accessToken, {
-      ttl: expiresIn - expiresIn * TTL_LEEWAY_FACTOR
-    });
-  }
+      if (accessToken && typeof accessToken === 'string') {
+        api.cache.set(cacheKey, accessToken, {
+          ttl: expiresIn - expiresIn * TTL_LEEWAY_FACTOR
+        });
+      }
 
-  return accessToken;
-};
+      return accessToken;
+    };
 
-/**
- * Get users with the same verified email address
- */
-const getUsersWithSameEmail = async (event, api) => {
-  const accessToken = await getManagementAccessToken(event, api);
-  const management = new ManagementClient({
-    domain: event.secrets.MANAGEMENT_API_DOMAIN,
-    token: accessToken
-  });
+    /**
+     * Get users with the same verified email address
+     */
+    const getUsersWithSameEmail = async (event, api) => {
+      const accessToken = await getManagementAccessToken(event, api);
+      const management = new ManagementClient({
+        domain: event.secrets.MANAGEMENT_API_DOMAIN,
+        token: accessToken
+      });
 
-  
-  const users = await management.users.listUsersByEmail({
-    email: event.user.email
-  });
+      
+      const users = await management.users.listUsersByEmail({
+        email: event.user.email
+      });
 
-  return users;
-};
+      return users;
+    };
 
-/**
- * Filter and map candidate identities with verified email
- */
-const getCandidateIdentitiesWithVerifiedEmail = (event, candidateUsers) => {
-  return candidateUsers
-    .filter((user) => user.user_id !== event.user.user_id && user.email_verified === true)
-    .filter((user) => user.identities && user.identities.length > 0)
-    .map((user) => ({
-      user_id: user.user_id,
-      provider: user.identities[0].provider,
-      connection: user.identities[0].connection
-    }));
-};
+    /**
+     * Filter and map candidate identities with verified email
+     */
+    const getCandidateIdentitiesWithVerifiedEmail = (event, candidateUsers) => {
+      return candidateUsers
+        .filter((user) => user.user_id !== event.user.user_id && user.email_verified === true)
+        .filter((user) => user.identities && user.identities.length > 0)
+        .map((user) => ({
+          user_id: user.user_id,
+          provider: user.identities[0].provider,
+          connection: user.identities[0].connection
+        }));
+    };
 
-/**
- * Link accounts using Management API
- * Links secondary identity TO primary identity
- */
-const linkAccounts = async (event, primaryIdentity, secondaryIdentity) => {
-  const accessToken = await getManagementAccessToken(event, { cache: { get: () => null, set: () => {} } });
+    /**
+     * Link accounts using Management API
+     * Links secondary identity TO primary identity
+     */
+    const linkAccounts = async (event, primaryIdentity, secondaryIdentity) => {
+      const accessToken = await getManagementAccessToken(event, { cache: { get: () => null, set: () => {} } });
 
-  // Extract the ID part after the | for the API
-  const idParts = secondaryIdentity.user_id.split('|');
-  const userId = idParts.length > 1 ? idParts[1] : secondaryIdentity.user_id;
+      // Extract the ID part after the | for the API
+      const idParts = secondaryIdentity.user_id.split('|');
+      const userId = idParts.length > 1 ? idParts[1] : secondaryIdentity.user_id;
 
-  const url = `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/users/${encodeURIComponent(primaryIdentity.user_id)}/identities`;
+      const url = `https://${event.secrets.MANAGEMENT_API_DOMAIN}/api/v2/users/${encodeURIComponent(primaryIdentity.user_id)}/identities`;
 
-  const body = {
-    provider: secondaryIdentity.provider,
-    user_id: userId
-  };
+      const body = {
+        provider: secondaryIdentity.provider,
+        user_id: userId
+      };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
-  });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Link API error: ${response.status} - ${errorText}`);
-  }
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Link API error: ${response.status} - ${errorText}`);
+      }
 
-  return await response.json();
-};
+      return await response.json();
+    };
 
-/**
- * Complete missing profile properties from linked identities
- */
-const completeProperties = (event, api) => {
-  for (const property of PROPERTIES_TO_COMPLETE) {
-    if (!event.user[property]) {
-      for (const identity of event.user.identities) {
-        if (identity.profileData && identity.profileData[property]) {
-          api.idToken.setCustomClaim(property, identity.profileData[property]);
-          break;
+    /**
+     * Complete missing profile properties from linked identities
+     */
+    const completeProperties = (event, api) => {
+      for (const property of PROPERTIES_TO_COMPLETE) {
+        if (!event.user[property]) {
+          for (const identity of event.user.identities) {
+            if (identity.profileData && identity.profileData[property]) {
+              api.idToken.setCustomClaim(property, identity.profileData[property]);
+              break;
+            }
+          }
         }
       }
-    }
-  }
-};
+    };
 
-/**
- * onExecutePostLogin - Detect duplicate accounts and redirect to linking service
- */
-exports.onExecutePostLogin = async (event, api) => {
-  // Validate configuration
-  if (
-    !event.secrets.MANAGEMENT_API_DOMAIN ||
-    !event.secrets.MANAGEMENT_API_CLIENT_ID ||
-    !event.secrets.MANAGEMENT_API_CLIENT_SECRET ||
-    !event.secrets.SESSION_TOKEN_SHARED_SECRET ||
-    !event.secrets.ACCOUNT_LINKING_SERVICE_URL
-  ) {
-    console.log('Missing required configuration - skipping account linking');
-    return;
-  }
-
-// We won't process users for account linking until they have verified their email address.
-  // We might consider rejecting logins here or redirecting users to an external tool to
-  // remind the user to confirm their email address before proceeding.
-  //
-  // In this example, we simply won't process users unless their email is verified.
-  if (!event.user.email_verified) {
-    return;
-  }
-
-  // Skip if already processed
-  if (event.user.app_metadata && event.user.app_metadata[ACCOUNT_LINKING_TIMESTAMP_KEY]) {
-    completeProperties(event, api);
-    return;
-  }
-
-  try {
-    // Find users with same email
-    const candidateUsers = await getUsersWithSameEmail(event, api);
-
-    if (!Array.isArray(candidateUsers) || candidateUsers.length === 0) {
-      return;
-    }
-
-    // Filter for verified emails
-    const candidateIdentities = getCandidateIdentitiesWithVerifiedEmail(event, candidateUsers);
-
-    if (candidateIdentities.length === 0) {
-      return;
-    }
-
-    // Create session token
-    const sessionToken = api.redirect.encodeToken({
-      payload: {
-        current_identity: {
-          user_id: event.user.user_id,
-          provider: event.connection.strategy,
-          connection: event.connection.name
-        },
-        candidate_identities: candidateIdentities,
-        email: event.user.email,
-        continue_url: `https://${event.request.hostname}/continue`
-      },
-      secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
-      expiresInSeconds: 120
-    });
-
-    // Redirect to linking service
-    api.redirect.sendUserTo(event.secrets.ACCOUNT_LINKING_SERVICE_URL, {
-      query: {
-        session_token: sessionToken
+    /**
+     * onExecutePostLogin - Detect duplicate accounts and redirect to linking service
+     */
+    exports.onExecutePostLogin = async (event, api) => {
+      // Validate configuration
+      if (
+        !event.secrets.MANAGEMENT_API_DOMAIN ||
+        !event.secrets.MANAGEMENT_API_CLIENT_ID ||
+        !event.secrets.MANAGEMENT_API_CLIENT_SECRET ||
+        !event.secrets.SESSION_TOKEN_SHARED_SECRET ||
+        !event.secrets.ACCOUNT_LINKING_SERVICE_URL
+      ) {
+        console.log('Missing required configuration - skipping account linking');
+        return;
       }
-    });
+      // We won't process users for account linking until they have verified their email address.
+      // We might consider rejecting logins here or redirecting users to an external tool to
+      // remind the user to confirm their email address before proceeding.
+      //
+      // In this example, we simply won't process users unless their email is verified.
+      if (!event.user.email_verified) {
+        return;
+      }
 
-  } catch (err) {
-    console.error('Account linking error:', err.message);
-    // Don't block login on error
-  }
-};
+      // Skip if already processed
+      if (event.user.app_metadata && event.user.app_metadata[ACCOUNT_LINKING_TIMESTAMP_KEY]) {
+        completeProperties(event, api);
+        return;
+      }
 
-/**
- * onContinuePostLogin - Process user's linking decision
- */
-exports.onContinuePostLogin = async (event, api) => {
-  try {
-    // Validate response token
-    const { primary_identity: primaryIdentity, secondary_identity: secondaryIdentity } = api.redirect.validateToken({
-      secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
-      tokenParameterName: 'session_token'
-    });
+      try {
+        // Find users with same email
+        const candidateUsers = await getUsersWithSameEmail(event, api);
 
-    if (!primaryIdentity || !secondaryIdentity) {
-      // User cancelled - continue without linking
-      return;
-    }
+        if (!Array.isArray(candidateUsers) || candidateUsers.length === 0) {
+          return;
+        }
 
-    const currentUserId = event.user.user_id;
+        // Filter for verified emails
+        const candidateIdentities = getCandidateIdentitiesWithVerifiedEmail(event, candidateUsers);
 
-    // CRITICAL: Switch to primary user BEFORE linking
-    // This prevents "Unable to construct login user" error
-    if (primaryIdentity.user_id !== currentUserId) {
-      api.authentication.setPrimaryUser(primaryIdentity.user_id);
-    }
+        if (candidateIdentities.length === 0) {
+          return;
+        }
 
-    // Link the secondary account
-    const linkedIdentities = await linkAccounts(event, primaryIdentity, secondaryIdentity);
+        // Create session token
+        const sessionToken = api.redirect.encodeToken({
+          payload: {
+            current_identity: {
+              user_id: event.user.user_id,
+              provider: event.connection.strategy,
+              connection: event.connection.name
+            },
+            candidate_identities: candidateIdentities,
+            email: event.user.email,
+            continue_url: `https://${event.request.hostname}/continue`
+          },
+          secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+          expiresInSeconds: 120
+        });
 
-    if (linkedIdentities && linkedIdentities.length > 0) {
-      // Mark as processed
-      api.user.setAppMetadata(ACCOUNT_LINKING_TIMESTAMP_KEY, Date.now());
-      completeProperties(event, api);
-    } else {
-      api.access.deny('Account linking failed');
-    }
-  } catch (err) {
-    console.error('onContinuePostLogin error:', err.message);
-    api.access.deny('Account linking error: ' + err.message);
-  }
-};
+        // Redirect to linking service
+        api.redirect.sendUserTo(event.secrets.ACCOUNT_LINKING_SERVICE_URL, {
+          query: {
+            session_token: sessionToken
+          }
+        });
+
+      } catch (err) {
+        console.error('Account linking error:', err.message);
+        // Don't block login on error
+      }
+    };
+
+    /**
+     * onContinuePostLogin - Process user's linking decision
+     */
+    exports.onContinuePostLogin = async (event, api) => {
+      try {
+        // Validate response token
+        const { primary_identity: primaryIdentity, secondary_identity: secondaryIdentity } = api.redirect.validateToken({
+          secret: event.secrets.SESSION_TOKEN_SHARED_SECRET,
+          tokenParameterName: 'session_token'
+        });
+
+        if (!primaryIdentity || !secondaryIdentity) {
+          // User cancelled - continue without linking
+          return;
+        }
+
+        const currentUserId = event.user.user_id;
+
+        // CRITICAL: Switch to primary user BEFORE linking
+        // This prevents "Unable to construct login user" error
+        if (primaryIdentity.user_id !== currentUserId) {
+          api.authentication.setPrimaryUser(primaryIdentity.user_id);
+        }
+
+        // Link the secondary account
+        const linkedIdentities = await linkAccounts(event, primaryIdentity, secondaryIdentity);
+
+        if (linkedIdentities && linkedIdentities.length > 0) {
+          // Mark as processed
+          api.user.setAppMetadata(ACCOUNT_LINKING_TIMESTAMP_KEY, Date.now());
+          completeProperties(event, api);
+        } else {
+          api.access.deny('Account linking failed');
+        }
+      } catch (err) {
+        console.error('onContinuePostLogin error:', err.message);
+        api.access.deny('Account linking error: ' + err.message);
+      }
+    };
 ```
 
 ## Management API
 
-You can use the Management API [Link a user account](https://auth0.com/docs/api/v2#!/Users/post_identities) endpoint in two ways:
+You can use the Management API [Link a user account](/docs/api/management/v2/users/post-identities) endpoint in two ways:
 
 * User-initiated client-side account linking using <Tooltip tip="Access Token: Authorization credential, in the form of an opaque string or JWT, used to access an API." cta="View Glossary" href="/docs/glossary?term=access+tokens">access tokens</Tooltip> with the `update:current_user_identities` scope.
 * Server-side account linking using access tokens with the `update:users` scope.
@@ -350,149 +349,144 @@ An access token that contains the `update:current_user_identities` scope can onl
 <Callout icon="file-lines" color="#0EA5E9" iconType="regular">Using the Auth0 CLI? If you haven't already, [set up and authenticate your CLI session](/docs/deploy-monitor/auth0-cli) before running this command.</Callout>
 
 <AuthCodeGroup>
-```bash Auth0 CLI
-auth0 api post "users/PRIMARY_ACCOUNT_USER_ID/identities" \
-  --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
-```
-```bash cURL
-curl --request POST \
-  --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
-  --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
-  --header 'content-type: application/json' \
-  --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
-```
-```csharp C#
-var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
-var request = new RestRequest(Method.POST);
-request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
-request.AddHeader("content-type", "application/json");
-request.AddParameter("application/json", "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}", ParameterType.RequestBody);
-IRestResponse response = client.Execute(request);
-```
-```go Go
-package main
+    ```bash Auth0 CLI
+    auth0 api post "users/PRIMARY_ACCOUNT_USER_ID/identities" \
+      --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+    ```
+    ```bash cURL
+    curl --request POST \
+      --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+      --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+      --header 'content-type: application/json' \
+      --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+    ```
+    ```csharp C#
+    var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+    var request = new RestRequest(Method.POST);
+    request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+    request.AddHeader("content-type", "application/json");
+    request.AddParameter("application/json", "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}", ParameterType.RequestBody);
+    IRestResponse response = client.Execute(request);
+    ```
+    ```go Go
+    package main
 
-import (
-	"fmt"
-	"strings"
-	"net/http"
-	"io/ioutil"
-)
+    import (
+        "fmt"
+        "strings"
+        "net/http"
+        "io/ioutil"
+    )
 
-func main() {
+    func main() {
+        url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+        payload := strings.NewReader("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
 
-	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+        req, _ := http.NewRequest("POST", url, payload)
+        req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+        req.Header.Add("content-type", "application/json")
 
-	payload := strings.NewReader("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+        res, _ := http.DefaultClient.Do(req)
+        defer res.Body.Close()
+        body, _ := ioutil.ReadAll(res.Body)
 
-	req, _ := http.NewRequest("POST", url, payload)
-
-	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
-	req.Header.Add("content-type", "application/json")
-
-	res, _ := http.DefaultClient.Do(req)
-
-	defer res.Body.Close()
-	body, _ := ioutil.ReadAll(res.Body)
-
-	fmt.Println(res)
-	fmt.Println(string(body))
-
-}
-```
-```java Java
-HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
-  .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
-  .header("content-type", "application/json")
-  .body("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
-  .asString();
-```
-```javascript Node.JS
-var axios = require("axios").default;
-
-var options = {
-  method: 'POST',
-  url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
-  headers: {
-    authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
-    'content-type': 'application/json'
-  },
-  data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
-};
-
-axios.request(options).then(function (response) {
-  console.log(response.data);
-}).catch(function (error) {
-  console.error(error);
-});
-```
-```php PHP
-$curl = curl_init();
-
-curl_setopt_array($curl, [
-  CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
-  CURLOPT_RETURNTRANSFER => true,
-  CURLOPT_ENCODING => "",
-  CURLOPT_MAXREDIRS => 10,
-  CURLOPT_TIMEOUT => 30,
-  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-  CURLOPT_CUSTOMREQUEST => "POST",
-  CURLOPT_POSTFIELDS => "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}",
-  CURLOPT_HTTPHEADER => [
-    "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
-    "content-type: application/json"
-  ],
-]);
-
-$response = curl_exec($curl);
-$err = curl_error($curl);
-
-curl_close($curl);
-
-if ($err) {
-  echo "cURL Error #:" . $err;
-} else {
-  echo $response;
-}
-```
-```python Python
-import http.client
-
-conn = http.client.HTTPSConnection("")
-
-payload = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
-
-headers = {
-    'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
-    'content-type': "application/json"
+        fmt.Println(res)
+        fmt.Println(string(body))
     }
+    ```
+    ```java Java
+    HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+      .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+      .header("content-type", "application/json")
+      .body("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+      .asString();
+    ```
+    ```javascript Node.JS
+    var axios = require("axios").default;
 
-conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+    var options = {
+      method: 'POST',
+      url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+      headers: {
+        authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+        'content-type': 'application/json'
+      },
+      data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
+    };
 
-res = conn.getresponse()
-data = res.read()
+    axios.request(options).then(function (response) {
+      console.log(response.data);
+    }).catch(function (error) {
+      console.error(error);
+    });
+    ```
+    ```php PHP
+    $curl = curl_init();
 
-print(data.decode("utf-8"))
-```
-```ruby Ruby
-require 'uri'
-require 'net/http'
-require 'openssl'
+    curl_setopt_array($curl, [
+      CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_ENCODING => "",
+      CURLOPT_MAXREDIRS => 10,
+      CURLOPT_TIMEOUT => 30,
+      CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+      CURLOPT_CUSTOMREQUEST => "POST",
+      CURLOPT_POSTFIELDS => "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}",
+      CURLOPT_HTTPHEADER => [
+        "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+        "content-type: application/json"
+      ],
+    ]);
 
-url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+    $response = curl_exec($curl);
+    $err = curl_error($curl);
 
-http = Net::HTTP.new(url.host, url.port)
-http.use_ssl = true
-http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    curl_close($curl);
 
-request = Net::HTTP::Post.new(url)
-request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
-request["content-type"] = 'application/json'
-request.body = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+    if ($err) {
+      echo "cURL Error #:" . $err;
+    } else {
+      echo $response;
+    }
+    ```
+    ```python Python
+    import http.client
 
-response = http.request(request)
-puts response.read_body
-```
+    conn = http.client.HTTPSConnection("")
+
+    payload = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+    headers = {
+        'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+        'content-type': "application/json"
+        }
+
+    conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+    res = conn.getresponse()
+    data = res.read()
+
+    print(data.decode("utf-8"))
+    ```
+    ```ruby Ruby
+    require 'uri'
+    require 'net/http'
+    require 'openssl'
+
+    url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+    request = Net::HTTP::Post.new(url)
+    request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+    request["content-type"] = 'application/json'
+    request.body = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+    response = http.request(request)
+    puts response.read_body
+    ```
 </AuthCodeGroup>
 
 ### Server-side account linking
@@ -507,149 +501,149 @@ For server-side account linking, you need an access token that contains the foll
 Access tokens that contain the `update:users` scope can be used to update the information of any user. Therefore, this method is intended for use in server-side code only.
 
 <AuthCodeGroup>
-```bash Auth0 CLI
-auth0 api post "users/PRIMARY_ACCOUNT_USER_ID/identities" \
-  --data '{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}'
-```
-```bash cURL
-curl --request POST \
-  --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
-  --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
-  --header 'content-type: application/json' \
-  --data '{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}'
-```
-```csharp C#
-var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
-var request = new RestRequest(Method.POST);
-request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
-request.AddHeader("content-type", "application/json");
-request.AddParameter("application/json", "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}", ParameterType.RequestBody);
-IRestResponse response = client.Execute(request);
-```
-```go Go
-package main
+    ```bash Auth0 CLI
+    auth0 api post "users/PRIMARY_ACCOUNT_USER_ID/identities" \
+      --data '{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}'
+    ```
+    ```bash cURL
+    curl --request POST \
+      --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+      --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+      --header 'content-type: application/json' \
+      --data '{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}'
+    ```
+    ```csharp C#
+    var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+    var request = new RestRequest(Method.POST);
+    request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+    request.AddHeader("content-type", "application/json");
+    request.AddParameter("application/json", "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}", ParameterType.RequestBody);
+    IRestResponse response = client.Execute(request);
+    ```
+    ```go Go
+    package main
 
-import (
-	"fmt"
-	"strings"
-	"net/http"
-	"io/ioutil"
-)
+    import (
+        "fmt"
+        "strings"
+        "net/http"
+        "io/ioutil"
+    )
 
-func main() {
+    func main() {
 
-	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+        url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
 
-	payload := strings.NewReader("{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}")
+        payload := strings.NewReader("{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}")
 
-	req, _ := http.NewRequest("POST", url, payload)
+        req, _ := http.NewRequest("POST", url, payload)
 
-	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
-	req.Header.Add("content-type", "application/json")
+        req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+        req.Header.Add("content-type", "application/json")
 
-	res, _ := http.DefaultClient.Do(req)
+        res, _ := http.DefaultClient.Do(req)
 
-	defer res.Body.Close()
-	body, _ := ioutil.ReadAll(res.Body)
+        defer res.Body.Close()
+        body, _ := ioutil.ReadAll(res.Body)
 
-	fmt.Println(res)
-	fmt.Println(string(body))
+        fmt.Println(res)
+        fmt.Println(string(body))
 
-}
-```
-```java Java
-HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
-  .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
-  .header("content-type", "application/json")
-  .body("{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}")
-  .asString();
-```
-```javascript Node.JS
-var axios = require("axios").default;
-
-var options = {
-  method: 'POST',
-  url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
-  headers: {
-    authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
-    'content-type': 'application/json'
-  },
-  data: {provider: 'SECONDARY_ACCOUNT_PROVIDER', user_id: 'SECONDARY_ACCOUNT_USER_ID'}
-};
-
-axios.request(options).then(function (response) {
-  console.log(response.data);
-}).catch(function (error) {
-  console.error(error);
-});
-```
-```php PHP
-$curl = curl_init();
-
-curl_setopt_array($curl, [
-  CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
-  CURLOPT_RETURNTRANSFER => true,
-  CURLOPT_ENCODING => "",
-  CURLOPT_MAXREDIRS => 10,
-  CURLOPT_TIMEOUT => 30,
-  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-  CURLOPT_CUSTOMREQUEST => "POST",
-  CURLOPT_POSTFIELDS => "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}",
-  CURLOPT_HTTPHEADER => [
-    "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
-    "content-type: application/json"
-  ],
-]);
-
-$response = curl_exec($curl);
-$err = curl_error($curl);
-
-curl_close($curl);
-
-if ($err) {
-  echo "cURL Error #:" . $err;
-} else {
-  echo $response;
-}
-```
-```python Python
-import http.client
-
-conn = http.client.HTTPSConnection("")
-
-payload = "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}"
-
-headers = {
-    'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
-    'content-type': "application/json"
     }
+    ```
+    ```java Java
+    HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+      .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+      .header("content-type", "application/json")
+      .body("{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}")
+      .asString();
+    ```
+    ```javascript Node.JS
+    var axios = require("axios").default;
 
-conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+    var options = {
+      method: 'POST',
+      url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+      headers: {
+        authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+        'content-type': 'application/json'
+      },
+      data: {provider: 'SECONDARY_ACCOUNT_PROVIDER', user_id: 'SECONDARY_ACCOUNT_USER_ID'}
+    };
 
-res = conn.getresponse()
-data = res.read()
+    axios.request(options).then(function (response) {
+      console.log(response.data);
+    }).catch(function (error) {
+      console.error(error);
+    });
+    ```
+    ```php PHP
+    $curl = curl_init();
 
-print(data.decode("utf-8"))
-```
-```ruby Ruby
-require 'uri'
-require 'net/http'
-require 'openssl'
+    curl_setopt_array($curl, [
+      CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_ENCODING => "",
+      CURLOPT_MAXREDIRS => 10,
+      CURLOPT_TIMEOUT => 30,
+      CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+      CURLOPT_CUSTOMREQUEST => "POST",
+      CURLOPT_POSTFIELDS => "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}",
+      CURLOPT_HTTPHEADER => [
+        "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+        "content-type: application/json"
+      ],
+    ]);
 
-url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+    $response = curl_exec($curl);
+    $err = curl_error($curl);
 
-http = Net::HTTP.new(url.host, url.port)
-http.use_ssl = true
-http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    curl_close($curl);
 
-request = Net::HTTP::Post.new(url)
-request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
-request["content-type"] = 'application/json'
-request.body = "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}"
+    if ($err) {
+      echo "cURL Error #:" . $err;
+    } else {
+      echo $response;
+    }
+    ```
+    ```python Python
+    import http.client
 
-response = http.request(request)
-puts response.read_body
-```
+    conn = http.client.HTTPSConnection("")
+
+    payload = "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}"
+
+    headers = {
+        'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+        'content-type': "application/json"
+        }
+
+    conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+    res = conn.getresponse()
+    data = res.read()
+
+    print(data.decode("utf-8"))
+    ```
+    ```ruby Ruby
+    require 'uri'
+    require 'net/http'
+    require 'openssl'
+
+    url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+    request = Net::HTTP::Post.new(url)
+    request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+    request["content-type"] = 'application/json'
+    request.body = "{"provider":"SECONDARY_ACCOUNT_PROVIDER", "user_id": "SECONDARY_ACCOUNT_USER_ID"}"
+
+    response = http.request(request)
+    puts response.read_body
+    ```
 </AuthCodeGroup>
 
 The secondary user account's `user_id` and `provider` can be deduced by its unique identifier. For example, for the identifier `google-oauth2|108091299999329986433`:
@@ -660,157 +654,146 @@ The secondary user account's `user_id` and `provider` can be deduced by its uniq
 Alternatively, you can you can send the secondary account's ID token instead of the `provider` and `user_id`:
 
 <AuthCodeGroup>
-```bash Auth0 CLI
-auth0 api post "users/PRIMARY_ACCOUNT_USER_ID/identities" \
-  --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
-```
-```bash cURL
-curl --request POST \
-  --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
-  --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
-  --header 'content-type: application/json' \
-  --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
-```
-```csharp C#
-var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
-var request = new RestRequest(Method.POST);
-request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
-request.AddHeader("content-type", "application/json");
-request.AddParameter("application/json", "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}", ParameterType.RequestBody);
-IRestResponse response = client.Execute(request);
-```
-```go Go
-package main
+    ```bash Auth0 CLI
+    auth0 api post "users/PRIMARY_ACCOUNT_USER_ID/identities" \
+      --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+    ```
+    ```bash cURL
+    curl --request POST \
+      --url 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities' \
+      --header 'authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN' \
+      --header 'content-type: application/json' \
+      --data '{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}'
+    ```
+    ```csharp C#
+    var client = new RestClient("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities");
+    var request = new RestRequest(Method.POST);
+    request.AddHeader("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN");
+    request.AddHeader("content-type", "application/json");
+    request.AddParameter("application/json", "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}", ParameterType.RequestBody);
+    IRestResponse response = client.Execute(request);
+    ```
+    ```go Go
+    package main
 
-import (
-	"fmt"
-	"strings"
-	"net/http"
-	"io/ioutil"
-)
+    import (
+        "fmt"
+        "strings"
+        "net/http"
+        "io/ioutil"
+    )
 
-func main() {
+    func main() {
+        url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+        payload := strings.NewReader("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
 
-	url := "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities"
+        req, _ := http.NewRequest("POST", url, payload)
+        req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+        req.Header.Add("content-type", "application/json")
 
-	payload := strings.NewReader("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+        res, _ := http.DefaultClient.Do(req)
+        defer res.Body.Close()
+        body, _ := ioutil.ReadAll(res.Body)
 
-	req, _ := http.NewRequest("POST", url, payload)
-
-	req.Header.Add("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
-	req.Header.Add("content-type", "application/json")
-
-	res, _ := http.DefaultClient.Do(req)
-
-	defer res.Body.Close()
-	body, _ := ioutil.ReadAll(res.Body)
-
-	fmt.Println(res)
-	fmt.Println(string(body))
-
-}
-```
-```java Java
-HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
-  .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
-  .header("content-type", "application/json")
-  .body("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
-  .asString();
-```
-```javascript Node.JS
-var axios = require("axios").default;
-
-var options = {
-  method: 'POST',
-  url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
-  headers: {
-    authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
-    'content-type': 'application/json'
-  },
-  data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
-};
-
-axios.request(options).then(function (response) {
-  console.log(response.data);
-}).catch(function (error) {
-  console.error(error);
-});
-```
-```php PHP
-$curl = curl_init();
-
-curl_setopt_array($curl, [
-  CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
-  CURLOPT_RETURNTRANSFER => true,
-  CURLOPT_ENCODING => "",
-  CURLOPT_MAXREDIRS => 10,
-  CURLOPT_TIMEOUT => 30,
-  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-  CURLOPT_CUSTOMREQUEST => "POST",
-  CURLOPT_POSTFIELDS => "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}",
-  CURLOPT_HTTPHEADER => [
-    "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
-    "content-type: application/json"
-  ],
-]);
-
-$response = curl_exec($curl);
-$err = curl_error($curl);
-
-curl_close($curl);
-
-if ($err) {
-  echo "cURL Error #:" . $err;
-} else {
-  echo $response;
-}
-```
-```python Python
-import http.client
-
-conn = http.client.HTTPSConnection("")
-
-payload = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
-
-headers = {
-    'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
-    'content-type': "application/json"
+        fmt.Println(res)
+        fmt.Println(string(body))
     }
+    ```
+    ```java Java
+    HttpResponse<String> response = Unirest.post("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+      .header("authorization", "Bearer MANAGEMENT_API_ACCESS_TOKEN")
+      .header("content-type", "application/json")
+      .body("{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}")
+      .asString();
+    ```
+    ```javascript Node.JS
+    var axios = require("axios").default;
 
-conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+    var options = {
+      method: 'POST',
+      url: 'https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities',
+      headers: {
+        authorization: 'Bearer MANAGEMENT_API_ACCESS_TOKEN',
+        'content-type': 'application/json'
+      },
+      data: {link_with: 'SECONDARY_ACCOUNT_ID_TOKEN'}
+    };
 
-res = conn.getresponse()
-data = res.read()
+    axios.request(options).then(function (response) {
+      console.log(response.data);
+    }).catch(function (error) {
+      console.error(error);
+    });
+    ```
+    ```php PHP
+    $curl = curl_init();
 
-print(data.decode("utf-8"))
-```
-```ruby Ruby
-require 'uri'
-require 'net/http'
-require 'openssl'
+    curl_setopt_array($curl, [
+      CURLOPT_URL => "https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities",
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_ENCODING => "",
+      CURLOPT_MAXREDIRS => 10,
+      CURLOPT_TIMEOUT => 30,
+      CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+      CURLOPT_CUSTOMREQUEST => "POST",
+      CURLOPT_POSTFIELDS => "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}",
+      CURLOPT_HTTPHEADER => [
+        "authorization: Bearer MANAGEMENT_API_ACCESS_TOKEN",
+        "content-type: application/json"
+      ],
+    ]);
 
-url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+    $response = curl_exec($curl);
+    $err = curl_error($curl);
 
-http = Net::HTTP.new(url.host, url.port)
-http.use_ssl = true
-http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    curl_close($curl);
 
-request = Net::HTTP::Post.new(url)
-request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
-request["content-type"] = 'application/json'
-request.body = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+    if ($err) {
+      echo "cURL Error #:" . $err;
+    } else {
+      echo $response;
+    }
+    ```
+    ```python Python
+    import http.client
 
-response = http.request(request)
-puts response.read_body
-```
+    conn = http.client.HTTPSConnection("")
+
+    payload = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+    headers = {
+        'authorization': "Bearer MANAGEMENT_API_ACCESS_TOKEN",
+        'content-type': "application/json"
+        }
+
+    conn.request("POST", "/{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities", payload, headers)
+
+    res = conn.getresponse()
+    data = res.read()
+
+    print(data.decode("utf-8"))
+    ```
+    ```ruby Ruby
+    require 'uri'
+    require 'net/http'
+    require 'openssl'
+
+    url = URI("https://{yourDomain}/api/v2/users/PRIMARY_ACCOUNT_USER_ID/identities")
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+    request = Net::HTTP::Post.new(url)
+    request["authorization"] = 'Bearer MANAGEMENT_API_ACCESS_TOKEN'
+    request["content-type"] = 'application/json'
+    request.body = "{"link_with":"SECONDARY_ACCOUNT_ID_TOKEN"}"
+
+    response = http.request(request)
+    puts response.read_body
+    ```
 </AuthCodeGroup>
 
 ## Auth0.js library
 
 You can use the Auth0.js library to perform client-side account linking. Read [Auth0.js Reference > User management](/docs/libraries/auth0js#user-management) to learn more.
-
-## Learn more
-
-* [User Account Linking: Server-Side Implementation](/docs/manage-users/user-accounts/user-account-linking/suggested-account-linking-server-side-implementation)
-* [User-Initiated Account Linking: Client-Side Implementation](/docs/manage-users/user-accounts/user-account-linking/user-initiated-account-linking-client-side-implementation)
-* [Unlink User Accounts](/docs/manage-users/user-accounts/user-account-linking/unlink-user-accounts)
