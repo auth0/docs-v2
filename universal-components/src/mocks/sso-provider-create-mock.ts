@@ -167,10 +167,28 @@ export const getSsoProviderCreateMock = () => {
     handleCreate: async () => {
       console.log("Provider created!");
     },
-    createStepActions: () => ({
-      onNextAction: async () => true,
-      onPreviousAction: async () => true,
-    }),
+    createStepActions: (
+      stepId: string,
+      stepRef: { current?: { validate?: () => Promise<boolean>; getData?: () => unknown } },
+    ) => {
+      const key = stepId === "provider_details" ? "details" : "configure";
+      const run = async (shouldValidate: boolean) => {
+        if (
+          shouldValidate &&
+          stepRef?.current?.validate &&
+          !(await stepRef.current.validate())
+        ) {
+          return false;
+        }
+        const data = stepRef?.current?.getData?.() ?? null;
+        setFormData((prev) => ({ ...prev, [key]: data }));
+        return true;
+      };
+      return {
+        onNextAction: () => run(true),
+        onPreviousAction: () => run(false),
+      };
+    },
   };
-  return { logic: mockLogic, handlers: mockHandlers };
+  return { ...mockLogic, ...mockHandlers };
 };
