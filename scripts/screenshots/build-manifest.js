@@ -53,6 +53,23 @@ function proposeNewPath(currentPath) {
   return `/docs/images/${dir === '.' ? 'dashboard/unsorted' : dir}/${base.replace(/-light$/, '')}-light.png`;
 }
 
+// Mutates entries in place, appending "-N" to every id after the first occurrence of that id.
+// The counter is always keyed by the original (pre-rename) id, so a third or later duplicate of
+// the same base id does not collide with an earlier rename.
+function dedupeIds(entries) {
+  const seen = new Map();
+  for (const e of entries) {
+    const baseId = e.id;
+    if (seen.has(baseId)) {
+      const n = seen.get(baseId) + 1;
+      seen.set(baseId, n);
+      e.id = `${baseId}-${n}`;
+    } else {
+      seen.set(baseId, 1);
+    }
+  }
+}
+
 function fileContains(absFile, needle) {
   if (!fs.existsSync(absFile)) return null;
   const lines = fs.readFileSync(absFile, 'utf8').split('\n');
@@ -153,12 +170,7 @@ function main(argv) {
     stats.entries++;
   }
   entries.sort((a, b) => a.newPath.localeCompare(b.newPath));
-
-  const ids = new Map();
-  for (const e of entries) {
-    if (ids.has(e.id)) e.id = `${e.id}-${ids.get(e.id)}`;
-    ids.set(e.id, (ids.get(e.id) || 1) + 1);
-  }
+  dedupeIds(entries);
 
   manifest.save(entries, outFile);
   console.log(`Wrote ${outFile}`);
@@ -170,4 +182,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { main, normalizeImagePath, proposeNewPath };
+module.exports = { main, normalizeImagePath, proposeNewPath, dedupeIds };
