@@ -25,17 +25,21 @@ node scripts/update-dashboard-links.js --report=reports/links-dry-run.csv
 1. **Blessed tenant-agnostic Dashboard URL form: `https://manage.auth0.com/dashboard/#/...`.** All 131 rows in the "New Dashboard links" sheet already target this form exclusively (confirmed by scanning every `new` value in the imported map); there was no real three-way competition once the sheet was decoded. The 9 pattern-rule placeholders (`REPLACE_WITH_BLESSED_FORM`) are now filled with this prefix, and `dashboard-link-policy.json` moved `/dashboard/*/` into `reject` and deleted the `/dashboard/#/` pending-decision entry.
 2. **Tenant-specific links are rewritten, not left.** `dev-6endizjt`, `dev-gja8kxz4ndtex3rq`, `auth0-dsepaid` are seeded/leaked test-tenant names. `dashboard-link-policy.json` now rejects them under CI. 7 of these had no map entry (they were falling into `unmatched`); each was verified by hand to be an exact duplicate (different tenant prefix, same path) of an already-mapped tenant-agnostic URL in the sheet, and added to the map accordingly — not guessed.
 
+## Bug fixed in this PR
+
+`classify()` in `scripts/lib/dashboard-links.js` checked the raw-shape `isMalformed()` heuristic (wildcard, encoded brace, double hash) *before* consulting the map, so a URL that looks malformed but has an explicit, correct map entry was routed to `needs-human` instead of being rewritten. Reordered: map lookup first, `isMalformed()` only as a fallback for URLs the map doesn't cover. Fixed 3 real URL shapes (the `self-service-profiles` wildcard link, `#/*/logs`, and the double-hash okta-integration-network link), rescuing 15 occurrences across locales. Added a regression test and a fixture map entry covering it.
+
 ## Dry-run counts (after the above, full tree, all locales + main/ai)
 
 ```
 locale           rewritten pattern-rewritten    unchanged-root     unchanged-new       needs-human         unmatched
-en                    1083                 1               171                24                 9                 0
-fr-ca                 1073                 1               165                23                 9                 0
-ja-jp                 1073                 1               165                23                 9                 0
-total                 3229                 3               501                70                27                 0
+en                    1088                 1               171                24                 4                 0
+fr-ca                 1078                 1               165                23                 4                 0
+ja-jp                 1078                 1               165                23                 4                 0
+total                 3244                 3               501                70                12                 0
 ```
 
-`unmatched` is 0. The 27 remaining `needs-human` rows are genuinely malformed source URLs (`%7D`/`%7B` encoding, `/?/`, `/*/` wildcard without prefix, doubled `#/`) — see `reports/links-dry-run.csv` for the full per-line list. These need a hand fix in the content PRs, not a tooling change.
+`unmatched` is 0. The 12 remaining `needs-human` rows are all explicitly `changeType: malformed` in the sheet (`REMOVE - malformed URL in docs`) — `%7D` encoding on `#/applications`, `#/apis`, `#/rules`. These are genuine docs typos needing a human to fix the surrounding sentence, not a script decision. See `reports/links-dry-run.csv` for the full per-line list.
 
 ## Known gap found during setup
 
