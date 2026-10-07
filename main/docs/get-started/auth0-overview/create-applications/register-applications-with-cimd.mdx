@@ -4,6 +4,15 @@ description: Learn how to register applications with the Client ID Metadata Docu
 validatedOn: 2026-04-29
 ---
 
+import { ReleaseStageNotice } from "/snippets/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice
+    feature="Dynamic CIMD Registration"
+    stage="ea"
+    contact="Auth0 Support"
+    terms="true"
+/>
+
 To learn about Client ID Metadata Document (CIMD) registration, including its benefits, use cases, and how manual and dynamic CIMD work, read [CIMD Overview](/docs/get-started/auth0-overview/create-applications/cimd-overview).
 
 ## Prerequisites
@@ -12,11 +21,40 @@ Before registering an application with CIMD, make sure your tenant and applicati
 
 ### Tenant configuration
 
+<Tabs><Tab title="Auth0 Dashboard">
+
 * **Enable CIMD support**: Enable the **Client ID Metadata Document Registration** toggle in your [tenant settings](/docs/get-started/tenant-settings) to indicate CIMD support in the Auth0 Authorization Server metadata, allowing clients to automatically discover this capability when connecting.
   - Navigate to **Settings > Advanced** and scroll down to the **Settings** section.
   - Toggle on **Client ID Metadata Document Registration**.
-  - To enable Dynamic CIMD Registration support, toggle on **Dynamic CIMD Registration**.
+* **Dynamic CIMD Registration support**: Enable the **Dynamic CIMD Registration** toggle underneath **Client ID Metadata Document Registration**.
 * **Resource Parameter Compatibility Profile (Optional)**: For MCP clients, we recommend enabling this profile in your [tenant settings](/docs/get-started/tenant-settings). This allows the authorization server to handle resource-specific requests ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707.html#name-resource-parameter)) by checking the `resource` parameter if the `audience` is not provided.
+
+</Tab><Tab title="Management API">
+
+You can also enable these tenant settings using the Management API. The **Client ID Metadata Document Registration** toggle corresponds to the `client_id_metadata_document_supported` property, and **Dynamic CIMD Registration** corresponds to `client_id_metadata_document_dynamic_registration_supported`, both on the [`PATCH /api/v2/tenants/settings`](https://auth0.com/docs/api/management/v2/tenants/patch-settings) endpoint.
+
+`client_id_metadata_document_dynamic_registration_supported` requires `client_id_metadata_document_supported` to be `true`, and `client_id_metadata_document_supported` cannot be disabled while `client_id_metadata_document_dynamic_registration_supported` is `true`. Attempting either returns a `400 Bad Request` error, for example:
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "errorCode": "validation_error",
+  "message": "client_id_metadata_document_dynamic_registration_supported cannot be enabled when client_id_metadata_document_supported is false. Enable client_id_metadata_document_supported in the same request or beforehand."
+}
+```
+
+If your tenant doesn't have access to Dynamic CIMD Registration, setting `client_id_metadata_document_dynamic_registration_supported` returns a `403 Forbidden` error:
+
+```json
+{
+  "statusCode": 403,
+  "error": "Forbidden",
+  "errorCode": "not_entitled",
+  "message": "Updating the client_id_metadata_document_dynamic_registration_supported setting is not allowed for this tenant."
+}
+```
+</Tab></Tabs>
 
 ### Supported client types
 
@@ -130,13 +168,31 @@ If successful, Auth0 returns a response like the following:
 }
 ```
 
+If a client is already registered with the `external_client_id` you previewed, the response also includes `client_id` and `external_metadata_created_by`:
+
+```json
+{
+  "mapped_fields": { "..." },
+  "validation": { "valid": true, "violations": [], "warnings": [] },
+  "client_id": "YOUR_CLIENT_ID",
+  "external_metadata_created_by": "client"
+}
+```
+
+`external_metadata_created_by` indicates how the existing client was registered:
+
+| Value | Description |
+|-------|-------------|
+| `client` | The application dynamically registered itself via its CIMD URL at runtime. |
+| `admin` | A tenant admin manually registered the application from its CIMD URL. |
+
 ### Register CIMD client
 
 Once you've verified the client metadata, make a `POST` request to the `/api/v2/clients/cimd/register` endpoint and pass the following:
 
 - `external_client_id`: The CIMD URL for the application
 
-The `/api/v2/clients/cimd/register` endpoint registers the CIMD application.
+The `/api/v2/clients/cimd/register` endpoint registers the CIMD application. If a manual CIMD client already exists with that `external_client_id`, Auth0 updates the existing client instead of creating a new one. If a dynamic CIMD client already exists with that `external_client_id`, the request fails with a `409 Conflict` error.
 
 The following request passes `https://mcpserver.example.com/client.json` as the `external_client_id` to the `/api/v2/clients/cimd/register` endpoint:
 
@@ -295,7 +351,20 @@ curl --request GET \
 
 </Tab></Tabs>
 
-If successful, Auth0 returns a response that includes the CIMD client configuration with fields like `external_client_id`, `name`, `callbacks`, `token_endpoint_auth_method`, and more.
+If successful, Auth0 returns a response that includes the CIMD client configuration with fields like `external_client_id`, `name`, `callbacks`, `token_endpoint_auth_method`, `external_metadata_created_by`, `external_metadata_status`, and more.
+
+### CIMD metadata status
+
+Every CIMD client includes an `external_metadata_status` field that indicates whether Auth0 could resolve the client's hosted metadata document:
+
+| Value | Description |
+|-------|-------------|
+| `available` | The metadata document was resolved. Manual CIMD clients always report `available`, since a tenant admin controls when metadata refreshes. For dynamic CIMD clients, `available` reflects resolution at a point in time and doesn't guarantee the returned fields are the latest version. Auth0 may serve a recently cached copy of the metadata rather than re-fetching it on every request. |
+| `unavailable` | Auth0 could not resolve the client's metadata document, for example because the hosted CIMD URL is temporarily unreachable or returns invalid content. While unavailable, only `name` and `app_type` are returned, holding their last known (stale) values; the rest of the metadata-derived fields are omitted. Authentication requests for this client fail until the metadata becomes resolvable again. |
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+A dynamic CIMD client with `external_metadata_status: "unavailable"` can recover on its own once its metadata URL becomes reachable again — Auth0 re-resolves the metadata automatically on a subsequent authentication request, with no manual action required. If the status remains `unavailable` for an extended period, consider deleting the client rather than waiting indefinitely.
+</Callout>
 
 ## Update CIMD client
 
@@ -351,3 +420,18 @@ To successfully rotate keys for CIMD clients using Private Key JWT authenticatio
 For manual CIMD clients, refresh your key registration in Auth0 after rotating your keys. To learn more, read [Rotate signing keys](/docs/get-started/tenant-settings/signing-keys/rotate-signing-keys).
 
 For dynamic CIMD clients, no manual refresh is required: if Auth0 cannot find a signing key (`kid`) during token validation, it automatically fetches the latest keys from the client's `jwks_uri`.
+
+### Credentials are not supported for dynamic CIMD clients
+
+A dynamic CIMD client authenticates with keys resolved from its `jwks_uri`, so it has no stored credential records. Making a `POST` request to the [`/v2/clients/{id}/credentials`](https://auth0.com/docs/api/management/v2#!/Client_Credentials/post_credentials) endpoint for a dynamic CIMD client fails with the following error:
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "errorCode": "client_credentials_not_supported",
+  "message": "Credentials of dynamically registered CIMD clients are resolved from the jwks_uri of their client ID metadata document and cannot be managed through this endpoint."
+}
+```
+
+To rotate the keys of a dynamic CIMD client, update the `jwks_uri` document hosted on its domain; Auth0 fetches the new keys automatically when needed. Reading, updating, or deleting credentials for a dynamic CIMD client is not blocked; since no credential record exists, these requests behave the same as they would for any client with no credentials (an empty list, a `404 Not Found` for a specific credential ID, or an idempotent `204 No Content` on delete). Manual CIMD clients and other application types are not affected by this restriction.
