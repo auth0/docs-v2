@@ -74,6 +74,13 @@ test('--locale and --path scope the run', () => {
   assert.match(read(root, 'main/docs/page.mdx'), /\(https:\/\/manage\.auth0\.com\/#\/applications\)/, 'en still untouched');
 });
 
+test('--path pointing directly at a single .mdx file scopes to that file', () => {
+  const root = tempRepo();
+  run(root, '--fix', '--path=main/docs/page.mdx');
+  assert.match(read(root, 'main/docs/page.mdx'), /\[Applications\]\(https:\/\/manage\.auth0\.com\/dashboard\/applications\)/);
+  assert.match(read(root, 'main/docs/ja-jp/page.mdx'), /#\/applications/, 'sibling locale file untouched');
+});
+
 test('CRLF line endings are preserved', () => {
   const root = tempRepo();
   const file = path.join(root, 'main/docs/crlf.mdx');

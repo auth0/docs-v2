@@ -14,8 +14,18 @@ function toPosix(p) {
   return p.split(path.sep).join('/');
 }
 
-// Recursively list .mdx files under dir. Skips dotfiles and node_modules. Sorted, absolute.
+// List .mdx files at or under dir. If dir is itself a single .mdx file, returns just that file
+// (so --path=some/page.mdx works, not only --path=some/directory). Skips dotfiles and
+// node_modules. Sorted, absolute.
 function walkMdx(dir) {
+  let stat;
+  try {
+    stat = fs.statSync(dir);
+  } catch {
+    return [];
+  }
+  if (stat.isFile()) return dir.endsWith('.mdx') ? [dir] : [];
+
   const out = [];
   (function rec(d) {
     let entries;
