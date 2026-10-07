@@ -33,6 +33,11 @@ module.exports = defineConfig({
   use: {
     baseURL: process.env.DASHBOARD_BASE_URL || 'https://manage.auth0.com',
     browserName: 'chromium',
+    // Playwright's pinned Chromium build (136.0.7103.25) crashes hard, every time, on the SAML
+    // POST-binding redirect during Okta SSO login (reproduced with and without automation flags,
+    // GPU disabled, and under varying memory pressure -- isolated to this specific old build).
+    // Driving the user's real installed Chrome via channel: 'chrome' does not have this problem.
+    channel: 'chrome',
     viewport: { width: 1280, height: 800 },
     deviceScaleFactor: 1,
     colorScheme: 'light',
