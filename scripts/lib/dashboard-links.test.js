@@ -47,6 +47,13 @@ test('classify: root, already-new, map-malformed, malformed, unmatched', () => {
   assert.equal(un.candidates[0], 'https://manage.auth0.com/#/connections/database');
 });
 
+test('classify: a map entry wins over a malformed-looking shape (wildcard without /dashboard)', () => {
+  // self-service-profiles is in map.json fixture as a wildcard URL with a real, non-malformed fix.
+  const res = links.classify('http://manage.auth0.com/*/self-service-profiles', ctx);
+  assert.equal(res.action, 'rewritten');
+  assert.equal(res.newUrl, 'https://manage.auth0.com/login?connection={x}');
+});
+
 test('classify: pattern with id or placeholder; unconfigured replacement is needs-human', () => {
   assert.equal(links.classify('https://manage.auth0.com/#/applications/abc123XYZ/settings', ctx).newUrl, 'https://manage.auth0.com/dashboard/applications/abc123XYZ/settings');
   assert.equal(links.classify('https://manage.auth0.com/#/applications/{yourClientId}/settings', ctx).newUrl, 'https://manage.auth0.com/dashboard/applications/{yourClientId}/settings');

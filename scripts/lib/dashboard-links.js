@@ -102,10 +102,13 @@ function nearest(n, map, k = 3) {
 const ACTIONS = ['rewritten', 'pattern-rewritten', 'unchanged-root', 'unchanged-new', 'needs-human', 'unmatched'];
 
 // Decide what to do with one URL. Returns { action, newUrl?, reason?, candidates? }.
+//
+// The map is checked before the raw-shape isMalformed() check: a URL that looks malformed
+// (wildcard, encoded brace, double hash...) but has an explicit, non-malformed map entry still
+// gets rewritten. isMalformed() is a fallback classification for URLs the map doesn't cover.
 function classify(raw, ctx) {
   const n = normalize(raw);
   if (isRoot(n)) return { action: 'unchanged-root' };
-  if (isMalformed(raw)) return { action: 'needs-human', reason: 'malformed URL' };
   if (ctx.map.newUrls.has(n)) return { action: 'unchanged-new', reason: 'already in new form' };
 
   const entry = ctx.map.byOld.get(n) || ctx.map.byOldLower.get(n.toLowerCase());
@@ -116,6 +119,8 @@ function classify(raw, ctx) {
     }
     return { action: 'rewritten', newUrl: entry.new, reason: entry.changeType || 'map' };
   }
+
+  if (isMalformed(raw)) return { action: 'needs-human', reason: 'malformed URL' };
 
   for (const p of ctx.patterns) {
     const m = n.match(p.re);
