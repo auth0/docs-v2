@@ -31,6 +31,17 @@ async function runStep(page, step) {
   throw new Error(`Unknown step: ${JSON.stringify(step)}`);
 }
 
+// Dismiss the cookie consent banner, which is not part of the Dashboard screen itself and can
+// cover the bottom of a crop. The one-time "new navigation" tour is handled once, during
+// auth.setup.js, not here -- see enableNewNavigation() there.
+async function dismissChrome(page) {
+  try {
+    await page.getByRole('button', { name: 'Accept All' }).first().click({ timeout: 1500 });
+  } catch {
+    // not present on this page; fine
+  }
+}
+
 for (const entry of entries) {
   const problems = manifest.validate(entry);
   test(`${entry.id} @${manifest.sectionOf(entry)}`, async ({ page }) => {
@@ -41,6 +52,7 @@ for (const entry of entries) {
     await page.goto(url, { waitUntil: 'networkidle' });
     if (LOGIN_RE.test(page.url())) throw new Error('Redirected to login: the saved session expired. Run `npm run auth`.');
 
+    await dismissChrome(page);
     for (const step of entry.steps || []) await runStep(page, step);
 
     const target = page.locator(entry.crop || 'main').first();
