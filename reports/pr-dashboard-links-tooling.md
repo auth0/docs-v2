@@ -41,9 +41,10 @@ total                 3244                 3               501                70
 
 `unmatched` is 0. The 12 remaining `needs-human` rows are all explicitly `changeType: malformed` in the sheet (`REMOVE - malformed URL in docs`) — `%7D` encoding on `#/applications`, `#/apis`, `#/rules`. These are genuine docs typos needing a human to fix the surrounding sentence, not a script decision. See `reports/links-dry-run.csv` for the full per-line list.
 
-## Known gap found during setup
+## Known gaps found during setup
 
-`main/snippets/**/*.mdx` (259 files) has 28 dashboard-link occurrences but is **not** in the rewriter's `DEFAULT_SCAN` (`main/docs`, `main/ai` only). The guardrail *does* scan all of `main/` by default, so `check-dashboard-links.js` with no file args currently reports errors in `main/snippets/`. Options: add `main/snippets` to `DEFAULT_SCAN` and give it its own content PR, or scope the guardrail's default scan to exclude it until a snippets PR lands. Flagging for a decision before this workflow goes live — right now it would be red on `main` the moment it merges.
+1. `main/snippets/**/*.mdx` (259 files) has 28 dashboard-link occurrences but is **not** in the rewriter's `DEFAULT_SCAN` (`main/docs`, `main/ai` only). The guardrail *does* scan all of `main/` by default, so `check-dashboard-links.js` with no file args currently reports errors in `main/snippets/`. Options: add `main/snippets` to `DEFAULT_SCAN` and give it its own content PR, or scope the guardrail's default scan to exclude it until a snippets PR lands. Flagging for a decision before this workflow goes live — right now it would be red on `main` the moment it merges.
+2. **Fixed in this PR:** `--path=<single-file>.mdx` silently scanned 0 files instead of that file, because `walkMdx()` called `readdirSync()` on the path and swallowed the resulting error. Caught while splitting the `authenticate` content PR — two top-level files were missing from an otherwise-complete section. `walkMdx` now checks `statSync` first and returns a one-element list for a file path. Regression test added.
 
 ## Reviewers
 
