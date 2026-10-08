@@ -48,6 +48,8 @@ for (const entry of entries) {
     test.skip(problems.length > 0, `manifest entry invalid: ${problems.join(', ')}`);
     test.skip(!entry.dashboardUrl, 'dashboardUrl not filled in yet');
 
+    if (entry.width) await page.setViewportSize({ width: entry.width, height: 800 });
+
     const url = await tenant.resolveUrl(entry.dashboardUrl);
     await page.goto(url, { waitUntil: 'networkidle' });
     if (LOGIN_RE.test(page.url())) throw new Error('Redirected to login: the saved session expired. Run `npm run auth`.');
