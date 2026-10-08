@@ -31,14 +31,25 @@ async function runStep(page, step) {
   throw new Error(`Unknown step: ${JSON.stringify(step)}`);
 }
 
-// Dismiss the cookie consent banner, which is not part of the Dashboard screen itself and can
-// cover the bottom of a crop. The one-time "new navigation" tour is handled once, during
-// auth.setup.js, not here -- see enableNewNavigation() there.
+// Dismiss the cookie consent banner and the "Meet your new navigation" promo card, neither of
+// which is part of the Dashboard screen itself. Unlike the one-time tour handled in
+// auth.setup.js (enableNewNavigation()), this promo card re-appears per page load, not just once
+// per account, so it has to be cleared on every capture. The card's "Close" (X) button doesn't
+// dismiss it in one click -- it swaps the card to a second "No problem..." state that has its
+// own "Close" button, so it must be clicked twice.
 async function dismissChrome(page) {
   try {
     await page.getByRole('button', { name: 'Accept All' }).first().click({ timeout: 1500 });
   } catch {
     // not present on this page; fine
+  }
+  for (let i = 0; i < 2; i++) {
+    try {
+      await page.getByRole('button', { name: 'Close', exact: true }).first().click({ timeout: 1500 });
+    } catch {
+      // not present (either already dismissed, or never showed); fine
+      break;
+    }
   }
 }
 
