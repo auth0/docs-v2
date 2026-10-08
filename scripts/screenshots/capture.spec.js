@@ -36,16 +36,19 @@ async function runStep(page, step) {
 // auth.setup.js (enableNewNavigation()), this promo card re-appears per page load, not just once
 // per account, so it has to be cleared on every capture. The card's "Close" (X) button doesn't
 // dismiss it in one click -- it swaps the card to a second "No problem..." state that has its
-// own "Close" button, so it must be clicked twice.
+// own "Close" button, so it must be clicked twice. The click must be scoped to the card's own
+// role=dialog: some pages (e.g. a toast elsewhere on screen) have an unrelated "Close" button
+// that an unscoped getByRole('button', { name: 'Close' }).first() would hit instead.
 async function dismissChrome(page) {
   try {
     await page.getByRole('button', { name: 'Accept All' }).first().click({ timeout: 1500 });
   } catch {
     // not present on this page; fine
   }
+  const navCard = page.getByRole('dialog').filter({ hasText: 'Meet your new navigation' });
   for (let i = 0; i < 2; i++) {
     try {
-      await page.getByRole('button', { name: 'Close', exact: true }).first().click({ timeout: 1500 });
+      await navCard.getByRole('button', { name: 'Close', exact: true }).first().click({ timeout: 1500 });
     } catch {
       // not present (either already dismissed, or never showed); fine
       break;
