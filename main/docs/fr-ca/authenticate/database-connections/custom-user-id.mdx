@@ -1,0 +1,129 @@
+---
+title: Comment définir des identifiants d'utilisateur personnalisés avec les Actions pour les nouveaux utilisateurs dans les connexions de base de données
+sidebarTitle: Définir des identifiants d'utilisateur personnalisés
+description: Écrivez une Action `pre-user-registration` pour attribuer des `user_id` personnalisés lors de la création de nouveaux utilisateurs dans les connexions de base de données, afin d'assurer la cohérence des identifiants d'un système à l'autre ou d'en uniformiser le format.
+validatedOn: 2026-09-14
+---
+
+import { ReleaseStageNotice } from "/snippets/fr-ca/ReleaseStageNotice.jsx"
+
+<ReleaseStageNotice feature="custom user ID assignment with Actions" stage="ea" terms="true" />
+
+Par défaut, lors de la création d&#39;un nouvel utilisateur, Auth0 génère automatiquement un [attribut `user_id`](/docs/fr-ca/manage-users/user-accounts/user-profiles/user-profile-structure#param-identities) qui sert d&#39;identifiant unique à cet utilisateur.
+
+Les connexions de base de données permettent de définir un identifiant utilisateur personnalisé au moment de la création de l&#39;utilisateur. Vous voudrez peut-être préciser vos propres identifiants utilisateur si vous avez besoin d&#39;un formatage normalisé ou d&#39;une cohérence entre les systèmes. Par exemple :
+
+* Conserver une structure d&#39;identifiant utilisateur existante lors d&#39;une migration d&#39;un autre fournisseur d&#39;identité vers Auth0, afin que les jetons, les journaux d&#39;audit et les intégrations demeurent cohérents.
+
+* Assurer la compatibilité avec des systèmes de données ou de facturation qui exigent des formats précis, comme des identifiants utilisateur UUID v4 ou des entiers séquentiels.
+
+* Faire correspondre les identifiants utilisateur aux clés primaires d&#39;une base de données interne ou d&#39;un CRM afin de simplifier les jointures de données et la production de rapports.
+
+* Composer des identifiants utilisateur déterministes à partir d&#39;attributs connus, comme les noms de locataires ou les métadonnées d&#39;application.
+
+Vous pouvez définir un `user_id` personnalisé en appelant `api.user.setUserId()` dans une [Action](/docs/fr-ca/customize/actions/actions-overview) ajoutée au [trigger `pre-user-registration`](/docs/fr-ca/customize/actions/explore-triggers/pre-user-registration), qui se déclenche avant la création d&#39;un nouveau profil utilisateur.
+
+## Comment les identifiants d&#39;utilisateur sont déterminés {#how-user-ids-are-determined}
+
+Dans le profil utilisateur, [le tableau `identities`](/docs/fr-ca/manage-users/user-accounts/user-profiles/user-profile-structure#param-identities) contient des objets renfermant l&#39;information de chaque fournisseur d&#39;identité auprès duquel l&#39;utilisateur s&#39;authentifie. Définir un identifiant d&#39;utilisateur personnalisé fixe l&#39;attribut `user_id` dans l&#39;objet du tableau `identities` correspondant à la connexion de base de données.
+
+Il existe différentes façons de définir un identifiant d&#39;utilisateur `identities` personnalisé selon la manière dont vous créez l&#39;utilisateur. Le tableau suivant résume les méthodes de création offertes ainsi que l&#39;ordre de préséance selon lequel le `user_id` est défini :
+
+| Méthode de création de l&#39;utilisateur                                                                                                                                                                                                       | Préséance du `user_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Le [terminal Create a new user de l&#39;Authentication API](/docs/fr-ca/api/authentication/signup/create-a-new-user) (`POST /dbconnections/signup`) ou l&#39;inscription par [connexion universelle](/docs/fr-ca/authenticate/login/auth0-universal-login) | <ol><li>`api.user.setUserId()` dans une Action `pre-user-registration`</li> <li>Identifiant d&#39;utilisateur généré par Auth0</li></ol>                                                                                                                                                                                                                                                                                                                                                                                       |
+| Le [terminal Create a user de la Management API](/docs/fr-ca/api/management/v2/users/post-users) (`POST /users`)                                                                                                                                     | <ol><li>`api.user.setUserId()` dans une Action `pre-user-registration`</li> <li>[`user_id` défini dans le corps de la requête](/docs/fr-ca/api/management/v2/users/post-users#body-user-id)</li> <li>Identifiant d&#39;utilisateur généré par Auth0</li></ol>                                                                                                                                                                                                                                                                        |
+| Une connexion de base de données personnalisée dont la [migration automatique](/docs/fr-ca/manage-users/user-migration/configure-automatic-migration-from-your-database) est activée                                                                 | <ol><li>`api.user.setUserId()` dans une Action `pre-user-registration`</li> <li>L&#39;[attribut `user_id` du profil d&#39;utilisateur normalisé](/docs/fr-ca/manage-users/user-accounts/user-profiles/user-profile-structure#param-user-id) retourné par les scripts d&#39;action de base de données [Login](/docs/fr-ca/authenticate/database-connections/custom-db/templates/login) et [Get User](/docs/fr-ca/authenticate/database-connections/custom-db/templates/get-user)</li><li>Identifiant d&#39;utilisateur généré par Auth0</li></ol> |
+| Une [tâche d&#39;importation groupée d&#39;utilisateurs](/docs/fr-ca/manage-users/user-migration/bulk-user-imports)                                                                                                                                  | <ol><li>La [propriété `user_id` du JSON d&#39;importation groupée](/docs/fr-ca/manage-users/user-migration/bulk-user-import-schema#param-user-id)</li> <li>Identifiant d&#39;utilisateur généré par Auth0</li></ol>                                                                                                                                                                                                                                                                                                                  |
+
+En résumé, un identifiant d&#39;utilisateur défini avec `api.user.setUserId()` dans une Action `pre-user-registration` a préséance sur les autres façons de définir un identifiant d&#39;utilisateur personnalisé, mais le trigger `pre-user-registration` ne se déclenche pas dans le cas des tâches d&#39;importation groupée.
+
+De plus, Auth0 définit le [`user_id` de niveau racine](/docs/fr-ca/manage-users/user-accounts/user-profiles/user-profile-structure#param-user-id) du profil utilisateur en fonction de l&#39;identité principale du profil, soit la première identité du tableau `identities`.
+
+Le `user_id` de niveau racine correspond à l&#39;identifiant d&#39;utilisateur de l&#39;identité principale préfixé par la stratégie de connexion (par exemple, `auth0|your_custom_id`). Il sert notamment de valeur à la [demande `sub`](/docs/fr-ca/secure/tokens/json-web-tokens/json-web-token-claims); assurez-vous donc que les systèmes en aval s&#39;attendent à recevoir la valeur préfixée.
+
+## Définir des identifiants d&#39;utilisateur personnalisés avec une Action `pre-user-registration` {#set-custom-user-ids-with-a-pre-user-registration-action}
+
+Pour définir un `user_id` personnalisé avec une Action `pre-user-registration`, vous devez créer l&#39;Action, écrire le code qui attribue à l&#39;identifiant d&#39;utilisateur la valeur souhaitée, puis ajouter l&#39;Action au trigger `pre-user-registration`.
+
+<Steps titleSize="h3">
+  <Step title="Créer l'Action">
+    Allez à **[Dashboard &gt; Actions &gt; Library](https://manage.auth0.com/#/actions/library)**. Sélectionnez **Create Action**, puis choisissez **Create Custom Action** dans le menu déroulant.
+
+    Dans la fenêtre **Create Action** qui s&#39;ouvre, remplissez les champs suivants :
+
+    * **Name** : choisissez un nom pour votre action, par exemple « Set Custom User ID ».
+    * **Trigger** : sélectionnez **Pre User Registration**.
+    * **Runtime** : choisissez votre environnement d&#39;exécution Node.
+
+    Sélectionnez ensuite **Create** pour accéder à l&#39;éditeur de code Actions de la nouvelle Action.
+  </Step>
+
+  <Step title="Écrire le code de l'Action">
+    Dans l&#39;éditeur de code Actions, [écrivez le code de votre Action](/docs/fr-ca/customize/actions/action-coding-guidelines) en utilisant `api.user.setUserId()` pour définir l&#39;identifiant d&#39;utilisateur selon votre cas d&#39;utilisation.
+
+    Les identifiants d&#39;utilisateur personnalisés doivent respecter les exigences suivantes :
+
+    * Le `user_id` doit être unique au sein de la connexion. Si un utilisateur ayant le `user_id` spécifié existe déjà, la création échoue.
+
+    * Le `user_id` doit passer la même validation que le [paramètre de corps `user_id` du terminal Create a user](/docs/fr-ca/api/management/v2/users/post-users#body-user-id) de la Management API.
+
+    Si la création d&#39;un utilisateur échoue en raison de problèmes liés à l&#39;identifiant d&#39;utilisateur, consultez vos [journaux de locataire](/docs/fr-ca/deploy-monitor/logs) à la recherche du [type de journal `fs`](/docs/fr-ca/tenant-logs/auth-signup-fail/fs) (échec d&#39;inscription).
+
+    <AccordionGroup>
+      <Accordion title="Exemple : Générer un UUID v4">
+        Vous pouvez générer un UUID v4 à l&#39;aide du module `crypto` intégré de Node :
+
+        ```js wrap Example: Generate a UUID v4
+        exports.onExecutePreUserRegistration = async (event, api) => {
+          const crypto = require('crypto');
+          api.user.setUserId(crypto.randomUUID());
+        };
+        ```
+      </Accordion>
+
+      <Accordion title="Exemple : Générer une version précise d'UUID">
+        Si vous avez besoin d&#39;une version précise d&#39;UUID (v1, v5, v7, etc.), ajoutez le paquet npm `uuid` comme dépendance et utilisez-le dans votre Action :
+
+        ```js wrap Example: Generate a specific UUID version
+        const { v7: uuidv7 } = require('uuid');
+
+        exports.onExecutePreUserRegistration = async (event, api) => {
+          api.user.setUserId(uuidv7());
+        };
+        ```
+      </Accordion>
+
+      <Accordion title="Exemple : Composer un identifiant à partir des données d'inscription">
+        Vous pouvez composer un identifiant d&#39;utilisateur déterministe à partir des données d&#39;inscription, comme une valeur `app_metadata` :
+
+        ```js wrap Example: Compose an ID from sign-up data
+        exports.onExecutePreUserRegistration = async (event, api) => {
+          const externalId = event.user.app_metadata?.external_id;
+          if (externalId) {
+        	api.user.setUserId(externalId);
+          }
+        };
+        ```
+      </Accordion>
+    </AccordionGroup>
+
+    Lorsque vous avez fini d&#39;écrire et de [tester l&#39;Action](/docs/fr-ca/customize/actions/test-actions), sélectionnez **Deploy**.
+  </Step>
+
+  <Step title="Ajouter l'Action au trigger">
+    Après avoir déployé l&#39;Action, allez à **[Dashboard &gt; Actions &gt; Triggers &gt; Pre User Registration](https://manage.auth0.com/#/actions/triggers/pre-user-registration)**.
+
+    Dans la section **Add Action** à droite, sous **Custom**, glissez la nouvelle Action que vous avez créée dans le flux, entre **Start** et **Complete**. Sélectionnez ensuite **Apply**.
+  </Step>
+</Steps>
+
+## Limites {#limitations}
+
+* La définition d&#39;un identifiant d&#39;utilisateur personnalisé avec le trigger `pre-user-registration` n&#39;est pas prise en charge pour les connexions sans mot de passe.
+
+* Le trigger `pre-user-registration` ne se déclenche pas lors des tâches d&#39;importation groupée.
+
+* Vous ne pouvez pas définir un `user_id` personnalisé pour les utilisateurs qui se connectent au moyen d&#39;une connexion sociale ou d&#39;entreprise, car ces ID sont fournis par le fournisseur d&#39;identité externe.
+
+* Vous ne pouvez pas modifier le `user_id` d&#39;un utilisateur existant.
