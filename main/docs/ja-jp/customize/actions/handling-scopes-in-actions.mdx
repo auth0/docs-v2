@@ -1,0 +1,159 @@
+---
+description: 認可ポリシーを順守しつつ、Post LoginアクションとCredentials Exchangeアクションでトークンのスコープを変更する方法について説明します。
+title: アクションでのスコープの処理
+---
+
+`api.transaction.*` メソッドを使用すると、[Post Login](/docs/ja-jp/customize/actions/explore-triggers/post-login)アクションと[Credentials Exchange](/docs/ja-jp/customize/actions/explore-triggers/credentials-exchange)アクションでターゲットスコープを変更できます。Auth0は、トークンを発行する前に、変更後のスコープを該当する認可ポリシーに照らして評価します。
+
+Post Loginでは、`api.accessToken.addScope()` と `removeScope()` を使ってアクセストークンを直接変更することもできます。この場合、認可ポリシーの評価は行われません。これらの独立したメソッドは、Credentials Exchangeでは使用できません。
+
+## ターゲットスコープの仕組み {#how-target-scopes-work}
+
+`event.transaction.target_scopes` には、現在のターゲットスコープのセットが格納されています。このセットはアクションの実行後に認可ポリシーによってフィルタリングされ、最終的に付与されるスコープが決まります。`event.transaction.target_scopes` の初期値は、Post Loginでは要求されたスコープ、Credentials Exchangeでは対象APIに対してアプリケーションに認可されたスコープです。
+
+**変更はアクション間で累積されます。** 各ターゲットスコープメソッドは `event.transaction.target_scopes` を即座に更新し、その変更は現在のアクション内だけでなく、同じ取引内の後続のアクションにも反映されます。`event.transaction.requested_scopes` は変更されません。ターゲットセットはイベントから読み取り、変更はAPIメソッドを使って行ってください。
+
+| メソッド                       | 効果            | APIリファレンス                                                                                                                                                                   |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `addTargetScope(scope)`    | スコープを追加します。   | [Post Login](/docs/ja-jp/actions/reference/post-login/post-login-api-object)、[Credentials Exchange](/docs/ja-jp/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `removeTargetScope(scope)` | スコープを削除します。   | [Post Login](/docs/ja-jp/actions/reference/post-login/post-login-api-object)、[Credentials Exchange](/docs/ja-jp/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `setTargetScopes(scopes)`  | セット全体を置き換えます。 | [Post Login](/docs/ja-jp/actions/reference/post-login/post-login-api-object)、[Credentials Exchange](/docs/ja-jp/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `clearTargetScopes()`      | セットを空にします。    | [Post Login](/docs/ja-jp/actions/reference/post-login/post-login-api-object)、[Credentials Exchange](/docs/ja-jp/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+
+Auth0は、すべてのアクションが完了した後、最終的なターゲットセットを認可ポリシーと照合して評価します。認可されていないスコープを追加しても、通知なしに破棄されます。削除したスコープは、後続のオペレーションで復元されるか、セットが置き換えられない限り適用されません。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  4つのメソッドはいずれも、フローの機能の範囲内で、`openid`、`profile`、`offline_access` を含むAPI、OIDC、リフレッシュトークンのスコープに影響します。これらのスコープを追加・削除すると、トークンの発行内容やプロファイルが変わる場合があります。
+
+  `setTargetScopes()` と `clearTargetScopes()` はセット全体を置き換えるため、意図せずスコープを削除してしまうおそれがあります。`openid` を削除または省略するとIDトークンが発行されなくなる場合があり、`offline_access` を削除または省略するとリフレッシュトークンが発行されなくなる場合があります。特定のスコープだけを削除するには、`removeTargetScope()` を使用してください。
+</Callout>
+
+### 認可と同意 {#authorization-and-consent}
+
+既存の制御は引き続き適用されます。
+
+* **アプリケーションのアクセス：** [APIアクセスポリシー](/docs/ja-jp/get-started/apis/api-access-policies-for-applications)と[クライアントグラント](/docs/ja-jp/get-started/applications/application-access-to-apis-client-grants) (デフォルトのサードパーティ権限を含む) 。
+* **ユーザーの権限：** [RBAC](/docs/ja-jp/manage-users/access-control/rbac)が有効な場合、Auth0はロールと直接割り当てられた権限を確認します。Organizationでのログインには、そのOrganizationにおけるユーザーのロールが使用されます。
+* **同意：** 同意が必要な場合は、認可によるフィルタリング後に残ったすべてのスコープが同意プロンプトに表示されます。これには、アクションによって追加されたスコープも含まれます。最終的なターゲットセットから削除されたスコープや、ポリシーによって拒否されたスコープは表示されません。また、スコープをクリアしても同意はスキップされません。
+
+Credentials Exchangeには、ユーザーもユーザーの同意も存在しません。ターゲットセットはクライアントグラントとの共通部分に絞り込まれます。**スコープを変更できるメソッドは、ターゲットスコープのメソッドのみです。**`api.accessToken.addScope()`と`removeScope()`は使用できません。
+
+## 使用例 {#examples}
+
+### 認可ポリシーに従ってスコープを追加する {#add-a-scope-while-respecting-authorization-policies}
+
+適用されるポリシーと必要な同意に従って、レポートへの読み取りアクセスを追加します：
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.addTargetScope('read:reports');
+};
+```
+
+### リスクの高い取引で書き込みアクセスを削除する {#remove-write-access-for-risky-transactions}
+
+Auth0が連続するログイン間で物理的に不可能な移動を検出した場合に、書き込みアクセスを削除します。その他のターゲットスコープはそのまま維持されます。評価コードの詳細については、「[Adaptive MFAをカスタマイズする](/docs/ja-jp/secure/multi-factor-authentication/adaptive-mfa/customize-adaptive-mfa)」をお読みください。
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  const travel = event.authentication?.riskAssessment?.assessments?.ImpossibleTravel;
+  if (travel?.code === 'impossible_travel_from_last_login') {
+    api.transaction.removeTargetScope('write:reports');
+  }
+};
+```
+
+### 委任されたリクエストから管理者アクセスを削除する {#remove-admin-access-for-delegated-requests}
+
+`event.transaction.actor` を使用すると、アクターがどのフローで提供されたかに関係なく、委任されたリクエストを検出できます。次の例では、`openid` を含むほかのスコープはそのままにして、管理者アクセスのみを削除します。
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.transaction?.actor) {
+    api.transaction.removeTargetScope('admin:reports');
+  }
+};
+```
+
+### 複数のアクションにまたがって変更を適用する {#apply-changes-across-actions}
+
+`write:reports` を含むリクエストに対して、アクション1が読み取りアクセスを追加すると、その変更は即座にイベントに反映され、両方のスコープが含まれます：
+
+```javascript Action 1 lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.addTargetScope('read:reports');
+  console.log(event.transaction.target_scopes);
+  // ['write:reports', 'read:reports']
+};
+```
+
+アクション2は、この蓄積されたセットを受け取り、書き込みアクセスを削除します。
+
+```javascript Action 2 lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.removeTargetScope('write:reports');
+  console.log(event.transaction.target_scopes);
+  // ['read:reports']
+};
+```
+
+次に、Auth0 は `read:reports` を評価します。ターゲットセットに含まれているからといって、発行されるとは限りません。
+
+### マシンツーマシンのアクセスをレポートの書き込みに限定する {#limit-machine-to-machine-access-to-writing-reports}
+
+Credentials Exchangeでは書き込みアクセスのみを残します。ただし、このスコープはクライアントグラントでも引き続き許可されている必要があります：
+
+```javascript lines
+exports.onExecuteCredentialsExchange = async (event, api) => {
+  api.transaction.setTargetScopes(['write:reports']);
+};
+```
+
+## アクセストークンのスコープを直接変更する {#modify-access-token-scopes-directly}
+
+ファーストパーティのアプリケーションでは、Post Loginの`api.accessToken.addScope()`と`removeScope()`を使って、トークンレベルで直接変更を加えられます。どちらも認可の後に実行されるため、RBAC、アプリケーションアクセスポリシー、同意の評価は適用されません。また、どちらも`event.transaction.target_scopes`は変更しません。
+
+`addScope()`は、これらのチェックを経ず、同意画面にも表示しないままスコープを追加します。`removeScope()`は最終的なアクセストークンのスコープを絞り込むだけで、同意プロンプトからスコープを削除するものではありません。
+
+直接変更を行う場合は、信頼できるスコープ値と想定どおりのAPIオーディエンスを使用し、意図を明確にしたうえで行ってください。ターゲットスコープを変更しても、強制的に追加されたスコープを取り消すことはできません。
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.resource_server?.identifier === 'https://example.com/api') {
+    api.accessToken.addScope('audit:reports');
+    api.transaction.removeTargetScope('audit:reports');
+  }
+};
+```
+
+`audit:reports` は、ターゲットセットにも同意画面にも含まれていませんが、アクセストークンには引き続き含まれます。これは呼び出し順序にかかわらず、どのアクションでも同様です。
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  [サードパーティアプリケーション](/docs/ja-jp/get-started/applications/third-party-applications/security-controls)では `api.accessToken.addScope()` がサポートされていないため、スコープを追加してアプリケーションの権限や同意を迂回することはできません。一方、`removeScope()` はアクセスを減らすだけなので、引き続き使用できます。変更を認可と同意の両方に反映させたい場合は、ターゲットスコープ用のメソッドを使用してください。
+</Callout>
+
+## サポートされているフロー {#supported-flows}
+
+| フロー                                               | 動作                                                                                           |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Authorization Code、Implicit、Hybrid                | サポートされています。                                                                                  |
+| Resource Owner Password、Password Realm、パスワードレスOTP | サポートされています。                                                                                  |
+| オフラインのリフレッシュトークン交換                                | サポートされています。交換で指定されたスコープが初期値となり、省略された場合は以前に付与されたスコープが初期値となります。リフレッシュトークンの認可に関する制限は引き続き適用されます。 |
+| Device Authorization                              | サポートされています。                                                                                  |
+| MFA (OTP、アウトオブバンド、リカバリーコード) 、パスキー / WebAuthn      | サポートされています。                                                                                  |
+| トークン交換 (カスタムトークン交換、on-behalf-of、ネイティブソーシャルログイン)   | サポートされています。                                                                                  |
+| アプリ間アクセス (ID-JAG)                                 | サポートされています。                                                                                  |
+| CIBA Webリンクチャネル                                   | サポートされています。                                                                                  |
+| クライアント認証情報                                        | Credentials Exchangeアクションでサポートされています。                                                                      |
+| CIBA MFAプッシュチャネル                                  | 変更は無視されます。                                                                                   |
+| SAML、WS-Fed、レガシーエンドポイント、レガシー認可モデル                 | 変更は無視されます。                                                                                   |
+| Token Vaultのフェデレーション接続によるアクセストークン交換               | ターゲットスコープのメソッドを使用するとエラーになります。                                                                |
+
+共有アクションでは、`event.transaction.protocol === 'oauth2-token-exchange-federated-connection'` の場合、ターゲットスコープのメソッドをスキップしてください。サポート対象外のフローを制限する手段として、ターゲットスコープの変更を利用しないでください。
+
+## 詳細はこちら {#learn-more}
+
+* [Post LoginAPIオブジェクト](/docs/ja-jp/actions/reference/post-login/post-login-api-object)
+* [Credentials ExchangeAPIオブジェクト](/docs/ja-jp/actions/reference/credentials-exchange/credentials-exchange-api-object)
+* [アクションの取引メタデータ](/docs/ja-jp/customize/actions/transaction-metadata)
+* [アクションを使ったリダイレクト](/docs/ja-jp/customize/actions/redirect-with-actions)
