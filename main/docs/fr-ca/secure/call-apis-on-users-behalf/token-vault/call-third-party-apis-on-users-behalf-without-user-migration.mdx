@@ -1,0 +1,214 @@
+---
+description: Permettez aux agents d'IA d'appeler des API tierces au nom de l'utilisateur sans migrer votre magasin d'identité d'utilisateurs vers Auth0.
+title: Appeler des API tierces au nom de l'utilisateur sans migration des utilisateurs
+sidebarTitle: Appeler des API tierces au nom de l'utilisateur sans migration des utilisateurs
+---
+
+Intégrez [Token Vault](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault) à vos applications sans migrer votre magasin d&#39;identité d&#39;utilisateurs vers Auth0. L&#39;authentification principale reste confiée à votre fournisseur d&#39;identité (IdP) d&#39;utilisateurs, qu&#39;il s&#39;agisse d&#39;une solution personnalisée ou tierce, d&#39;une base de données locale ou d&#39;une solution B2C/B2B. Auth0, quant à lui, stocke, renouvelle et distribue de façon sécurisée les jetons d&#39;accès OAuth tiers destinés aux flux de production d&#39;IA autonomes.
+
+Grâce à [Custom Token Exchange](/docs/fr-ca/authenticate/custom-token-exchange) ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)), vous échangez un jeton émis par votre IdP d&#39;utilisateurs contre des jetons Auth0, ce qui déclenche la fourniture juste-à-temps (JIT) d&#39;un profil fantôme léger. Vous associez ensuite des comptes de fournisseurs tiers à ce profil au moyen du flux [Connected Accounts](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault). Votre système dorsal ou vos agents peuvent alors récupérer à la demande des jetons en aval de courte durée, sans jamais manipuler directement d&#39;informations d’identification de longue durée.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  L&#39;utilisation conjointe de Custom Token Exchange et de Token Vault constitue une solution provisoire pour mettre en place des agents d&#39;IA sans migrer les magasins d&#39;utilisateurs. Auth0 prendra bientôt en charge une solution native reposant sur ID-JAG ([Cross App Access](/docs/fr-ca/ai-agents-mcp/cross-app-access)), qui normalisera l&#39;autorisation entre applications sans exiger de développement personnalisé pour l&#39;échange de jetons.
+</Callout>
+
+## Aperçu de l&#39;architecture {#architecture-overview}
+
+| Composant                            | Rôle                                                                                                                                                                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Votre IdP d&#39;utilisateurs         | Le fournisseur d&#39;identité principal (p. ex. personnalisé, tiers ou base de données locale) qui authentifie les utilisateurs et émet les jetons principaux (jetons d’ID OIDC signés ou assertions JWT). |
+| Serveur d&#39;application            | Gère les sessions de l&#39;application et effectue le Custom Token Exchange avec Auth0 pour orchestrer le flux de connexion.                                                                               |
+| Action Auth0 (Custom Token Exchange) | Valide les jetons principaux émis par votre IdP d&#39;utilisateurs et lie les jetons d&#39;accès aux Organizations Auth0.                                                                                  |
+| Token Vault                          | Chiffre et gère, pour chaque Organization, les jetons OAuth tiers connectés.                                                                                                                               |
+| Agent IA / processus de travail      | Récupère des jetons en aval de courte durée pour exécuter des appels d&#39;outils automatisés.                                                                                                             |
+
+## Informations requises {#prerequisites}
+
+* Locataire Auth0 : un locataire actif, avec [Organizations](/docs/fr-ca/manage-users/organizations) activé si vous utilisez des structures multilocataires ou B2B.
+* Capacités de l’IdP des utilisateurs : un fournisseur d’identité principal capable d’émettre des jetons d’ID OIDC signés ou des assertions JWT, reposant sur un terminal JWKS public ou une clé statique pour la vérification des signatures.
+* Informations d’identification de développeur tierces : des informations d’identification client actives (ID client et secret client) pour chaque fournisseur en aval auquel vos agents d’IA doivent accéder, comme GitHub, Google Workspace ou Salesforce.
+* Accès administrateur de locataire : les autorisations nécessaires dans votre locataire Auth0 pour créer des applications clientes, configurer des connexions OAuth et déployer des Actions [Custom Token Exchange](/docs/fr-ca/authenticate/custom-token-exchange).
+
+## Étape 1 : Configuration et enregistrement de l&#39;application {#step-1-setup-and-application-registration}
+
+### Enregistrer et configurer votre application {#register-and-configure-your-application}
+
+Accédez à **Applications &gt; Applications** et créez votre application. Configurez-la en tant qu’application de première partie, confidentielle et conforme à OIDC, et activez [Custom Token Exchange](/docs/fr-ca/authenticate/custom-token-exchange/configure-custom-token-exchange#enable-custom-token-exchange-for-your-application) :
+
+* Désactivez **Allow Refresh Token Rotation** pour l’application. Comme les récupérations répétées de jetons reposent sur la réutilisation du même jeton de sujet, la rotation compromettrait l’accès en aval.
+* Sous **Advanced Settings &gt; Grant Types**, assurez-vous que **Refresh Token** et **Token Vault** sont sélectionnés.
+* Sous **APIs &gt; Auth0 My Account API**, accordez à l’application l’accès à l’[API My Account](/docs/fr-ca/manage-users/my-account-api) (obtenu au moyen d’un [jeton d’actualisation multiressource](/docs/fr-ca/secure/tokens/refresh-tokens/multi-resource-refresh-token)) avec les permissions suivantes :
+  * `read:me:connected_accounts`
+  * `create:me:connected_accounts`
+  * `delete:me:connected_accounts`
+
+Ensuite, sous **Applications &gt; APIs**, sélectionnez **Allow Skipping User Consent** pour l’API cible.
+
+### Enregistrer les connexions OAuth en aval {#register-downstream-oauth-connections}
+
+Pour chaque fournisseur tiers auquel vos agents d’IA doivent accéder :
+
+1. Accédez à **Authentication &gt; Social** ou à **Authentication &gt; Enterprise**.
+2. Ajoutez la connexion à l’aide des informations d’identification obtenues sur le portail des développeurs du fournisseur.
+3. Sous **Purpose**, [activez Connected Accounts for Token Vault](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault/configure-token-vault#configure-connected-accounts-for-token-vault) pour la connexion.
+4. Sous **Permissions**, sélectionnez `Offline Access` afin de permettre à votre application client d’obtenir un jeton d’actualisation auprès du fournisseur externe.
+5. Dans l’onglet **Applications** de la connexion, activez votre application enregistrée.
+
+Pour en savoir plus, consultez [Connected Accounts for Token Vault](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault).
+
+## Étape 2 : Configurer l&#39;Action Custom Token Exchange {#step-2-configure-the-custom-token-exchange-action}
+
+Créez une nouvelle Action sous **Actions &gt; Library &gt; Custom** à l&#39;aide du [déclencheur Custom Token Exchange](/docs/fr-ca/customize/actions/explore-triggers/custom-token-exchange) (`onExecuteCustomTokenExchange`). Cette Action valide le jeton émis par votre IdP d&#39;utilisateurs, crée un profil utilisateur fantôme dans Auth0 et, au besoin, limite la portée du jeton d&#39;accès à une Organization Auth0.
+
+```javascript lines expandable
+const { createRemoteJWKSet, jwtVerify } = require('jose');
+
+/**
+ * Gestionnaire Custom Token Exchange
+ * @param {Event} event - Événement Custom Token Exchange d'Auth0
+ * @param {CustomTokenExchangeAPI} api - API Action d'Auth0
+ */
+exports.onExecuteCustomTokenExchange = async (event, api) => {
+  const token = event.transaction.subject_token;
+  const issuer = event.secrets.YOUR_IDP_ISSUER; // avec barre oblique finale, au format d'émetteur OIDC
+  const audience = event.secrets.YOUR_IDP_AUDIENCE; // lie le jeton à votre client de connexion
+
+  let claims;
+  try {
+    const jwks = createRemoteJWKSet(new URL(`${issuer}.well-known/jwks.json`));
+
+    // 1. Valider le jeton d’ID émis par l'IdP de vos utilisateurs
+    ({ payload: claims } = await jwtVerify(token, jwks, { issuer, audience }));
+  } catch {
+    return api.access.rejectInvalidSubjectToken('Invalid subject token');
+  }
+  if (!claims.sub) return api.access.rejectInvalidSubjectToken('Missing sub');
+  if (!claims.email) return api.access.rejectInvalidSubjectToken('Missing email');
+
+  // 2. Provisionner ou mettre à jour le profil miroir JIT dans Auth0
+  api.authentication.setUserByConnection(
+    'cte-users',
+    {
+      user_id: claims.sub, // stable et unique pour chaque utilisateur en amont
+      email: claims.email,
+      email_verified: claims.email_verified === true,
+      name: claims.name,
+    },
+    { creationBehavior: 'create_if_not_exists', updateBehavior: 'none' },
+  );
+
+  // 3. Facultatif : associer le contexte d'Organization pour l'accès à Token Vault, au besoin
+  if (event.organization) api.authentication.setOrganization(event.organization.id);
+};
+```
+
+Ensuite, [créez un profil Custom Token Exchange](/docs/fr-ca/authenticate/custom-token-exchange/configure-custom-token-exchange#configure-custom-token-exchange-profile) à l&#39;aide de la Management API, en associant un `subject_token_type` personnalisé à cette Action. L&#39;URN ne doit pas utiliser d&#39;espace de noms réservé (`urn:ietf`, `urn:auth0`, `urn:okta`, etc.) :
+
+```json lines
+{
+  "name": "external-idp-exchange",
+  "subject_token_type": "urn:acme:external-idp",
+  "action_id": "<YOUR_ACTION_ID>",
+  "type": "custom_authentication"
+}
+```
+
+## Étape 3 : Échanger votre jeton IdP contre un jeton d&#39;accès à l&#39;API Auth0 My Account {#step-3-exchange-your-idp-token-for-an-auth0-my-account-api-access-token}
+
+Envoyez une requête d&#39;échange de jeton ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) à partir du système dorsal de votre application afin d&#39;obtenir un jeton d&#39;accès à l&#39;API Auth0 My Account limité à l&#39;Organization de l&#39;utilisateur.
+
+```bash lines
+curl --request POST 'https://{yourDomain}/oauth/token' \
+  --header 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+  --data-urlencode 'subject_token=<YOUR_USER_IDP_ID_TOKEN>' \
+  --data-urlencode 'subject_token_type=urn:acme:external-idp' \
+  --data-urlencode 'audience=https://{yourDomain}/me/' \
+  --data-urlencode 'scope=read:me:connected_accounts create:me:connected_accounts' \
+  --data-urlencode 'client_id=<YOUR_CLIENT_ID>' \
+  --data-urlencode 'client_secret=<YOUR_CLIENT_SECRET>'
+  # Ajoutez --data-urlencode 'organization=<YOUR_ORGANIZATION_ID>' seulement si vous utilisez Organizations.
+```
+
+La réponse contient un jeton d&#39;accès pour l&#39;API My Account et un jeton d&#39;actualisation.
+
+## Étape 4 : Lier les comptes en aval à Token Vault {#step-4-link-downstream-accounts-to-token-vault}
+
+Utilisez le flux [Connected Accounts](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault/connected-accounts-for-token-vault) pour autoriser des fournisseurs OAuth tiers, comme GitHub, Google Workspace ou Salesforce, sans faire d&#39;Auth0 la méthode de connexion principale de l&#39;utilisateur.
+
+```typescript lines expandable
+// 1. Créer le flux de connexion (système dorsal)
+async function startConnect(myAccountToken, connection, redirectUri) {
+  const res = await fetch(
+    'https://{yourDomain}/me/v1/connected-accounts/connect',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${myAccountToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ connection, redirect_uri: redirectUri, state: '<csrf>' }),
+    },
+  );
+  const { connect_uri, connect_params, auth_session } = await res.json();
+  // Conserver auth_session (côté serveur, courte durée de vie); rediriger l'utilisateur vers :
+  return {
+    authorizationUrl: `${connect_uri}?ticket=${encodeURIComponent(connect_params.ticket)}`,
+    auth_session,
+  };
+}
+
+// 2. Rappel pour finaliser l'association (système dorsal)
+async function completeConnect(myAccountToken, auth_session, connect_code, redirectUri) {
+  await fetch('https://{yourDomain}/me/v1/connected-accounts/complete', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${myAccountToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ auth_session, connect_code, redirect_uri: redirectUri }),
+  });
+  // En cas de réussite, le compte est ajouté à connected_accounts et les jetons sont stockés dans Token Vault.
+}
+```
+
+## Étape 5 : Récupérer les jetons tiers pour les agents d’IA {#step-5-retrieve-third-party-tokens-for-ai-agents}
+
+Les agents récupèrent les jetons d’accès en aval non expirés directement depuis Token Vault grâce à l’[échange de jeton d’actualisation](/docs/fr-ca/secure/call-apis-on-users-behalf/token-vault/refresh-token-exchange-with-token-vault).
+
+```typescript lines expandable
+async function getVaultToken(refreshToken: string, connection: string): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token',
+    subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+    subject_token: refreshToken,
+    requested_token_type: 'http://auth0.com/oauth/token-type/federated-connection-access-token',
+    connection, // p. ex. 'github', 'google-oauth2'
+    client_id: process.env.AGENT_CLIENT_ID!,
+    client_secret: process.env.AGENT_CLIENT_SECRET!,
+    // login_hint: '<facultatif — permet de distinguer plusieurs comptes liés>'
+  });
+  const res = await fetch('https://{yourDomain}/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const data = await res.json();
+  return data.access_token; // jeton à courte durée de vie du fournisseur en aval
+}
+```
+
+## Étape 6 : Exécuter les appels d&#39;outils de l&#39;agent d&#39;IA {#step-6-execute-ai-agent-tool-calls}
+
+Transmettez le jeton du fournisseur récupéré aux SDK tiers afin d&#39;effectuer des actions d&#39;API au nom de l&#39;utilisateur.
+
+```javascript lines
+import { Octokit } from '@octokit/rest';
+
+async function runGitHubAgentTool(refreshToken) {
+  const token = await getVaultToken(refreshToken, 'github');
+  const octokit = new Octokit({ auth: token });
+  const { data } = await octokit.rest.issues.listForAuthenticatedUser({ state: 'open', per_page: 5 });
+  return data.map((i) => ({ title: i.title, url: i.html_url }));
+}
+```
