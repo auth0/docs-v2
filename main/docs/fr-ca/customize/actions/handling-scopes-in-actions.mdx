@@ -1,0 +1,159 @@
+---
+description: Apprenez à modifier les permissions des jetons avec les Actions Post Login et Credentials Exchange tout en respectant les politiques d’autorisation.
+title: Gestion des permissions dans les Actions
+---
+
+Utilisez les méthodes `api.transaction.*` pour modifier les permissions cibles dans les Actions [Post Login](/docs/fr-ca/customize/actions/explore-triggers/post-login) et [Credentials Exchange](/docs/fr-ca/customize/actions/explore-triggers/credentials-exchange). Avant d’émettre les jetons, Auth0 évalue les permissions obtenues en fonction des politiques d’autorisation applicables.
+
+Post Login permet également de modifier directement le jeton d’accès avec `api.accessToken.addScope()` et `removeScope()`, sans passer par l’évaluation des politiques d’autorisation. Ces méthodes indépendantes ne sont pas offertes dans Credentials Exchange.
+
+## Fonctionnement des permissions cibles {#how-target-scopes-work}
+
+`event.transaction.target_scopes` contient l’ensemble cible actuel de permissions, qui est filtré par les politiques d’autorisation après l’exécution des Actions afin de déterminer les permissions finales accordées. `event.transaction.target_scopes` contient initialement les permissions demandées dans Post Login ou les permissions autorisées de l’application pour l’API cible dans Credentials Exchange.
+
+**Les modifications s’accumulent d’une Action à l’autre.** Chaque méthode de permissions cibles met immédiatement à jour `event.transaction.target_scopes`, autant dans l’Action en cours que dans les Actions subséquentes de la même transaction. `event.transaction.requested_scopes` demeure inchangé. Lisez l’ensemble cible à partir de l’événement, puis modifiez-le au moyen des méthodes de l’API :
+
+| Méthode                    | Effet                           | Référence de l’API                                                                                                                                                           |
+| -------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `addTargetScope(scope)`    | Ajoute une permission.          | [Post Login](/docs/fr-ca/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/fr-ca/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `removeTargetScope(scope)` | Retire une permission.          | [Post Login](/docs/fr-ca/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/fr-ca/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `setTargetScopes(scopes)`  | Remplace l’ensemble au complet. | [Post Login](/docs/fr-ca/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/fr-ca/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+| `clearTargetScopes()`      | Vide l’ensemble.                | [Post Login](/docs/fr-ca/actions/reference/post-login/post-login-api-object), [Credentials Exchange](/docs/fr-ca/actions/reference/credentials-exchange/credentials-exchange-api-object) |
+
+Auth0 évalue l’ensemble cible final en fonction des politiques d’autorisation une fois toutes les Actions terminées. Les ajouts non autorisés sont ignorés sans avertissement. Les permissions retirées ne sont pas appliquées, à moins qu’une opération ultérieure ne les rétablisse ou ne remplace l’ensemble.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les quatre méthodes s’appliquent aux permissions de l’API, aux permissions OIDC et aux permissions du jeton d’actualisation, y compris `openid`, `profile` et `offline_access`, selon les capacités du flux. L’ajout ou le retrait de ces permissions peut modifier l’émission des jetons ou les renseignements du profil.
+
+  `setTargetScopes()` et `clearTargetScopes()` remplacent l’ensemble au complet; elles peuvent donc aussi retirer des permissions par inadvertance. Retirer ou omettre `openid` peut empêcher l’émission du jeton d’ID; retirer ou omettre `offline_access` peut empêcher l’émission du jeton d’actualisation. Utilisez `removeTargetScope()` pour retirer une seule permission précise.
+</Callout>
+
+### Autorisation et consentement {#authorization-and-consent}
+
+Les contrôles existants s’appliquent toujours :
+
+* **Accès des applications :** les [politiques d’accès aux API](/docs/fr-ca/get-started/apis/api-access-policies-for-applications) et les [autorisations client](/docs/fr-ca/get-started/applications/application-access-to-apis-client-grants), y compris les autorisations tierces par défaut.
+* **Autorisations des utilisateurs :** lorsque le [RBAC](/docs/fr-ca/manage-users/access-control/rbac) est activé, Auth0 vérifie les rôles et les autorisations attribuées directement. Pour les connexions d’Organization, ce sont les rôles de l’utilisateur dans cette Organization qui sont utilisés.
+* **Consentement :** lorsque le consentement est requis, toutes les permissions qui restent après le filtrage des autorisations figurent dans l’invite de consentement, y compris celles ajoutées par des Actions. Les permissions retirées de l’ensemble cible final ou rejetées par une politique ne sont pas affichées. Le fait d’effacer les permissions ne permet pas de contourner le consentement.
+
+Credentials Exchange n’implique ni utilisateur ni consentement de l’utilisateur. Son ensemble cible est croisé avec l’autorisation client. **Les méthodes de permissions cibles sont les seules méthodes qui permettent d’y modifier les permissions :** `api.accessToken.addScope()` et `removeScope()` ne sont pas disponibles.
+
+## Exemples {#examples}
+
+### Ajouter une permission dans le respect des politiques d&#39;autorisation {#add-a-scope-while-respecting-authorization-policies}
+
+Ajoutez l&#39;accès en lecture aux rapports, sous réserve des politiques applicables et de tout consentement requis :
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.addTargetScope('read:reports');
+};
+```
+
+### Retirer l&#39;accès en écriture pour les transactions à risque {#remove-write-access-for-risky-transactions}
+
+Retirez l&#39;accès en écriture lorsqu&#39;Auth0 détecte un déplacement impossible entre deux connexions consécutives. Les autres permissions ciblées demeurent inchangées. Pour en apprendre davantage sur les codes d&#39;évaluation, consultez [Personnaliser Adaptive MFA](/docs/fr-ca/secure/multi-factor-authentication/adaptive-mfa/customize-adaptive-mfa).
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  const travel = event.authentication?.riskAssessment?.assessments?.ImpossibleTravel;
+  if (travel?.code === 'impossible_travel_from_last_login') {
+    api.transaction.removeTargetScope('write:reports');
+  }
+};
+```
+
+### Retirer l&#39;accès administrateur pour les requêtes déléguées {#remove-admin-access-for-delegated-requests}
+
+Utilisez `event.transaction.actor` pour détecter une requête déléguée, quel que soit le flux ayant fourni l&#39;actor. Retirez l&#39;accès administrateur sans modifier les autres permissions, y compris `openid` :
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.transaction?.actor) {
+    api.transaction.removeTargetScope('admin:reports');
+  }
+};
+```
+
+### Appliquer des modifications d&#39;une Action à l&#39;autre {#apply-changes-across-actions}
+
+Pour une requête comportant `write:reports`, l&#39;Action 1 ajoute l&#39;accès en lecture. L&#39;événement affiche aussitôt les deux permissions :
+
+```javascript Action 1 lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.addTargetScope('read:reports');
+  console.log(event.transaction.target_scopes);
+  // ['write:reports', 'read:reports']
+};
+```
+
+L&#39;Action 2 reçoit cet ensemble cumulé et retire l&#39;accès en écriture :
+
+```javascript Action 2 lines
+exports.onExecutePostLogin = async (event, api) => {
+  api.transaction.removeTargetScope('write:reports');
+  console.log(event.transaction.target_scopes);
+  // ['read:reports']
+};
+```
+
+Auth0 évalue ensuite `read:reports`. Sa présence dans l&#39;ensemble cible n&#39;en garantit pas l&#39;émission.
+
+### Limiter l’accès de communication entre machines à l’écriture de rapports {#limit-machine-to-machine-access-to-writing-reports}
+
+Ne conservez que l’accès en écriture dans Credentials Exchange. La permission doit tout de même être autorisée par l’autorisation client :
+
+```javascript lines
+exports.onExecuteCredentialsExchange = async (event, api) => {
+  api.transaction.setTargetScopes(['write:reports']);
+};
+```
+
+## Modifier directement les permissions du jeton d&#39;accès {#modify-access-token-scopes-directly}
+
+Pour les applications internes, Post Login permet de modifier directement le jeton au moyen de `api.accessToken.addScope()` et de `removeScope()`. Ces deux méthodes s&#39;exécutent après l&#39;autorisation, sans passer par le RBAC, la politique d&#39;accès de l&#39;application ni l&#39;évaluation du consentement. Ni l&#39;une ni l&#39;autre ne modifie `event.transaction.target_scopes`.
+
+`addScope()` ajoute une permission sans effectuer ces vérifications et sans l&#39;afficher sur l&#39;écran de consentement. `removeScope()` ne fait que restreindre le jeton d&#39;accès final; la permission demeure affichée dans l&#39;invite de consentement.
+
+Faites ces modifications directes en connaissance de cause, avec des valeurs de permissions fiables et le public d&#39;API attendu. Les modifications apportées aux permissions cibles ne peuvent pas annuler un ajout forcé :
+
+```javascript lines
+exports.onExecutePostLogin = async (event, api) => {
+  if (event.resource_server?.identifier === 'https://example.com/api') {
+    api.accessToken.addScope('audit:reports');
+    api.transaction.removeTargetScope('audit:reports');
+  }
+};
+```
+
+`audit:reports` se retrouve tout de même dans le jeton d&#39;accès, même s&#39;il ne figure ni dans l&#39;ensemble cible ni sur l&#39;écran de consentement. Ce comportement s&#39;applique à toutes les Actions, peu importe l&#39;ordre des appels.
+
+<Callout icon="file-lines" color="#0EA5E9" iconType="regular">
+  Les [applications tierces](/docs/fr-ca/get-started/applications/third-party-applications/security-controls) ne prennent pas en charge `api.accessToken.addScope()`; les ajouts ne peuvent donc pas contourner les autorisations de l&#39;application ni le consentement. `removeScope()` demeure disponible, puisqu&#39;elle ne fait que réduire l&#39;accès. Utilisez les méthodes de permissions cibles si vous voulez que les modifications se reflètent à la fois dans l&#39;autorisation et dans le consentement.
+</Callout>
+
+## Flux pris en charge {#supported-flows}
+
+| Flux                                                                                         | Comportement                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Code d’autorisation, implicite, hybride                                                      | Pris en charge.                                                                                                                                                                                |
+| Mot de passe du propriétaire de la ressource, domaine de mot de passe, OTP sans mot de passe | Pris en charge.                                                                                                                                                                                |
+| Échange de jeton d’actualisation hors ligne                                                  | Pris en charge. Part des permissions de l’échange ou, si elles sont omises, de l’ensemble accordé précédemment. Les limites d’autorisation du jeton d’actualisation continuent de s’appliquer. |
+| Autorisation d’appareil                                                                      | Pris en charge.                                                                                                                                                                                |
+| MFA (OTP, hors bande, code de récupération), clé d’identification / WebAuthn                 | Pris en charge.                                                                                                                                                                                |
+| Échange de jetons (Échange personnalisé de jetons, au nom de, connexion sociale native)      | Pris en charge.                                                                                                                                                                                |
+| Cross App Access (ID-JAG)                                                                    | Pris en charge.                                                                                                                                                                                |
+| Canal de lien Web CIBA                                                                       | Pris en charge.                                                                                                                                                                                |
+| Identifiants du client                                                                       | Pris en charge au moyen des Actions Credentials Exchange.                                                                                                                 |
+| Canal de notification poussée MFA CIBA                                                       | Les modifications sont ignorées.                                                                                                                                                               |
+| SAML, WS-Fed, anciens points de terminaison, ancien modèle d’autorisation                    | Les modifications sont ignorées.                                                                                                                                                               |
+| Échange de jeton d’accès de connexion fédérée Token Vault                                    | Les méthodes de permissions cibles génèrent une erreur.                                                                                                                                        |
+
+Pour les Actions partagées, n’appelez pas les méthodes de permissions cibles lorsque `event.transaction.protocol === 'oauth2-token-exchange-federated-connection'`. Ne vous fiez pas aux modifications des permissions cibles pour restreindre les flux non pris en charge.
+
+## En savoir plus {#learn-more}
+
+* [Objet API Post Login](/docs/fr-ca/actions/reference/post-login/post-login-api-object)
+* [Objet API Credentials Exchange](/docs/fr-ca/actions/reference/credentials-exchange/credentials-exchange-api-object)
+* [Métadonnées de transaction des Actions](/docs/fr-ca/customize/actions/transaction-metadata)
+* [Redirection avec les Actions](/docs/fr-ca/customize/actions/redirect-with-actions)
