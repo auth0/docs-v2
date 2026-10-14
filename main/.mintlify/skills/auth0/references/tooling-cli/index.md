@@ -217,7 +217,7 @@ auth0 apps update --help | jq -r '.[0].flags[].name'
 | Custom login logic | `auth0 actions create --trigger post-login` |
 | Reusable code shared across actions | `auth0 actions modules create` + `--module` |
 | Multi-step self-service journeys | `auth0 forms` / `auth0 flows` |
-| Branding the login page | `auth0 ul update --logo ... --accent ...` |
+| Branding the login page | `auth0 ul update --logo ...` (colors on a tenant with a theme: see Universal Login — Branding) |
 | Custom domain for login | `auth0 domains create --domain "auth.myapp.com"` |
 | Debugging a failed login | `auth0 logs tail --filter "type:f"` |
 | Testing a login flow | `auth0 test login <client-id>` |
@@ -309,6 +309,9 @@ auth0 connections enabled-clients update <connection-id> \
   --data '[{"client_id":"<id>","status":true}]'
 ```
 
+`enabled-clients update` changes only the clients in the payload and keeps the
+status of every other client, so a single entry does not replace the existing list.
+
 Strategies include `auth0` (database), `google-oauth2`, `samlp`, `oidc`, `waad`,
 `ad`, `oauth2`, and more.
 
@@ -398,7 +401,7 @@ Alias: `auth0 mfa`.
 ```bash
 auth0 guardian policies set --policy all-applications     # or: confidence-score, or --none
 auth0 guardian factors list
-auth0 guardian factors set                                # enable/disable a factor
+auth0 guardian factors set sms --enabled                  # enable/disable a factor (--enabled=false)
 auth0 guardian enrollments create-ticket --user-id "auth0|123" \
   --factor push-notification --send-email
 ```
@@ -563,13 +566,24 @@ auth0 domains default set <domain-id>       # pick the tenant's default custom d
 ### Universal Login — Branding
 
 ```bash
-auth0 ul update --accent "#FF6600" --background "#FFFFFF" \
-  --logo "https://myapp.com/logo.png"
+auth0 ul update --logo "https://myapp.com/logo.png" \
+  --favicon "https://myapp.com/favicon.ico"
 auth0 ul update --data @branding.json           # or drive it with a JSON body
 ```
 
+`auth0 ul update` writes the tenant's classic branding settings (`/branding`: logo, favicon,
+font, colors). On a tenant that has a theme, the theme sets the colors users see (Organization
+branding can override them in an Organization context), with the button color in
+`colors.primary_button`. Send color changes with a GET, merge and PATCH on
+`branding/themes/<theme-id>` using `auth0 api`, carrying `displayName` and every top-level
+section over (see the `feature-branding` reference).
+
+`auth0 ul prompts update <prompt> -l <language> --data '...'` sets a prompt's custom text
+and replaces the existing text for that prompt, so read it first with
+`auth0 ul prompts show <prompt> -l <language>` and write the merged object back.
+
 `auth0 ul update` and `auth0 ul prompts update` are non-interactive and take
-`--data` / `--schema`. `auth0 ul customize` and `templates update` are
+`--data`. `auth0 ul customize` and `templates update` are
 interactive editors that fail fast in agent mode (see agent-mode.md); for
 non-interactive advanced rendering (ACUL), use `auth0 acul config ...`.
 
@@ -688,7 +702,7 @@ is already JSON so you rarely need them. There is **no `--csv`**.
 
 ```bash
 auth0 api get connections
-auth0 api post client-grants --data '{"client_id":"...","audience":"...","scope":["read:data"]}'
+auth0 api post "organizations/<org-id>/members" --data '{"members":["<user-id>"]}'
 auth0 api get stats/daily -q "from=20240101" -q "to=20240131"
 auth0 api delete "actions/actions/<action-id>" --force
 auth0 api post clients --data @client.json      # @file
@@ -698,6 +712,12 @@ cat data.json | auth0 api post clients          # or pipe the body via stdin
 `--data` accepts inline JSON, `@file`, or `@-`/stdin (or a plain pipe). Method
 defaults to `GET` without data and `POST` with data. If a call returns 403,
 re-run `auth0 login --scopes "<needed:scope>"`.
+
+**Secrets.** To read or change a client, use `auth0 apps show <id>` or
+`auth0 apps update <id>`: they leave `client_secret` out unless you pass `--reveal-secrets`.
+A raw `auth0 api` call on `clients/<id>` returns the full client including the secret,
+so pipe it through `jq` and keep only the fields you need, for example
+`jq '{name, organization_usage}'`, to keep the secret out of your context.
 
 **Paths are relative to the API root.** Write `connections`, not
 `/api/v2/connections`. The prefixed form returns a flat `404: Not Found` that
